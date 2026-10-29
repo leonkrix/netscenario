@@ -104,3 +104,17 @@ Accepted. Python 3.9 reached its end of life on 2025-10-31 and 3.10 on 2026-10-0
 
 Alternatives: 3.10 (already past its end of life), 3.12 (a longer window, but it would leave out users who still run 3.11 for no gain).
 
+## D-018: The Python side uses uv, maturin, hatchling, ruff and pyright in strict mode
+
+Accepted. The tools of the Python packages are chosen for the strictness of the checks and for one reproducible environment, and they are cheap to change while there is little code.
+
+- **uv** manages the environment as a workspace of the two packages (D-010) with one lock file, `uv.lock`, which is committed. It also fetches the lowest supported Python (3.11, D-017) for `just py-test-min`.
+- **maturin** builds `netscenario`, the package with the native module from `crates/netscenario-py`; its version is the one of the Rust workspace, so the crates, the bindings and the plugin are released together (D-004). The `extension-module` feature of PyO3 is not set in `Cargo.toml` but by maturin, so that `cargo test` still links. **hatchling** builds the plugin, which is pure Python; a test checks that both packages have the same version.
+- **ruff** formats and lints (security, annotations, docstrings in the Google style, naming, bugbear, simplifications, pytest style).
+- **pyright in strict mode** checks the types, with `py.typed` and a stub for the native module. It is chosen over mypy because it is faster, strict mode is its normal way of working, and it is the checker that most editors use. The cost is that the PyPI package fetches a Node runtime on first use; this is no problem on a development machine or a CI runner. mypy would be the choice for a build without network access.
+- **The tests of the plugin** run pytest inside pytest (`pytester`), and each check that judges has a canary that must fail.
+
+The wheels that `uv build` makes on the development machine carry the platform tag of that machine (`linux_x86_64`). Release wheels are built in a manylinux container (REL-01, PYT-08).
+
+Alternatives: mypy (the long-standing standard, slower, strict mode is a collection of flags), pip with venv and a requirements file (no lock for the workspace), setuptools for the plugin (works, was used in spike S9, but hatchling needs no `setup.py` history).
+

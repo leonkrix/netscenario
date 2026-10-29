@@ -22,11 +22,12 @@ A choice that is hard to undo (a file format, a dependency of the core, a public
 
 ## Development
 
-The code is a Cargo workspace in `crates/`; the Python packages follow. You need Linux (the emulation uses network namespaces), [rustup](https://rustup.rs) and a few tools:
+The code is a Cargo workspace in `crates/` and two Python packages in `python/` (`netscenario`, the typed API built with maturin around `crates/netscenario-py`, and `pytest-netscenario`, the plugin). You need Linux (the emulation uses network namespaces), [rustup](https://rustup.rs), [uv](https://docs.astral.sh/uv/) and a few tools:
 
 ```bash
 rustup toolchain install 1.85.0 --profile minimal   # the lowest supported Rust, for `just msrv`
 cargo install --locked just cargo-nextest cargo-deny
+uv --version                                        # uv installs the Python packages and, if needed, Python itself
 just hooks                                          # once per clone: checks run before every commit
 ```
 
@@ -36,10 +37,13 @@ The development toolchain is the current stable Rust (`rust-toolchain.toml` inst
 | --- | --- |
 | `just check` | Everything the CI checks: format, lints (every warning is an error), tests, documentation, supply chain |
 | `just fmt` | Format the code |
-| `just clippy`, `just test`, `just doc`, `just deny` | One of the checks alone |
+| `just clippy`, `just test`, `just doc`, `just deny` | One of the Rust checks alone |
+| `just py-check` | Python: format and lints (ruff), types (pyright, strict), tests (pytest); it builds the native module first |
+| `just py-fmt` | Format the Python code and fix what ruff can fix |
+| `just py-test-min` | Run the Python tests with the lowest supported Python, 3.11 |
 | `just msrv` | Build with the lowest supported Rust |
 | `just spikes` | Run the experiments of [spikes/](spikes/) (they need `iproute2`, `python3` and user namespaces) |
 
-The crates and what they are for are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Library code does not print and does not use `unwrap`; a crate that needs `unsafe` says why in its own `Cargo.toml`. A new dependency is a decision for the supply chain: `deny.toml` lists the allowed licences.
+The crates and what they are for are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Python is typed strictly (`py.typed`, pyright in strict mode) and every public item has a docstring. Library code does not print and does not use `unwrap`; a crate that needs `unsafe` says why in its own `Cargo.toml`. A new dependency is a decision for the supply chain: `deny.toml` lists the allowed licences.
 
 By contributing you agree that your contribution is licensed under the terms in the README (Apache-2.0 or MIT, at the choice of the user).

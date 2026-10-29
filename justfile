@@ -7,8 +7,8 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Everything the CI checks: format, lints, tests, documentation and the supply chain
-check: fmt-check clippy test doc deny
+# Everything the CI checks: format, lints, tests, documentation and the supply chain, for Rust and Python
+check: fmt-check clippy test doc deny py-check
 
 # Format the code
 fmt:
@@ -38,6 +38,26 @@ deny:
 # Check that the code builds with the lowest supported Rust (rust-version in Cargo.toml). One-time: rustup toolchain install 1.85.0 --profile minimal
 msrv:
     cargo +1.85.0 check --workspace --all-targets
+
+# Set up the Python environment (builds the native module with maturin)
+py-sync:
+    uv sync
+
+# Python: format, lints, types (pyright, strict) and tests
+py-check: py-sync
+    uv run ruff format --check python
+    uv run ruff check python
+    uv run pyright
+    uv run pytest
+
+# Format the Python code and fix what ruff can fix
+py-fmt: py-sync
+    uv run ruff check --fix python
+    uv run ruff format python
+
+# Run the Python tests with the lowest supported Python (3.11, uv fetches it)
+py-test-min:
+    uv run --python 3.11 --isolated --with-editable python/netscenario --with-editable python/pytest-netscenario --with pytest pytest
 
 # Run the spikes of Phase 0 (needs iproute2, python3 and, for S1 to S5, user namespaces)
 spikes:

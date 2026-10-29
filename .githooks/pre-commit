@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs before every commit (turn on with `just hooks`): the format of the Rust code, the lints and the
-# tests of the crates that the commit touches. The same checks run on the CI (`just check`); this hook only
+# tests of the crates that the commit touches, and the format and lints of Python files. The same checks run on the CI (`just check`); this hook only
 # makes the failure come earlier. It looks at the working tree, so stage what you test.
 # Skip it in an emergency with `git commit --no-verify`.
 set -euo pipefail
@@ -13,6 +13,7 @@ staged="$(git diff --cached --name-only --diff-filter=ACMR)"
 # configuration) counts as all of them.
 crates=()
 workspace=0
+python=0
 while IFS= read -r file; do
   case "$file" in
     crates/*/*)
@@ -20,8 +21,18 @@ while IFS= read -r file; do
       case " ${crates[*]:-} " in *" $name "*) ;; *) crates+=("$name") ;; esac
       ;;
     Cargo.toml | Cargo.lock | rust-toolchain.toml | rustfmt.toml | clippy.toml | deny.toml) workspace=1 ;;
+    *.py | pyproject.toml | uv.lock) python=1 ;;
   esac
 done <<<"$staged"
+
+if [ "$python" -eq 1 ]; then
+  echo "pre-commit: ruff"
+  uv run --frozen ruff format --check python || {
+    echo "pre-commit: the Python code is not formatted. Run 'just py-fmt', stage the result and commit again." >&2
+    exit 1
+  }
+  uv run --frozen ruff check python
+fi
 
 if [ "$workspace" -eq 0 ] && [ "${#crates[@]}" -eq 0 ]; then
   exit 0

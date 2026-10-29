@@ -1,0 +1,71 @@
+# The root of the Python side: a uv workspace of the two packages (D-010) and the configuration of the
+# tools that check them. The root itself is not a package.
+[project]
+name = "netscenario-workspace"
+version = "0.0.0"
+description = "Development environment of netscenario, not a package"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["python/netscenario", "python/pytest-netscenario"]
+
+[tool.uv.sources]
+netscenario = { workspace = true }
+pytest-netscenario = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "netscenario",
+  "pytest-netscenario",
+  "pytest>=8",
+  "ruff",
+  "pyright",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["python"]
+# pytester is the pytest plugin that lets a test run pytest on a test file of its own (used for the plugin)
+addopts = "-ra --strict-markers --strict-config -p pytester"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+  "E", "W",  # pycodestyle
+  "F",       # pyflakes
+  "I",       # isort
+  "B",       # bugbear
+  "UP",      # pyupgrade
+  "SIM",     # simplify
+  "C4",      # comprehensions
+  "PT",      # pytest style
+  "N",       # naming
+  "PTH",     # pathlib
+  "S",       # security
+  "ANN",     # annotations
+  "D",       # docstrings
+  "RUF",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["netscenario", "pytest_netscenario"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, and need neither docstrings nor annotations on every test
+"**/tests/**" = ["S101", "D", "ANN"]
+
+[tool.pyright]
+include = ["python"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
