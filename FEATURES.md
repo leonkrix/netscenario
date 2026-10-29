@@ -156,7 +156,7 @@ Nothing is implemented yet; all lines are `planned`, `designed` or `idea`.
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | planned |
-| BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1? | planned |
+| BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | planned |
 | BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | designed |
 | BKD-04 | Cleanup guarantee: no leftovers after a crash, and `netscenario clean` | M | 0.1 | planned |
 | BKD-05 | Netlink instead of calls to `ip` and `tc` | S | 0.4 | planned |
