@@ -38,6 +38,18 @@ jobs:
           fi
           SPIKE_OUT="$PWD/spikes/out-relaxed" bash spikes/run-all.sh
         continue-on-error: true
+      # S2 asked for `netem ... seed`, which neither iproute2 5.15 (22.04) nor 6.1.0 (24.04) knows.
+      # Build the current iproute2 and run S2 with it, to separate "old tool" from "old kernel".
+      - name: S2 with a current tc built from source
+        run: |
+          sudo apt-get install -y --no-install-recommends bison flex pkg-config libelf-dev libmnl-dev build-essential git ca-certificates
+          git clone --depth 1 https://git.kernel.org/pub/scm/network/iproute2/iproute2.git "$RUNNER_TEMP/iproute2"
+          echo "iproute2 commit: $(git -C "$RUNNER_TEMP/iproute2" rev-parse HEAD)"
+          make -C "$RUNNER_TEMP/iproute2" -j"$(nproc)"
+          "$RUNNER_TEMP/iproute2/tc/tc" -V
+          mkdir -p "$PWD/spikes/out-newtc"
+          sudo env PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-newtc" bash spikes/s2-netem-seed.sh
+        continue-on-error: true
       - name: Which options does tc know?
         run: |
           tc -V || true
@@ -53,3 +65,4 @@ jobs:
             spikes/out/
             spikes/out-root/
             spikes/out-relaxed/
+            spikes/out-newtc/
