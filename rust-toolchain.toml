@@ -1,0 +1,6 @@
+# The toolchain for development: the current stable Rust. The lowest supported version is `rust-version`
+# in Cargo.toml (checked by `just msrv` and, later, by the CI).
+[toolchain]
+channel = "stable"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

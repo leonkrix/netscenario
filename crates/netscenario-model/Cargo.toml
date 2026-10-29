@@ -1,0 +1,13 @@
+[package]
+name = "netscenario-model"
+description = "Scenario types, units, validation and the JSON Schema of netscenario"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
