@@ -73,7 +73,7 @@ jobs:
             python3 --version
             python3 -c 'import venv, sys; print("venv module ok")'
             gcc --version | head -n 1
-            ldd --version | head -n 1
+            ldd --version | sed -n 1p
             docker --version
             ip -V
           } 2>&1 | tee spikes/out-rust/s10.txt

@@ -16,7 +16,7 @@ sudo bash spikes/run-all.sh     # as root: tests the root case (use SPIKE_OUT=ou
 bash spikes/s6-docker.sh        # optional: what works inside a Docker container
 ```
 
-The summary is written to `spikes/out/summary.md` (not committed). The workflow `Spikes` in `.github/workflows` runs the same scripts on GitHub's runners (Actions tab, "Run workflow") and keeps the results as an artifact.
+The summary is written to `spikes/out/summary.md` (not committed). The workflow `Spikes` in `.github/workflows` runs the same scripts, and the Rust and Python experiments S7 to S10 below, on GitHub's runners (Actions tab, "Run workflow") and keeps the results as an artifact.
 
 Run one spike alone with `bash spikes/s2-netem-seed.sh`.
 

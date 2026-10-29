@@ -38,7 +38,7 @@ Alternatives: TOML (worse for nested time lines), a Python DSL only (ties the fo
 
 ## D-008: Traffic and measurement come from agents inside the nodes
 
-Proposed. A small static Rust binary runs inside every node, so scenarios do not depend on tools installed in the node (iperf and so on) and per-packet records have one format. Your own programs are measured through their output and through packet captures.
+Accepted (confirmed by the sender and receiver of spike S8, see D-016). A small static Rust binary runs inside every node, so scenarios do not depend on tools installed in the node (iperf and so on) and per-packet records have one format. Your own programs are measured through their output and through packet captures.
 
 ## D-009: Call `ip` and `tc` first, netlink later
 
@@ -78,4 +78,23 @@ Accepted. Measured on Debian 13 (kernel 6.12, Ryzen 7 5800X) in unprivileged use
 - **The userspace engine (BKD-06) is feasible and keeps its place in 0.4.** One thread on AF_PACKET sockets forwarded 100,000 packets per second with a fixed delay of 20 ms and no loss using about 44 percent of one core, and with a seed it drops exactly the same packets in every run. The timer decides the accuracy: `epoll_pwait2` is exact at high rates but 0.3 to 0.7 ms late at 10,000 to 50,000 packets per second (the core sleeps between packets), a spinning loop is exact at the price of a whole core, and `epoll_wait` with milliseconds is too coarse. Open before the design of 0.4: jitter needs a sorted queue, not a FIFO; frames from a veth pair carry unfinished checksums (offload), so a TCP workload needs the engine to complete them, to switch the offload off, or to use a TAP device (which an unprivileged user can create in a user namespace); batching with `recvmmsg` and `sendmmsg`; many flows; bit rates with full-size frames.
 
 Alternatives: netlink from the start (a first Kernel backend would depend on an immature library), a scratch-built netlink layer now (cost without a need), a lower MSRV (it would exclude the current `pyo3`).
+
+## D-015: The run on the CI runners confirms S7 to S9 and qualifies the timer finding of S8
+
+Accepted. The `Spikes` workflow ran S7 to S10 on `ubuntu-22.04` (kernel 6.8, 4 virtual CPUs, AMD EPYC) and `ubuntu-24.04` (kernel 7.0), as the runner user.
+
+- **S7 and S9 gave the same results as on the development machine.** `nlink` made the same qdiscs as `tc` in all ten comparisons, and its seed 1234 gave the same 200-packet loss pattern even with the old `tc` of the images (5.15, 6.1.0), which only reads the result. A change of a running `netem` took 16 to 18 microseconds. The abi3 wheel built and the five tests passed with Python 3.10 and 3.12. Together with spike S2 the complete loss patterns of two seeds are now identical on three machines, kernels 6.8, 6.12 and 7.0.
+- **The engine of S8 forwarded 100,000 packets per second on both runners** with no loss and with the delay within 0.04 ms (p99) with `epoll_pwait2` and `spin`, using 3 seconds of CPU in 6 (about half a core). At 150,000 packets per second without delay the 22.04 runner shows the first strain (p99 0.4 ms, p99.9 2.3 ms), so about 150,000 small packets per second is a practical ceiling on a 4-CPU runner for this simple loop. The seeded loss was identical on both kernels and in both runs (3,971 of 40,000 packets for seed 7), and another seed gave another set.
+- **The timer finding of D-014 was specific to the development machine.** There, `epoll_pwait2` was 0.3 to 0.7 ms late (p99) at 10,000 to 50,000 packets per second; on the runners it was within 0.2 ms. How late a sleeping core wakes depends on the processor and its idle states, so the engine must report its timer precision per run (ENV-05) and never promise a fixed figure. `spin` stays the most exact choice at the price of a whole core; `epoll_wait` with milliseconds stays too coarse (up to 1 ms late at low rates).
+- **The image lists were right about the tools and slightly off about the compiler:** both images have Rust 1.99.1, rustup 1.29.2, clippy and rustfmt; the system Python is 3.10.12 and 3.12.3; gcc is 11.4.0 and 13.3.0; glibc is 2.35 and 2.39; Docker 28.0.4. The wheel is tagged `manylinux_2_34` on both images and on the development machine (glibc 2.41), because the tag follows the symbols that the build links against; wheels for older systems need a build in a manylinux container.
+- **The corrected spike runs show failures honestly:** on `ubuntu-24.04` with the default settings the runner reports 5 FAIL (S1.1 and S2.0 to S5.0, no namespace can be created), where before the fix only S1.1 was reported and S2 to S5 recorded nothing at all.
+
+## D-016: D-008 is accepted; D-007 stays proposed until the first implementation
+
+Accepted. The phase of the spikes ends with D-008 accepted and D-007 open on purpose.
+
+- **D-008 (agents inside the nodes) holds.** The sender and the receiver of spike S8 are small Rust programs that run inside a node, put a sequence number and the send time into every packet, and record the arrival time. At 100,000 packets per second they measured the one-way delay of a direct veth pair as 2 microseconds on average (p99 3 microseconds) on the development machine and 4 to 5 microseconds on the CI runners, with no packet lost, and a delay of 20 ms through the engine within 0.04 ms (p99). No tool had to be installed in the node. Not yet checked: that the agent is a static binary (musl) that the supervisor can start by path in any node, the documented wire format, and the delivery of the binary next to the command line; these belong to section 3.5 of the plan and the acceptance of release 0.1.
+- **D-007 (versioned YAML with a generated JSON Schema) stays proposed.** No experiment can show whether the format is good; the first implementation of the model (SCN-01 to SCN-04) and the tests of its error messages will. The decision is confirmed or replaced when the model of release 0.1 is finished.
+
+Alternatives: accepting D-007 now (would record a decision that nothing has tested), leaving D-008 proposed (the measurement it waited for exists).
 
