@@ -4,6 +4,11 @@
 #   sudo bash spikes/run-all.sh     as root (tests the root case)
 # Nothing here changes the network of your machine: every check runs in namespaces that exist only while it runs.
 set -u
+# Debian keeps `ip` and `tc` in /usr/sbin and /sbin, which a normal user does not have in the PATH
+for dir in /usr/sbin /sbin; do
+  case ":$PATH:" in *":$dir:"*) ;; *) PATH="$PATH:$dir" ;; esac
+done
+export PATH
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SPIKE_OUT="${SPIKE_OUT:-$here/out}"
 mkdir -p "$SPIKE_OUT"

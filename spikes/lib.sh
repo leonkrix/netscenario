@@ -1,6 +1,13 @@
 # Shared helpers of the spikes. Sourced by the scripts, not run on its own.
 # Every check writes one line to out/results.txt: PASS, FAIL, WARN or INFO, an id and a text.
 
+# On Debian `ip` and `tc` live in /usr/sbin and /sbin, which are not in the PATH of a normal user.
+# Add them (at the end, so that a tool the user put first still wins) before any tool is looked up.
+for dir in /usr/sbin /sbin; do
+  case ":$PATH:" in *":$dir:"*) ;; *) PATH="$PATH:$dir" ;; esac
+done
+export PATH
+
 SPIKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPIKE_OUT="${SPIKE_OUT:-$SPIKE_DIR/out}"
 mkdir -p "$SPIKE_OUT"
