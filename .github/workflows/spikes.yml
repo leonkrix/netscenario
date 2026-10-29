@@ -23,11 +23,33 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends iproute2 iputils-ping python3
-      - name: Run the spikes
+      # Three cases: as the runner user with the defaults of the image, as root, and as the runner
+      # user after relaxing the AppArmor rule that blocks unprivileged user namespaces on Ubuntu 24.04.
+      - name: Run the spikes as an unprivileged user
         run: bash spikes/run-all.sh
+        continue-on-error: true
+      - name: Run the spikes as root
+        run: sudo SPIKE_OUT="$PWD/spikes/out-root" bash spikes/run-all.sh
+        continue-on-error: true
+      - name: Run the spikes as an unprivileged user, AppArmor restriction off
+        run: |
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          SPIKE_OUT="$PWD/spikes/out-relaxed" bash spikes/run-all.sh
+        continue-on-error: true
+      - name: Which options does tc know?
+        run: |
+          tc -V || true
+          ip -V || true
+          # The words the tc binary contains for netem (the kernel side is tested by S2)
+          strings "$(command -v tc)" | grep -ix 'seed' || echo "the word 'seed' is not in the tc binary"
         continue-on-error: true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: spikes-${{ matrix.os }}
-          path: spikes/out/
+          path: |
+            spikes/out/
+            spikes/out-root/
+            spikes/out-relaxed/
