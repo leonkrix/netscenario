@@ -94,8 +94,8 @@ Planned layout of the repository (a Cargo workspace plus Python packages; create
 
 A backend implements a small interface: report capabilities, create a node, create a link, apply impairments to a link direction, start a program in a node, capture, tear down. The engine uses nothing else, so a new backend means implementing that interface and filling its column in the coverage matrix.
 
-- **Kernel** (reference). One network namespace per node, virtual Ethernet pairs for links, `tc` with `netem` (and a token bucket or a queue discipline) on each direction. Time-varying behaviour is done by changing the parameters at the steps of a trace. It is real, and its limits are the kernel's: the resolution of changes and the seed of `netem` (see the experiments).
-- **Engine** (from 0.4). A Rust process that forwards packets between virtual devices inside a user namespace, with its own queues and impairment code. It needs no root, can be seeded exactly, can log every packet, and can implement behaviour that `netem` lacks (traces per packet, any loss model). Its correctness is not assumed: it is compared with the Kernel backend by differential tests.
+- **Kernel** (reference). One network namespace per node, virtual Ethernet pairs for links, `tc` with `netem` (and a token bucket or a queue discipline) on each direction. Time-varying behaviour is done by changing the parameters at the steps of a trace. It is real, and its limits are the kernel's: a change of a running `netem` takes about 12 microseconds in a batch (spike S5, and through netlink in S7), so the resolution is set by the scheduler and not by `tc`, and the seed of `netem` guides only the loss and corruption events and needs a quiet namespace (see [COVERAGE.md](COVERAGE.md)).
+- **Engine** (from 0.4). A Rust process that forwards packets between virtual devices inside a user namespace, with its own queues and impairment code. It needs no root, can be seeded exactly, can log every packet, and can implement behaviour that `netem` lacks (traces per packet, any loss model). Its correctness is not assumed: it is compared with the Kernel backend by differential tests. A prototype (spike S8) forwarded 100,000 packets per second on one thread with an exact delay and a deterministic seeded loss; the timer, the completion of checksums for TCP and the queue for jitter are still to be designed (see D-014 in [DECISIONS.md](DECISIONS.md)).
 - **Proxy** (from 0.5). Your program talks to a proxy process. Exact for UDP, stream-level for TCP. It exists so that people on Windows and macOS, or in containers without rights, can run the scenarios that are meaningful there. Everything it cannot do is refused.
 
 **Rule:** a backend never approximates silently. If it can do something only in part, the scenario must say `allow-limited` for that feature, and the result records that it did.
@@ -110,7 +110,7 @@ The scheduler asks the models for their steps ahead of time, so a run's timeline
 
 - **One clock.** All nodes run on one machine, so `CLOCK_MONOTONIC` is shared and one-way delay is measured exactly, not estimated.
 - **Agents, not the program, measure.** Built-in workloads write per-packet records (sequence number, send time, receive time) into the result. Your own program reports through its output, and the framework can add a capture on the links.
-- **What is deterministic.** With a seed, loss and corruption patterns, jitter samples, trace choices and generated traffic are reproducible where the backend supports it (Engine and Proxy always; Kernel if the kernel's `netem` has the seed option). Scheduling noise of the machine is not removed, and results say so: they report timer precision and the real moments of events.
+- **What is deterministic.** With a seed, loss and corruption patterns, jitter samples, trace choices and generated traffic are reproducible where the backend supports it (Engine and Proxy always; Kernel for loss and corruption when `tc` is iproute2 6.6.0 or newer and the namespace is quiet, see [COVERAGE.md](COVERAGE.md)). Scheduling noise of the machine is not removed, and results say so: they report timer precision and the real moments of events.
 - **Statistics above runs.** A single measurement is a sample. The framework runs repetitions with seeds derived from the scenario seed, and assertions can be stated with a confidence interval.
 
 ## Python and pytest
@@ -119,7 +119,7 @@ The Rust core is the only implementation of semantics. The Python package wraps 
 
 ## Privileges
 
-The preferred mode is an unprivileged user namespace (`unshare` with a user, a network and a mount namespace), where the process is root only inside it. That works on most modern kernels, but some distributions restrict it (the experiments check this). The fallbacks are root, `sudo`, or the capabilities `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` granted to the binary. `doctor` says which mode is available and why the others are not.
+The preferred mode is an unprivileged user namespace (`unshare` with a user, a network and a mount namespace), where the process is root only inside it. That works by default on Debian 13 and Ubuntu 22.04. Ubuntu 24.04 and newer refuse it until `kernel.apparmor_restrict_unprivileged_userns` is 0 or an AppArmor profile allows the binary, and a container needs `SYS_ADMIN` and a seccomp profile that allows `unshare` (spikes S1 and S6). The fallbacks are root, `sudo`, or the capabilities `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` granted to the binary. `doctor` says which mode is available and why the others are not.
 
 ## Errors and messages
 
