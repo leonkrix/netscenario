@@ -42,7 +42,7 @@ Proposed. A small static Rust binary runs inside every node, so scenarios do not
 
 ## D-009: Call `ip` and `tc` first, netlink later
 
-Proposed (confirm with spike S6). Getting a first, correct kernel backend is worth more than a native implementation. The calls sit behind the backend interface and are replaced by netlink in 0.4 (BKD-05).
+Proposed (confirm with spike S7). Getting a first, correct kernel backend is worth more than a native implementation. The calls sit behind the backend interface and are replaced by netlink in 0.4 (BKD-05).
 Alternative: netlink from the start with `rtnetlink` or `nlink` (better in the end, slower to a first result).
 
 ## D-010: Two Python distributions
@@ -56,3 +56,14 @@ Accepted. `FEATURES.md` and `docs/COVERAGE.md` are the plan that is visible to e
 ## D-012: Working practice follows the sibling projects
 
 Accepted. Pull requests into a protected `main`, squash merge, a single required check `CI passed`, Conventional Commits, all actions pinned to commits, releases by tag with provenance and staged approval, documentation written as part of the change. The maintainer's working documents (`PLAN.md`, `CLAUDE.md`) stay local and are listed in `.gitignore`; nothing in the repository refers to them.
+
+## D-013: Findings of the spikes S1 to S6 decide the Kernel backend of release 0.1
+
+Accepted. Measured on Debian 13 (kernel 6.12, iproute2 6.15), on the GitHub runners (Ubuntu 22.04 with kernel 6.8, Ubuntu 24.04 with kernel 7.0) and in Docker; the scripts are in [spikes/](../spikes/README.md) and the consequences are in [COVERAGE.md](COVERAGE.md).
+
+- **Rootless stays in 0.1 (BKD-02).** Unprivileged user namespaces work by default on Debian 13 and Ubuntu 22.04, and on Ubuntu 24.04 after one setting. The tool does not hide the restriction: `doctor` and the error message name what failed, why, and the three ways out (user namespaces, root, capabilities), and the permissions guide (CIX-04) belongs to 0.1. In a container the rootless way needs `SYS_ADMIN` and a seccomp profile that allows `unshare`; this is documented, not worked around.
+- **Reproducible loss is limited, not promised without conditions.** `netem ... seed` exists from iproute2 6.6.0 on and gives the same loss pattern in a quiet namespace (checked in 7 runs on each of three machines and across kernels 6.8, 6.12 and 7.0). The pattern depends on the packets that enter the queue, so the Kernel backend uses quiet namespaces, checks the packet counter of the queue, and marks a run that is not reproducible. The coverage cell is `~` until a test of the framework proves it. The `doctor` checks that the installed `tc` knows `seed`.
+- **Judging tests use percentiles, never the maximum, and never a minimum from the tail of a distribution.** One packet in about 2000 arrives roughly 2 ms late, and the tables of `netem` are cut at about 3.5 to 4 sigma. The numerical tolerances of QA-06 are set when measurements from the CI runners exist, which are noisier than a development machine.
+- **`ip` and `tc` are looked up in `PATH` plus `/usr/sbin` and `/sbin`** (on Debian they are not in the `PATH` of a normal user), and `doctor` prints where it looked.
+
+Alternatives: dropping rootless from 0.1 (would leave the main CI case, an unprivileged user, to the later engine); promising reproducible loss on the Kernel backend without conditions (would be false as soon as a stray packet enters the queue).

@@ -113,7 +113,7 @@ One-way delay is exact because all nodes share one machine and one clock. For th
 
 | Feature | Kernel | Engine | Proxy |
 | --- | --- | --- | --- |
-| Same seed, same loss pattern | ? (depends on the `netem` seed of the kernel) | ✔ 0.4 | ✔ 0.5 |
+| Same seed, same loss pattern | ~ 0.1 | ✔ 0.4 | ✔ 0.5 |
 | Same seed, same timing | ~ (scheduling noise) | ✔ 0.4 (optional virtual time) | ~ |
 | Provenance in every result | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
 
@@ -122,11 +122,15 @@ One-way delay is exact because all nodes share one machine and one clock. For th
 | Place | Kernel | Engine | Proxy |
 | --- | --- | --- | --- |
 | Linux, as root | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
-| Linux, unprivileged user namespace | ? (0.1 if the experiments allow) | ✔ 0.4 | ✔ 0.5 |
-| Container with `NET_ADMIN` | ✔ 0.5 | ✔ 0.5 | ✔ 0.5 |
+| Linux, unprivileged user namespace | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
+| Container with `NET_ADMIN` | ✘ alone, ✔ 0.5 with `SYS_ADMIN` and a seccomp profile that allows `unshare` | ✔ 0.5 | ✔ 0.5 |
 | Container without extra rights | ✘ | ? | ✔ 0.5 |
-| GitHub-hosted runner | ? | ? | ✔ 0.5 |
+| GitHub-hosted runner | ✔ 0.1 | ? | ✔ 0.5 |
 | Windows, macOS | ✘ | ✘ | ✔ 0.5 |
+
+**Restriction "same seed" for the Kernel**: `netem` accepts a `seed` (the `tc` of iproute2 6.6.0 or newer; older versions, such as those of Ubuntu 22.04 and 24.04, do not know the word), which according to its manual guides the random loss and corruption events. Jitter, reordering and duplication are not promised to be reproducible. The pattern is a function of the seed **and of the number of packets that enter the queue**, so any other packet in the namespace (IPv6 neighbour discovery, ARP) shifts it. The tool therefore creates quiet namespaces and compares the packet counter of the queue with the packets of the workload; if they differ, the result says that the run is not reproducible. Measured so far (spike S2): identical patterns on kernels 6.8, 6.12 and 7.0, with `tc` 6.15 and 7.3.0, as root and as user. The kernel does not promise this across versions, so the guarantee is "same seed, same kernel and `tc` version", and the provenance of every result records both. The engine backend has no such condition.
+
+**Notes on "Where it can run"** (spikes S1 and S6): unprivileged user namespaces work by default on Debian 13 and Ubuntu 22.04. Ubuntu 24.04 refuses them until `kernel.apparmor_restrict_unprivileged_userns` is 0 or an AppArmor profile allows the binary; `doctor` says so and the permissions guide (CIX-04) shows the ways out. In a container, `NET_ADMIN` alone is not enough: the default seccomp profile of Docker blocks `unshare`, so no namespace can be created. It works with `SYS_ADMIN` and `seccomp=unconfined` (a narrower profile that only allows `unshare` and `setns` is not tested yet). The rootless case inside a container is not tested yet. The `tc` of both GitHub images (iproute2 5.15 and 6.1.0) is too old for `seed`, so the CI builds or installs a newer one.
 
 ## Rules for changing this page
 
