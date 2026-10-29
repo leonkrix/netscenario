@@ -31,6 +31,21 @@ check() {
   return 1
 }
 
+# enter_ns ID SCRIPT   re-runs SCRIPT with the argument `inner` in a new network namespace (a user and network
+# namespace when not root). When the namespace cannot be created (a container with Docker's default
+# seccomp profile, a kernel that forbids it), this records a FAIL for ID and ends the script: without
+# it, run-all.sh counted such a script as having passed because it had recorded nothing.
+enter_ns() {
+  local id="$1" script="$2" err
+  local -a cmd
+  if [ "$(id -u)" -eq 0 ]; then cmd=(unshare -n); else cmd=(unshare -Urn); fi
+  if ! err="$("${cmd[@]}" true 2>&1)"; then
+    fail "$id" "cannot create a network namespace (${cmd[*]}) :: $(printf '%s' "$err" | head -n 3 | tr '\n' ' ')"
+    exit 0
+  fi
+  exec "${cmd[@]}" bash "$script" inner
+}
+
 # A second network namespace without `ip netns` (which needs a mount namespace): a process that
 # holds an empty one. Sets NS_PID; the namespace lives as long as the process.
 ns_start() {

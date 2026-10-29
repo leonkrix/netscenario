@@ -4,8 +4,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 if [ "${1:-outer}" = outer ]; then
-  if [ "$(id -u)" -eq 0 ]; then exec unshare -n bash "$0" inner; fi
-  exec unshare -Urn bash "$0" inner
+  enter_ns S5.0 "$0"
 fi
 
 if ! ip link add v0 type veth peer name v1; then
