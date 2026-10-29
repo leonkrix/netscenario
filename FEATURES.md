@@ -8,7 +8,7 @@ Every feature of netscenario has one line here. The ledger is the answer to "wha
 - A `?` after the release means the plan depends on an experiment (a [spike](spikes/README.md)).
 - Where a feature depends on the backend, [docs/COVERAGE.md](docs/COVERAGE.md) says which backends can do it faithfully.
 
-Nothing is implemented yet; all lines are `planned`, `designed` or `idea`.
+A line moves to `in progress` when the first code of the feature exists, and to `done` when its tests, its documentation and its coverage cells are in.
 
 ## Releases
 
@@ -198,7 +198,7 @@ Nothing is implemented yet; all lines are `planned`, `designed` or `idea`.
 | CLI-03 | `profiles` and `capabilities`: what exists, what a backend can do | S | 0.3 | planned |
 | CLI-04 | `schema`: print the JSON Schema | S | 0.1 | planned |
 | CLI-05 | Shell completions and man pages | S | 0.8 | planned |
-| CLI-06 | Machine-readable output and documented exit codes | M | 0.1 | planned |
+| CLI-06 | Machine-readable output and documented exit codes | M | 0.1 | in progress |
 
 ## Python (PYT)
 
@@ -245,14 +245,14 @@ Nothing is implemented yet; all lines are `planned`, `designed` or `idea`.
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| QA-01 | Unit tests and property tests | M | 0.1 | planned |
+| QA-01 | Unit tests and property tests | M | 0.1 | in progress |
 | QA-02 | Integration tests inside namespaces, on the CI | M | 0.1 | planned |
 | QA-03 | Fuzzing of the scenario parser | S | 0.3 | planned |
 | QA-04 | Snapshot tests for reports and the schema | S | 0.2 | planned |
 | QA-05 | Benchmarks of the engine (throughput, added delay) | S | 0.4 | planned |
 | QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | planned |
-| QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | planned |
-| QA-08 | Supply chain: dependency audit and policy, OpenSSF Scorecard, actions pinned to commits | M | 0.1 | planned |
+| QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | in progress |
+| QA-08 | Supply chain: dependency audit and policy, OpenSSF Scorecard, actions pinned to commits | M | 0.1 | in progress |
 | QA-09 | Coverage figures (for information) | C | 0.3 | idea |
 | QA-10 | Tests on several kernels and distributions | S | 0.5 | planned |
 

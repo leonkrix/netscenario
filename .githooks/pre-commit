@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Runs before every commit (turn on with `just hooks`): the format of the Rust code, the lints and the
+# tests of the crates that the commit touches. The same checks run on the CI (`just check`); this hook only
+# makes the failure come earlier. It looks at the working tree, so stage what you test.
+# Skip it in an emergency with `git commit --no-verify`.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+[ -n "$staged" ] || exit 0
+
+# Which crates are touched? A change to anything shared (the workspace, the toolchain, the lint
+# configuration) counts as all of them.
+crates=()
+workspace=0
+while IFS= read -r file; do
+  case "$file" in
+    crates/*/*)
+      name="$(echo "$file" | cut -d/ -f2)"
+      case " ${crates[*]:-} " in *" $name "*) ;; *) crates+=("$name") ;; esac
+      ;;
+    Cargo.toml | Cargo.lock | rust-toolchain.toml | rustfmt.toml | clippy.toml | deny.toml) workspace=1 ;;
+  esac
+done <<<"$staged"
+
+if [ "$workspace" -eq 0 ] && [ "${#crates[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+echo "pre-commit: cargo fmt"
+cargo fmt --all --check || {
+  echo "pre-commit: the code is not formatted. Run 'just fmt', stage the result and commit again." >&2
+  exit 1
+}
+
+if [ "$workspace" -eq 1 ]; then
+  scope=(--workspace)
+else
+  scope=()
+  for name in "${crates[@]}"; do scope+=(-p "$name"); done
+fi
+
+echo "pre-commit: cargo clippy ${scope[*]}"
+cargo clippy "${scope[@]}" --all-targets --all-features -- -D warnings
+
+echo "pre-commit: tests ${scope[*]}"
+if command -v cargo-nextest >/dev/null 2>&1; then
+  cargo nextest run "${scope[@]}" --all-features --no-tests=pass
+else
+  cargo test "${scope[@]}" --all-features
+fi

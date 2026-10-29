@@ -1,0 +1,13 @@
+[package]
+name = "netscenario-agent"
+description = "The traffic generators and probes that run inside the nodes of a netscenario run"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

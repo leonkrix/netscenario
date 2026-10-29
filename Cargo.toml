@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# The spikes are scratch crates with a workspace of their own
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+# The lowest supported Rust version (D-014). It is what pyo3 and tokio need, and it allows edition 2024.
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/leonkrix/netscenario"
+homepage = "https://github.com/leonkrix/netscenario"
+# Nothing is published before release 0.1 (REL-01)
+publish = false
+
+[workspace.dependencies]
+netscenario-model = { path = "crates/netscenario-model", version = "0.0.0" }
+netscenario-core = { path = "crates/netscenario-core", version = "0.0.0" }
+netscenario-backend-kernel = { path = "crates/netscenario-backend-kernel", version = "0.0.0" }
+netscenario-agent = { path = "crates/netscenario-agent", version = "0.0.0" }
+netscenario-cli = { path = "crates/netscenario-cli", version = "0.0.0" }
+
+[workspace.lints.rust]
+# A crate that needs `unsafe` (the engine, the bindings) overrides this in its own Cargo.toml and says why
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Library code does not print: it returns data or writes to a writer it was given
+print_stdout = "warn"
+print_stderr = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+module_name_repetitions = "allow"

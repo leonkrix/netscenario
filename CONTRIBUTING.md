@@ -22,6 +22,24 @@ A choice that is hard to undo (a file format, a dependency of the core, a public
 
 ## Development
 
-The workspace, the toolchain and the commands are described here when the code starts (Phase 1 of the plan). Until then, the experiments in [spikes/](spikes/) need only a Linux machine with `iproute2`.
+The code is a Cargo workspace in `crates/`; the Python packages follow. You need Linux (the emulation uses network namespaces), [rustup](https://rustup.rs) and a few tools:
+
+```bash
+rustup toolchain install 1.85.0 --profile minimal   # the lowest supported Rust, for `just msrv`
+cargo install --locked just cargo-nextest cargo-deny
+just hooks                                          # once per clone: checks run before every commit
+```
+
+The development toolchain is the current stable Rust (`rust-toolchain.toml` installs it, with `rustfmt` and `clippy`). The lowest supported version is `rust-version` in `Cargo.toml`.
+
+| Command | What it does |
+| --- | --- |
+| `just check` | Everything the CI checks: format, lints (every warning is an error), tests, documentation, supply chain |
+| `just fmt` | Format the code |
+| `just clippy`, `just test`, `just doc`, `just deny` | One of the checks alone |
+| `just msrv` | Build with the lowest supported Rust |
+| `just spikes` | Run the experiments of [spikes/](spikes/) (they need `iproute2`, `python3` and user namespaces) |
+
+The crates and what they are for are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Library code does not print and does not use `unwrap`; a crate that needs `unsafe` says why in its own `Cargo.toml`. A new dependency is a decision for the supply chain: `deny.toml` lists the allowed licences.
 
 By contributing you agree that your contribution is licensed under the terms in the README (Apache-2.0 or MIT, at the choice of the user).

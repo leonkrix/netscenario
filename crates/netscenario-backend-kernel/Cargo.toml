@@ -1,0 +1,13 @@
+[package]
+name = "netscenario-backend-kernel"
+description = "The Kernel backend of netscenario: network namespaces, virtual Ethernet pairs and netem"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
