@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pytest-netscenario-spike"
+version = "0.0.0"
+description = "Spike S9: a pytest plugin in its own distribution that depends on the bindings"
+requires-python = ">=3.9"
+dependencies = ["netscenario-spike", "pytest>=7"]
+license = "MIT OR Apache-2.0"
+
+[project.entry-points.pytest11]
+netscenario_spike = "pytest_netscenario_spike.plugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]

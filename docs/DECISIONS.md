@@ -42,12 +42,12 @@ Proposed. A small static Rust binary runs inside every node, so scenarios do not
 
 ## D-009: Call `ip` and `tc` first, netlink later
 
-Proposed (confirm with spike S7). Getting a first, correct kernel backend is worth more than a native implementation. The calls sit behind the backend interface and are replaced by netlink in 0.4 (BKD-05).
+Accepted (confirmed by spike S7, see D-014). Getting a first, correct kernel backend is worth more than a native implementation. The calls sit behind the backend interface and are replaced by netlink in 0.4 (BKD-05).
 Alternative: netlink from the start with `rtnetlink` or `nlink` (better in the end, slower to a first result).
 
 ## D-010: Two Python distributions
 
-Proposed. `netscenario` (bindings, API, statistics) and `pytest-netscenario` (the plugin, which depends on it). This follows the naming convention of pytest plugins and lets the API be used without pytest.
+Accepted (confirmed by spike S9, see D-014). `netscenario` (bindings, API, statistics) and `pytest-netscenario` (the plugin, which depends on it). This follows the naming convention of pytest plugins and lets the API be used without pytest.
 
 ## D-011: The feature ledger and the coverage matrix drive the work
 
@@ -67,3 +67,15 @@ Accepted. Measured on Debian 13 (kernel 6.12, iproute2 6.15), on the GitHub runn
 - **`ip` and `tc` are looked up in `PATH` plus `/usr/sbin` and `/sbin`** (on Debian they are not in the `PATH` of a normal user), and `doctor` prints where it looked.
 
 Alternatives: dropping rootless from 0.1 (would leave the main CI case, an unprivileged user, to the later engine); promising reproducible loss on the Kernel backend without conditions (would be false as soon as a stray packet enters the queue).
+
+## D-014: The spikes S7 to S10 confirm D-009 and D-010, fix the Rust version, and show what the engine still has to solve
+
+Accepted. Measured on Debian 13 (kernel 6.12, Ryzen 7 5800X) in unprivileged user namespaces; the experiments are in [spikes/](../spikes/README.md).
+
+- **D-009 holds: the Kernel backend of 0.1 calls `ip` and `tc`.** Netlink works (spike S7): with `nlink` 0.33.0 the namespaces, the veth pair, the addresses and every `netem` setting that was tried give the same qdisc as the `tc` command line, and `netem seed` gives exactly the loss pattern that `tc` gives. A change of a running `netem` takes 12 microseconds through netlink and through `tc -batch`, against 1.1 ms for one `tc` process per change, so the speed is no reason to hurry. What speaks against netlink now is the library: `rtnetlink` cannot configure `netem` at all (`netlink-packet-route` 0.33.0 knows only `fq_codel` and `ingress`), and `nlink` is ten months old, has one maintainer, changes its API between minor versions and contains `unsafe` code. The calls stay behind the backend interface, and netlink replaces them with BKD-05. Candidates then: `nlink` pinned to an exact version, or our own thin layer for the `netem` options on `netlink-packet-core` and `netlink-sys`. Decide at BKD-05 with the maturity of `nlink` at that time. Either way, a fidelity test must measure the jitter distributions, because `tc qdisc show` does not print the distribution table, and the distribution tables of iproute2 (`/usr/lib/tc/*.dist`) are a run-time dependency of `nlink` unless we embed them.
+- **D-010 holds: two Python distributions, built with maturin, abi3.** One wheel (`cp39-abi3`, 256 KB) serves several Python versions; the plugin as a second distribution with a `pytest11` entry point is found by pytest; the interpreter lock can be released while Rust works. Release wheels are built in a manylinux container, not on the development machine, whose tag (`manylinux_2_34`) is too new for older systems. The lowest supported Python version is still to be chosen (3.10 is the system Python of Ubuntu 22.04).
+- **Minimum supported Rust version: 1.85 for release 0.1**, with a CI job on exactly that version next to stable. It is what `pyo3` 0.30 and `tokio` need, and it allows edition 2024. If `nlink` is adopted it becomes 1.88. Both CI images have Rust 1.99.1 (spike S10).
+- **The userspace engine (BKD-06) is feasible and keeps its place in 0.4.** One thread on AF_PACKET sockets forwarded 100,000 packets per second with a fixed delay of 20 ms and no loss using about 44 percent of one core, and with a seed it drops exactly the same packets in every run. The timer decides the accuracy: `epoll_pwait2` is exact at high rates but 0.3 to 0.7 ms late at 10,000 to 50,000 packets per second (the core sleeps between packets), a spinning loop is exact at the price of a whole core, and `epoll_wait` with milliseconds is too coarse. Open before the design of 0.4: jitter needs a sorted queue, not a FIFO; frames from a veth pair carry unfinished checksums (offload), so a TCP workload needs the engine to complete them, to switch the offload off, or to use a TAP device (which an unprivileged user can create in a user namespace); batching with `recvmmsg` and `sendmmsg`; many flows; bit rates with full-size frames.
+
+Alternatives: netlink from the start (a first Kernel backend would depend on an immature library), a scratch-built netlink layer now (cost without a need), a lower MSRV (it would exclude the current `pyo3`).
+

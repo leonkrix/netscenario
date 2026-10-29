@@ -1,0 +1,16 @@
+# Spike S8: can a userspace packet engine run in an unprivileged user namespace at a useful packet rate?
+# A scratch crate, not part of any workspace.
+[package]
+name = "spike-engine"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+debug = false
+opt-level = 3
+
+[workspace]

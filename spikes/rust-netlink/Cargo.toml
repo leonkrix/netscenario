@@ -1,0 +1,14 @@
+# Spike S7: netlink library or calls to `ip` and `tc`? A scratch crate, not part of any workspace.
+[package]
+name = "spike-netlink"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rtnetlink = "0.23"
+nlink = "0.33"
+tokio = { version = "1", features = ["rt", "macros", "time", "process"] }
+futures = "0.3"
+
+[workspace]

@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "netscenario-spike"
+version = "0.0.0"
+description = "Spike S9: a Rust function called from Python"
+requires-python = ">=3.9"
+license = "MIT OR Apache-2.0"
+
+[tool.maturin]
+python-source = "python"
+module-name = "netscenario_spike._native"
