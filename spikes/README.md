@@ -31,7 +31,15 @@ Run one spike alone with `bash spikes/s2-netem-seed.sh`.
 | S5 `s5-change-rate.sh` | How fast can the parameters of a running `netem` be changed, one by one and in a batch? | What "trace-driven" can mean on the Kernel backend (LMD-03) |
 | S6 `s6-docker.sh` | What works inside a container with and without extra rights? | The Docker rows of the matrix; the CI guide |
 
-Two more experiments are not scripts and are described in the plan: whether the packet engine can run on a virtual device inside a user namespace (a prototype in Rust), and which Rust netlink library to use (S7, S8).
+Four more experiments are small Rust or Python projects, each with its own `run.sh`. They are scratch crates, not part of any workspace, and their build output (`target/`) is not committed.
+
+| Spike | Question | Decides | Run |
+| --- | --- | --- | --- |
+| S7 `rust-netlink/` | Can a netlink library (`nlink`, `rtnetlink`) build the namespaces and configure `netem` exactly as `ip` and `tc` do? How fast can it change a running `netem`? | Whether the Kernel backend calls `ip` and `tc` or speaks netlink (D-009); BKD-05 | `bash spikes/rust-netlink/run.sh` |
+| S8 `rust-engine/` | Can a userspace packet engine inside an unprivileged user namespace forward about 100,000 packets per second on one core, with an exact delay and a seeded loss? Which timer? | Whether the Engine backend (BKD-06) is feasible and how its data path is built | `bash spikes/rust-engine/run.sh` (about 3 minutes; `QUICK=1` for a short run) |
+| S9 `rust-pyo3/` | Does a PyO3 extension built with maturin work as one wheel for several Python versions, with the pytest plugin in a second distribution? | The layout of the Python packages (D-010) | `bash spikes/rust-pyo3/run.sh` (needs network access to PyPI and crates.io) |
+
+S10 (the toolchain of the CI images and the oldest Rust version that the dependencies allow) is a reading of the published image lists and of the dependency manifests, recorded in the decisions and not a script.
 
 ## How to report
 

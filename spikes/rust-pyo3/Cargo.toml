@@ -1,0 +1,16 @@
+# Spike S9: PyO3 and maturin. A scratch crate, not part of any workspace.
+[package]
+name = "netscenario-spike-native"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+# abi3: one wheel per platform for all Python versions from 3.9 on
+pyo3 = { version = "0.30", features = ["abi3-py39", "extension-module"] }
+
+[workspace]
