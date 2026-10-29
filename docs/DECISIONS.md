@@ -98,3 +98,9 @@ Accepted. The phase of the spikes ends with D-008 accepted and D-007 open on pur
 
 Alternatives: accepting D-007 now (would record a decision that nothing has tested), leaving D-008 proposed (the measurement it waited for exists).
 
+## D-017: The lowest supported Python is 3.11, and the rule is the oldest version that has not reached its end of life
+
+Accepted. Python 3.9 reached its end of life on 2025-10-31 and 3.10 on 2026-10-01, so release 0.1 starts at **3.11** (end of life 2027-10), built as one `abi3` wheel (`abi3-py311`) that also serves the newer versions. The system Python of Ubuntu 22.04 (3.10) is no reason to go lower: the CI installs the Python it needs, and users of that system can use `uv` or another installer. The rule for later releases is that the lowest supported version is the oldest one that has not reached its end of life when the release is made; raising it is allowed in a minor release before 1.0 and is written in the changelog. The `abi3-py39` setting of spike S9 was a trial and is not carried over.
+
+Alternatives: 3.10 (already past its end of life), 3.12 (a longer window, but it would leave out users who still run 3.11 for no gain).
+
