@@ -6,8 +6,7 @@ set -u
 
 if [ "${1:-outer}" = outer ]; then
   if ! command -v python3 >/dev/null 2>&1; then fail S4.0 "python3 is needed for this spike"; exit 0; fi
-  if [ "$(id -u)" -eq 0 ]; then exec unshare -n bash "$0" inner; fi
-  exec unshare -Urn bash "$0" inner
+  enter_ns S4.0 "$0"
 fi
 
 count=2000

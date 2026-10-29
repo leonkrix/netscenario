@@ -11,7 +11,7 @@ __pycache__/
 
 # Results of runs and spikes
 /results/
-/spikes/out/
+/spikes/out*/
 *.pcap
 
 # Editors and systems

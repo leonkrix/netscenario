@@ -17,7 +17,7 @@ if [ "${1:-outer}" = outer ]; then
   done
   if [ "$(id -u)" -eq 0 ]; then
     info S1.0 "running as root: using plain network namespaces (the rootless case is not tested)"
-    exec unshare -n bash "$0" inner
+    enter_ns S1.1 "$0"
   fi
   if ! check S1.1 "unshare --user --map-root-user --net" unshare -Urn true; then
     info S1.0 "No unprivileged user namespaces here. Run the spikes with sudo as well, and see spikes/README.md."
