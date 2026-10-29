@@ -204,9 +204,9 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| PYT-01 | Python package with bindings and API (builder, run, results) | M | 0.1 | planned |
-| PYT-02 | `pytest` plugin: fixtures, markers, options | M | 0.1 | planned |
-| PYT-03 | Typed API (`py.typed`, checked with a strict type checker) | M | 0.1 | planned |
+| PYT-01 | Python package with bindings and API (builder, run, results) | M | 0.1 | in progress |
+| PYT-02 | `pytest` plugin: fixtures, markers, options | M | 0.1 | in progress |
+| PYT-03 | Typed API (`py.typed`, checked with a strict type checker) | M | 0.1 | in progress |
 | PYT-04 | `asyncio` friendly API | S | 0.3 | planned |
 | PYT-05 | Per-packet data as pandas and polars frames | S | 0.3 | planned |
 | PYT-06 | Notebook helpers for plots | C | 0.8 | idea |

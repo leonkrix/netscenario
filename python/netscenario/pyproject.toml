@@ -1,0 +1,29 @@
+[build-system]
+requires = ["maturin>=1.9.4,<2"]
+build-backend = "maturin"
+
+[project]
+name = "netscenario"
+description = "Declarative network scenarios for tests: describe a network, run a program in it, measure per packet, assert with statistics"
+requires-python = ">=3.11"
+license = "MIT OR Apache-2.0"
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "Topic :: Software Development :: Testing",
+  "Typing :: Typed",
+]
+# The version is the one of the Rust workspace (Cargo.toml): the crates, the bindings and the plugin are
+# released together (D-004)
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/leonkrix/netscenario"
+Issues = "https://github.com/leonkrix/netscenario/issues"
+
+[tool.maturin]
+manifest-path = "../../crates/netscenario-py/Cargo.toml"
+python-source = "src"
+module-name = "netscenario._native"

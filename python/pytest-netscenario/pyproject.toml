@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pytest-netscenario"
+version = "0.0.0"
+description = "pytest plugin for netscenario: fixtures and markers to test a program on a described network"
+requires-python = ">=3.11"
+license = "MIT OR Apache-2.0"
+dependencies = ["netscenario", "pytest>=8"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Framework :: Pytest",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Testing",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/leonkrix/netscenario"
+Issues = "https://github.com/leonkrix/netscenario/issues"
+
+[project.entry-points.pytest11]
+netscenario = "pytest_netscenario.plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pytest_netscenario"]

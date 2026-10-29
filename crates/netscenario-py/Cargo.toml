@@ -1,0 +1,22 @@
+[package]
+name = "netscenario-py"
+description = "The Python bindings of netscenario (PyO3), built into the package netscenario by maturin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+# abi3: one wheel per platform serves every Python version from 3.11 on (D-017). The `extension-module`
+# feature is not set here: maturin sets it when it builds the wheel, so that `cargo test` still links.
+pyo3 = { version = "0.30", features = ["abi3-py311"] }
+
+[lints]
+workspace = true
