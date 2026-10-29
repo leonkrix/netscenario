@@ -179,6 +179,7 @@ Nothing is implemented yet; all lines are `planned`, `designed` or `idea`.
 | ENV-04 | `netscenario doctor`: what this machine can do, and what it cannot | M | 0.1 | planned |
 | ENV-05 | Report on timer and clock precision | S | 0.3 | planned |
 | ENV-06 | Result format with a version | M | 0.1 | designed |
+| ENV-07 | Reproducibility check: the run compares the packet counter of each queue with the packets of the workload, and marks a run in which something else entered the queue as not reproducible; `doctor` checks that `tc` knows `seed` | M | 0.1 | planned |
 
 ## Safety (SAF)
 

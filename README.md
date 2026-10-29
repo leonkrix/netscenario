@@ -75,7 +75,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 
 ## Requirements
 
-Linux for the real emulation (kernel 5.10 or newer is the working assumption until the spikes say otherwise). Other systems are targeted by the portable backends later. Rust and Python versions are fixed when the code starts.
+Linux for the real emulation. The spikes ran on kernels 6.8, 6.12 and 7.0; older kernels are untested. Other systems are targeted by the portable backends later. Rust and Python versions are fixed when the code starts.
 
 ## Contributing and security
 
