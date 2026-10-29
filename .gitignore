@@ -1,0 +1,27 @@
+# Build output
+/target/
+/dist/
+*.egg-info/
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.whl
+
+# Results of runs and spikes
+/results/
+/spikes/out/
+*.pcap
+
+# Editors and systems
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+
+# Local working documents: instructions for the assistant and the working plan. They stay on the
+# machine of the maintainer and nothing in the repository may refer to them.
+/PLAN.md
+/CLAUDE.md
+/.claude/

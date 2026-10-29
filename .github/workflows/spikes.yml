@@ -1,0 +1,33 @@
+name: Spikes
+
+# Runs the experiments of spikes/ on GitHub's runners, to see what their kernels allow.
+# By hand only. The results are in the log of the run and in the artifact.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spikes:
+    name: Spikes on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends iproute2 iputils-ping python3
+      - name: Run the spikes
+        run: bash spikes/run-all.sh
+        continue-on-error: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: spikes-${{ matrix.os }}
+          path: spikes/out/

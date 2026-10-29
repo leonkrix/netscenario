@@ -1,0 +1,15 @@
+version: 2
+
+# The ecosystems for Rust (cargo) and Python (pip) are added with the first Cargo.toml and
+# pyproject.toml, because Dependabot reports an error for a manifest that does not exist yet.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: 'chore(ci)'
+    groups:
+      actions:
+        patterns: ['*']
