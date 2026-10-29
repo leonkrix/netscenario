@@ -51,4 +51,18 @@ case "$a" in INVALID*) warn S2.3 "ping did not run as intended (minimum interval
 if [ -n "$a" ] && [ "$a" = "$b" ] && [ "${a#INVALID}" = "$a" ]; then pass S2.3 "same seed, same lost packets"; else fail S2.3 "same seed, but different lost packets (or none lost)"; fi
 if [ "$a" != "$c" ]; then pass S2.4 "another seed gives another pattern"; else fail S2.4 "another seed gave the same pattern"; fi
 info S2.5 "without a seed: $d"
+
+# Five more runs with the same seed. If they all agree with the first, the pattern is a function of the
+# seed and of the number of packets that enter the qdisc. If some differ, something else sends packets.
+same=0
+others=5
+for _ in $(seq 1 "$others"); do
+  x="$(lost_pattern 1234)"
+  if [ "$x" = "$a" ]; then same=$((same + 1)); else info S2.6 "differs from run 1: $x"; fi
+done
+if [ "$same" -eq "$others" ] && [ "${a#INVALID}" = "$a" ]; then
+  pass S2.6 "same seed, same lost packets in $others further runs"
+else
+  warn S2.6 "same seed, same lost packets in only $same of $others further runs (a packet that nobody asked for shifts the pattern)"
+fi
 ns_stop
