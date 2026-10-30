@@ -35,9 +35,9 @@ doc:
 deny:
     cargo deny check
 
-# Check that the code builds with the lowest supported Rust (rust-version in Cargo.toml). One-time: rustup toolchain install 1.85.0 --profile minimal
+# Check that the code builds with the lowest supported Rust (rust-version in Cargo.toml). One-time: rustup toolchain install 1.89.0 --profile minimal
 msrv:
-    cargo +1.85.0 check --workspace --all-targets
+    cargo +1.89.0 check --workspace --all-targets
 
 # Set up the Python environment (builds the native module with maturin)
 py-sync:

@@ -1,130 +1,135 @@
-# Scenario format (draft 0)
+# Scenario format, version 0 (release 0.1)
 
-**Status: draft.** This is the shape the format is expected to have. It changes freely until 0.1 is released. Anything not in this document is not part of the format. A JSON Schema is generated from the Rust types (`netscenario schema`), and that schema, not this page, is the final authority once it exists.
+**Status: the contract for release 0.1.** Part 1 describes exactly what a scenario file may contain in release 0.1. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01); once it exists, that schema and the tests are the final authority, and this page is checked against them.
 
-The format is YAML (JSON is accepted, since it is a subset). A scenario can also be built in code with the same model.
+The format is versioned with the line `version: 0`. **Version 0 is the series before 1.0: it may change in any minor release, and the changelog says how.** From 1.0 on the version is 1, and a change that breaks files raises it (SCN-08 adds `netscenario migrate`).
 
-## Overview
+## Principles
+
+1. **Strict.** An unknown key, a duplicate key, a value of the wrong type, a number without a unit, a unit that does not exist: each is an error. A file means the same thing everywhere.
+2. **One way to say a thing.** There are no aliases and no two spellings of one unit.
+3. **Data, not code.** A scenario cannot compute or run anything. (A workload that runs your program says so, from release 0.2.)
+4. **Refuse, do not approximate.** A value that a backend cannot apply exactly is an error, not a rounded value (D-005).
+5. **Errors point at the file.** See "Errors" below.
+
+## YAML rules
+
+The format is YAML 1.2; JSON is accepted because it is a subset. In addition:
+
+- One document per file, UTF-8, at most 1 MiB, nesting at most 32 levels deep. An empty file is an error.
+- Keys are unique inside a mapping.
+- **Anchors, aliases, merge keys (`<<`) and tags are refused.** A scenario reads the same from top to bottom. Reuse is designed on purpose in release 0.3 (parameters, includes, templates), and not through YAML features.
+- Comments are free.
+
+## The file at a glance
 
 ```yaml
-version: 0            # format version, required
-name: lte-burst-loss  # for reports
-seed: 42              # one seed; component seeds are derived from it
-duration: 30s
-backend: kernel       # optional: kernel | engine | proxy | auto (default auto)
-topology: { ... }     # nodes and links
-timeline: [ ... ]     # events over time
-mobility: { ... }     # positions over time (0.6)
-workloads: [ ... ]    # what runs on the nodes
-probes: [ ... ]       # extra measurements
-expect: [ ... ]       # optional assertions
+version: 0              # required: the format version
+name: lte-like-link     # required: a Name, used in reports and file names
+seed: 42                # optional: one seed, the seeds of the parts are derived from it
+duration: 30s           # required: the length of the measured phase
+backend: auto           # optional: auto (default) or kernel
+topology: { ... }       # required: the nodes and the link
+workloads: [ ... ]      # required: what sends traffic, at least one
 ```
+
+A complete scenario of release 0.1:
+
+```yaml
+version: 0
+name: lte-like-link
+seed: 42
+duration: 30s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward:                     # client -> server
+        delay: 40ms
+        jitter: { amount: 5ms, distribution: normal }
+        loss: { model: random, p: 1% }
+        rate: 10mbit
+      reverse:                     # server -> client
+        delay: 40ms
+        rate: 20mbit
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 2mbit
+    packet-size: 1200b
+```
+
+### Top level
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `version` | yes | The integer `0`. Any other number is an error that says which versions this tool reads. |
+| `name` | yes | A Name. Appears in the result and names its files. |
+| `seed` | no | An unsigned 64-bit integer. Without it the tool draws one and records it in the result, so every run can be repeated (ENV-01). |
+| `duration` | yes | A Duration greater than zero. The measured phase runs from the start of the workloads to this time. The setup and the teardown are not part of it. |
+| `backend` | no | `auto` (the default) or `kernel`. `engine` and `proxy` are refused until releases 0.4 and 0.5. |
+| `topology` | yes | See below. |
+| `workloads` | yes | A list with at least one workload. |
 
 ## Values
 
-| Kind | Examples | Rules |
-| --- | --- | --- |
-| Duration | `40ms`, `2.5s`, `1m` | unit required; `ns`, `us`, `ms`, `s`, `m`, `h` |
-| Rate | `10mbit`, `500kbit`, `1gbit` | bits per second; `bps` accepted; no bare numbers |
-| Size | `1200b`, `64kb`, `1mb` | bytes |
-| Probability | `2%`, `0.02` | `0` to `1` |
-| Name | `client`, `access` | letters, digits, `-`; unique inside its kind |
+All values are strings or numbers in the file; this table says what is accepted. A number is decimal digits with an optional fraction (`40`, `2.5`): no sign, no exponent, no digit separators. **A unit follows the number directly, without a space, in lower case.** A value that is not a whole number of the smallest unit of its kind is an error (`0.5ns`), because it cannot be applied exactly.
 
-A number without a unit is an error. A unit in the wrong place is an error. The error names the path in the file.
+| Kind | Units | Examples | Rules |
+| --- | --- | --- | --- |
+| Duration | `ns`, `us`, `ms`, `s`, `m`, `h` | `40ms`, `2.5s`, `1m` | A whole number of nanoseconds. Zero is allowed where a delay is meant. |
+| Rate | `bit`, `kbit`, `mbit`, `gbit`, `tbit` | `10mbit`, `500kbit` | Bits per second, decimal (`kbit` is 1,000). A whole number of bits per second, greater than zero. There is no `bps` and no `Mbit`. |
+| Size | `b`, `kb`, `mb`, `gb`, `kib`, `mib`, `gib` | `1200b`, `64kb`, `1mib` | Bytes. `kb` is 1,000 bytes, `kib` is 1,024. A whole number of bytes. |
+| Probability | `%` | `2%`, `0.1%`, `100%` | From `0%` to `100%`, at most six digits after the point. **Only with the percent sign:** `0.02` or `1` is an error, because `1` could mean 1 % or 100 %. |
+| Name | none | `client`, `access-1` | 1 to 32 characters: lower case letters, digits and `-`; starts with a letter, does not end with `-`. Unique among nodes, among links and among workloads. |
+
+`netem` stores probabilities with a resolution of about 2·10⁻¹⁰, finer than the six digits that the format allows, so every accepted probability is applied without rounding that matters.
 
 ## Topology
 
 ```yaml
 topology:
-  nodes:
-    - client
-    - { id: router, role: router }
-    - server
+  nodes: [client, server]
   links:
     - id: access
-      between: [client, router]
-      forward:                      # client -> router
-        delay: 40ms
-        jitter: { amount: 5ms, distribution: normal }
-        loss: { model: random, p: 1% }
-        rate: 10mbit
-        queue: { limit: 100p, discipline: fifo }
-      reverse:                      # router -> client
-        delay: 40ms
-        rate: 20mbit
-    - id: core
-      between: [router, server]
-      both: { delay: 5ms, rate: 1gbit }   # same in both directions
+      between: [client, server]
+      forward:  { ... }
+      reverse:  { ... }
 ```
 
-- A link has two directions, `forward` (first node to second) and `reverse`. `both` sets both.
-- Addresses are assigned by the tool (`10.<scenario>.<link>.<n>`; IPv6 from a unique-local prefix), unless a node or link sets them. Programs get them from the environment (see Workloads).
-- Routing is derived for chains and stars; for other graphs, `routes` can be given.
-- Shortcuts for common shapes are planned: `topology: { kind: dumbbell, senders: 2, bottleneck: { rate: 10mbit, delay: 20ms } }`.
+- `nodes` is a list of exactly two Names in release 0.1 (point to point, TOP-01). The longer form `{ id: router, role: router }` and more nodes arrive with release 0.3.
+- `links` is a list of exactly one link in release 0.1.
+- A link has an `id` (Name) and `between`: two different nodes from `nodes`. The first is the "forward" side: `forward` is the direction from the first node to the second, `reverse` the way back.
+- Impairments are set per direction (LNK-11). `both` sets the same values in both directions; **`both` cannot be combined with `forward` or `reverse`** (use one form). A direction that is not mentioned has no impairment.
+- The addresses are assigned by the tool from `10.0.0.0/8` (IPv4 only, TOP-08) and recorded in the result. They are not part of the file. A key `address` is reserved for a later release.
 
-### Loss models
+### Impairments of a direction
 
 ```yaml
-loss: { model: random, p: 2% }
-loss: { model: gilbert-elliott, p: 2%, r: 30%, loss-bad: 50%, loss-good: 0.1% }
-loss: { model: markov4, p13: 2%, p31: 30%, p32: 10%, p23: 20%, p14: 0.5% }
-loss: { model: trace, file: traces/lte-loss.csv }
+forward:
+  delay: 40ms
+  jitter: { amount: 5ms, distribution: normal }
+  loss: { model: random, p: 1% }
+  rate: 10mbit
 ```
 
-`p` is the chance of entering the lossy state, `r` the chance of leaving it. The names follow the `netem` documentation so that the mapping is checkable.
+| Key | Value | Meaning in the Kernel backend |
+| --- | --- | --- |
+| `delay` | Duration | `netem delay` (LNK-01). |
+| `jitter` | `amount`: Duration, `distribution`: `uniform` (default) or `normal` | `netem delay D J`, with `distribution normal` for the second one (LNK-02). **Needs `delay`.** A delay below zero cannot exist, and `netem` would silently clamp it to zero, so the format refuses a jitter that reaches below zero: `uniform` needs `amount` not greater than `delay`, `normal` needs `delay` at least four times `amount` (the tables of `netem` are cut at about four sigma, which is also why a normal jitter never reaches its far tail, see COVERAGE). |
+| `loss` | `model: random`, `p`: Probability | `netem loss` (LNK-03). Other models (`gilbert-elliott`, `markov4`, `trace`) are planned for 0.2 and 0.3. |
+| `rate` | Rate | `netem rate` (LNK-08). |
 
-## Timeline
-
-```yaml
-timeline:
-  - { at: 10s, link: access, set: { forward.rate: 2mbit } }
-  - { at: 20s, link: access, outage: 2s }
-  - { at: 25s, every: 1s, until: 30s, link: access, set: { forward.delay: 80ms } }
-```
-
-An event has a time (`at`), a target (`link`, optionally a direction) and an action (`set`, `outage`, `down`, `up`, `replace-model`). Times are relative to the start of the workloads, not to the setup. The result records when each event was really applied.
-
-## Link models
-
-```yaml
-topology:
-  links:
-    - id: air
-      between: [drone, ground]
-      model:
-        kind: geometry                 # 0.6
-        propagation: log-distance
-        frequency: 2.4ghz
-        exponent: 2.7
-        rate-by-snr: table/wifi-rates.csv
-    - id: radio
-      between: [a, b]
-      model: { kind: trace, file: traces/verizon-lte.up, format: mahimahi }   # 0.3
-```
-
-A model replaces the static values of the link it is attached to. The kinds: `static` (default), `steps` (what `timeline` is shorthand for), `trace`, `markov`, `periodic`, `geometry`, and `plugin`.
-
-## Mobility (0.6)
-
-```yaml
-mobility:
-  space: { dimensions: 3, unit: m }
-  nodes:
-    drone:
-      model: waypoints
-      start: [0, 0, 100]
-      path: [{ to: [2000, 0, 100], speed: 25 }, { to: [2000, 2000, 150], speed: 25 }]
-    ground: { model: static, at: [0, 0, 2] }
-    sat:    { model: orbit, file: orbits/leo-1.tle }
-```
-
-Other models: `random-waypoint`, `random-walk`, `gauss-markov`, and `trace` (CSV, BonnMotion, ns-2 `setdest`). Links with a `geometry` model read the positions.
+The queue of the link is the default of the kernel (`limit 1000` packets) and is recorded in the result. A `queue` key (limit and discipline, LNK-09) arrives with release 0.3.
 
 ## Workloads
 
 ```yaml
 workloads:
-  - id: media                       # built-in traffic generator
+  - id: media
     kind: udp-cbr
     from: client
     to: server
@@ -132,68 +137,118 @@ workloads:
     packet-size: 1200b
     start: 0s
     stop: 30s
+```
 
-  - id: app                         # your program
+`udp-cbr` is the only kind in release 0.1 (WRK-01): UDP at a constant bit rate, sent by the agent in `from`, received by the agent in `to`.
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | A Name, unique among workloads. Metrics are named after it (`media.delay.p99`). |
+| `kind` | yes | `udp-cbr`. |
+| `from`, `to` | yes | Two different nodes from `nodes`. |
+| `rate` | yes | A Rate. **The rate of the payload**: the number of payload bits per second. The packets per second follow from it and `packet-size`. |
+| `packet-size` | yes | A Size: the payload of one packet. From the size of the header of the agent (16 bytes) to 1472 bytes, the largest payload that fits the MTU of 1500 without fragmentation (fragmentation arrives with release 0.3). |
+| `start` | no | A Duration, default `0s`. Relative to the start of the measured phase. |
+| `stop` | no | A Duration, default `duration`. Must be greater than `start` and not greater than `duration`. |
+
+Packets per second are at most **100,000** per workload. A higher rate is an error that says so: the agent was measured up to that rate (spike S8) and the format does not promise more than has been measured.
+
+Every `udp-cbr` workload produces a record per packet (sequence number, send time, receive time, PRB-01) and the metrics of PRB-02, PRB-03 and PRB-05: packets sent, received and lost, delivered ratio, one-way delay (mean, percentiles, maximum) and throughput and goodput over time. The metric names and the result format are defined in `docs/RESULTS.md`, which arrives with the result format (RPT-01). The assertions of release 0.1 are written in test code (ASR-01), not in the file.
+
+## Keys that are reserved
+
+These keys are not part of version 0 in release 0.1. A scenario that uses one is refused with the message "`<key>` is planned for release X (see FEATURES.md)", not with "unknown key".
+
+| Key | Planned in | Meaning |
+| --- | --- | --- |
+| `timeline`, `repetitions`, `probes` | 0.2 | Events over time, repeated runs, extra measurements. |
+| `allow-limited`, `expect`, `params`, `include` | 0.3 | Accepted restrictions, assertions in the file, parameters and includes. |
+| `matrix` | 0.5 | Sweeps. |
+| `mobility` | 0.6 | Positions over time. |
+| `model` (in a link) | 0.2 and 0.3 | Link models: steps, trace, Markov, periodic. |
+| `queue` (in a direction) | 0.3 | Queue limit and discipline. |
+| `address` (node, link) | later | Fixed addresses. |
+| `kind` other than `udp-cbr` | 0.2 and 0.3 | `command` (your program), `tcp-bulk`, `request-response` and more. |
+
+## Errors
+
+Every error from reading a file has **the line and the column, and shows the source line** with a mark under the place. The errors that come from the contents and not from the syntax (a node that does not exist, `stop` before `start`) name in addition the **path** in the file, such as `topology.links[0].between[1]`. The text says what was found, what was expected, and how to fix it. Examples of what the tool prints:
+
+```text
+error: line 7 column 16: '40' has no unit (use ns, us, ms, s, m or h)
+ --> access.yaml:7:16
+  |
+6 |       forward:
+7 |         delay: 40
+  |                ^ '40' has no unit (use ns, us, ms, s, m or h)
+
+error: topology.links[0].between[1]: the node 'sever' does not exist (line 4, column 28)
+  did you mean 'server'?   nodes are: client, server
+
+error: line 3: `timeline` is planned for release 0.2 (see FEATURES.md)
+```
+
+The messages of the parser (syntax, types, unknown and duplicate keys) come from the YAML library, the others from the validation of the model (D-020). A test holds the messages of a corpus of faulty files in snapshots (QA-01).
+
+## Part 2: planned, not binding
+
+The following sketches show where the format is heading. They are **not** part of version 0 in release 0.1 and may change. The release in brackets is the plan of `FEATURES.md`.
+
+**Timeline (0.2).** Events over time: `at`, a target (`link`, optionally a direction), and an action (`set`, `outage`, `down`, `up`). Times are relative to the start of the measured phase. The result records when each event was really applied.
+
+```yaml
+timeline:
+  - { at: 10s, link: access, set: { forward.rate: 2mbit } }
+  - { at: 20s, link: access, outage: 2s }
+```
+
+**More loss models (0.2).** The parameters follow the `netem` documentation so that the mapping can be checked; there are no aliases.
+
+```yaml
+loss: { model: gilbert-elliott, p: 2%, r: 30%, loss-bad: 50%, loss-good: 0.1% }
+loss: { model: markov4, p13: 2%, p31: 30%, p32: 10%, p23: 20%, p14: 0.5% }
+```
+
+**Your program as a node (0.2).**
+
+```yaml
+workloads:
+  - id: app
     kind: command
     node: server
     run: ["./target/release/my-server", "--listen", "{server.addr}:4433"]
     ready: { udp-port: 4433, within: 5s }
     stop: { signal: TERM, within: 3s }
-    metrics: { stdout: json-lines }
 ```
 
-- `{node.addr}` and `{link.node.addr}` in commands, and the environment variables `NETSCENARIO_ADDR_<NODE>`, give your program the addresses.
-- A `command` runs in the namespace of its node, as the invoking user, with the working directory of the scenario file. It is the only way for a scenario to run code, and it always says so in the file.
-- Built-in kinds (see FEATURES.md): `udp-cbr`, `udp-poisson`, `udp-onoff`, `trace-replay`, `tcp-bulk`, `request-response`, and later `container`.
-- The agent that runs a built-in workload writes per-packet records into the result.
+A `command` runs in the namespace of its node, as the invoking user, with the working directory of the scenario file. It is the only way for a scenario to run code, and it always says so in the file.
 
-## Probes and expectations
+**Link models (0.3 to 0.6).** `model: { kind: trace, file: ..., format: mahimahi }`, Markov, periodic and geometry-based models, with mobility (0.6). A model replaces the static values of its link. Traces are files named by a path; hashes of their content come with 0.3.
+
+**Expectations in the file (0.3).**
 
 ```yaml
-probes:
-  - { id: cap, kind: capture, link: access }       # packet capture of a link
-
 expect:
   - { metric: media.delivered_ratio, ci95-low: ">= 0.97" }
   - { metric: media.delay.p99, "<": 150ms }
-repetitions: 10
 ```
 
-`expect` is for simple thresholds that belong with the scenario. Anything more is test code in Python or Rust.
+**Parameters and sweeps (0.3, 0.5).** Values such as `{rtt / 2}` with units and `+ - * /` only; the file stays data. `matrix` describes the grid and the tool runs and judges it.
 
-## Parameters and sweeps (0.3, 0.5)
+**Limited features (0.3).** A backend that can do a feature only in part refuses it unless the scenario lists it in `allow-limited`; the result records every accepted restriction.
 
-```yaml
-params:
-  loss: 2%
-  rtt: 80ms
-topology:
-  links:
-    - id: access
-      between: [client, server]
-      both: { delay: "{rtt / 2}", loss: "{loss}" }
-matrix:
-  loss: [0%, 1%, 2%, 5%, 10%]
-  rtt: [20ms, 80ms, 300ms]
-```
+## Decisions on the questions of the draft
 
-Expressions are deliberately small (units, `+ - * /`); the scenario file is data, not a programming language.
+| Question | Decision |
+| --- | --- |
+| How strict is address assignment? | In 0.1 the tool assigns every address; fixed plans come later (`address` is reserved). |
+| One thing for `timeline` and `model: steps`? | Yes. `timeline` is the readable shorthand (0.2). |
+| An `environment` section? | No. Kernel, permissions and tools are properties of the run, recorded in the result, not requirements of a scenario. |
+| Names of the loss parameters? | The `netem` names, without aliases. |
+| How are traces shared? | As files with a path; content hashes with 0.3. |
+| Where do sweeps end and a test harness begin? | The format describes only the grid; running and judging it is the job of the tool. |
 
-## Limited features
+## Open
 
-A backend that can do a feature only in part refuses it unless the scenario accepts the restriction:
-
-```yaml
-allow-limited: [trace-driven-delay]
-```
-
-The result records every accepted restriction.
-
-## Open questions
-
-1. How strict should address assignment be (fixed plans versus freely chosen)?
-2. Should `timeline` and `model: steps` be one thing? (Probably yes; the timeline is the readable shorthand.)
-3. Is a separate `environment` section (kernel version, permissions) a requirement of a scenario, or only a property of the run? (Probably the second.)
-4. Names of the loss-model parameters: `netem` names or readable names, or both with aliases?
-5. How are traces versioned and shared (inline, files, content hashes)?
-6. Where do sweeps end and a test harness begin? (The format only describes the grid; running and judging it is the job of the tool.)
+1. **Round-trip time (PRB-03).** The ledger lists it for 0.1, but `udp-cbr` is one-way. An option on the workload that makes the receiver echo each packet would give it, or the metric moves to the request/response workload of 0.3. To be decided with the agent (section 3.5 of the plan); the answer changes the ledger, not this format, if the option stays out.
+2. **Typo hints** ("did you mean 'server'?") for names and keys. Wanted; whether they come with 0.1 depends on the effort.
