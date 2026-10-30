@@ -26,6 +26,8 @@ netscenario-cli = { path = "crates/netscenario-cli", version = "0.0.0" }
 # Third-party dependencies are listed once here; a crate says `name.workspace = true`
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The agent reads the clock and sets socket buffers through this safe interface, so no crate of ours needs `unsafe`
+rustix = { version = "1", default-features = false, features = ["std", "time", "net"] }
 serde-saphyr = "2"
 # The parser that serde-saphyr uses; read directly to find the position of every value in the file
 granit-parser = "2"
