@@ -14,7 +14,9 @@ mod feature;
 mod provision;
 mod seed;
 
-pub use backend::{Backend, Direction, LinkHandle, NodeHandle, Program, ProgramHandle};
+pub use backend::{
+    Backend, Direction, LinkHandle, NodeHandle, Program, ProgramExit, ProgramHandle, ProgramState,
+};
 pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, check};
 pub use error::Error;
 pub use feature::{Feature, Requirement, requirements};

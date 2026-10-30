@@ -547,6 +547,7 @@ dependencies = [
 name = "netscenario-backend-kernel"
 version = "0.0.0"
 dependencies = [
+ "netscenario-agent",
  "netscenario-core",
  "netscenario-model",
  "serde",

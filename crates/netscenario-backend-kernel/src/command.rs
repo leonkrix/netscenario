@@ -60,6 +60,8 @@ pub struct Toolbox {
     pub unshare: PathBuf,
     /// `nsenter` of util-linux.
     pub nsenter: PathBuf,
+    /// `prlimit` of util-linux: limits the memory of a program (SAF-02).
+    pub prlimit: PathBuf,
 }
 
 impl Toolbox {
@@ -73,18 +75,21 @@ impl Toolbox {
         let tc = find("tc");
         let unshare = find("unshare");
         let nsenter = find("nsenter");
-        match (ip, tc, unshare, nsenter) {
-            (Some(ip), Some(tc), Some(unshare), Some(nsenter)) => Ok(Self {
+        let prlimit = find("prlimit");
+        match (ip, tc, unshare, nsenter, prlimit) {
+            (Some(ip), Some(tc), Some(unshare), Some(nsenter), Some(prlimit)) => Ok(Self {
                 ip,
                 tc,
                 unshare,
                 nsenter,
+                prlimit,
             }),
-            (ip, tc, unshare, nsenter) => Err([
+            (ip, tc, unshare, nsenter, prlimit) => Err([
                 ("ip", ip.is_none()),
                 ("tc", tc.is_none()),
                 ("unshare", unshare.is_none()),
                 ("nsenter", nsenter.is_none()),
+                ("prlimit", prlimit.is_none()),
             ]
             .into_iter()
             .filter_map(|(name, missing)| missing.then_some(name))

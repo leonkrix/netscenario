@@ -13,7 +13,7 @@ It looks at the machine and prints one line per check, in four groups, and for e
 
 | Group | Check (`id`) | What it tests | Not as it should be |
 |---|---|---|---|
-| Tools | `tool-ip`, `tool-tc`, `tool-unshare`, `tool-nsenter` | The tool is found (in the `PATH` and in `/usr/sbin`, `/sbin`, `/usr/local/sbin`, `/usr/bin`, `/bin`; the line says where it looked) and prints its version | `FAIL`, with the package to install |
+| Tools | `tool-ip`, `tool-tc`, `tool-unshare`, `tool-nsenter`, `tool-prlimit` | The tool is found (in the `PATH` and in `/usr/sbin`, `/sbin`, `/usr/local/sbin`, `/usr/bin`, `/bin`; the line says where it looked) and prints its version (`prlimit` limits the memory of the programs of a run) | `FAIL`, with the package to install |
 | Tools | `tool-kill` | Needed by `clean` only | `warn` |
 | Rights | `way-user-namespace`, `way-own-rights` | Whether the exact `unshare` command of a run works, once in an unprivileged user namespace and once with the rights of the process (root or the capabilities `CAP_NET_ADMIN` and `CAP_SYS_ADMIN`). The probe runs inside the namespaces it creates | `info` for the way that is not available, with the answer of `unshare` |
 | Rights | `can-create-namespaces` | At least one of the two ways works | `FAIL`; the fix names what applies to this machine: the AppArmor setting of Ubuntu 24.04, `kernel.unprivileged_userns_clone`, `user.max_user_namespaces`, what a container needs, or running as root |

@@ -12,9 +12,7 @@ use support::{
 };
 
 fn sh(script: &str) -> Program {
-    Program {
-        argv: vec!["sh".to_owned(), "-c".to_owned(), script.to_owned()],
-    }
+    Program::new(vec!["sh".to_owned(), "-c".to_owned(), script.to_owned()])
 }
 
 #[test]
@@ -171,9 +169,7 @@ fn a_node_that_does_not_exist_is_an_error_not_a_crash() {
         return;
     }
     let mut backend = backend(|_| {});
-    let program = Program {
-        argv: vec!["true".to_owned()],
-    };
+    let program = Program::new(vec!["true".to_owned()]);
     let error = backend.start_program(NodeHandle(5), &program).unwrap_err();
     assert!(error.to_string().contains("does not exist"), "{error}");
 }

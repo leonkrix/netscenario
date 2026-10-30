@@ -1,6 +1,9 @@
 //! The interface that every backend implements (BKD-03). The engine of a run uses nothing else, so a new
 //! backend means implementing this trait and filling its column in the coverage matrix.
 
+use std::fmt;
+use std::time::Duration;
+
 use netscenario_model::{Impairments, Name, Scenario};
 
 use crate::capability::{Capabilities, CapabilityError};
@@ -30,9 +33,71 @@ pub enum Direction {
 
 /// A program to run in a node.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Program {
     /// The program and its arguments.
     pub argv: Vec<String>,
+    /// The most address space the program may use, in bytes (SAF-02). Without it the program is not limited.
+    /// A program that needs more fails to allocate and ends; it does not take the machine down with it.
+    pub memory_limit: Option<u64>,
+}
+
+impl Program {
+    /// A program without a memory limit.
+    #[must_use]
+    pub fn new(argv: Vec<String>) -> Self {
+        Self {
+            argv,
+            memory_limit: None,
+        }
+    }
+
+    /// The same program with a limit on its address space.
+    #[must_use]
+    pub fn with_memory_limit(mut self, bytes: u64) -> Self {
+        self.memory_limit = Some(bytes);
+        self
+    }
+}
+
+/// How a program ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramExit {
+    /// It returned this exit code.
+    Code(i32),
+    /// The system ended it with this signal (for example 9 when it was killed, or 11 after a crash).
+    Signal(i32),
+}
+
+impl ProgramExit {
+    /// Whether the program ended with the exit code 0.
+    #[must_use]
+    pub fn success(self) -> bool {
+        self == ProgramExit::Code(0)
+    }
+}
+
+impl fmt::Display for ProgramExit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProgramExit::Code(code) => write!(f, "exit code {code}"),
+            ProgramExit::Signal(signal) => write!(f, "killed by signal {signal}"),
+        }
+    }
+}
+
+/// What a program has done since the last time it was asked about.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProgramState {
+    /// The lines the program wrote to its standard output since the last call, in order. The agent reports
+    /// its events this way.
+    pub lines: Vec<String>,
+    /// How the program ended, once it has. All of its output is in `lines` by then.
+    pub exit: Option<ProgramExit>,
+    /// The end of what the program wrote to its standard error (at most the last 16 KiB), all of it so far.
+    pub stderr: String,
+    /// Whether lines were dropped because the program wrote more than the backend keeps (10,000 lines).
+    pub truncated: bool,
 }
 
 /// A way to make a network real: it reports what it can reproduce and builds what a scenario describes.
@@ -90,7 +155,8 @@ pub trait Backend {
         seed: Option<u64>,
     ) -> Result<(), Error>;
 
-    /// Starts `program` in `node`.
+    /// Starts `program` in `node`. Its standard output is read by [`poll_program`](Backend::poll_program),
+    /// its standard input is written by [`send_line`](Backend::send_line), and its standard error is kept.
     ///
     /// # Errors
     ///
@@ -100,6 +166,26 @@ pub trait Backend {
         node: NodeHandle,
         program: &Program,
     ) -> Result<ProgramHandle, Error>;
+
+    /// Waits for news from a program: returns as soon as it has written a line or has ended, or after `wait`
+    /// if neither happened (then the state is empty and `exit` is `None`).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the program does not exist in this run.
+    fn poll_program(
+        &mut self,
+        program: ProgramHandle,
+        wait: Duration,
+    ) -> Result<ProgramState, Error>;
+
+    /// Writes a line to the standard input of a program. The receiver of the agent stops when it reads
+    /// `stop`. A program that has ended is not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the program does not exist in this run.
+    fn send_line(&mut self, program: ProgramHandle, line: &str) -> Result<(), Error>;
 
     /// Removes everything the backend created and ends the programs it started. It can be called after a
     /// failure at any point, and calling it twice does no harm.

@@ -11,13 +11,13 @@ use std::time::{Duration, Instant};
 
 use netscenario_core::{
     Backend, Capabilities, CapabilityError, Direction, Error, Feature, LinkHandle, NodeHandle,
-    Program, ProgramHandle, Refusal,
+    Program, ProgramExit, ProgramHandle, ProgramState, Refusal,
 };
 use netscenario_model::{Impairments, Name, Scenario};
 
 use crate::capabilities::{Environment, capabilities};
 use crate::command::{Toolbox, run, running_as_root};
-use crate::protocol::{Request, Response, Way};
+use crate::protocol::{Exit, Request, Response, Way};
 use crate::supervisor::FAIL_AT;
 use crate::tools::{Tool, parse_tc_version};
 
@@ -158,7 +158,7 @@ impl KernelBackend {
             backend: BACKEND.to_owned(),
             action: "find its tools".to_owned(),
             message: format!(
-                "{} not found; install iproute2 (ip, tc) and util-linux (unshare, nsenter)",
+                "{} not found; install iproute2 (ip, tc) and util-linux (unshare, nsenter, prlimit)",
                 missing.join(", ")
             ),
         })?;
@@ -272,6 +272,18 @@ impl KernelBackend {
     }
 
     fn call(&mut self, action: &str, request: &Request) -> Result<Option<u32>, Error> {
+        match self.exchange(action, request)? {
+            Response::Ok { id } => Ok(id),
+            other => Err(Self::error(
+                action,
+                format!("the supervisor gave an answer that was not asked for: {other:?}"),
+            )),
+        }
+    }
+
+    /// Sends a request, starting the supervisor first if it is not running, and returns its answer. An
+    /// answer that says `error` is an `Err`.
+    fn exchange(&mut self, action: &str, request: &Request) -> Result<Response, Error> {
         if self.session.is_none() {
             self.start()?;
         }
@@ -285,10 +297,20 @@ impl KernelBackend {
         if !sent {
             return Err(self.ended(action));
         }
-        self.receive(action)
+        self.receive_response(action)
     }
 
     fn receive(&mut self, action: &str) -> Result<Option<u32>, Error> {
+        match self.receive_response(action)? {
+            Response::Ok { id } => Ok(id),
+            other => Err(Self::error(
+                action,
+                format!("the supervisor gave an answer that was not asked for: {other:?}"),
+            )),
+        }
+    }
+
+    fn receive_response(&mut self, action: &str) -> Result<Response, Error> {
         let mut line = String::new();
         let read = self
             .session
@@ -298,8 +320,8 @@ impl KernelBackend {
             return Err(self.ended(action));
         }
         match serde_json::from_str::<Response>(&line) {
-            Ok(Response::Ok { id }) => Ok(id),
             Ok(Response::Error { message }) => Err(Self::error(action, message)),
+            Ok(response) => Ok(response),
             Err(error) => Err(Self::error(
                 action,
                 format!("cannot read the answer '{}': {error}", line.trim()),
@@ -488,10 +510,51 @@ impl Backend for KernelBackend {
         let request = Request::StartProgram {
             node: node.0,
             argv: program.argv.clone(),
+            memory_limit: program.memory_limit,
         };
         let id = self.call(action, &request)?;
         id.map(ProgramHandle)
             .ok_or_else(|| Self::error(action, "the supervisor gave no handle"))
+    }
+
+    fn poll_program(
+        &mut self,
+        program: ProgramHandle,
+        wait: Duration,
+    ) -> Result<ProgramState, Error> {
+        let action = "ask a program what it did";
+        let request = Request::Poll {
+            program: program.0,
+            wait_ms: u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
+        };
+        match self.exchange(action, &request)? {
+            Response::Program {
+                lines,
+                exit,
+                stderr,
+                truncated,
+            } => Ok(ProgramState {
+                lines,
+                exit: exit.map(|exit| match exit {
+                    Exit::Code(code) => ProgramExit::Code(code),
+                    Exit::Signal(signal) => ProgramExit::Signal(signal),
+                }),
+                stderr,
+                truncated,
+            }),
+            other => Err(Self::error(
+                action,
+                format!("the supervisor gave an answer that was not asked for: {other:?}"),
+            )),
+        }
+    }
+
+    fn send_line(&mut self, program: ProgramHandle, line: &str) -> Result<(), Error> {
+        let request = Request::SendLine {
+            program: program.0,
+            line: line.to_owned(),
+        };
+        self.call("write to a program", &request).map(|_| ())
     }
 
     fn teardown(&mut self) -> Result<(), Error> {

@@ -17,6 +17,10 @@ serde_json.workspace = true
 
 # The helper that a test starts as the supervisor of a run (D-022). An application starts its own binary
 # that calls `supervisor::main`.
+[dev-dependencies]
+# The record file and the events of the agent are read by the tests that run it in namespaces
+netscenario-agent.workspace = true
+
 [[bin]]
 name = "netscenario-kernel-supervisor"
 path = "src/bin/supervisor.rs"

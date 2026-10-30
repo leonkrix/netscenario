@@ -25,7 +25,7 @@ clippy:
 # The tests of the Kernel backend alone. The CI runs them a second time as root (`sudo`); on a machine
 # without sudo, `unshare --user --map-root-user just test-kernel` takes the same code path as root.
 test-kernel:
-    cargo nextest run -p netscenario-backend-kernel --all-features --no-tests=pass
+    cargo nextest run -p netscenario-backend-kernel -p netscenario-agent --all-features --no-tests=pass
 
 # Unit and doc tests (nextest does not run doc tests). The Python extension is a cdylib: cargo has no doc
 # tests for it and would say so on every run, so it is left out of the doc tests.

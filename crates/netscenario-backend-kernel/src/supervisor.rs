@@ -4,6 +4,7 @@
 
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use crate::command::Toolbox;
 use crate::protocol::{Request, Response};
@@ -115,8 +116,29 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
             } => provisioner
                 .apply(link, direction, &impairments, seed)
                 .map(|()| None),
-            Request::StartProgram { node, argv } => {
-                provisioner.start_program(node, &argv).map(Some)
+            Request::StartProgram {
+                node,
+                argv,
+                memory_limit,
+            } => provisioner
+                .start_program(node, &argv, memory_limit)
+                .map(Some),
+            Request::Poll { program, wait_ms } => {
+                send(
+                    &match provisioner.poll(program, Duration::from_millis(wait_ms)) {
+                        Ok(report) => Response::Program {
+                            lines: report.lines,
+                            exit: report.exit,
+                            stderr: report.stderr,
+                            truncated: report.truncated,
+                        },
+                        Err(message) => Response::Error { message },
+                    },
+                );
+                continue;
+            }
+            Request::SendLine { program, line } => {
+                provisioner.send_line(program, &line).map(|()| None)
             }
             Request::Teardown => provisioner.teardown().map(|()| None),
         });

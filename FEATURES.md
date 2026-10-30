@@ -112,7 +112,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| WRK-01 | UDP constant bit rate | M | 0.1 | in progress (the agent sends and receives, tested over loopback and as programs, [AGENT.md](docs/AGENT.md); starting it in the nodes of a run follows) |
+| WRK-01 | UDP constant bit rate | M | 0.1 | in progress (the agent is tested over loopback, as programs and in the namespaces of a run with a delay and a loss, [AGENT.md](docs/AGENT.md); the run that starts it from a scenario follows) |
 | WRK-02 | UDP Poisson, on/off and bursty | M | 0.2 | planned |
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | planned |
 | WRK-04 | TCP bulk transfer | M | 0.3 | planned |
@@ -187,7 +187,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | SAF-01 | Refuse any change to an interface outside the namespaces created by the tool | M | 0.1 | in progress |
-| SAF-02 | Limits: number of namespaces, run time, memory of agents | M | 0.1 | in progress (namespaces and run time; memory comes with the agent) |
+| SAF-02 | Limits: number of namespaces, run time, memory of agents | M | 0.1 | done in the backend (namespaces, run time, `Program::memory_limit` with `prlimit`, tested: `tests/safety.rs`, `tests/programs.rs`); a run sets the limit for its agents in 3.5, PR C |
 | SAF-03 | Watchdog that ends and cleans up a run that hangs | M | 0.1 | in progress |
 
 ## Command line (CLI)

@@ -67,4 +67,10 @@ Packet `n` leaves at `start + n × size × 8 / rate`, computed in integers from 
 - **Static binary.** D-008 spoke of a static (musl) binary. In the Kernel backend the nodes share the file system of the host and need none; the static build belongs to the release (REL-01) and to backends where the node has its own file system.
 - Hardware or kernel timestamps (`SO_TIMESTAMPNS`): the receive time is taken in user space after the read. At the measured rates the error is a few microseconds (S8).
 - Poisson, on/off and bursty traffic (WRK-02), TCP (WRK-04), request and response (WRK-05).
-- The memory limit of the agent (SAF-02, with the supervisor).
+
+## How a run starts the agent
+
+The Kernel backend starts the agent as any program of a node (`Backend::start_program`): in the network namespace of the node, with its standard output, standard error and standard input connected to the supervisor. The caller then asks what the program did (`poll_program`: new lines, and how it ended) and writes to it (`send_line`, for `stop`). The order of a stream, as the test `tests/agent.rs` in the Kernel backend runs it: start the receiver, wait for its `ready` line, start the sender, wait until it ends, wait for the packets in flight, send `stop` to the receiver, wait until it ends, read the record file. The files are written by the agent into a directory of the run, which the nodes share with the host.
+
+**Memory.** A program can be started with a limit on its address space (`Program::memory_limit`, set with `prlimit --as` before the program starts). A program that needs more fails to allocate and ends; it does not take the machine down (SAF-02). A test starts a program that needs 150 MB with a limit of 64 MiB and shows that it does not get it.
+

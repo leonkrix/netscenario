@@ -4,9 +4,12 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use netscenario_model::Impairments;
 
@@ -66,6 +69,103 @@ struct Link {
     ends: [End; 2],
 }
 
+/// The most lines of standard output that the supervisor keeps for a program that nobody asks about.
+const MAX_LINES: usize = 10_000;
+
+/// The most bytes of standard error that are kept: the end of it.
+const STDERR_LIMIT: usize = 16 * 1024;
+
+/// How long a program that has ended may take to deliver the rest of its output, if a process that it started
+/// keeps the pipe open.
+const OUTPUT_GRACE: Duration = Duration::from_millis(500);
+
+/// What the threads that read a program's output collect.
+#[derive(Default)]
+struct Output {
+    state: Mutex<OutputState>,
+    news: Condvar,
+}
+
+#[derive(Default)]
+struct OutputState {
+    lines: Vec<String>,
+    kept: usize,
+    truncated: bool,
+    stdout_ended: bool,
+    stderr_ended: bool,
+    stderr: String,
+}
+
+impl Output {
+    fn lock(&self) -> std::sync::MutexGuard<'_, OutputState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// A program in a node, with the threads that read its standard output and standard error.
+struct RunningProgram {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    output: Arc<Output>,
+}
+
+/// What a poll reports.
+pub(crate) struct ProgramReport {
+    pub(crate) lines: Vec<String>,
+    pub(crate) exit: Option<crate::protocol::Exit>,
+    pub(crate) stderr: String,
+    pub(crate) truncated: bool,
+}
+
+fn read_stdout(pipe: impl Read, output: &Output) {
+    let mut reader = BufReader::new(pipe);
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        // A program may write what is not UTF-8: it is shown with replacement characters, not dropped
+        match reader.read_until(b'\n', &mut bytes) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                let line = String::from_utf8_lossy(&bytes)
+                    .trim_end_matches(['\n', '\r'])
+                    .to_owned();
+                let mut state = output.lock();
+                if state.kept < MAX_LINES {
+                    state.lines.push(line);
+                    state.kept += 1;
+                } else {
+                    state.truncated = true;
+                }
+                output.news.notify_all();
+            }
+        }
+    }
+    output.lock().stdout_ended = true;
+    output.news.notify_all();
+}
+
+fn read_stderr(mut pipe: impl Read, output: &Output) {
+    let mut buffer = [0_u8; 1024];
+    while let Ok(n) = pipe.read(&mut buffer) {
+        if n == 0 {
+            break;
+        }
+        let mut state = output.lock();
+        state
+            .stderr
+            .push_str(&String::from_utf8_lossy(&buffer[..n]));
+        if state.stderr.len() > STDERR_LIMIT {
+            let cut = state.stderr.len() - STDERR_LIMIT;
+            let cut = (cut..state.stderr.len())
+                .find(|&i| state.stderr.is_char_boundary(i))
+                .unwrap_or(0);
+            state.stderr.drain(..cut);
+        }
+    }
+    output.lock().stderr_ended = true;
+    output.news.notify_all();
+}
+
 pub(crate) struct Provisioner {
     tools: Toolbox,
     /// This program, which also holds the namespaces of the nodes (`hold`).
@@ -75,7 +175,7 @@ pub(crate) struct Provisioner {
     failpoints: Failpoints,
     nodes: Vec<Node>,
     links: Vec<Link>,
-    programs: Vec<Child>,
+    programs: Vec<RunningProgram>,
 }
 
 fn id(index: usize) -> Result<u32, String> {
@@ -309,7 +409,12 @@ impl Provisioner {
         Ok(())
     }
 
-    pub(crate) fn start_program(&mut self, node: u32, argv: &[String]) -> Result<u32, String> {
+    pub(crate) fn start_program(
+        &mut self,
+        node: u32,
+        argv: &[String],
+        memory_limit: Option<u64>,
+    ) -> Result<u32, String> {
         self.failpoints.hit("program:start");
         let node = self
             .nodes
@@ -318,14 +423,23 @@ impl Provisioner {
         let Some((program, arguments)) = argv.split_first() else {
             return Err("a program needs at least its name".to_owned());
         };
-        let child = Command::new(&self.tools.nsenter)
+        let mut command = Command::new(&self.tools.nsenter);
+        command
             .arg(format!("--net=/proc/{}/ns/net", node.pid))
-            .arg("--")
+            .arg("--");
+        if let Some(bytes) = memory_limit {
+            // `prlimit` sets the limit and then becomes the program: nothing stays between it and us
+            command
+                .arg(&self.tools.prlimit)
+                .arg(format!("--as={bytes}"))
+                .arg("--");
+        }
+        let mut child = command
             .arg(program)
             .args(arguments)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| {
                 format!(
@@ -333,9 +447,90 @@ impl Provisioner {
                     node.name
                 )
             })?;
-        self.programs.push(child);
+        let output = Arc::new(Output::default());
+        if let Some(pipe) = child.stdout.take() {
+            let output = Arc::clone(&output);
+            std::thread::spawn(move || read_stdout(pipe, &output));
+        } else {
+            output.lock().stdout_ended = true;
+        }
+        if let Some(pipe) = child.stderr.take() {
+            let output = Arc::clone(&output);
+            std::thread::spawn(move || read_stderr(pipe, &output));
+        } else {
+            output.lock().stderr_ended = true;
+        }
+        let stdin = child.stdin.take();
+        self.programs.push(RunningProgram {
+            child,
+            stdin,
+            output,
+        });
         self.failpoints.hit("program:end");
         id(self.programs.len() - 1)
+    }
+
+    /// Waits up to `wait` for a line or the end of a program and returns what is new since the last call.
+    pub(crate) fn poll(&mut self, program: u32, wait: Duration) -> Result<ProgramReport, String> {
+        let running = self
+            .programs
+            .get_mut(program as usize)
+            .ok_or_else(|| format!("the program {program} does not exist in this run"))?;
+        let deadline = Instant::now() + wait;
+        loop {
+            let exit = running
+                .child
+                .try_wait()
+                .map_err(|error| format!("cannot ask the program {program}: {error}"))?;
+            let mut state = running.output.lock();
+            if exit.is_some() {
+                // Everything the program wrote is read before it is reported as ended
+                let grace = Instant::now() + OUTPUT_GRACE;
+                while !(state.stdout_ended && state.stderr_ended) && Instant::now() < grace {
+                    state = running
+                        .output
+                        .news
+                        .wait_timeout(state, Duration::from_millis(10))
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .0;
+                }
+            }
+            let now = Instant::now();
+            if !state.lines.is_empty() || exit.is_some() || now >= deadline {
+                return Ok(ProgramReport {
+                    lines: std::mem::take(&mut state.lines),
+                    exit: exit.map(|status| match (status.code(), status.signal()) {
+                        (Some(code), _) => crate::protocol::Exit::Code(code),
+                        (None, Some(signal)) => crate::protocol::Exit::Signal(signal),
+                        (None, None) => crate::protocol::Exit::Code(-1),
+                    }),
+                    stderr: state.stderr.clone(),
+                    truncated: state.truncated,
+                });
+            }
+            // A line wakes this up at once; the end of the program is looked for every few milliseconds
+            let slice = (deadline - now).min(Duration::from_millis(10));
+            drop(
+                running
+                    .output
+                    .news
+                    .wait_timeout(state, slice)
+                    .unwrap_or_else(PoisonError::into_inner),
+            );
+        }
+    }
+
+    /// Writes a line to the standard input of a program. A program that has ended is not an error.
+    pub(crate) fn send_line(&mut self, program: u32, line: &str) -> Result<(), String> {
+        let running = self
+            .programs
+            .get_mut(program as usize)
+            .ok_or_else(|| format!("the program {program} does not exist in this run"))?;
+        if let Some(stdin) = &mut running.stdin {
+            // A broken pipe means that the program is gone, which is what the caller wanted anyway
+            let _ = writeln!(stdin, "{line}").and_then(|()| stdin.flush());
+        }
+        Ok(())
     }
 
     /// Ends the programs and the holders of the nodes. It can be called at any point and twice. What is left
@@ -346,8 +541,8 @@ impl Provisioner {
         let mut left = Vec::new();
         for mut program in self.programs.drain(..) {
             // A program that ended already is not an error
-            let _ = program.kill();
-            let _ = program.wait();
+            let _ = program.child.kill();
+            let _ = program.child.wait();
         }
         for mut node in self.nodes.drain(..) {
             if node.holder.kill().is_err() && node.holder.try_wait().ok().flatten().is_none() {

@@ -19,6 +19,25 @@ pub(crate) fn supervisor_exe() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_netscenario-kernel-supervisor"))
 }
 
+/// The agent, which is built next to the supervisor when the packages of the workspace are tested together
+/// (`just test`, `just test-kernel`). A test that needs it stops where it is missing, except on the CI.
+pub(crate) fn agent_exe() -> Option<PathBuf> {
+    let path = supervisor_exe().with_file_name("netscenario-agent");
+    if path.is_file() {
+        return Some(path);
+    }
+    assert!(
+        std::env::var_os("CI").is_none(),
+        "this test must run on the CI, but the agent is not built at {}",
+        path.display()
+    );
+    eprintln!(
+        "SKIPPED: the agent is not built at {} (use `just test-kernel`)",
+        path.display()
+    );
+    None
+}
+
 /// Whether this machine lets the tests create the namespaces of a run. If not, the test prints why and
 /// returns, except on the CI, where it fails: a test that never runs there proves nothing.
 pub(crate) fn namespaces_available() -> bool {
