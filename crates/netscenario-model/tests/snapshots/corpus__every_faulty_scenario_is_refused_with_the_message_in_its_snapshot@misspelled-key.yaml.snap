@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/misspelled-key.yaml
+---
+error: unknown field `dealy`, expected one of delay, jitter, loss, rate
+  --> misspelled-key.yaml:10:9
+   |
+ 9 |       forward:
+10 |         dealy: 40ms
+   |         ^^^^^

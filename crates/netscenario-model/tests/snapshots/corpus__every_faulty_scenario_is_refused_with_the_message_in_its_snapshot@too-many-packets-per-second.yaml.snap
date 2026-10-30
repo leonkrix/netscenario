@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/too-many-packets-per-second.yaml
+---
+error: the rate 1gbit with packets of 1200b is 104166 packets per second; at most 100000 are supported
+  --> too-many-packets-per-second.yaml:16:11
+   |
+15 |     to: server
+16 |     rate: 1gbit
+   |           ^^^^^
+   = path: workloads[0].rate
+   = help: use bigger packets or a lower rate: the agent was measured up to that many packets per second

@@ -1,0 +1,10 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/version-as-text.yaml
+---
+error: the format version is the number 0, not the text 'zero'
+ --> version-as-text.yaml:1:10
+  |
+1 | version: zero
+  |          ^^^^

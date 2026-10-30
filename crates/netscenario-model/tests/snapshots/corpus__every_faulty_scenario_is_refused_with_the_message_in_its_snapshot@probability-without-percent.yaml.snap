@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/probability-without-percent.yaml
+---
+error: '0.02' has no percent sign: write probabilities as percentages, for example 2%
+  --> probability-without-percent.yaml:10:35
+   |
+ 9 |       forward:
+10 |         loss: { model: random, p: 0.02 }
+   |                                   ^^^^

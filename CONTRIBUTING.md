@@ -42,6 +42,7 @@ The development toolchain is the current stable Rust (`rust-toolchain.toml` inst
 | `just py-fmt` | Format the Python code and fix what ruff can fix |
 | `just py-test-min` | Run the Python tests with the lowest supported Python, 3.11 |
 | `just msrv` | Build with the lowest supported Rust |
+| `just schema`, `just snapshots` | After a change to the scenario model: write the JSON Schema; accept changed error messages (read the diff before you commit it) |
 | `just spikes` | Run the experiments of [spikes/](spikes/) (they need `iproute2`, `python3` and user namespaces) |
 
 The CI (`.github/workflows/ci.yml`) runs the same commands: format, clippy, the tests on Ubuntu 22.04 and 24.04 with the current stable Rust and with the lowest supported one, the documentation, the supply chain policy, the Python packages with Python 3.11 to 3.14, the workflows themselves (actionlint) and, on pull requests, a review of new dependencies. One job, `CI passed`, collects them all and is the only one that a pull request has to pass. CodeQL and the OpenSSF Scorecard run in their own workflows. Every action is pinned to a full commit hash and the tools are pinned to a version, so a run does not change by itself.

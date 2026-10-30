@@ -1,0 +1,25 @@
+# A mobile access link: a long delay with a normal jitter, some loss and a rate that differs per direction.
+version: 0
+name: lte-like
+seed: 42
+duration: 30s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward:                     # client -> server
+        delay: 40ms
+        jitter: { amount: 5ms, distribution: normal }
+        loss: { model: random, p: 1% }
+        rate: 10mbit
+      reverse:                     # server -> client
+        delay: 40ms
+        rate: 20mbit
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 2mbit
+    packet-size: 1200b

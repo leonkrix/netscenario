@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/name-upper-case.yaml
+---
+error: 'Test' is not a valid name: it contains 'T' (a name has 1 to 32 characters: lower case letters, digits and '-', starting with a letter)
+ --> name-upper-case.yaml:2:7
+  |
+1 | version: 0
+2 | name: Test
+  |       ^^^^

@@ -1,0 +1,11 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward:
+        delay: 40ms
+workloads: []

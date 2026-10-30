@@ -59,6 +59,14 @@ py-fmt: py-sync
 py-test-min:
     uv run --python 3.11 --isolated --with-editable python/netscenario --with-editable python/pytest-netscenario --with pytest pytest
 
+# Write docs/schema/scenario-v0.json from the types (after a change to the model)
+schema:
+    UPDATE_SCHEMA=1 cargo nextest run -p netscenario-model --test schema
+
+# Accept the changed error messages in the snapshots (read the diff first: `git diff crates/netscenario-model/tests/snapshots`)
+snapshots:
+    INSTA_UPDATE=always cargo nextest run -p netscenario-model --test corpus
+
 # Run the spikes of Phase 0 (needs iproute2, python3 and, for S1 to S5, user namespaces)
 spikes:
     bash spikes/run-all.sh

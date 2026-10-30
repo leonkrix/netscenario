@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/both-and-forward.yaml
+---
+error: `both` cannot be combined with `forward` or `reverse`
+ --> both-and-forward.yaml:9:13
+  |
+8 |       between: [client, server]
+9 |       both: { delay: 10ms }
+  |             ^
+  = path: topology.links[0].both
+  = help: use `both` for the same values in both directions, or `forward` and `reverse` for different ones

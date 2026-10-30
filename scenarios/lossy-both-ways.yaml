@@ -1,0 +1,26 @@
+# Loss in both directions and two streams, one in each direction.
+version: 0
+name: lossy-both-ways
+seed: 7
+duration: 20s
+topology:
+  nodes: [a, b]
+  links:
+    - id: radio
+      between: [a, b]
+      both:
+        delay: 10ms
+        loss: { model: random, p: 5% }
+workloads:
+  - id: uplink
+    kind: udp-cbr
+    from: a
+    to: b
+    rate: 500kbit
+    packet-size: 500b
+  - id: downlink
+    kind: udp-cbr
+    from: b
+    to: a
+    rate: 500kbit
+    packet-size: 500b

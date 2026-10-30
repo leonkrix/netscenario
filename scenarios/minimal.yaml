@@ -1,0 +1,16 @@
+# The smallest scenario: two nodes, one link without any impairment, one stream.
+version: 0
+name: minimal
+duration: 5s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 1mbit
+    packet-size: 1200b
