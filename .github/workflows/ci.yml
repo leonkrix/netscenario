@@ -75,6 +75,10 @@ jobs:
           make -C iproute2-6.15.0 -j"$(nproc)"
           "$PWD/iproute2-6.15.0/tc/tc" -V
           echo "$PWD/iproute2-6.15.0/tc" >> "$GITHUB_PATH"
+          # A `tc` that is not installed looks for the tables of the distributions (`normal.dist`) in
+          # /usr/lib/tc, which is empty here on Ubuntu 24.04. `TC_LIB_DIR` points it to the tables of the build.
+          test -f "$PWD/iproute2-6.15.0/netem/normal.dist"
+          echo "TC_LIB_DIR=$PWD/iproute2-6.15.0/netem" >> "$GITHUB_ENV"
       # The tests of the Kernel backend create network namespaces as an unprivileged user. Ubuntu 24.04
       # refuses that by default (AppArmor, spike S1); Ubuntu 22.04 has no such rule.
       - name: Allow unprivileged user namespaces
@@ -88,7 +92,7 @@ jobs:
       # passed on: `sudo` would drop the toolchain and the `PATH` with the newer `tc`.
       - name: Kernel backend tests as root
         run: |
-          sudo env "PATH=$PATH" "HOME=$HOME" "CI=$CI" "RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN" just test-kernel
+          sudo env "PATH=$PATH" "HOME=$HOME" "CI=$CI" "RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN" "TC_LIB_DIR=$TC_LIB_DIR" just test-kernel
 
   docs:
     name: Documentation (rustdoc)
