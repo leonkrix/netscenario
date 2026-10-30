@@ -1,0 +1,7 @@
+[env]
+# The bindings are built for the stable ABI (abi3) as an extension module, so cargo needs neither to find
+# nor to link a Python interpreter. Without this, pyo3 looks for `python3` and refuses one older than the
+# abi3 minimum (3.11), which is what Ubuntu 22.04 has (3.10). maturin sets its own configuration for the
+# wheel and is not affected: these are only defaults.
+PYO3_NO_PYTHON = "1"
+PYO3_BUILD_EXTENSION_MODULE = "1"

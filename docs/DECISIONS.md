@@ -118,3 +118,9 @@ The wheels that `uv build` makes on the development machine carry the platform t
 
 Alternatives: mypy (the long-standing standard, slower, strict mode is a collection of flags), pip with venv and a requirements file (no lock for the workspace), setuptools for the plugin (works, was used in spike S9, but hatchling needs no `setup.py` history).
 
+## D-019: The bindings are built as an extension module without a Python interpreter, and the crate has no Rust tests
+
+Accepted. The first CI run failed on Ubuntu 22.04: its system Python is 3.10, and PyO3 looks for `python3` even for an `abi3` build and refuses an interpreter below the minimum that `abi3-py311` implies (3.11). The same would have hit every developer on that system. `.cargo/config.toml` now sets `PYO3_NO_PYTHON` and `PYO3_BUILD_EXTENSION_MODULE` as defaults, so that cargo neither looks for nor links a Python interpreter; maturin gives PyO3 its own configuration when it builds the wheel and is not affected. An extension module cannot be linked into a test program without Python, so `netscenario-py` has `test = false` and is covered by the Python tests in `python/`. This replaces the statement in D-018 that maturin alone sets the extension-module mode.
+
+Alternatives: install Python 3.11 in the CI (fixes the CI but not the developer on Ubuntu 22.04), the `extension-module` feature in `Cargo.toml` (still needs the environment variable to avoid the interpreter search, and the feature is being replaced by the environment variable in PyO3).
+

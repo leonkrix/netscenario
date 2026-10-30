@@ -1,5 +1,14 @@
 # netscenario
 
+[![CI](https://github.com/leonkrix/netscenario/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/leonkrix/netscenario/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/leonkrix/netscenario/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/leonkrix/netscenario/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/leonkrix/netscenario/badge)](https://scorecard.dev/viewer/?uri=github.com/leonkrix/netscenario)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange?logo=rust)](docs/DECISIONS.md)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](docs/DECISIONS.md)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux&logoColor=white)](docs/COVERAGE.md)
+[![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-red)](FEATURES.md)
+
 Describe a network, run your program in it, measure what happens, and assert on it. In a test, in your CI, or on your laptop.
 
 > **Status: planning.** Nothing here runs yet. This repository holds the design, the plan and the first experiments. The sections below describe what netscenario is going to be; the [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea. Examples are marked as sketches until they are real.
