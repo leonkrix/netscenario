@@ -25,6 +25,10 @@ pub enum Error {
         /// What went wrong, including what the tools reported.
         message: String,
     },
+    /// The run was cancelled (a [`CancelToken`](crate::CancelToken) was cancelled). The network was torn down
+    /// and no result was written.
+    #[error("the run was cancelled")]
+    Cancelled,
     /// The run itself failed: an agent did not start, did not answer or ended badly, or a file could not be
     /// written.
     #[error("the run failed to {action}: {message}")]

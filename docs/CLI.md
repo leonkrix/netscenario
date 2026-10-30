@@ -42,6 +42,8 @@ netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--packe
 | `--packets` | Also write `packets-<id>.jsonl` with one line for each packet ([RESULTS.md](RESULTS.md)). |
 | `--json` | Print `result.json` on standard output instead of the summary. The file is written either way. |
 
+On a terminal, one line shows how far the run is (`running, 12 of 30 s`) and is erased before the summary; in a file or a CI log, where standard error is not a terminal, one line says what runs. Nothing about progress goes to standard output.
+
 The run, in order: the file is read and checked (exit 2 with the lines if it is wrong), the backend checks that it can reproduce the scenario exactly (exit 2 if not, before anything is created), the network is built, the agents start, the workloads run for the `duration` of the scenario, the result is written, and everything is removed. The summary shows the seed, the packets, the delay and the throughput of each workload; `result.json` has everything ([RESULTS.md](RESULTS.md)).
 
 A run needs `netscenario-agent` next to the `netscenario` program: `cargo build` and `cargo install` put both in the same directory. The program is also its own supervisor: a run starts it again inside the namespaces with the hidden commands `supervise` and `hold`, which are not for people and are not in the help (D-022).
