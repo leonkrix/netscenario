@@ -8,6 +8,8 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 *.whl
+# The native module that maturin puts next to the Python sources of an editable install
+*.so
 
 # Results of runs and spikes
 /results/

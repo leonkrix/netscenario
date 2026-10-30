@@ -8,7 +8,9 @@ The latest released version gets security fixes. While the version is `0.x`, old
 
 Please do not open a public issue for a security problem.
 
-Use GitHub's private vulnerability reporting: on the repository page choose **Security**, then **Report a vulnerability**. You get an answer within a few days.
+Use GitHub's private vulnerability reporting: on the repository page choose **Security**, then **Report a vulnerability**, or go straight to <https://github.com/leonkrix/netscenario/security/advisories/new>. You get an answer within a few days.
+
+The advisories that have been published are listed at <https://github.com/leonkrix/netscenario/security/advisories>. Please include the version, the kernel and distribution, how netscenario was started (as root or in a user namespace), and the scenario file if there is one.
 
 ## What this project does that matters for security
 
