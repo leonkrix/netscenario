@@ -7,8 +7,8 @@ mod support;
 use netscenario_backend_kernel::{Tool, Version};
 use netscenario_core::{Backend, NodeHandle, Program, provision};
 use support::{
-    backend, is_root, namespaces_available, processes_with, program, scenario, tools, wait_for,
-    work_dir,
+    assert_nothing_left, backend, is_root, namespaces_available, program, scenario, tools,
+    wait_for, work_dir,
 };
 
 fn sh(script: &str) -> Program {
@@ -50,7 +50,7 @@ fn the_impairments_are_in_the_queues_of_the_right_interfaces() {
     assert!(server.contains("delay 1.5ms"), "{server}");
     assert!(!server.contains("rate"), "{server}");
     backend.teardown().unwrap();
-    assert_eq!(processes_with(backend.run_id()), Vec::<String>::new());
+    assert_nothing_left(backend.run_id(), "after the teardown");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -160,7 +160,7 @@ fn a_refused_scenario_starts_nothing() {
     let refused = scenario("", "      both: { delay: 1500ns }\n");
     let error = provision(&mut backend, &refused).unwrap_err();
     assert!(error.to_string().contains("whole microseconds"), "{error}");
-    assert_eq!(processes_with(backend.run_id()), Vec::<String>::new());
+    assert_nothing_left(backend.run_id(), "after the teardown");
 }
 
 #[test]

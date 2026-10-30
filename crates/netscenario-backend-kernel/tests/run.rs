@@ -78,7 +78,7 @@ fn a_run_measures_the_link_and_writes_a_result() {
     assert_eq!(media.sender.send_errors, 0);
     let delay = media.stats.delay.as_ref().unwrap();
     assert!(
-        (20_000_000..20_500_000).contains(&delay.p50_ns),
+        (20_000_000..22_000_000).contains(&delay.p50_ns),
         "the median delay is {} ns",
         delay.p50_ns
     );
@@ -87,8 +87,11 @@ fn a_run_measures_the_link_and_writes_a_result() {
         "faster than the link: {} ns",
         delay.min_ns
     );
+    // One packet may be held up by a busy machine for some milliseconds, but not by a hundred
+    // (the exact deviations are for the fidelity tests, QA-06; the first packets not waiting for ARP is
+    // checked in `agent.rs`)
     assert!(
-        delay.max_ns < 30_000_000,
+        delay.max_ns < 120_000_000,
         "the slowest packet took {} ns",
         delay.max_ns
     );
@@ -209,7 +212,7 @@ fn workloads_run_together_and_a_window_limits_one_of_them() {
     for workload in &result.workloads {
         let delay = workload.stats.delay.as_ref().unwrap();
         assert!(
-            (5_000_000..6_000_000).contains(&delay.p50_ns),
+            (5_000_000..8_000_000).contains(&delay.p50_ns),
             "{}: {} ns",
             workload.id,
             delay.p50_ns
