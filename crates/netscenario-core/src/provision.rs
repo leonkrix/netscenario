@@ -4,9 +4,10 @@
 use netscenario_model::{Impairments, Link, Name, Problem, Scenario};
 
 use crate::backend::{Backend, Direction, LinkHandle, NodeHandle};
-use crate::capability::{Accepted, check};
+use crate::capability::{Accepted, Support, check};
 use crate::error::Error;
-use crate::seed::derive_seed;
+use crate::feature::{Feature, requirements};
+use crate::seed::{derive_seed, draw_seed};
 
 /// What was created for a scenario.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,12 +18,24 @@ pub struct Provisioned {
     pub links: Vec<(Name, LinkHandle)>,
     /// The restrictions that the scenario accepted. The result has to record them.
     pub accepted: Vec<Accepted>,
+    /// The seed of the run: the one in the scenario, or one that was drawn, or none (see `loss_reproducible`).
+    /// The result records it, so that the run can be repeated.
+    pub seed: Option<u64>,
+    /// Whether `seed` was drawn because the scenario has none.
+    pub seed_drawn: bool,
+    /// Whether the same seed gives the same lost packets. It is `false` for a scenario with loss that runs on a
+    /// backend that cannot apply a seed: the scenario asked for no reproducibility, so it runs, and the result
+    /// has to say so (D-023). A scenario without loss is always `true`.
+    pub loss_reproducible: bool,
 }
 
 /// Builds the network of `scenario` with `backend`.
 ///
 /// The capabilities are checked before anything is created, so a refused scenario leaves nothing behind. If a
 /// step fails after that, the backend is torn down before the error is returned.
+///
+/// A scenario without a `seed` gets a drawn one if the backend can apply a seed, so that every run can be
+/// repeated; otherwise it runs without (`Provisioned::loss_reproducible` is then `false` if it has loss).
 ///
 /// # Errors
 ///
@@ -36,11 +49,23 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
     }
     let accepted = check(scenario, &backend.capabilities(), false)?;
     backend.check_values(scenario)?;
-    match build(backend, scenario) {
+    let can_seed = backend.capabilities().support(Feature::SeededLoss) == Support::Exact;
+    let (seed, seed_drawn) = match scenario.seed {
+        Some(seed) => (Some(seed), false),
+        None if can_seed => (Some(draw_seed()), true),
+        None => (None, false),
+    };
+    let has_loss = requirements(scenario)
+        .iter()
+        .any(|requirement| requirement.feature == Feature::IndependentLoss);
+    match build(backend, scenario, seed) {
         Ok((nodes, links)) => Ok(Provisioned {
             nodes,
             links,
             accepted,
+            seed,
+            seed_drawn,
+            loss_reproducible: !has_loss || seed.is_some(),
         }),
         Err(error) => {
             // The first error is the one to report; a failure of the teardown is the backend's to log
@@ -52,7 +77,11 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
 
 type Built = (Vec<(Name, NodeHandle)>, Vec<(Name, LinkHandle)>);
 
-fn build(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Built, Error> {
+fn build(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    seed: Option<u64>,
+) -> Result<Built, Error> {
     let mut nodes = Vec::new();
     for name in &scenario.topology.nodes {
         nodes.push((name.clone(), backend.create_node(name)?));
@@ -78,8 +107,9 @@ fn build(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Built, Error>
         let handle = backend.create_link(&link.id, [first, second])?;
         for direction in [Direction::Forward, Direction::Reverse] {
             if let Some(impairments) = impairments_of(link, direction) {
-                let seed = scenario
-                    .seed
+                // Only random loss uses the seed
+                let seed = seed
+                    .filter(|_| impairments.loss.is_some())
                     .map(|seed| derive_seed(seed, index, direction));
                 backend.apply(handle, direction, impairments, seed)?;
             }
@@ -110,6 +140,8 @@ mod tests {
         calls: Vec<String>,
         fail_on: Option<&'static str>,
         support_everything: bool,
+        /// Everything but the seed of the loss is supported.
+        cannot_seed: bool,
     }
 
     impl Fake {
@@ -147,11 +179,22 @@ mod tests {
                     fix: "none".to_owned(),
                 }
             };
-            Feature::ALL
+            let caps = Feature::ALL
                 .iter()
                 .fold(Capabilities::new("fake"), |caps, f| {
                     caps.with(*f, support.clone())
-                })
+                });
+            if self.cannot_seed {
+                caps.with(
+                    Feature::SeededLoss,
+                    Support::Unsupported {
+                        reason: "no".to_owned(),
+                        fix: "none".to_owned(),
+                    },
+                )
+            } else {
+                caps
+            }
         }
 
         fn create_node(&mut self, name: &Name) -> Result<NodeHandle, Error> {
@@ -199,8 +242,12 @@ mod tests {
     use crate::backend::ProgramHandle;
 
     fn scenario(link_body: &str) -> Scenario {
+        scenario_with("", link_body)
+    }
+
+    fn scenario_with(head: &str, link_body: &str) -> Scenario {
         Scenario::from_yaml(
-            &format!("version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n{link_body}workloads:\n  - {{ id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }}\n"),
+            &format!("version: 0\nname: t\nduration: 10s\n{head}topology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n{link_body}workloads:\n  - {{ id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }}\n"),
             "t.yaml",
         )
         .expect("valid")
@@ -260,5 +307,68 @@ mod tests {
         let link = &s.topology.links[0];
         assert!(impairments_of(link, Direction::Forward).is_some());
         assert!(impairments_of(link, Direction::Reverse).is_none());
+    }
+
+    const LOSS: &str = "      both: { loss: { model: random, p: 10% } }\n";
+
+    #[test]
+    fn a_seed_in_the_scenario_is_used_and_not_called_drawn() {
+        let mut backend = Fake::new();
+        let done = provision(&mut backend, &scenario_with("seed: 77\n", LOSS)).unwrap();
+        assert_eq!(done.seed, Some(77));
+        assert!(!done.seed_drawn && done.loss_reproducible);
+        let seeds: Vec<&String> = backend
+            .calls
+            .iter()
+            .filter(|c| c.contains("seed"))
+            .collect();
+        assert_eq!(
+            seeds.len(),
+            2,
+            "one seed for each direction: {:?}",
+            backend.calls
+        );
+        assert_ne!(seeds[0], seeds[1]);
+    }
+
+    #[test]
+    fn a_scenario_without_a_seed_gets_a_drawn_one_that_is_recorded() {
+        let mut backend = Fake::new();
+        let done = provision(&mut backend, &scenario(LOSS)).unwrap();
+        assert!(done.seed.is_some() && done.seed_drawn && done.loss_reproducible);
+        assert!(backend.calls.iter().any(|c| c.contains("seed")));
+    }
+
+    /// The scenario asked for no reproducibility, so it runs on a backend that cannot seed, and says so.
+    #[test]
+    fn without_a_seed_on_a_backend_that_cannot_seed_the_loss_is_not_reproducible() {
+        let mut backend = Fake::new();
+        backend.cannot_seed = true;
+        let done = provision(&mut backend, &scenario(LOSS)).unwrap();
+        assert_eq!(done.seed, None);
+        assert!(!done.loss_reproducible);
+        assert!(
+            !backend.calls.iter().any(|c| c.contains("seed")),
+            "{:?}",
+            backend.calls
+        );
+    }
+
+    /// Canary: with a written seed the same backend refuses, as the capability check says.
+    #[test]
+    fn with_a_written_seed_on_a_backend_that_cannot_seed_the_scenario_is_refused() {
+        let mut backend = Fake::new();
+        backend.cannot_seed = true;
+        let error = provision(&mut backend, &scenario_with("seed: 1\n", LOSS)).unwrap_err();
+        assert!(matches!(error, Error::Capability(_)));
+        assert_eq!(backend.calls, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_scenario_without_loss_is_reproducible_whatever_the_backend_can_seed() {
+        let mut backend = Fake::new();
+        backend.cannot_seed = true;
+        let done = provision(&mut backend, &scenario("      both: { delay: 5ms }\n")).unwrap();
+        assert!(done.loss_reproducible);
     }
 }

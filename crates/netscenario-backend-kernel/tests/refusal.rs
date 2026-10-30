@@ -37,6 +37,18 @@ fn a_seed_with_an_old_tc_is_refused_with_the_way_out() {
     );
 }
 
+#[test]
+fn with_the_text_at_hand_the_refusal_shows_the_line() {
+    let old = Environment {
+        tc: Tool::Found(Version::new(6, 1, 0)),
+    };
+    let error = check(&scenario(SEEDED), &capabilities(&old), false).unwrap_err();
+    assert_eq!(
+        error.render("seeded.yaml", SEEDED),
+        "error: the kernel backend cannot reproduce 'Same seed, same loss pattern': the `tc` of this machine is iproute2 6.1.0, and `seed` needs 6.6.0 or newer\n --> seeded.yaml:3:7\n  |\n2 | name: seeded\n3 | seed: 1234\n  |       ^^^^\n  = path: seed\n  = help: install iproute2 6.6.0 or newer, leave out `seed` (the run is then not reproducible and says so), or use the Engine backend (planned for release 0.4)\n"
+    );
+}
+
 /// The same scenario without a seed is not refused: it asks for no reproducibility.
 #[test]
 fn the_same_scenario_without_a_seed_runs_with_an_old_tc() {

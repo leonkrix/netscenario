@@ -91,6 +91,24 @@ impl Scenario {
     }
 }
 
+impl Error {
+    /// Problems that were found after the file was read, such as a feature that a backend cannot reproduce,
+    /// with the place in `source` of the path of each: the same kind of error as the reading of a file gives.
+    /// `None` if there are no problems.
+    #[must_use]
+    pub fn in_source(source_name: &str, source: &str, problems: Vec<Problem>) -> Option<Self> {
+        if problems.is_empty() {
+            return None;
+        }
+        let (index, _) = crate::source::index(source);
+        let located = problems
+            .into_iter()
+            .map(|problem| locate(problem, &index))
+            .collect();
+        Some(Self::new(source_name, source, sorted(located)))
+    }
+}
+
 /// Puts a problem about the contents at the place of its path in the file.
 fn locate(problem: Problem, index: &SourceIndex) -> Problem {
     let found = problem.path.as_deref().and_then(|path| index.locate(path));
@@ -178,6 +196,22 @@ fn clean_message(rendered: &str) -> (String, Option<String>) {
 
 #[cfg(test)]
 mod tests {
+    use super::{Error, Problem};
+
+    #[test]
+    fn problems_found_later_are_shown_at_their_place_in_the_file() {
+        let source = "version: 0\nseed: 5\nname: t\n";
+        let problem = Problem::new("not here")
+            .at_path("seed")
+            .with_help("do this");
+        let error = Error::in_source("t.yaml", source, vec![problem]).unwrap();
+        assert_eq!(
+            error.render(),
+            "error: not here\n --> t.yaml:2:7\n  |\n1 | version: 0\n2 | seed: 5\n  |       ^\n  = path: seed\n  = help: do this\n"
+        );
+        assert!(Error::in_source("t.yaml", source, Vec::new()).is_none());
+    }
+
     use super::clean_message;
 
     #[test]

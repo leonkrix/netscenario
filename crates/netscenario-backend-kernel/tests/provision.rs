@@ -7,7 +7,8 @@ mod support;
 use netscenario_backend_kernel::{Tool, Version};
 use netscenario_core::{Backend, NodeHandle, Program, provision};
 use support::{
-    backend, namespaces_available, processes_with, program, scenario, tools, wait_for, work_dir,
+    backend, is_root, namespaces_available, processes_with, program, scenario, tools, wait_for,
+    work_dir,
 };
 
 fn sh(script: &str) -> Program {
@@ -125,19 +126,24 @@ fn the_same_seed_loses_the_same_packets() {
         return;
     }
     let Some(ping) = program("ping") else {
+        assert!(std::env::var_os("CI").is_none(), "ping is needed on the CI");
         eprintln!("SKIPPED: ping is not installed");
         return;
     };
     let backend = backend(|_| {});
-    let Tool::Found(version) = backend.environment().tc else {
-        eprintln!("SKIPPED: the version of tc is not known");
-        return;
+    let version = match backend.environment().tc {
+        Tool::Found(version) if version >= Version::new(6, 6, 0) => version,
+        ref other => {
+            // The CI builds iproute2 6.15 for this test (D-023), so there it must not be skipped
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "the tc of the CI cannot seed: {other:?}"
+            );
+            eprintln!("SKIPPED: this tc does not know `seed` ({other:?})");
+            return;
+        }
     };
-    if version < Version::new(6, 6, 0) {
-        // The CI builds a newer iproute2 for this (D-023); until then the test cannot run on its images
-        eprintln!("SKIPPED: tc {version} does not know `seed`");
-        return;
-    }
+    eprintln!("tc {version}");
     drop(backend);
     let first = lost_with_seed("seed: 1234\n", &ping, "seed-a");
     let second = lost_with_seed("seed: 1234\n", &ping, "seed-b");
@@ -170,4 +176,63 @@ fn a_node_that_does_not_exist_is_an_error_not_a_crash() {
     };
     let error = backend.start_program(NodeHandle(5), &program).unwrap_err();
     assert!(error.to_string().contains("does not exist"), "{error}");
+}
+
+/// A run has the rights of its caller: a root process runs it with its own rights, and anyone else in a user
+/// namespace in which they are root. The CI runs these tests once as root, so that both ways are tested.
+#[test]
+fn a_run_uses_the_rights_of_its_caller() {
+    if !namespaces_available() {
+        return;
+    }
+    let dir = work_dir("rights");
+    let mut backend = backend(|_| {});
+    let node = netscenario_core::Backend::create_node(
+        &mut backend,
+        &netscenario_model::Name::new("a").unwrap(),
+    )
+    .unwrap();
+    backend
+        .start_program(
+            node,
+            &sh(&format!(
+                "cat /proc/self/uid_map > {}/map.txt",
+                dir.display()
+            )),
+        )
+        .unwrap();
+    let in_run = wait_for(&dir.join("map.txt"), "0");
+    let own = std::fs::read_to_string("/proc/self/uid_map").unwrap();
+    if is_root() {
+        assert_eq!(
+            in_run, own,
+            "a root caller runs the run with its own rights"
+        );
+    } else {
+        assert_ne!(
+            in_run, own,
+            "an ordinary user runs the run in a user namespace"
+        );
+        assert!(
+            in_run.trim_end().ends_with(" 1"),
+            "only the user is mapped: {in_run}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn asking_for_root_without_the_rights_says_what_is_missing() {
+    if !namespaces_available() || is_root() {
+        return;
+    }
+    let mut backend = backend(|options| options.mode = netscenario_backend_kernel::Mode::Root);
+    let error = netscenario_core::Backend::create_node(
+        &mut backend,
+        &netscenario_model::Name::new("a").unwrap(),
+    )
+    .unwrap_err();
+    let text = error.to_string();
+    assert!(text.contains("Operation not permitted"), "{text}");
+    assert!(text.contains("docs/COVERAGE.md"), "{text}");
 }

@@ -26,9 +26,30 @@ pub fn derive_seed(scenario_seed: u64, link_index: usize, direction: Direction) 
     mix(mix(scenario_seed) ^ mix(part.wrapping_add(0x9e37_79b9_7f4a_7c15)))
 }
 
+/// A seed for a run whose scenario has none. It comes from the random keys that the standard library draws
+/// from the system for its hash tables, so two runs get different seeds, and the seed is recorded in the
+/// result so that the run can be repeated.
+#[must_use]
+pub fn draw_seed() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos()),
+    );
+    hasher.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drawn_seeds_differ() {
+        let seeds: Vec<u64> = (0..8).map(|_| draw_seed()).collect();
+        assert!(seeds.iter().any(|seed| *seed != seeds[0]), "{seeds:?}");
+    }
 
     #[test]
     fn the_same_inputs_give_the_same_seed() {

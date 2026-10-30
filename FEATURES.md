@@ -156,8 +156,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | in progress (the code path exists, the tests have run unprivileged only) |
-| BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | in progress |
+| BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | in progress (tested in the root code path locally; the CI runs the tests as root with `sudo`, to be confirmed by its first run) |
+| BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | in progress (tested; to be confirmed on both CI images) |
 | BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | in progress |
 | BKD-04 | Cleanup guarantee: no leftovers after a crash (PID namespace, D-022), and `netscenario clean` as a safety net | M | 0.1 | in progress (the guarantee is tested at every step; `clean` follows) |
 | BKD-05 | Netlink instead of calls to `ip` and `tc` | S | 0.4 | planned |
@@ -174,7 +174,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| ENV-01 | Seeds: one per scenario, derived for each component | M | 0.1 | designed |
+| ENV-01 | Seeds: one per scenario, derived for each component | M | 0.1 | in progress (derivation, drawing and recording in `provision` are done; the result format and `docs/RESULTS.md` follow with 3.5) |
 | ENV-02 | Provenance in every result (versions, kernel, `tc`, CPU, backend, seeds, scenario hash) | M | 0.1 | designed |
 | ENV-03 | Replay a run from its result file | S | 0.2 | planned |
 | ENV-04 | `netscenario doctor`: what this machine can do, and what it cannot | M | 0.1 | planned |
