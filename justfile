@@ -94,3 +94,21 @@ spikes:
 hooks:
     git config core.hooksPath .githooks
     @echo "git hooks are on: .githooks/pre-commit checks the format, the lints and the tests of what you commit"
+
+# A wheel of this platform with the two programs inside, and the plugin; a proof of the packaging, not a
+# release: it is tagged `linux`, not manylinux (the CI builds those in the manylinux containers)
+wheel:
+    cargo build --release -p netscenario-cli -p netscenario-agent
+    rm -rf python/netscenario/src/netscenario/_bin dist/wheels
+    mkdir -p python/netscenario/src/netscenario/_bin dist/wheels
+    cp target/release/netscenario target/release/netscenario-agent python/netscenario/src/netscenario/_bin/
+    cd python/netscenario && uvx maturin@1.16.0 build --release --compatibility linux -o ../../dist/wheels
+    uv build --package pytest-netscenario --out-dir dist/wheels
+
+# Install the wheels into a clean environment and run a scenario from there (python is the version)
+wheel-smoke python="3.11": wheel
+    rm -rf target/wheel-venv
+    uv venv --python {{python}} target/wheel-venv
+    uv pip install --python target/wheel-venv/bin/python dist/wheels/netscenario-*.whl dist/wheels/pytest_netscenario-*.whl
+    cd target && wheel-venv/bin/python -I ../python/smoke/wheel_smoke.py
+

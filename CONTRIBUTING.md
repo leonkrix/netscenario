@@ -41,6 +41,8 @@ The development toolchain is the current stable Rust (`rust-toolchain.toml` inst
 | `just py-check` | Python: format and lints (ruff), types (pyright, strict), tests (pytest); it builds the native module first |
 | `just py-fmt` | Format the Python code and fix what ruff can fix |
 | `just py-test-min` | Run the Python tests with the lowest supported Python, 3.11 |
+| `just wheel`, `just wheel-smoke [python]` | Build a wheel of this platform with the supervisor and the agent inside, and install it into a clean environment (Python 3.11 unless you name another) to run a scenario from there. The wheel is tagged `linux`; the CI builds the manylinux ones in the containers of the PyPA |
+| `just fidelity` | Run the fidelity tests alone and rewrite the measured block of [docs/FIDELITY.md](docs/FIDELITY.md) with what your machine measures |
 | `just msrv` | Build with the lowest supported Rust |
 | `just schema`, `just snapshots` | After a change to the scenario model: write the JSON Schema; accept changed error messages (read the diff before you commit it) |
 | `just test-kernel` (and `just test`) | The tests of `netscenario-backend-kernel` create real network namespaces as an unprivileged user. On a machine that does not allow that (Ubuntu 24.04 until `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`) they say `SKIPPED` and pass; on the CI (`CI` is set) they fail instead. The CI runs them a second time as root; `unshare --user --map-root-user just test-kernel` takes the same code path on your machine. Needs `ip`, `tc`, `unshare`, `nsenter` and `ping`. |

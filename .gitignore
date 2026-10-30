@@ -11,6 +11,9 @@ __pycache__/
 # The native module that maturin puts next to the Python sources of an editable install
 *.so
 
+# The two programs that `just wheel` and the CI copy into the package before they build the wheel
+/python/netscenario/src/netscenario/_bin/
+
 # Results of runs and spikes
 /results/
 /spikes/out*/

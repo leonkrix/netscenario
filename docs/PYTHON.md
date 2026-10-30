@@ -2,13 +2,22 @@
 
 `netscenario` for Python is a typed interface to the Rust core. It calls the core in the same process (D-031), so a scenario is read and checked by the same code as on the command line, a run is the same run, and the errors arrive as exceptions with the details attached. The package is checked with `pyright` in strict mode and ships `py.typed`.
 
-There is no release on PyPI yet (3.8d builds the wheels). In a checkout:
+## Installing
+
+There is no release on PyPI yet (the release machinery is REL-01). What exists:
+
+- **A wheel** of the package for Linux on x86_64 and aarch64, built by every run of the CI in the manylinux_2_28 containers of the PyPA (the artifacts `wheel-x86_64` and `wheel-aarch64`) and installed into a clean environment on other images as a test. One wheel serves every Python from 3.11 on (the stable ABI). It carries the extension module, the supervisor `netscenario`, the agent `netscenario-agent` and the command line; `pip install` of it gives you `import netscenario` and a command `netscenario` on the `PATH` (the same program as `docs/CLI.md` describes). The plugin, `pytest-netscenario`, is a second, pure Python wheel.
+- **A checkout**, for development:
 
 ```bash
 cargo build                  # the programs 'netscenario' and 'netscenario-agent' that a run needs
 uv sync                      # builds the extension module and installs the package
 uv run python
 ```
+
+`just wheel-smoke` builds a wheel of your own platform and installs it into a clean environment, which is the closest thing to what a user gets.
+
+The wheel needs the same machine as a checkout: network namespaces, and `ip`, `tc` (iproute2 6.6.0 or newer for a seed), `unshare`, `nsenter` and `prlimit` on the `PATH` (`ns.doctor()` or `netscenario doctor` says what is missing).
 
 ## A first run
 

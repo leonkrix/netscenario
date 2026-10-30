@@ -130,6 +130,95 @@ jobs:
       - uses: ./.github/actions/namespaces
       - run: just py-check
 
+  # The wheels (PYT-08): the extension module, the supervisor `netscenario` and the agent, built in the
+  # manylinux containers of the PyPA on a runner of each architecture, so that the programs link only to
+  # the C library of an old distribution (glibc 2.28) and run on every newer one. The programs are built
+  # first and copied into the package; maturin puts them in the wheel (python/netscenario/pyproject.toml).
+  wheels:
+    name: Wheel (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          maturin-version: v1.16.0
+          manylinux: 2_28
+          rust-toolchain: stable
+          working-directory: python/netscenario
+          args: --release --out ../../dist
+          # Runs in the container, in the working directory, after Rust is installed
+          before-script-linux: |
+            (
+              cd ../..
+              cargo build --release -p netscenario-cli -p netscenario-agent
+              mkdir -p python/netscenario/src/netscenario/_bin
+              cp target/release/netscenario target/release/netscenario-agent python/netscenario/src/netscenario/_bin/
+            )
+      - name: What is in the wheel
+        run: |
+          ls -l dist
+          python3 -m zipfile --list dist/*.whl | grep -E '_bin/|_native|entry_points'
+          # The tag says which C library the wheel needs: a manylinux wheel for this architecture, for the
+          # stable ABI of Python 3.11. (maturin may name an older glibc than the container if the files
+          # need nothing newer.)
+          case "$(ls dist/*.whl)" in
+            *-cp311-abi3-manylinux_*_${{ matrix.arch }}*.whl) ;;
+            *) echo "unexpected tag: $(ls dist/*.whl)"; exit 1 ;;
+          esac
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel-${{ matrix.arch }}
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  # A wheel is only worth something if it works where it is installed: into a clean environment, on other
+  # images than it was built on, with no checkout on the path. The smoke script runs a scenario through the
+  # installed package, the installed command and the installed plugin (python/smoke/wheel_smoke.py).
+  wheel-test:
+    name: Wheel on ${{ matrix.runner }} (Python ${{ matrix.python }})
+    needs: wheels
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64, python: '3.11' }
+          - { runner: ubuntu-24.04, arch: x86_64, python: '3.14' }
+          - { runner: ubuntu-24.04-arm, arch: aarch64, python: '3.12' }
+    steps:
+      # The checkout is only for the smoke script, the composite action and the build of the plugin; the
+      # package under test comes from the wheel
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/namespaces
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheel-${{ matrix.arch }}
+          path: dist
+      - name: Build the plugin (pure Python)
+        run: uv build --package pytest-netscenario --out-dir dist
+      - name: Install into a clean environment and run a scenario
+        run: |
+          uv venv --python "${{ matrix.python }}" "$RUNNER_TEMP/clean"
+          uv pip install --python "$RUNNER_TEMP/clean/bin/python" dist/netscenario-*.whl dist/pytest_netscenario-*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/clean/bin/python" -I "$GITHUB_WORKSPACE/python/smoke/wheel_smoke.py"
+
   # The workflows are code too: syntax, expressions and the shell scripts in them. The binary is pinned
   # by version and checksum.
   actionlint:
@@ -169,7 +258,7 @@ jobs:
   ci-ok:
     name: CI passed
     if: always()
-    needs: [fmt, clippy, test, docs, deny, python, actionlint, dependency-review]
+    needs: [fmt, clippy, test, docs, deny, python, wheels, wheel-test, actionlint, dependency-review]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
