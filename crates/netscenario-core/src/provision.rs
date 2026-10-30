@@ -1,6 +1,8 @@
 //! Steps 2 to 4 of the life of a run (`docs/ARCHITECTURE.md`): check the capabilities, create the nodes and
 //! links, and apply the impairments of time zero.
 
+use std::net::Ipv4Addr;
+
 use netscenario_model::{Impairments, Link, Name, Problem, Scenario};
 
 use crate::backend::{Backend, Direction, LinkHandle, NodeHandle};
@@ -9,6 +11,17 @@ use crate::error::Error;
 use crate::feature::{Feature, requirements};
 use crate::seed::{derive_seed, draw_seed};
 
+/// The address of a node on a link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeAddress {
+    /// The node.
+    pub node: Name,
+    /// The link it is on.
+    pub link: Name,
+    /// The address of its end of the link.
+    pub address: Ipv4Addr,
+}
+
 /// What was created for a scenario.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Provisioned {
@@ -16,6 +29,8 @@ pub struct Provisioned {
     pub nodes: Vec<(Name, NodeHandle)>,
     /// The links in the order of the scenario.
     pub links: Vec<(Name, LinkHandle)>,
+    /// The address of each end of each link. The result records them (TOP-08).
+    pub addresses: Vec<NodeAddress>,
     /// The restrictions that the scenario accepted. The result has to record them.
     pub accepted: Vec<Accepted>,
     /// The seed of the run: the one in the scenario, or one that was drawn, or none (see `loss_reproducible`).
@@ -59,9 +74,10 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
         .iter()
         .any(|requirement| requirement.feature == Feature::IndependentLoss);
     match build(backend, scenario, seed) {
-        Ok((nodes, links)) => Ok(Provisioned {
+        Ok((nodes, links, addresses)) => Ok(Provisioned {
             nodes,
             links,
+            addresses,
             accepted,
             seed,
             seed_drawn,
@@ -75,7 +91,11 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
     }
 }
 
-type Built = (Vec<(Name, NodeHandle)>, Vec<(Name, LinkHandle)>);
+type Built = (
+    Vec<(Name, NodeHandle)>,
+    Vec<(Name, LinkHandle)>,
+    Vec<NodeAddress>,
+);
 
 fn build(
     backend: &mut dyn Backend,
@@ -93,6 +113,7 @@ fn build(
             .map(|(_, handle)| *handle)
     };
     let mut links = Vec::new();
+    let mut addresses = Vec::new();
     for (index, link) in scenario.topology.links.iter().enumerate() {
         let (Some(first), Some(second)) = (node(&link.between[0]), node(&link.between[1])) else {
             // `validate` has checked this, so it only happens if that check and this code disagree
@@ -114,9 +135,16 @@ fn build(
                 backend.apply(handle, direction, impairments, seed)?;
             }
         }
+        for (end, node) in link.between.iter().enumerate() {
+            addresses.push(NodeAddress {
+                node: node.clone(),
+                link: link.id.clone(),
+                address: backend.address(handle, end)?,
+            });
+        }
         links.push((link.id.clone(), handle));
     }
-    Ok((nodes, links))
+    Ok((nodes, links, addresses))
 }
 
 /// The impairments that apply to one direction of a link: `both` if it is written, else the direction's own.
@@ -233,6 +261,19 @@ mod tests {
             unreachable!("not part of provisioning")
         }
 
+        fn address(&self, link: LinkHandle, end: usize) -> Result<std::net::Ipv4Addr, Error> {
+            Ok(std::net::Ipv4Addr::new(
+                10,
+                100,
+                u8::try_from(link.0).unwrap(),
+                1 + u8::try_from(end).unwrap(),
+            ))
+        }
+
+        fn describe(&self) -> crate::backend::BackendInfo {
+            crate::backend::BackendInfo::default()
+        }
+
         fn poll_program(
             &mut self,
             _: ProgramHandle,
@@ -263,6 +304,27 @@ mod tests {
             "t.yaml",
         )
         .expect("valid")
+    }
+
+    #[test]
+    fn every_end_of_a_link_gets_its_address() {
+        let mut backend = Fake::new();
+        let done = provision(&mut backend, &scenario("")).unwrap();
+        let shown: Vec<String> = done
+            .addresses
+            .iter()
+            .map(|a| format!("{} on {}: {}", a.node, a.link, a.address))
+            .collect();
+        // The fake counts every object, so the number of the link is its handle; what matters is that the
+        // first node of `between` gets the first address and the second node the second one
+        let link = done.links[0].1.0;
+        assert_eq!(
+            shown,
+            [
+                format!("a on l: 10.100.{link}.1"),
+                format!("b on l: 10.100.{link}.2")
+            ]
+        );
     }
 
     #[test]

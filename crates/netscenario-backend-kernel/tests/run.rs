@@ -1,0 +1,238 @@
+//! A whole run: from a scenario to a result, in real namespaces (WRK-01, PRB-01 to PRB-03, PRB-05, ENV-01,
+//! ENV-02, RPT-01). The scenario is written as a person would write it.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    // Delays of a few milliseconds and rates of a few megabits are far below the precision of a double
+    clippy::cast_precision_loss
+)]
+
+mod support;
+
+use std::path::Path;
+
+use netscenario_core::{RunOptions, RunResult, run};
+use netscenario_model::Scenario;
+use support::{agent_exe, assert_nothing_left, backend, namespaces_available, work_dir};
+
+fn scenario(head: &str, link: &str, workloads: &str) -> Scenario {
+    Scenario::from_yaml(
+        &format!(
+            "version: 0\nname: media-test\n{head}duration: 2s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n{link}workloads:\n{workloads}"
+        ),
+        "media-test.yaml",
+    )
+    .unwrap()
+}
+
+const MEDIA: &str =
+    "  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }\n";
+
+fn options(dir: &Path, packets: bool) -> RunOptions {
+    let mut options = RunOptions::new(agent_exe().unwrap(), dir);
+    options.export_packets = packets;
+    options
+}
+
+fn lost_in(dir: &Path, workload: &str) -> Vec<u64> {
+    std::fs::read_to_string(dir.join(format!("packets-{workload}.jsonl")))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .filter(|v| v["lost"] == true)
+        .map(|v| v["sequence"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_run_measures_the_link_and_writes_a_result() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("run-delay");
+    let mut backend = backend(|_| {});
+    let result = run(
+        &mut backend,
+        &scenario("", "      forward: { delay: 20ms }\n", MEDIA),
+        &options(&dir, false),
+    )
+    .unwrap();
+
+    let media = &result.workloads[0];
+    // 2 mbit with 1200 byte payloads is 208.33 packets per second: 417 in two seconds
+    assert_eq!(media.stats.sent, 417);
+    assert_eq!(
+        media.stats.received, 417,
+        "a link without loss loses nothing"
+    );
+    assert_eq!(
+        (
+            media.stats.lost,
+            media.stats.duplicates,
+            media.foreign_datagrams
+        ),
+        (0, 0, 0)
+    );
+    assert!(media.stats.loss_ratio.abs() < f64::EPSILON);
+    assert_eq!(media.sender.send_errors, 0);
+    let delay = media.stats.delay.as_ref().unwrap();
+    assert!(
+        (20_000_000..22_000_000).contains(&delay.p50_ns),
+        "the median delay is {} ns",
+        delay.p50_ns
+    );
+    assert!(
+        delay.min_ns >= 20_000_000,
+        "faster than the link: {} ns",
+        delay.min_ns
+    );
+    // One packet may be held up by a busy machine for some milliseconds, but not by a hundred
+    // (the exact deviations are for the fidelity tests, QA-06; the first packets not waiting for ARP is
+    // checked in `agent.rs`)
+    assert!(
+        delay.max_ns < 120_000_000,
+        "the slowest packet took {} ns",
+        delay.max_ns
+    );
+    // The first second carries about the rate of the workload
+    let first = media.stats.throughput.bits_per_second[0];
+    assert!(
+        (1_800_000.0..2_100_000.0).contains(&first),
+        "{first} bit/s in the first second"
+    );
+
+    // Where it came from
+    assert_eq!(result.provenance.backend, "kernel");
+    assert!(result.provenance.backend_details["tc"].starts_with("iproute2 "));
+    assert!(
+        result
+            .provenance
+            .kernel
+            .as_deref()
+            .is_some_and(|k| !k.is_empty())
+    );
+    assert!(result.provenance.cpus.is_some_and(|n| n > 0));
+    assert!(result.provenance.started_at.ends_with('Z'));
+    assert_eq!(
+        result
+            .addresses
+            .iter()
+            .map(|a| a.address.as_str())
+            .collect::<Vec<_>>(),
+        ["10.100.0.1", "10.100.0.2"]
+    );
+    assert_eq!(
+        (media.from_address.as_str(), media.to_address.as_str()),
+        ("10.100.0.1", "10.100.0.2:5000")
+    );
+
+    // A scenario without a seed got one that was drawn, so the run can be repeated
+    assert!(result.seed.drawn && result.seed.value.is_some() && result.seed.loss_reproducible);
+
+    // What is on disk is what came back, and the raw records are next to it
+    let written = std::fs::read_to_string(dir.join("result.json")).unwrap();
+    assert_eq!(RunResult::from_json(&written).unwrap(), result);
+    assert!(dir.join(&media.records_file).is_file());
+    assert!(media.packets_file.is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The same seed loses the same packets, another seed other packets (ENV-01), as the per-packet export shows.
+#[test]
+fn the_same_seed_gives_the_same_lost_packets() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let lossy = "      forward: { loss: { model: random, p: 20% } }\n";
+    let lost = |seed: u32, label: &str| -> (Vec<u64>, RunResult) {
+        let dir = work_dir(label);
+        let mut backend = backend(|_| {});
+        let result = run(
+            &mut backend,
+            &scenario(&format!("seed: {seed}\n"), lossy, MEDIA),
+            &options(&dir, true),
+        )
+        .unwrap();
+        let lost = lost_in(&dir, "media");
+        let _ = std::fs::remove_dir_all(dir);
+        (lost, result)
+    };
+    let (first, result) = lost(42, "run-seed-a");
+    let (again, _) = lost(42, "run-seed-b");
+    let (other, _) = lost(43, "run-seed-c");
+
+    assert_eq!(result.seed.value, Some(42));
+    assert!(!result.seed.drawn);
+    // 417 packets at 20 percent: about 83 lost; the band is wide on purpose, far from none and from all
+    let media = &result.workloads[0];
+    assert_eq!(usize::try_from(media.stats.lost).unwrap(), first.len());
+    assert!(
+        (0.10..0.30).contains(&media.stats.loss_ratio),
+        "{} of {} packets were lost",
+        media.stats.lost,
+        media.stats.sent
+    );
+    assert_eq!(first, again, "the same seed must lose the same packets");
+    assert_ne!(first, other, "another seed must lose other packets");
+}
+
+#[test]
+fn workloads_run_together_and_a_window_limits_one_of_them() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("run-two");
+    let mut backend = backend(|_| {});
+    let workloads = format!(
+        "{MEDIA}  - {{ id: burst, kind: udp-cbr, from: server, to: client, rate: 1mbit, packet-size: 500b, start: 500ms, stop: 1500ms }}\n"
+    );
+    let result = run(
+        &mut backend,
+        &scenario("", "      both: { delay: 5ms }\n", &workloads),
+        &options(&dir, false),
+    )
+    .unwrap();
+    assert_eq!(result.workloads.len(), 2);
+    let (media, burst) = (&result.workloads[0], &result.workloads[1]);
+    assert_eq!((media.id.as_str(), burst.id.as_str()), ("media", "burst"));
+    assert_eq!(media.stats.sent, 417);
+    // 1 mbit with 500 byte payloads is 250 packets per second, for one second
+    assert_eq!(
+        (burst.start_ns, burst.duration_ns),
+        (500_000_000, 1_000_000_000)
+    );
+    assert_eq!(burst.stats.sent, 250);
+    assert_eq!(burst.stats.received, 250);
+    // They went in opposite directions on their own ports
+    assert_eq!(
+        (burst.from_address.as_str(), burst.to_address.as_str()),
+        ("10.100.0.2", "10.100.0.1:5001")
+    );
+    for workload in &result.workloads {
+        let delay = workload.stats.delay.as_ref().unwrap();
+        assert!(
+            (5_000_000..8_000_000).contains(&delay.p50_ns),
+            "{}: {} ns",
+            workload.id,
+            delay.p50_ns
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A run that cannot start leaves nothing behind and says what is wrong.
+#[test]
+fn a_run_without_an_agent_fails_and_leaves_nothing() {
+    if !namespaces_available() {
+        return;
+    }
+    let dir = work_dir("run-noagent");
+    let mut backend = backend(|_| {});
+    let options = RunOptions::new("/nonexistent/netscenario-agent", &dir);
+    let error = run(&mut backend, &scenario("", "", MEDIA), &options).unwrap_err();
+    assert!(error.to_string().contains("does not exist"), "{error}");
+    // The network was built and is torn down again: no process of the run is left
+    assert_nothing_left(backend.run_id(), "no agent");
+    let _ = std::fs::remove_dir_all(dir);
+}

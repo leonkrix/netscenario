@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 use netscenario_backend_kernel::clean::{clean, clean_run};
 use netscenario_core::Backend;
 use netscenario_model::Name;
-use support::{backend, is_root, namespaces_available, processes_with, supervisor_exe, tools};
+use support::{
+    assert_nothing_left, backend, is_root, namespaces_available, processes_with, supervisor_exe,
+    tools,
+};
 
 /// A holder with no supervisor, as a leftover looks. Returns when it says that its namespace is ready. It is
 /// started the way a run starts: in a user namespace for an unprivileged user, with its own rights for root. A
@@ -78,7 +81,7 @@ fn a_run_without_a_supervisor_is_found_and_ended() {
     assert!(report.ended.contains(&pid), "{report:?}");
     assert!(report.succeeded(), "{report:?}");
     wait_until_gone(&mut holder);
-    assert_eq!(processes_with(&run_id), Vec::<String>::new());
+    assert_nothing_left(&run_id, "after clean");
 
     // A second call has nothing left to do for this run
     assert_eq!(clean_run(&run_id, true).found, []);

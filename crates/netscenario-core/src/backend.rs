@@ -1,7 +1,9 @@
 //! The interface that every backend implements (BKD-03). The engine of a run uses nothing else, so a new
 //! backend means implementing this trait and filling its column in the coverage matrix.
 
+use std::collections::BTreeMap;
 use std::fmt;
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use netscenario_model::{Impairments, Name, Scenario};
@@ -100,6 +102,17 @@ pub struct ProgramState {
     pub truncated: bool,
 }
 
+/// What a backend says about itself for the provenance of a result (ENV-02): its name and the facts about the
+/// machine side of it that a reader needs to judge a result, such as the version of `tc` or how the rights
+/// were obtained.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BackendInfo {
+    /// The name of the backend (`kernel`).
+    pub name: String,
+    /// Facts as name and value, for example `tc` and `iproute2 6.15.0`.
+    pub details: BTreeMap<String, String>,
+}
+
 /// A way to make a network real: it reports what it can reproduce and builds what a scenario describes.
 ///
 /// The methods are in the order of a run: create the nodes, connect them, apply the impairments, start
@@ -166,6 +179,18 @@ pub trait Backend {
         node: NodeHandle,
         program: &Program,
     ) -> Result<ProgramHandle, Error>;
+
+    /// The address of one end of a link, as the programs in the nodes use it. `end` is 0 for the first node of
+    /// `between` and 1 for the second. The addresses are the backend's to assign (TOP-08) and are recorded in
+    /// the result.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist.
+    fn address(&self, link: LinkHandle, end: usize) -> Result<Ipv4Addr, Error>;
+
+    /// What the backend says about itself for the provenance of a result.
+    fn describe(&self) -> BackendInfo;
 
     /// Waits for news from a program: returns as soon as it has written a line or has ended, or after `wait`
     /// if neither happened (then the state is empty and `exit` is `None`).

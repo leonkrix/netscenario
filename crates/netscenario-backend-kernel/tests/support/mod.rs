@@ -114,6 +114,19 @@ pub(crate) fn processes_with(needle: &str) -> Vec<String> {
         .collect()
 }
 
+/// Waits until a process whose command line contains `needle` exists. A process that was just started has the
+/// command line of its parent until it has called `exec`, and on a busy machine that takes a while.
+pub(crate) fn assert_started(needle: &str, context: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while processes_with(needle).is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "{context}: no process with '{needle}' appeared"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Waits until no process of the run is left. The kernel ends them when the supervisor dies, but not at the
 /// same instant.
 pub(crate) fn assert_nothing_left(run_id: &str, context: &str) {

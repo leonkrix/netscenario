@@ -100,10 +100,7 @@ fn programs_end_with_the_run() {
         marker.clone(),
     ]);
     backend.start_program(node, &program).unwrap();
-    assert!(
-        !support::processes_with(&marker).is_empty(),
-        "the program did not start"
-    );
+    support::assert_started(&marker, "the program did not start");
     backend.teardown().unwrap();
     assert_nothing_left(&marker, "after the teardown");
     assert_nothing_left(backend.run_id(), "after the teardown");

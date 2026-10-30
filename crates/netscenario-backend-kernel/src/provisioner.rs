@@ -17,10 +17,16 @@ use crate::command::{Toolbox, run};
 use crate::netem;
 use crate::protocol::Way;
 
-/// The addresses of the links: link `n` uses `10.100.n.0/30`, the first node `.1` and the second `.2`.
-const ADDRESS_BASE: &str = "10.100";
 /// The most links a run can address.
 const MAX_LINKS: usize = 200;
+
+/// The address of one end of a link: link `n` uses `10.100.n.0/30`, the first node `.1` and the second `.2`.
+/// The caller and the supervisor both compute it, so that the caller needs no question to the supervisor.
+pub(crate) fn link_address(link: u32, end: usize) -> std::net::Ipv4Addr {
+    let third = u8::try_from(link).unwrap_or(u8::MAX);
+    let host = if end == 0 { 1 } else { 2 };
+    std::net::Ipv4Addr::new(10, 100, third, host)
+}
 
 /// A failpoint of the crash tests: `NETSCENARIO_FAIL_AT=link:created` ends the supervisor, without cleaning
 /// up, the first time it passes that point; `link:created#2` the second time. It exists to test the cleanup
@@ -325,7 +331,7 @@ impl Provisioner {
             )?;
         }
         self.failpoints.hit("link:moved");
-        let addresses = [1, 2].map(|host| format!("{ADDRESS_BASE}.{index}.{host}"));
+        let addresses = [0, 1].map(|end| link_address(id(index).unwrap_or(0), end).to_string());
         for end in 0..2 {
             let other = 1 - end;
             let pid = pids[end];

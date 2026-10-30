@@ -25,6 +25,15 @@ pub enum Error {
         /// What went wrong, including what the tools reported.
         message: String,
     },
+    /// The run itself failed: an agent did not start, did not answer or ended badly, or a file could not be
+    /// written.
+    #[error("the run failed to {action}: {message}")]
+    Run {
+        /// What it was doing, as a verb phrase.
+        action: String,
+        /// What went wrong.
+        message: String,
+    },
 }
 
 fn list(problems: &[Problem]) -> String {
