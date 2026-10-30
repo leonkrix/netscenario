@@ -19,6 +19,11 @@ classifiers = [
 # released together (D-004)
 dynamic = ["version"]
 
+# `pip install netscenario` puts the command `netscenario` on the PATH: it starts the program of the
+# wheel (python/netscenario/src/netscenario/__main__.py)
+[project.scripts]
+netscenario = "netscenario.__main__:main"
+
 [project.urls]
 Repository = "https://github.com/leonkrix/netscenario"
 Issues = "https://github.com/leonkrix/netscenario/issues"
@@ -27,3 +32,8 @@ Issues = "https://github.com/leonkrix/netscenario/issues"
 manifest-path = "../../crates/netscenario-py/Cargo.toml"
 python-source = "src"
 module-name = "netscenario._native"
+# The two programs of a run (the supervisor `netscenario` and the agent) are built by cargo and copied into
+# the package before the wheel is built (`just wheel`, and the job `wheels` of the CI). They are listed here
+# because the folder is not in git, which maturin would otherwise honour. They are platform files, so the
+# wheel is a wheel for one platform in any case (D-031).
+include = [{ path = "src/netscenario/_bin/*", format = "wheel" }]

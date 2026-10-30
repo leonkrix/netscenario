@@ -212,7 +212,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PYT-05 | Per-packet data as pandas and polars frames | S | 0.3 | planned |
 | PYT-06 | Notebook helpers for plots | C | 0.8 | idea |
 | PYT-07 | Safe with `pytest-xdist` (parallel runs) | M | 0.5 | planned |
-| PYT-08 | Wheels for manylinux on x86_64 and aarch64 | M | 0.1 | planned |
+| PYT-08 | Wheels for manylinux on x86_64 and aarch64 | M | 0.1 | done as a build (every CI run builds both in the manylinux_2_28 containers and installs them into clean environments on 22.04 and 24.04, x86_64 and aarch64; [PYTHON.md](docs/PYTHON.md)); the upload to PyPI is REL-01 |
 
 ## Rust API (RST)
 

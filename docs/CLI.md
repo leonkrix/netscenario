@@ -12,6 +12,8 @@ netscenario <command> [options]
 | `doctor` | Reports what this machine can do and how to fix what it cannot ([DOCTOR.md](DOCTOR.md)). |
 | `clean` | Ends what a run without a supervisor left behind ([DOCTOR.md](DOCTOR.md)). |
 
+From Python, `pip install` of the wheel puts the same program on the `PATH` as the command `netscenario` (it starts the program that the wheel carries; [PYTHON.md](PYTHON.md)).
+
 `-h` or `--help` after a command prints the options of that command; `-V` or `--version` prints the version.
 
 ## Exit codes

@@ -11,7 +11,7 @@
 
 Describe a network, run your program in it, measure what happens, and assert on it. In a test, in your CI, or on your laptop.
 
-> **Status: pre-alpha.** The Kernel backend and the command line work on Linux: you can describe a point-to-point link in a file, run it in network namespaces, and get loss, delay percentiles and throughput back, with the seed and the versions that produced them. There is no release, no Python package and no pytest plugin yet, and most of what is below under "How it is going to work" does not exist. The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
+> **Status: pre-alpha.** The Kernel backend and the command line work on Linux: you can describe a point-to-point link in a file, run it in network namespaces, and get loss, delay percentiles and throughput back, with the seed and the versions that produced them. There is a Python package and a pytest plugin, built as wheels by the CI, but no release on PyPI yet, and most of what is below under "How it is going to work" does not exist. The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
 
 ## Why
 
@@ -49,7 +49,7 @@ workload media  client -> server  2 mbit/s, 1200 byte packets
 result: out/result.json
 ```
 
-From Python (a checkout; there is no package on PyPI yet, [docs/PYTHON.md](docs/PYTHON.md)):
+From Python (the CI builds wheels for Linux on x86_64 and aarch64 that carry the programs; there is no package on PyPI yet, [docs/PYTHON.md](docs/PYTHON.md)):
 
 ```python
 import netscenario as ns
