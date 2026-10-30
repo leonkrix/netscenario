@@ -91,6 +91,15 @@ Trusted publishing exists only for a crate that has been published once, by hand
 
 Rehearse (above), and release `0.1.0-rc.1` and then `0.1.0`.
 
+## The first release: texts that say "not published yet"
+
+The README of the repository is the README of the five crates on crates.io (the page of each crate shows it as it is in the release), so what it says on the day of the tag is what the page of `0.1.0` says for good. Therefore, **in the release pull request of `0.1.0`** (the one with `just release-prepare`), not after it:
+
+- `README.md`: remove the box "Release 0.1.0 is not published yet" and the words that go with it ("what will work after the release"), and the line "From source" can stay.
+- `docs/PYTHON.md` ("Installing") and `docs/PYTEST.md` (the sentence "There is no release on PyPI yet"): replace by the `pip install` line.
+
+(A release candidate keeps the box: its page says that it is one.) After both registries have the release, in a small pull request: the badges for PyPI (`https://img.shields.io/pypi/v/netscenario`), crates.io (`https://img.shields.io/crates/v/netscenario-cli`) and the latest release in `README.md`, because a badge of a package that does not exist shows an error. Then check the installation as a stranger would: a clean virtual environment, `pip install netscenario pytest-netscenario`, `netscenario doctor`, a run; and `cargo install netscenario-cli netscenario-agent` into an empty `--root`.
+
 ## What is not in a release yet
 
 Static binaries for download (the agent is not static, D-025), musllinux and macOS wheels (Linux first), a source distribution of `netscenario` (it needs Rust and the two programs, so the wheel is the way to install it), signing of the GitHub release, and Software Bills of Materials.

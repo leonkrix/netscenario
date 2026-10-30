@@ -1,0 +1,33 @@
+# A real-time game over a bad mobile link: small packets at a steady rate (80 per second, 100 bytes of payload),
+# a long delay with a wide jitter, some loss and a narrow rate.
+version: 0
+name: game-link
+seed: 7
+duration: 10s
+topology:
+  nodes: [player, server]
+  links:
+    - id: mobile
+      between: [player, server]
+      forward:                     # player -> server
+        delay: 60ms
+        jitter: { amount: 15ms, distribution: normal }
+        loss: { model: random, p: 2% }
+        rate: 1mbit
+      reverse:                     # server -> player
+        delay: 60ms
+        jitter: { amount: 15ms, distribution: normal }
+        rate: 2mbit
+workloads:
+  - id: input                      # the state of the player, sent to the server
+    kind: udp-cbr
+    from: player
+    to: server
+    rate: 64kbit
+    packet-size: 100b
+  - id: state                      # what the server tells the player
+    kind: udp-cbr
+    from: server
+    to: player
+    rate: 128kbit
+    packet-size: 200b

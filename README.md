@@ -11,7 +11,7 @@
 
 Describe a network, run your program in it, measure what happens, and assert on it. In a test, in your CI, or on your laptop.
 
-> **Status: pre-alpha.** The Kernel backend and the command line work on Linux: you can describe a point-to-point link in a file, run it in network namespaces, and get loss, delay percentiles and throughput back, with the seed and the versions that produced them. There is a Python package and a pytest plugin, built as wheels by the CI, but no release on PyPI yet, and most of what is below under "How it is going to work" does not exist. The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
+> **Status: pre-alpha, release 0.1 is being prepared.** The Kernel backend, the command line, the Python package and the pytest plugin work on Linux: you describe a point-to-point link in a file, run it in network namespaces, and get loss, delay percentiles and throughput back, with the seed and the versions that produced them. What is not there yet is listed under "What 0.1 does not do". The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
 
 ## Why
 
@@ -19,20 +19,41 @@ Code that talks over a network behaves differently on a good link and on a bad o
 
 netscenario is meant to make this a normal, repeatable test:
 
-- **A scenario is data.** Nodes, links, delay, jitter, loss (also bursty), rate, queues, and things that change over time, written in a short file or built in code.
-- **Your program is the test subject.** Any command or container, in any language. netscenario starts it inside the scenario, generates traffic, measures, and stops it.
-- **Results are numbers with provenance.** Loss, delay percentiles, throughput, time to recover, together with the seed, the kernel and the tool versions that produced them.
-- **Assertions understand noise.** Network measurements vary. Assertions can use repetitions, confidence intervals and baselines instead of one fragile number.
-- **It fits the tools you have.** A `pytest` plugin and a command line, results as JUnit, JSON and HTML, and a CI that does not need a special machine.
+- **A scenario is data.** Nodes, links, delay, jitter, loss, rate, written in a short file or built in code. (Bursty loss, queues and changes over time come in the next releases.)
+- **Results are numbers with provenance.** Loss, delay percentiles, throughput, together with the seed, the kernel and the tool versions that produced them.
+- **It fits the tools you have.** A command line, a Python package, a `pytest` plugin, and a CI that does not need a special machine.
+- **Later in the plan:** your own program or container as a node, assertions that understand noise (repetitions, confidence intervals, baselines), and reports as JUnit and HTML.
 
-## What works today
+## Install
 
-Build it (Rust 1.89 or newer, and `ip`, `tc`, `unshare`, `nsenter`, `prlimit` from iproute2 and util-linux), then ask the machine what it can do and run an example. Nothing needs root on a machine that allows user namespaces; `netscenario doctor` says what to change if yours does not.
+> **Release 0.1.0 is not published yet.** Until it is, use "From source" below. The commands in the first two blocks are what will work after the release.
+
+Linux, with the tools `ip`, `tc`, `unshare`, `nsenter` and `prlimit` (packages `iproute2` and `util-linux`) and the right to create network namespaces. Debian and Ubuntu 22.04 give a user that right; Ubuntu 24.04 needs one setting; a container needs more ([docs/PERMISSIONS.md](docs/PERMISSIONS.md)).
+
+```bash
+pip install netscenario pytest-netscenario     # wheels for Linux, x86_64 and aarch64, Python 3.11 or newer
+```
+
+```bash
+cargo install netscenario-cli netscenario-agent    # the programs `netscenario` and `netscenario-agent`, Rust 1.89 or newer
+```
+
+The wheel of `netscenario` carries the two programs, so the Python package needs nothing else. The command line needs both programs side by side, which is why both crates are installed.
+
+**From source** (a checkout of this repository):
 
 ```bash
 cargo build --release          # target/release/netscenario and netscenario-agent
-target/release/netscenario doctor
-target/release/netscenario run scenarios/lte-like.yaml --seed 42
+uv sync                        # the Python packages, if you want them
+```
+
+## First run
+
+Ask the machine what it can do, then run an example. Nothing needs root on a machine that allows user namespaces.
+
+```bash
+netscenario doctor
+netscenario run scenarios/lte-like.yaml --seed 42
 ```
 
 ```text
@@ -42,14 +63,16 @@ netscenario run: lte-like
   seed 42
 
 workload media  client -> server  2 mbit/s, 1200 byte packets
-  sent 6250  received 6203  lost 47 (0.75 %)  reordered 1736
-  delay  min 21.0 ms  median 41.1 ms  p95 49.2 ms  p99 52.7 ms  max 57.0 ms
+  sent 6250  received 6203  lost 47 (0.75 %)  reordered 1760
+  delay  min 21.0 ms  median 41.1 ms  p95 48.9 ms  p99 52.4 ms  max 57.6 ms
   throughput  1.98 mbit/s on average over 30 s (31 bins of one second in result.json)
 
-result: out/result.json
+result: netscenario-results/lte-like-20261030T202546Z/result.json
 ```
 
-From Python (the CI builds wheels for Linux on x86_64 and aarch64 that carry the programs; there is no package on PyPI yet, [docs/PYTHON.md](docs/PYTHON.md)):
+The scenario is [scenarios/lte-like.yaml](scenarios/lte-like.yaml): two nodes and a link with 40 ms of delay, a jitter of 5 ms, 1 % loss and different rates in the two directions, and one stream of 2 mbit/s. The same seed gives the same lost packets on the same kernel and `tc`; the delays vary a little from run to run, as they do on a real link.
+
+**From Python** ([docs/PYTHON.md](docs/PYTHON.md)):
 
 ```python
 import netscenario as ns
@@ -58,7 +81,18 @@ result = ns.run(ns.Scenario.load("scenarios/lte-like.yaml"))
 assert result["media"].delay.p99 < 0.150   # seconds
 ```
 
-The commands are `run`, `validate`, `schema`, `doctor` and `clean`, described in [docs/CLI.md](docs/CLI.md). The result is described field by field in [docs/RESULTS.md](docs/RESULTS.md). A scenario file that is wrong is refused with the line, the column and a hint:
+**As a pytest test** ([docs/PYTEST.md](docs/PYTEST.md)):
+
+```python
+def test_media_survives_the_lte_link(netscenario):
+    media = netscenario.run("scenarios/lte-like.yaml")["media"]
+    assert media.loss_ratio < 0.02
+    assert media.delay.p99 < 0.150  # seconds
+```
+
+On a machine that cannot create namespaces the test is skipped with the reason (and fails on a CI, where a test that never ran proves nothing). Two complete examples with their output are in [examples/](examples/).
+
+A scenario file that is wrong is refused with the line, the column and a hint:
 
 ```text
 error: `both` cannot be combined with `forward` or `reverse`
@@ -71,9 +105,24 @@ error: `both` cannot be combined with `forward` or `reverse`
   = help: use `both` for the same values in both directions, or `forward` and `reverse` for different ones
 ```
 
+The commands are `run`, `validate`, `schema`, `doctor` and `clean` ([docs/CLI.md](docs/CLI.md)); the result is described field by field in [docs/RESULTS.md](docs/RESULTS.md). If something does not work, [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) starts from the message.
+
+## What 0.1 does and does not do
+
+| Does | Does not do yet |
+| --- | --- |
+| Two nodes and one link, IPv4 | More than two nodes (a star, a chain, a dumbbell: 0.3), IPv6 (0.3) |
+| Delay, jitter (uniform, normal), independent loss, a rate, different values per direction | Bursty loss, reordering, duplication, outages (0.2), queue disciplines (0.3) |
+| Constant-rate UDP streams, measured per packet: loss, one-way delay percentiles, throughput | Your own program or container as a node (0.2) |
+| Seeds, and the same lost packets for the same seed on the same kernel and `tc` | Changes over time: a rate that drops, an outage (0.2) |
+| Results as JSON with the versions and the seed that made them | Reports as JUnit and HTML, repetitions and confidence intervals (0.2) |
+| A command line, a Python package, a pytest plugin | Backends other than the Linux kernel (0.4 and 0.5) |
+
+A scenario that asks for something that is not in the left column is refused with an error that names the release in which it is planned; it is never approximated silently.
+
 ## How it is going to work
 
-A sketch, **not implemented** (no timeline, no Gilbert-Elliott loss, no Python). The real format of release 0.1 is described in [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md).
+A sketch of release 0.2, **not implemented**: a timeline, a bursty loss model, and assertions with repetitions. The real format of release 0.1 is described in [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md).
 
 ```yaml
 # scenarios/lte-burst-loss.yaml
@@ -129,6 +178,9 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [docs/FIDELITY.md](docs/FIDELITY.md): how close the Kernel backend is to what a scenario says, measured, and what it does that you may not expect.
 - [docs/RESULTS.md](docs/RESULTS.md): the result of a run, field by field.
 - [docs/AGENT.md](docs/AGENT.md): the agent in the nodes: the packet, the record file, the command line.
+- [docs/PERMISSIONS.md](docs/PERMISSIONS.md): the ways to get the right to create namespaces, on a laptop, in a container and in a CI.
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): from a message or a symptom to the cause and the fix.
+- [examples/](examples/): a UDP protocol on the command line, and a pytest test, with their output.
 - [docs/DOCTOR.md](docs/DOCTOR.md): `netscenario doctor` and `netscenario clean`: what they check, what they print, their exit codes.
 - [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md): the scenario file, draft.
 - [docs/PRIOR-ART.md](docs/PRIOR-ART.md): what exists, and where netscenario differs.
@@ -139,7 +191,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 
 ## Requirements
 
-Linux for the real emulation. The spikes ran on kernels 6.8, 6.12 and 7.0; older kernels are untested. Other systems are targeted by the portable backends later. Rust and Python versions are fixed when the code starts.
+Linux for the real emulation, on x86_64 and aarch64; the tests ran on kernels 6.8, 6.12 and 7.0 and older kernels are untested. Python 3.11 or newer; Rust 1.89 or newer to build from source. Other systems are targeted by the portable backends later.
 
 ## Contributing and security
 

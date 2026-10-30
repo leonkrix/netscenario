@@ -27,7 +27,8 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["python"]
+# The examples are tests too: they are what the documentation shows, and they must keep working
+testpaths = ["python", "examples"]
 # pytester is the pytest plugin that lets a test run pytest on a test file of its own (used for the plugin)
 addopts = "-ra --strict-markers --strict-config -p pytester"
 
@@ -64,9 +65,11 @@ convention = "google"
 "**/tests/**" = ["S101", "D", "ANN"]
 # The smoke script of the wheels is a test that runs outside pytest, with `python -I`, never with `-O`
 "python/smoke/**" = ["S101", "D103"]
+# The examples are tests that people copy: they assert, and their comments are the documentation
+"examples/**" = ["S101", "D"]
 
 [tool.pyright]
-include = ["python"]
+include = ["python", "examples"]
 pythonVersion = "3.11"
 typeCheckingMode = "strict"
 venvPath = "."

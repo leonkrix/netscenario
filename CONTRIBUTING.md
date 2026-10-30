@@ -38,7 +38,7 @@ The development toolchain is the current stable Rust (`rust-toolchain.toml` inst
 | `just check` | Everything the CI checks: format, lints (every warning is an error), tests, documentation, supply chain |
 | `just fmt` | Format the code |
 | `just clippy`, `just test`, `just doc`, `just deny` | One of the Rust checks alone |
-| `just py-check` | Python: format and lints (ruff), types (pyright, strict), tests (pytest); it builds the native module first |
+| `just py-check` | Python: format and lints (ruff), types (pyright, strict), tests (pytest, with the tests of `examples/`); it builds the native module first |
 | `just py-fmt` | Format the Python code and fix what ruff can fix |
 | `just py-test-min` | Run the Python tests with the lowest supported Python, 3.11 |
 | `just wheel`, `just wheel-smoke [python]` | Build a wheel of this platform with the supervisor and the agent inside, and install it into a clean environment (Python 3.11 unless you name another) to run a scenario from there. The wheel is tagged `linux`; the CI builds the manylinux ones in the containers of the PyPA |

@@ -235,12 +235,12 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Continuous integration (CIX)
 
-| ID     | Feature                                                                           | Prio | Release | Status  |
-| ------ | --------------------------------------------------------------------------------- | ---- | ------- | ------- |
-| CIX-01 | GitHub Actions example and composite action                                       | S    | 0.5     | planned |
-| CIX-02 | GitLab CI example                                                                 | C    | 0.5     | idea    |
-| CIX-03 | Container image with everything installed                                         | S    | 0.5     | planned |
-| CIX-04 | Guide to permissions: user namespaces, `NET_ADMIN`, restrictions of distributions | M    | 0.1     | planned |
+| ID     | Feature | Prio | Release | Status |
+| ------ | --- | --- | --- | --- |
+| CIX-01 | GitHub Actions example and composite action | S | 0.5 | planned |
+| CIX-02 | GitLab CI example | C | 0.5 | idea |
+| CIX-03 | Container image with everything installed | S | 0.5 | planned |
+| CIX-04 | Guide to permissions: user namespaces, `NET_ADMIN`, restrictions of distributions | M | 0.1 | done ([docs/PERMISSIONS.md](docs/PERMISSIONS.md)) |
 
 ## Quality of the project (QA)
 
@@ -259,15 +259,15 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Documentation (DOC)
 
-| ID     | Feature                                                            | Prio | Release | Status      |
-| ------ | ------------------------------------------------------------------ | ---- | ------- | ----------- |
-| DOC-01 | README, architecture, decisions, scenario format, coverage         | M    | 0.1     | in progress |
-| DOC-02 | User guide with tutorials                                          | M    | 0.3     | planned     |
-| DOC-03 | Cookbook: QUIC, WebRTC, games, IoT, satellite                      | S    | 0.7     | planned     |
-| DOC-04 | API documentation for Rust and Python                              | M    | 0.1     | planned     |
-| DOC-05 | Troubleshooting (permissions, kernels, containers)                 | M    | 0.1     | planned     |
-| DOC-06 | Chapter on fidelity and limits, generated from the coverage matrix | M    | 0.4     | planned     |
-| DOC-07 | Validation report: how well the emulation matches what it claims   | C    | 0.9     | idea        |
+| ID     | Feature | Prio | Release | Status |
+| ------ | --- | --- | --- | --- |
+| DOC-01 | README, architecture, decisions, scenario format, coverage | M | 0.1 | done for 0.1 ([README.md](README.md), [examples/](examples/); later releases add to it) |
+| DOC-02 | User guide with tutorials | M | 0.3 | planned |
+| DOC-03 | Cookbook: QUIC, WebRTC, games, IoT, satellite | S | 0.7 | planned |
+| DOC-04 | API documentation for Rust and Python | M | 0.1 | done (`missing_docs` and ruff `D` are errors in the CI; a runnable example in `netscenario-model` and `netscenario-core`) |
+| DOC-05 | Troubleshooting (permissions, kernels, containers) | M | 0.1 | done ([docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)) |
+| DOC-06 | Chapter on fidelity and limits, generated from the coverage matrix | M | 0.4 | planned |
+| DOC-07 | Validation report: how well the emulation matches what it claims | C | 0.9 | idea |
 
 ## Releases and maintenance (REL)
 

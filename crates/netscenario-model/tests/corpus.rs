@@ -1,4 +1,4 @@
-//! The example scenarios in `scenarios/` must be valid and survive being written out and read again, and
+//! The example scenarios in `scenarios/` and `examples/` must be valid and survive being written out and read again, and
 //! every faulty file in `scenarios/invalid/` must be refused with the message in its snapshot.
 
 // A test file: a failing unwrap is a failing test
@@ -26,14 +26,33 @@ fn yaml_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// The scenario files of `examples/`, which sit in one folder for each example.
+fn example_files() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let mut files = Vec::new();
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(yaml_files(&path));
+        }
+    }
+    files
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name().unwrap().to_string_lossy().into_owned()
 }
 
 #[test]
 fn every_example_scenario_is_valid_and_survives_a_round_trip() {
-    let files = yaml_files(&scenarios_dir());
+    let mut files = yaml_files(&scenarios_dir());
     assert!(files.len() >= 4, "the examples are missing: {files:?}");
+    let in_examples = example_files();
+    assert!(
+        in_examples.len() >= 2,
+        "the scenarios of examples/ are missing: {in_examples:?}"
+    );
+    files.extend(in_examples);
     for path in files {
         let name = file_name(&path);
         let text = fs::read_to_string(&path).unwrap();
