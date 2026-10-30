@@ -1,0 +1,104 @@
+# The Python package
+
+`netscenario` for Python is a typed interface to the Rust core. It calls the core in the same process (D-031), so a scenario is read and checked by the same code as on the command line, a run is the same run, and the errors arrive as exceptions with the details attached. The package is checked with `pyright` in strict mode and ships `py.typed`.
+
+There is no release on PyPI yet (3.8d builds the wheels). In a checkout:
+
+```bash
+cargo build                  # the programs 'netscenario' and 'netscenario-agent' that a run needs
+uv sync                      # builds the extension module and installs the package
+uv run python
+```
+
+## A first run
+
+```python
+import netscenario as ns
+
+scenario = ns.Scenario.load("scenarios/lte-like.yaml")
+result = ns.run(scenario)
+
+media = result["media"]
+print(media.sent, media.received, f"{media.loss_ratio:.2%}")
+assert media.delay is not None
+assert media.delay.p99 < 0.150  # seconds
+```
+
+A run builds the network in network namespaces, starts the agents in the nodes, lets the workloads run for the duration of the scenario and removes everything again. It needs the same machine as the command line; `ns.doctor()` says what this one can do.
+
+## Scenarios
+
+A scenario is read from a file (`Scenario.load`), from text (`Scenario.from_yaml`) or built in code. All three give the same model, checked by the core.
+
+```python
+scenario = (
+    ns.Scenario.builder("lte-like", duration="30s", seed=42)
+    .nodes("client", "server")
+    .link(
+        "access", "client", "server",
+        forward=ns.Impairments(
+            delay="40ms", jitter=ns.Jitter("5ms", "normal"), loss="1%", rate="10mbit"
+        ),
+        reverse=ns.Impairments(delay="40ms", rate="20mbit"),
+    )
+    .udp_cbr("media", "client", "server", rate="2mbit", packet_size="1200b")
+    .build()
+)
+```
+
+Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`, `"1%"`): a bare number is refused, because `40` could be 40 seconds or 40 milliseconds. The built scenario above is equal to the one in `scenarios/lte-like.yaml` (a test compares them). `scenario.needs()` lists the features a backend has to reproduce; `scenario.with_seed(7)` gives a copy; `scenario.data` is the canonical form as a plain `dict`.
+
+## Results
+
+`ns.run` returns a frozen `Result` whose numbers are in **SI units**: times in seconds, rates in bits per second, sizes in bytes, ratios from 0 to 1. The fields are those of `result.json` ([RESULTS.md](RESULTS.md)).
+
+| You write | You get |
+| --- | --- |
+| `result["media"]` | the `Workload` called `media` (also `result.workloads`, and `for w in result`) |
+| `w.sent`, `w.received`, `w.lost`, `w.reordered` | packet counts |
+| `w.loss_ratio`, `w.delivery_ratio` | 0 to 1 |
+| `w.delay.p50`, `.p95`, `.p99`, `.min`, `.mean`, `.max` | seconds; `None` if no packet arrived. Percentiles are the nearest rank, always a measured delay |
+| `w.throughput.bits_per_second` | payload bit/s in each second, counted from the first packet sent |
+| `w.sender.max_lateness` | seconds; large against the gap between packets means the machine shaped the stream |
+| `result.seed.value`, `.drawn`, `.loss_reproducible` | the seed, and whether the loss can be repeated |
+| `result.provenance` | netscenario version, time, backend and its details, kernel, processor |
+| `result.raw` | the decoded `result.json`, unchanged |
+
+A run without a `seed` draws one and records it; `ns.run(scenario, seed=result.seed.value)` repeats it.
+
+## Errors
+
+Every error is a `netscenario.NetscenarioError`. They match the exit codes of the command line ([CLI.md](CLI.md)):
+
+| Exception | When | Exit code |
+| --- | --- | --- |
+| `ScenarioError` | the scenario is not valid; `.problems` lists every one with `path`, `line`, `column` and `help` | 2 |
+| `CapabilityError` | the backend cannot reproduce what the scenario asks for exactly; nothing was created; `.refusals` has the feature, the path, the reason and the way out | 2 |
+| `BackendError` | the machine does not allow the run (a tool or a permission is missing; `ns.doctor()` says what) | 3 |
+| `RunError` | the run failed after it started | 4 |
+| `Cancelled` | the run was stopped by a `CancelToken` | – |
+
+`str(error)` is the full message, with the lines of the file and a mark under the place, as the command line prints it. A scenario built in code has problems with paths and without lines, because there is no file.
+
+## Watching and stopping a run
+
+```python
+def show(event: ns.events.RunEvent) -> None:
+    if isinstance(event, ns.events.Progress):
+        print(f"{event.elapsed:.0f} of {event.total:.0f} s")
+
+token = ns.CancelToken()
+result = ns.run(scenario, observer=show, cancel=token)   # token.cancel() from any thread stops it
+```
+
+The events are `Provisioned`, `ReceiversReady`, `Started`, `Progress` (once a second), `Settling`, `Collecting`, `TearingDown` and `Finished` ([ARCHITECTURE.md](ARCHITECTURE.md), "Watching and stopping a run"). An exception in the observer stops the run and is raised.
+
+`ns.run` blocks, but it gives up the GIL and looks for interrupts every 100 ms. **Ctrl-C** (`KeyboardInterrupt`) and `pytest-timeout` stop the run: the network is torn down first, then the interrupt is raised. A run cannot be left behind: everything runs in a PID namespace that the kernel ends when the run's supervisor dies (D-022).
+
+## The programs of a run
+
+Python cannot be the supervisor of a run (it has several threads and cannot move into a user namespace), so a run starts the program `netscenario`, which is its own supervisor, and `netscenario-agent` in the nodes. They are looked for in this order: the directory in `NETSCENARIO_BIN_DIR`; `netscenario/_bin` inside the package (where a wheel puts them); in a checkout, `target/release` or `target/debug`, whichever was built last. If they are not found, `ns.run` raises `BackendError` and lists the places it looked.
+
+## Not yet
+
+Starting your own program in a node (release 0.2), repetitions and confidence intervals (0.2), `asyncio` (0.3), per-packet data as frames (0.3). The pytest plugin (`pytest-netscenario`) is the next step.

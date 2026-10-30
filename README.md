@@ -49,6 +49,15 @@ workload media  client -> server  2 mbit/s, 1200 byte packets
 result: out/result.json
 ```
 
+From Python (a checkout; there is no package on PyPI yet, [docs/PYTHON.md](docs/PYTHON.md)):
+
+```python
+import netscenario as ns
+
+result = ns.run(ns.Scenario.load("scenarios/lte-like.yaml"))
+assert result["media"].delay.p99 < 0.150   # seconds
+```
+
 The commands are `run`, `validate`, `schema`, `doctor` and `clean`, described in [docs/CLI.md](docs/CLI.md). The result is described field by field in [docs/RESULTS.md](docs/RESULTS.md). A scenario file that is wrong is refused with the line, the column and a hint:
 
 ```text
@@ -114,6 +123,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [FEATURES.md](FEATURES.md): every planned feature, its priority, its release and its status.
 - [docs/COVERAGE.md](docs/COVERAGE.md): what is faithful on which backend.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the parts and how they fit.
+- [docs/PYTHON.md](docs/PYTHON.md): the Python package: scenarios, builder, results in SI units, errors, observing and stopping a run.
 - [docs/CLI.md](docs/CLI.md): the commands, their options, the exit codes and the JSON they print.
 - [docs/FIDELITY.md](docs/FIDELITY.md): how close the Kernel backend is to what a scenario says, measured, and what it does that you may not expect.
 - [docs/RESULTS.md](docs/RESULTS.md): the result of a run, field by field.

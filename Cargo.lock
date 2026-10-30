@@ -594,7 +594,11 @@ dependencies = [
 name = "netscenario-py"
 version = "0.0.0"
 dependencies = [
+ "netscenario-backend-kernel",
+ "netscenario-core",
+ "netscenario-model",
  "pyo3",
+ "serde_json",
 ]
 
 [[package]]

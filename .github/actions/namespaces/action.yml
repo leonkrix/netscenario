@@ -1,0 +1,32 @@
+name: Prepare the runner for network namespaces
+description: A tc that knows the seed of netem, and the permission to create user namespaces (D-013, D-022)
+
+runs:
+  using: composite
+  steps:
+    # Neither iproute2 5.15 (Ubuntu 22.04) nor 6.1.0 (Ubuntu 24.04) knows the `seed` of `netem` (D-013), and
+    # the tests of reproducible loss need it. Build the release that the development machine has, from the
+    # tarball of kernel.org, checked against the checksum that kernel.org publishes (sha256sums.asc).
+    - name: Build iproute2 6.15.0 (for netem seed)
+      shell: bash
+      run: |
+        sudo apt-get install -y --no-install-recommends bison flex pkg-config libelf-dev libmnl-dev
+        curl --fail --silent --show-error --location --output iproute2.tar.xz \
+          https://www.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.15.0.tar.xz
+        echo "8041854a882583ad5263466736c9c8c68c74b1a35754ab770d23343f947528fb  iproute2.tar.xz" | sha256sum --check
+        tar --extract --xz --file iproute2.tar.xz
+        make -C iproute2-6.15.0 -j"$(nproc)"
+        "$PWD/iproute2-6.15.0/tc/tc" -V
+        echo "$PWD/iproute2-6.15.0/tc" >> "$GITHUB_PATH"
+        # A `tc` that is not installed looks for the tables of the distributions (`normal.dist`) in
+        # /usr/lib/tc, which is empty here on Ubuntu 24.04. `TC_LIB_DIR` points it to the tables of the build.
+        test -f "$PWD/iproute2-6.15.0/netem/normal.dist"
+        echo "TC_LIB_DIR=$PWD/iproute2-6.15.0/netem" >> "$GITHUB_ENV"
+    # The tests of the Kernel backend create network namespaces as an unprivileged user. Ubuntu 24.04
+    # refuses that by default (AppArmor, spike S1); Ubuntu 22.04 has no such rule.
+    - name: Allow unprivileged user namespaces
+      shell: bash
+      run: |
+        if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        fi
