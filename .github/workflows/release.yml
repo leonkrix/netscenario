@@ -1,0 +1,230 @@
+name: Release
+
+# A release is a tag: after the release pull request (the version, the changelog) is merged,
+# `git tag v0.1.0 && git push origin v0.1.0`. The jobs below check that the tag is on main and that its
+# commit passed the CI, build the wheels as the CI does, and then wait for a maintainer to approve (the
+# environment `release`) before anything is published. docs/RELEASING.md has the steps and the one-time setup.
+#
+# "Run workflow" by hand does everything except the publishing: a rehearsal on any branch.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Verify the release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # checks: reading the result of the CI run of this commit
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      python-version: ${{ steps.version.outputs.python-version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The whole history, to see that the tag is on main
+          fetch-depth: 0
+      - name: Every file has the same version, and the tag names it
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then
+            python3 python/release/version.py check --tag "$TAG"
+          else
+            python3 python/release/version.py check
+          fi
+          echo "version=$(python3 python/release/version.py show)" >> "$GITHUB_OUTPUT"
+          echo "python-version=$(python3 python/release/version.py show --python)" >> "$GITHUB_OUTPUT"
+      - name: The tag is on main, has a changelog entry, and its commit passed the CI
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "The commit of the tag is not on main (a squash merge makes a new commit: tag that one)"
+            exit 1
+          fi
+          if ! grep -q "^## ${VERSION//./\\.} (" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for $VERSION (just release-prepare writes it)"
+            exit 1
+          fi
+          RESULT="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=CI%20passed&filter=latest" --jq '.check_runs[0].conclusion')"
+          echo "CI passed: $RESULT"
+          if [ "$RESULT" != "success" ]; then
+            echo "The CI of $GITHUB_SHA has not passed (yet). Wait for it and run this workflow again."
+            exit 1
+          fi
+
+  # The wheels of the CI, built and installed into clean environments in exactly the same way
+  wheels:
+    name: Wheels
+    needs: verify
+    uses: ./.github/workflows/wheels.yml
+
+  # The plugin is pure Python: one wheel and one source distribution
+  plugin:
+    name: Build the plugin
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv build --package pytest-netscenario --out-dir dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # What goes to PyPI is checked as a whole: the files, their names, their metadata
+  distributions:
+    name: Check what is published
+    needs: [verify, wheels, plugin]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: '{wheel-*,plugin}'
+          merge-multiple: true
+          path: dist
+      - name: Four files, all of the version of the tag
+        env:
+          PYTHON_VERSION: ${{ needs.verify.outputs.python-version }}
+        run: |
+          ls -l dist
+          shopt -s nullglob
+          files=(dist/*)
+          test "${#files[@]}" -eq 4
+          wheels=("dist/netscenario-${PYTHON_VERSION}-cp311-abi3-manylinux"*.whl)
+          test "${#wheels[@]}" -eq 2
+          test -f "dist/pytest_netscenario-${PYTHON_VERSION}-py3-none-any.whl"
+          test -f "dist/pytest_netscenario-${PYTHON_VERSION}.tar.gz"
+      - name: Metadata that PyPI accepts
+        run: uvx twine@7.0.0 check --strict dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # Everything that cargo does before it uploads: packages every crate, in dependency order, and builds
+  # each one from its package against the packages of the others
+  crates-dry-run:
+    name: Package the crates
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo +stable publish --workspace --dry-run --locked
+
+  # From here on the release is real. The environment `release` has the maintainer as a required reviewer:
+  # nothing below starts before they approve, and the registries accept only this workflow in this
+  # environment (trusted publishing, no token is stored anywhere).
+  publish-crates:
+    name: Publish the crates to crates.io
+    if: github.event_name == 'push'
+    needs: [verify, distributions, crates-dry-run]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No cache here: a job that publishes does not restore files that another job wrote
+      - run: rustup toolchain install stable --profile minimal
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+      # In dependency order; cargo waits until a crate is in the index before it publishes the next one
+      - run: cargo +stable publish --workspace --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  publish-pypi:
+    name: Publish the wheels to PyPI
+    if: github.event_name == 'push'
+    needs: [verify, distributions, publish-crates]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: distributions
+          path: dist
+      # Trusted publishing: the OIDC identity of this workflow is the credential. The attestations
+      # (PEP 740, the provenance of the files) are made and uploaded with the files. A run that is repeated
+      # after a failure skips the files that are already there.
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist
+          skip-existing: true
+
+  github-release:
+    name: GitHub release
+    if: github.event_name == 'push'
+    needs: [verify, publish-crates, publish-pypi]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: distributions
+          path: dist
+      - name: Release with the notes of this version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          # The section of CHANGELOG.md for this version, without its heading
+          awk -v v="$VERSION" '
+            index($0, "## " v " (") == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "Version $VERSION." > notes.md; fi
+          FLAGS=""
+          case "$VERSION" in *-*) FLAGS="--prerelease" ;; esac
+          # shellcheck disable=SC2086
+          gh release create "$TAG" --title "$TAG" --notes-file notes.md $FLAGS dist/*

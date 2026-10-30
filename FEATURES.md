@@ -235,12 +235,12 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Continuous integration (CIX)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| CIX-01 | GitHub Actions example and composite action | S | 0.5 | planned |
-| CIX-02 | GitLab CI example | C | 0.5 | idea |
-| CIX-03 | Container image with everything installed | S | 0.5 | planned |
-| CIX-04 | Guide to permissions: user namespaces, `NET_ADMIN`, restrictions of distributions | M | 0.1 | planned |
+| ID     | Feature                                                                           | Prio | Release | Status  |
+| ------ | --------------------------------------------------------------------------------- | ---- | ------- | ------- |
+| CIX-01 | GitHub Actions example and composite action                                       | S    | 0.5     | planned |
+| CIX-02 | GitLab CI example                                                                 | C    | 0.5     | idea    |
+| CIX-03 | Container image with everything installed                                         | S    | 0.5     | planned |
+| CIX-04 | Guide to permissions: user namespaces, `NET_ADMIN`, restrictions of distributions | M    | 0.1     | planned |
 
 ## Quality of the project (QA)
 
@@ -271,12 +271,12 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Releases and maintenance (REL)
 
-| ID     | Feature                                                                    | Prio | Release | Status  |
-| ------ | -------------------------------------------------------------------------- | ---- | ------- | ------- |
-| REL-01 | Release by tag to crates.io and PyPI with provenance and a staged approval | M    | 0.1     | planned |
-| REL-02 | Automatic changelog from the history                                       | M    | 0.1     | planned |
-| REL-03 | Compatibility policy for the scenario format, the result format, the APIs  | M    | 0.1     | planned |
-| REL-04 | Review list for 1.0                                                        | M    | 0.9     | planned |
+| ID     | Feature                                                                    | Prio | Release | Status         |
+| ------ | -------------------------------------------------------------------------- | ---- | ------- | -------------- |
+| REL-01 | Release by tag to crates.io and PyPI with provenance and a staged approval | M    | 0.1     | built, untried |
+| REL-02 | Automatic changelog from the history                                       | M    | 0.1     | done           |
+| REL-03 | Compatibility policy for the scenario format, the result format, the APIs  | M    | 0.1     | done           |
+| REL-04 | Review list for 1.0                                                        | M    | 0.9     | planned        |
 
 ## Integration with other projects (INT)
 

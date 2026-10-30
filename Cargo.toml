@@ -13,8 +13,9 @@ rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/leonkrix/netscenario"
 homepage = "https://github.com/leonkrix/netscenario"
-# Nothing is published before release 0.1 (REL-01)
-publish = false
+readme = "README.md"
+keywords = ["network", "emulation", "netem", "testing", "scenario"]
+categories = ["development-tools::testing", "network-programming", "simulation"]
 
 [workspace.dependencies]
 netscenario-model = { path = "crates/netscenario-model", version = "0.0.0" }

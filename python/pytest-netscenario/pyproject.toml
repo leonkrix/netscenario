@@ -8,7 +8,10 @@ version = "0.0.0"
 description = "pytest plugin for netscenario: fixtures and markers to test a program on a described network"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
-dependencies = ["netscenario", "pytest>=8"]
+license-files = ["LICENSE-*"]
+readme = "README.md"
+# Released together with the package, so the exact version (python/release/version.py keeps it)
+dependencies = ["netscenario==0.0.0", "pytest>=8"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Framework :: Pytest",

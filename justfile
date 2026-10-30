@@ -112,3 +112,40 @@ wheel-smoke python="3.11": wheel
     uv pip install --python target/wheel-venv/bin/python dist/wheels/netscenario-*.whl dist/wheels/pytest_netscenario-*.whl
     cd target && wheel-venv/bin/python -I ../python/smoke/wheel_smoke.py
 
+
+# Prepare a release (docs/RELEASING.md): the version everywhere, the lock files and the changelog
+release-prepare version:
+    python3 python/release/version.py set {{version}}
+    cargo update --workspace
+    uv lock
+    python3 python/release/version.py check
+    just changelog {{version}}
+
+# Write the section of a version into CHANGELOG.md (the first one creates the file, later ones are put on top)
+changelog version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -f CHANGELOG.md ]; then
+        uvx git-cliff@2.14.2 --unreleased --tag v{{version}} --prepend CHANGELOG.md
+    else
+        uvx git-cliff@2.14.2 --unreleased --tag v{{version}} --output CHANGELOG.md
+    fi
+
+# Everything that cargo checks before it uploads the crates, in dependency order (nothing is uploaded)
+publish-dry-run:
+    cargo publish --workspace --dry-run --locked --allow-dirty
+
+# Tag the release commit on main and push the tag, which starts the release workflow (docs/RELEASING.md)
+release-tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(git branch --show-current)" = main ] || { echo "not on main"; exit 1; }
+    [ -z "$(git status --porcelain)" ] || { echo "there are local changes"; exit 1; }
+    git fetch --quiet origin main
+    [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "main is not the same as origin/main"; exit 1; }
+    python3 python/release/version.py check
+    version="$(python3 python/release/version.py show)"
+    grep -q "^## ${version//./\\.} (" CHANGELOG.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+    git tag --annotate "v$version" --message "v$version"
+    git push origin "v$version"
+    echo "pushed v$version: the workflow Release is running, and waits for your approval"

@@ -42,6 +42,8 @@ The development toolchain is the current stable Rust (`rust-toolchain.toml` inst
 | `just py-fmt` | Format the Python code and fix what ruff can fix |
 | `just py-test-min` | Run the Python tests with the lowest supported Python, 3.11 |
 | `just wheel`, `just wheel-smoke [python]` | Build a wheel of this platform with the supervisor and the agent inside, and install it into a clean environment (Python 3.11 unless you name another) to run a scenario from there. The wheel is tagged `linux`; the CI builds the manylinux ones in the containers of the PyPA |
+| `just publish-dry-run` | What `cargo publish` checks before it uploads: package every published crate in dependency order and build each from its package (the CI does it too) |
+| `just release-prepare X.Y.Z`, `just release-tag` | For the maintainer: prepare the release pull request (versions, lock files, changelog) and tag the release on `main`; [docs/RELEASING.md](docs/RELEASING.md) |
 | `just fidelity` | Run the fidelity tests alone and rewrite the measured block of [docs/FIDELITY.md](docs/FIDELITY.md) with what your machine measures |
 | `just msrv` | Build with the lowest supported Rust |
 | `just schema`, `just snapshots` | After a change to the scenario model: write the JSON Schema; accept changed error messages (read the diff before you commit it) |
