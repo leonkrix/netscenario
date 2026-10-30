@@ -26,3 +26,23 @@ fn no_command_exits_with_two() -> io::Result<()> {
     assert!(String::from_utf8_lossy(&output.stderr).contains("no command given"));
     Ok(())
 }
+
+#[test]
+fn doctor_exits_with_zero_or_three_and_says_why() -> io::Result<()> {
+    let output = netscenario(&["doctor"])?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    match output.status.code() {
+        Some(0) => assert!(text.contains("scenarios can run here"), "{text}"),
+        Some(3) => assert!(text.contains("FAIL") && text.contains("fix:"), "{text}"),
+        other => panic!("unexpected exit code {other:?}\n{text}"),
+    }
+    Ok(())
+}
+
+#[test]
+fn clean_with_nothing_to_do_exits_with_zero() -> io::Result<()> {
+    let output = netscenario(&["clean", "--dry-run"])?;
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("netscenario clean"));
+    Ok(())
+}

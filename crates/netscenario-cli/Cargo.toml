@@ -14,5 +14,11 @@ publish.workspace = true
 name = "netscenario"
 path = "src/main.rs"
 
+[dependencies]
+netscenario-backend-kernel.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

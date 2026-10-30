@@ -93,6 +93,25 @@ impl Toolbox {
     }
 }
 
+/// Whether this process is root, from `/proc/self/status` (no `unsafe` call to `geteuid`).
+pub(crate) fn running_as_root() -> bool {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix("Uid:"))
+                .and_then(|ids| ids.split_whitespace().nth(1).map(|euid| euid == "0"))
+        })
+        .unwrap_or(false)
+}
+
+/// The places where a tool is looked for, as text for a message: the `PATH` and the directories that are added.
+pub(crate) fn searched() -> String {
+    let from_path = std::env::var("PATH").unwrap_or_default();
+    format!("PATH ({from_path}) and {}", EXTRA_DIRECTORIES.join(", "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

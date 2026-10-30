@@ -7,8 +7,10 @@
 //! supervisor and implements [`netscenario_core::Backend`]; [`capabilities()`] declares what it reproduces.
 
 mod capabilities;
+pub mod clean;
 mod client;
 mod command;
+pub mod doctor;
 mod netem;
 mod protocol;
 mod provisioner;
