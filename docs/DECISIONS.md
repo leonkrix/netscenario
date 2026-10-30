@@ -286,3 +286,15 @@ Alternatives: the command line as a child process (the simplest, and the cleanes
 - **The two programs are found by `NETSCENARIO_BIN_DIR`, the package, or the checkout.** The wheel (3.8d) puts them in `netscenario/_bin`.
 - **The Python tests run scenarios.** They stop where the machine cannot make namespaces (with the reason from `doctor`) and fail on the CI. The Python job of the CI prepares the runner as the Rust jobs do (a shared composite action: `tc` with the seed, the permission for user namespaces).
 
+## D-032: The pytest plugin is a runner over `netscenario.run`, with a guard for the environment and plain asserts
+
+Accepted. The plugin is described in [PYTEST.md](PYTEST.md).
+
+- **A runner, not a second API.** The fixture `netscenario` gives a `Runner` that adds three things to `netscenario.run` and nothing else: scenario files are found next to the test (then in the ini directories, then in the root), every run goes into the temporary directory of the test, and the environment is checked. The semantics stay in the core and the Python package.
+- **Assertions are plain `assert`.** A DSL for assertions would be a second language on top of Python. The numbers are floats in SI units, and a test says `assert media.delay.p99 < 0.150`. What a plain assert cannot do (confidence intervals, baselines, the `expect` section of the file) comes with the releases that bring the statistics (ASR-02 to ASR-07).
+- **The guard has the rule of the project's own tests.** A machine that cannot run scenarios skips a test with the reason and the fix from `doctor`, but on a CI (`CI` is set) the test fails, because a test that never runs there proves nothing. `--netscenario-environment` overrides it either way. The machine is asked once per session and only when a test runs a scenario: a session that does not use the plugin pays nothing, and a test that only reads a scenario runs anywhere.
+- **The numbers go where a CI can read them.** A section in the report of the test (shown on failure), and properties of the test in a JUnit file. The properties are set on the test item, as `record_property` does, because the JUnit file takes them from the last report of the test: the first version put them on the report of the call, where they were silently lost. A test that checks the JUnit file found it.
+- **The marker has one argument and three options, and says what is wrong.** `@pytest.mark.netscenario("file.yaml", seed=, settle=, packets=)` with `netscenario_result` is the short form for a test that needs one result. A wrong marker is an error of the test with a message, not a silent default.
+
+Alternatives: a fixture that returns the module (the skeleton; no gain over `import netscenario`), a custom assertion helper (see above), skipping on a CI too (hides a machine that was set up wrongly), and putting the properties on the call report (does not reach the JUnit file).
+

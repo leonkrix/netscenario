@@ -206,7 +206,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | PYT-01 | Python package with bindings and API (builder, run, results) | M | 0.1 | in progress (bindings, builder, run with observer and cancel, results and errors are done and tested; [PYTHON.md](docs/PYTHON.md); the wheels follow with PYT-08) |
-| PYT-02 | `pytest` plugin: fixtures, markers, options | M | 0.1 | in progress |
+| PYT-02 | `pytest` plugin: fixtures, markers, options | M | 0.1 | done (fixture `netscenario`, marker and `netscenario_result`, the guard, report section and JUnit properties; [PYTEST.md](docs/PYTEST.md), tested with `pytester` in real runs) |
 | PYT-03 | Typed API (`py.typed`, checked with a strict type checker) | M | 0.1 | done (`pyright` strict over the package and its tests, part of `just check`) |
 | PYT-04 | `asyncio` friendly API | S | 0.3 | planned |
 | PYT-05 | Per-packet data as pandas and polars frames | S | 0.3 | planned |
