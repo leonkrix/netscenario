@@ -108,6 +108,8 @@ topology:
 
 ### Impairments of a direction
 
+The stages of a direction act in this order, whatever order the keys have in the file: **`loss`** (a packet may be dropped when it enters the direction and then uses no capacity), **`rate`** (the packets that are kept are sent one after the other at the rate, in a queue, in the order they came), **`delay` with `jitter`** (each packet then travels for its own delay, drawn independently). So a jitter does not slow the stream down, and it can make a packet overtake the one before it when the jitter is larger than the gap between them: the result counts such packets (`reordered`, [RESULTS.md](RESULTS.md)). A backend that cannot build exactly this refuses the scenario; the Kernel backend builds it ([COVERAGE.md](COVERAGE.md), [FIDELITY.md](FIDELITY.md)).
+
 ```yaml
 forward:
   delay: 40ms

@@ -177,6 +177,42 @@ fn the_same_seed_gives_the_same_lost_packets() {
     assert_ne!(first, other, "another seed must lose other packets");
 }
 
+/// The loss stays in front of the rate in a direction that is built from two qdiscs (a jitter and a rate), so
+/// the same seed still loses the same packets there (D-030).
+#[test]
+fn the_same_seed_loses_the_same_packets_through_a_jitter_and_a_rate() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let link = "      forward: { delay: 20ms, jitter: { amount: 2ms }, loss: { model: random, p: 20% }, rate: 10mbit }\n";
+    let lost = |label: &str| -> (Vec<u64>, RunResult) {
+        let dir = work_dir(label);
+        let mut backend = backend(|_| {});
+        let result = run(
+            &mut backend,
+            &scenario("seed: 5\n", link, MEDIA),
+            &options(&dir, true),
+        )
+        .unwrap();
+        let lost = lost_in(&dir, "media");
+        let _ = std::fs::remove_dir_all(dir);
+        (lost, result)
+    };
+    let (first, result) = lost("run-two-stages-a");
+    let (again, _) = lost("run-two-stages-b");
+    assert_eq!(first, again, "the same seed must lose the same packets");
+    let media = &result.workloads[0];
+    assert!(
+        (0.10..0.30).contains(&media.stats.loss_ratio),
+        "{} of {} packets were lost",
+        media.stats.lost,
+        media.stats.sent
+    );
+    // The jitter reached the packets that were kept: they were not all delayed by exactly 20 ms
+    let delay = media.stats.delay.as_ref().unwrap();
+    assert!(delay.max_ns - delay.min_ns > 2_000_000, "{delay:?}");
+}
+
 #[test]
 fn workloads_run_together_and_a_window_limits_one_of_them() {
     if !namespaces_available() || agent_exe().is_none() {

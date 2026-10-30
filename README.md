@@ -42,8 +42,8 @@ netscenario run: lte-like
   seed 42
 
 workload media  client -> server  2 mbit/s, 1200 byte packets
-  sent 6250  received 6197  lost 53 (0.85 %)
-  delay  min 30.4 ms  median 42.5 ms  p95 49.5 ms  p99 52.7 ms  max 58.6 ms
+  sent 6250  received 6203  lost 47 (0.75 %)  reordered 1736
+  delay  min 21.0 ms  median 41.1 ms  p95 49.2 ms  p99 52.7 ms  max 57.0 ms
   throughput  1.98 mbit/s on average over 30 s (31 bins of one second in result.json)
 
 result: out/result.json
