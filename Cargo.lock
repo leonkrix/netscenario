@@ -566,7 +566,10 @@ dependencies = [
 name = "netscenario-core"
 version = "0.0.0"
 dependencies = [
+ "netscenario-agent",
  "netscenario-model",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

@@ -11,6 +11,10 @@ publish.workspace = true
 
 [dependencies]
 netscenario-model.workspace = true
+# The record file and the events of the agent are what a run reads
+netscenario-agent.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [lints]

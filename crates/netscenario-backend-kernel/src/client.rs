@@ -10,14 +10,15 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use netscenario_core::{
-    Backend, Capabilities, CapabilityError, Direction, Error, Feature, LinkHandle, NodeHandle,
-    Program, ProgramExit, ProgramHandle, ProgramState, Refusal,
+    Backend, BackendInfo, Capabilities, CapabilityError, Direction, Error, Feature, LinkHandle,
+    NodeHandle, Program, ProgramExit, ProgramHandle, ProgramState, Refusal,
 };
 use netscenario_model::{Impairments, Name, Scenario};
 
 use crate::capabilities::{Environment, capabilities};
 use crate::command::{Toolbox, run, running_as_root};
 use crate::protocol::{Exit, Request, Response, Way};
+use crate::provisioner::link_address;
 use crate::supervisor::FAIL_AT;
 use crate::tools::{Tool, parse_tc_version};
 
@@ -499,6 +500,46 @@ impl Backend for KernelBackend {
         };
         self.call("apply the impairments of a link", &request)
             .map(|_| ())
+    }
+
+    fn address(&self, link: LinkHandle, end: usize) -> Result<std::net::Ipv4Addr, Error> {
+        if end > 1 {
+            return Err(Self::error(
+                "find an address",
+                format!("a link has two ends, not {}", end + 1),
+            ));
+        }
+        Ok(link_address(link.0, end))
+    }
+
+    fn describe(&self) -> BackendInfo {
+        let mut details = std::collections::BTreeMap::new();
+        details.insert(
+            "tc".to_owned(),
+            match &self.environment.tc {
+                Tool::Found(version) => format!("iproute2 {version}"),
+                Tool::Unreadable(printed) => format!("unreadable: {printed}"),
+                Tool::Missing => "missing".to_owned(),
+            },
+        );
+        let own_rights = match self.options.mode {
+            Mode::Auto => running_as_root(),
+            Mode::Unprivileged => false,
+            Mode::Root => true,
+        };
+        details.insert(
+            "rights".to_owned(),
+            if own_rights {
+                "own rights"
+            } else {
+                "user namespace"
+            }
+            .to_owned(),
+        );
+        BackendInfo {
+            name: BACKEND.to_owned(),
+            details,
+        }
     }
 
     fn start_program(

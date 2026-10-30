@@ -112,7 +112,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| WRK-01 | UDP constant bit rate | M | 0.1 | in progress (the agent is tested over loopback, as programs and in the namespaces of a run with a delay and a loss, [AGENT.md](docs/AGENT.md); the run that starts it from a scenario follows) |
+| WRK-01 | UDP constant bit rate | M | 0.1 | done as a library (`netscenario_core::run` starts the agents from a scenario, tested in real namespaces, [AGENT.md](docs/AGENT.md)); the command `netscenario run` follows with CLI-01 |
 | WRK-02 | UDP Poisson, on/off and bursty | M | 0.2 | planned |
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | planned |
 | WRK-04 | TCP bulk transfer | M | 0.3 | planned |
@@ -127,11 +127,11 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| PRB-01 | Per-packet records (sequence, send time, receive time) | M | 0.1 | in progress (the record file and its reader are done; the export as JSON Lines and the use in a run follow) |
-| PRB-02 | Loss and delivery ratio | M | 0.1 | planned |
-| PRB-03 | One-way delay and round trip time with percentiles | M | 0.1 | planned |
+| PRB-01 | Per-packet records (sequence, send time, receive time) | M | 0.1 | done (record file, JSON Lines export; [RESULTS.md](docs/RESULTS.md)) |
+| PRB-02 | Loss and delivery ratio | M | 0.1 | done (`tests/run.rs`, canaries in `stats.rs`) |
+| PRB-03 | One-way delay and round trip time with percentiles | M | 0.1 | in progress (one-way delay with nearest-rank percentiles is done; the round trip time is open) |
 | PRB-04 | Jitter (as in RFC 3550) and reordering metrics | S | 0.2 | planned |
-| PRB-05 | Throughput and goodput over time | M | 0.1 | planned |
+| PRB-05 | Throughput and goodput over time | M | 0.1 | done (payload per second; for UDP throughput and goodput are the same number) |
 | PRB-06 | Burst statistics (length of loss runs) | S | 0.2 | planned |
 | PRB-07 | Time to recover after an event | M | 0.2 | planned |
 | PRB-08 | Metrics from your program (JSON on stdout, exit code) | M | 0.2 | planned |
@@ -174,12 +174,12 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| ENV-01 | Seeds: one per scenario, derived for each component | M | 0.1 | in progress (derivation, drawing and recording in `provision` are done; the result format and `docs/RESULTS.md` follow with 3.5) |
-| ENV-02 | Provenance in every result (versions, kernel, `tc`, CPU, backend, seeds, scenario hash) | M | 0.1 | designed |
+| ENV-01 | Seeds: one per scenario, derived for each component | M | 0.1 | done (derivation pinned, drawing and recording in the result, `tests/run.rs`; [RESULTS.md](docs/RESULTS.md)) |
+| ENV-02 | Provenance in every result (versions, kernel, `tc`, CPU, backend, seeds, scenario hash) | M | 0.1 | done |
 | ENV-03 | Replay a run from its result file | S | 0.2 | planned |
 | ENV-04 | `netscenario doctor`: what this machine can do, and what it cannot | M | 0.1 | done for the Kernel backend ([DOCTOR.md](docs/DOCTOR.md), `tests/doctor.rs`); the probe of other backends comes with them |
 | ENV-05 | Report on timer and clock precision | S | 0.3 | planned |
-| ENV-06 | Result format with a version | M | 0.1 | designed |
+| ENV-06 | Result format with a version | M | 0.1 | done (`format` and `version`, 0 until 1.0) |
 | ENV-07 | Reproducibility check: the run compares the packet counter of each queue with the packets of the workload, and marks a run in which something else entered the queue as not reproducible; `doctor` checks that `tc` knows `seed` | M | 0.1 | in progress (the `doctor` check is done; the packet counter of the queues comes with the agent, 3.5) |
 
 ## Safety (SAF)
@@ -187,7 +187,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | SAF-01 | Refuse any change to an interface outside the namespaces created by the tool | M | 0.1 | in progress |
-| SAF-02 | Limits: number of namespaces, run time, memory of agents | M | 0.1 | done in the backend (namespaces, run time, `Program::memory_limit` with `prlimit`, tested: `tests/safety.rs`, `tests/programs.rs`); a run sets the limit for its agents in 3.5, PR C |
+| SAF-02 | Limits: number of namespaces, run time, memory of agents | M | 0.1 | done in the backend (namespaces, run time, `Program::memory_limit` with `prlimit`, tested: `tests/safety.rs`, `tests/programs.rs`); a run limits its agents to 1 GiB (`RunOptions::agent_memory_limit`) |
 | SAF-03 | Watchdog that ends and cleans up a run that hangs | M | 0.1 | in progress |
 
 ## Command line (CLI)
@@ -225,7 +225,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| RPT-01 | Results as JSON, per-packet data as JSON Lines | M | 0.1 | designed |
+| RPT-01 | Results as JSON, per-packet data as JSON Lines | M | 0.1 | done as a library; written by `netscenario run` with CLI-01 |
 | RPT-02 | JUnit XML | M | 0.2 | planned |
 | RPT-03 | HTML report with time series and distributions | M | 0.2 | planned |
 | RPT-04 | Markdown for the summary of a CI run | S | 0.2 | planned |
