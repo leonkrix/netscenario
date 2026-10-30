@@ -27,10 +27,11 @@ clippy:
 test-kernel:
     cargo nextest run -p netscenario-backend-kernel --all-features --no-tests=pass
 
-# Unit and doc tests (nextest does not run doc tests)
+# Unit and doc tests (nextest does not run doc tests). The Python extension is a cdylib: cargo has no doc
+# tests for it and would say so on every run, so it is left out of the doc tests.
 test:
     cargo nextest run --workspace --all-features --no-tests=pass
-    cargo test --workspace --all-features --doc
+    cargo test --workspace --exclude netscenario-py --all-features --doc
 
 # The API documentation; a broken link or a missing item is an error
 doc:

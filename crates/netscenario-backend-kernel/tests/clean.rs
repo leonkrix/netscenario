@@ -7,31 +7,42 @@
 
 mod support;
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use netscenario_backend_kernel::clean::{clean, clean_run};
 use netscenario_core::Backend;
 use netscenario_model::Name;
-use support::{backend, namespaces_available, processes_with, supervisor_exe, tools};
+use support::{backend, is_root, namespaces_available, processes_with, supervisor_exe, tools};
 
-/// A holder with no supervisor, as a leftover looks. Returns when it says that its namespace is ready.
+/// A holder with no supervisor, as a leftover looks. Returns when it says that its namespace is ready. It is
+/// started the way a run starts: in a user namespace for an unprivileged user, with its own rights for root. A
+/// root that went into a user namespace could not even start the test binary from a home directory that only
+/// its owner may enter (`CAP_DAC_OVERRIDE` does not reach files whose owner is not mapped there).
 fn leftover_holder(run_id: &str) -> Child {
-    let mut child = Command::new(tools().unshare)
-        .args(["--user", "--map-root-user", "--net", "--"])
+    let mut command = Command::new(tools().unshare);
+    if !is_root() {
+        command.args(["--user", "--map-root-user"]);
+    }
+    let mut child = command
+        .args(["--net", "--"])
         .arg(supervisor_exe())
         .args(["hold", run_id])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let mut ready = String::new();
     BufReader::new(child.stdout.take().unwrap())
         .read_line(&mut ready)
         .unwrap();
-    assert!(ready.contains("ready"), "the holder did not start: {ready}");
+    if !ready.contains("ready") {
+        let mut said = String::new();
+        let _ = child.stderr.take().unwrap().read_to_string(&mut said);
+        panic!("the holder did not start: '{ready}'; it said: '{said}'");
+    }
     child
 }
 
