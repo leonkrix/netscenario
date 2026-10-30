@@ -57,8 +57,13 @@ msrv:
 py-sync:
     uv sync
 
+# The two programs that a run needs (the supervisor and the agent); the Python package finds them in
+# target/ in a checkout (netscenario/_binaries.py)
+py-programs:
+    cargo build -p netscenario-cli -p netscenario-agent
+
 # Python: format, lints, types (pyright, strict) and tests
-py-check: py-sync
+py-check: py-sync py-programs
     uv run ruff format --check python
     uv run ruff check python
     uv run pyright

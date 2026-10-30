@@ -277,3 +277,12 @@ Accepted. The question was how `netscenario.run(...)` reaches the Rust core: by 
 
 Alternatives: the command line as a child process (the simplest, and the cleanest for a one-shot run, but a dead end for sessions, typed errors, progress and a second interface to keep in step), a long-running server process with an RPC protocol (the session API without the library, plus a protocol to version), and Python code that does the whole run itself (it would be a second implementation of the semantics, against D-002).
 
+**What building it settled (D-031, step 3.8b).**
+
+- **The exception classes are defined in Python and made from Rust by one factory.** `netscenario.errors.from_native(kind, message, details)` makes the instance; the native module hands it a kind, a message and plain tuples. The classes stay typed and documented in one place, and the native module knows nothing of them. A scenario built in code reports its problems by path only, because the lines of a generated text mean nothing.
+- **The builder composes plain data and the core checks it.** The Python builder writes the same structure as the file and has no rules of its own; `build()` hands it to the model, so the rules cannot drift. A test shows that a built scenario and the file give equal canonical JSON.
+- **A run is a thread, a slot and a wait in slices.** The core runs on its own thread; the calling thread waits on a condition in slices of 100 ms with the GIL given up and looks for signals between them (`check_signals`). An interrupt cancels the run, which tears down and returns, and then the `KeyboardInterrupt` is raised. An exception in the observer is kept, the run is cancelled, and the exception is raised afterwards. Tests: a cancel from a timer thread, `_thread.interrupt_main`, an observer that raises.
+- **The scenario goes into the run as the text it was read from**, so that a refusal by the backend can show the line of the person's own file.
+- **The two programs are found by `NETSCENARIO_BIN_DIR`, the package, or the checkout.** The wheel (3.8d) puts them in `netscenario/_bin`.
+- **The Python tests run scenarios.** They stop where the machine cannot make namespaces (with the reason from `doctor`) and fail on the CI. The Python job of the CI prepares the runner as the Rust jobs do (a shared composite action: `tc` with the seed, the permission for user namespaces).
+

@@ -32,7 +32,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | SCN-01 | Scenario file in YAML with a JSON Schema, versioned | M | 0.1 | done |
 | SCN-02 | Validation with precise errors (line, column and source line for every error, the path in the file for errors of content, what was expected, how to fix it; reserved keys name their release) | M | 0.1 | done |
 | SCN-03 | Units and durations parsed strictly (`40ms`, `10mbit`, `2%`) | M | 0.1 | done |
-| SCN-04 | Scenarios built in code (Python and Rust builders), same model as the file | M | 0.1 | in progress |
+| SCN-04 | Scenarios built in code (Python and Rust builders), same model as the file | M | 0.1 | done (the Rust builder, and the Python builder, which gives the same canonical form as the file: a test compares them) |
 | SCN-05 | Parameters, includes and templates (reuse a link, vary a value) | S | 0.3 | planned |
 | SCN-06 | Profile library: 3G, LTE, 5G, Wi-Fi, DSL, GEO and LEO satellite, datacenter, lossy radio | S | 0.3 | planned |
 | SCN-07 | Matrices and sweeps (grids, random sampling) | S | 0.5 | planned |
@@ -205,9 +205,9 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| PYT-01 | Python package with bindings and API (builder, run, results) | M | 0.1 | in progress |
+| PYT-01 | Python package with bindings and API (builder, run, results) | M | 0.1 | in progress (bindings, builder, run with observer and cancel, results and errors are done and tested; [PYTHON.md](docs/PYTHON.md); the wheels follow with PYT-08) |
 | PYT-02 | `pytest` plugin: fixtures, markers, options | M | 0.1 | in progress |
-| PYT-03 | Typed API (`py.typed`, checked with a strict type checker) | M | 0.1 | in progress |
+| PYT-03 | Typed API (`py.typed`, checked with a strict type checker) | M | 0.1 | done (`pyright` strict over the package and its tests, part of `just check`) |
 | PYT-04 | `asyncio` friendly API | S | 0.3 | planned |
 | PYT-05 | Per-packet data as pandas and polars frames | S | 0.3 | planned |
 | PYT-06 | Notebook helpers for plots | C | 0.8 | idea |
