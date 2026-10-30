@@ -16,7 +16,7 @@ use netscenario_core::{
 use netscenario_model::{Impairments, Name, Scenario};
 
 use crate::capabilities::{Environment, capabilities};
-use crate::command::{Toolbox, run};
+use crate::command::{Toolbox, run, running_as_root};
 use crate::protocol::{Request, Response, Way};
 use crate::supervisor::FAIL_AT;
 use crate::tools::{Tool, parse_tc_version};
@@ -130,6 +130,8 @@ struct Session {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     stderr: Arc<Mutex<String>>,
+    /// Set when the standard error of the supervisor has ended and `stderr` is complete.
+    stderr_done: Arc<AtomicBool>,
     watchdog: Watchdog,
 }
 
@@ -254,7 +256,7 @@ impl KernelBackend {
             ));
         };
         let stderr = Arc::new(Mutex::new(String::new()));
-        collect(stderr_pipe, Arc::clone(&stderr));
+        let stderr_done = collect(stderr_pipe, Arc::clone(&stderr));
         let child = Arc::new(Mutex::new(child));
         let watchdog = Watchdog::start(Arc::clone(&child), self.options.max_run_time);
         self.session = Some(Session {
@@ -262,6 +264,7 @@ impl KernelBackend {
             stdin,
             stdout: BufReader::new(stdout),
             stderr,
+            stderr_done,
             watchdog,
         });
         // The supervisor says whether it is ready, or why it refuses to run
@@ -327,6 +330,11 @@ impl KernelBackend {
         };
         let fired = session.watchdog.fired();
         session.watchdog.stop();
+        // What the supervisor wrote may still be on its way to the thread that collects it
+        let patience = Instant::now() + Duration::from_secs(1);
+        while !session.stderr_done.load(Ordering::SeqCst) && Instant::now() < patience {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         let said = session
             .stderr
             .lock()
@@ -356,7 +364,11 @@ impl KernelBackend {
     }
 }
 
-fn collect(mut pipe: impl Read + Send + 'static, into: Arc<Mutex<String>>) {
+/// Reads `pipe` into `into` on a thread of its own. The flag that it returns is set when the stream has ended,
+/// so that a reader of `into` can wait until everything that was written is there.
+fn collect(mut pipe: impl Read + Send + 'static, into: Arc<Mutex<String>>) -> Arc<AtomicBool> {
+    let done = Arc::new(AtomicBool::new(false));
+    let finished = Arc::clone(&done);
     std::thread::spawn(move || {
         let mut buffer = [0_u8; 1024];
         while let Ok(n) = pipe.read(&mut buffer) {
@@ -373,20 +385,9 @@ fn collect(mut pipe: impl Read + Send + 'static, into: Arc<Mutex<String>>) {
                 text.drain(..cut);
             }
         }
+        finished.store(true, Ordering::SeqCst);
     });
-}
-
-/// Whether this process is root, from `/proc/self/status` (no `unsafe` call to `geteuid`).
-fn running_as_root() -> bool {
-    std::fs::read_to_string("/proc/self/status")
-        .ok()
-        .and_then(|status| {
-            status
-                .lines()
-                .find_map(|line| line.strip_prefix("Uid:"))
-                .and_then(|ids| ids.split_whitespace().nth(1).map(|euid| euid == "0"))
-        })
-        .unwrap_or(false)
+    done
 }
 
 impl Backend for KernelBackend {

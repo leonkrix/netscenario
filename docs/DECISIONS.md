@@ -151,7 +151,7 @@ Accepted. A run needs a cleanup guarantee that does not depend on the supervisor
 
 - **The supervisor is a child process** (the same binary with an internal subcommand, started through `unshare`), never a thread of the caller. A process with several threads, such as Python with the bindings, cannot move itself into a new user namespace, and the workspace forbids `unsafe`. The caller talks to the child through a pipe. The command line and the Python package use the same structure.
 - **The backend depends on the tools** `unshare` and `nsenter` (util-linux), `ip` and `tc` (iproute2), as D-009 says for the last two. `doctor` checks them.
-- **`netscenario clean` is a safety net, not the mechanism.** With no named objects there is nothing to find by name in the normal case. The command looks for processes of a run that lost its supervisor (a run started by an older version, or outside a PID namespace), and a test covers it. This replaces "finds leftovers by name prefix" in the plan.
+- **`netscenario clean` is a safety net, not the mechanism.** With no named objects there is nothing to find by name in the normal case. The command looks for processes of a run that lost its supervisor (a run started by an older version, or outside a PID namespace), and a test covers it (D-024). This replaces "finds leftovers by name prefix" in the plan.
 - **Crash tests** let the supervisor die at every step of the setup and the teardown (`NETSCENARIO_FAIL_AT=<step>`, only in test builds), then check that no process of the run is left and that the next run works, as root and unprivileged.
 - **Limits and watchdog (SAF-02, SAF-03):** at most 8 namespaces in a run (release 0.1 needs 2), a maximum run time of the duration of the scenario plus 60 seconds (an option changes the margin), and the watchdog sits in the outer process so that it works when the supervisor hangs. The memory limit of agents comes with the agent and uses `prlimit` because cgroups need rights that the unprivileged mode does not have.
 
@@ -171,3 +171,17 @@ Accepted. `netscenario-core` defines the interface of a backend (`Backend`), the
 - **The interface is small and grows.** Waiting for programs and streaming records arrive with the agent, packet capture with release 0.2.
 
 Alternatives: a trait method `supports(feature)` that every backend implements by hand (no table to compare with the page), refusing every `Limited` feature forever (no way to accept a known restriction), a version check in the scenario reader (the model has no access to the machine, by design).
+
+## D-024: `doctor` probes with the commands of a run, and `clean` ends only holders without a supervisor
+
+Accepted. `netscenario doctor` (ENV-04) and `netscenario clean` (BKD-04) are described for people in [DOCTOR.md](DOCTOR.md).
+
+- **The probe uses the real commands.** Whether a run can get its namespaces is not guessed from the user id or from a list of known settings: `doctor` runs the `unshare` command of a run (same flags) once with `--user --map-root-user` and once without, and a small script inside tries a virtual Ethernet pair and three `netem` commands (delay, loss and rate; the distribution `normal`; a `seed`). The probe lives in the namespaces it creates and leaves nothing behind (a test compares the interfaces of the host before and after). The settings of the system (`kernel.apparmor_restrict_unprivileged_userns`, `kernel.unprivileged_userns_clone`, `user.max_user_namespaces`, container markers) are read only to choose the words of the fix when the probe fails.
+- **Looking and judging are separate** (`inspect` and `assess`). The judging takes plain findings, so every broken machine (AppArmor, a container, no `netem`, an old `tc`, missing tables) is tested with findings instead of with a machine that is broken in that way.
+- **Exit codes.** 0 if no check failed, 3 (environment) otherwise. A warning means a limit that the line names (an old `tc` without `seed`, missing tables); it does not fail, because scenarios without that feature run. Of the two ways to get rights only one has to work; the other is `info`.
+- **`seed` needs both the version and the probe.** The declaration of the backend decides by the version of `tc` (D-023); the doctor adds the probe and warns when either says no (an old `tc`, or a new enough one that the kernel refuses).
+- **`clean` ends nothing it cannot recognise.** A process counts only if its program name starts with `netscenario` and its arguments are exactly `hold <run id>` or `supervise <run id> <nodes>` with a run id of the form `<pid>-<counter>-<nanoseconds>`. A run with a living supervisor is never touched, even if its caller is gone; the supervisor ends such a run itself when its input closes. `--dry-run` reports only.
+- **Found by the CI before this existed:** a `tc` built from source looks for `normal.dist` in `/usr/lib/tc`, which is empty on Ubuntu 24.04; the CI sets `TC_LIB_DIR`. The check `tables` reports it.
+
+Alternatives: deciding the rights from the user id and a table of distributions (wrong for containers and for every new restriction, and untested), probing in the namespace of the host (against SAF-01), `clean` by name prefix of namespaces (nothing is named, D-022), `clean` that also ends runs whose caller is gone (a supervisor that is waiting on a slow caller would be killed).
+

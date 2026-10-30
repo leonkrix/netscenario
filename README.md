@@ -77,6 +77,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [FEATURES.md](FEATURES.md): every planned feature, its priority, its release and its status.
 - [docs/COVERAGE.md](docs/COVERAGE.md): what is faithful on which backend.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the parts and how they fit.
+- [docs/DOCTOR.md](docs/DOCTOR.md): `netscenario doctor` and `netscenario clean`: what they check, what they print, their exit codes.
 - [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md): the scenario file, draft.
 - [docs/PRIOR-ART.md](docs/PRIOR-ART.md): what exists, and where netscenario differs.
 - [docs/DECISIONS.md](docs/DECISIONS.md): the decisions made so far, with reasons.

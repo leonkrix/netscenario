@@ -551,6 +551,10 @@ dependencies = [
 [[package]]
 name = "netscenario-cli"
 version = "0.0.0"
+dependencies = [
+ "netscenario-backend-kernel",
+ "serde_json",
+]
 
 [[package]]
 name = "netscenario-core"
