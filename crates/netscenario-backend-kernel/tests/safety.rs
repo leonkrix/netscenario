@@ -93,14 +93,12 @@ fn programs_end_with_the_run() {
     let mut backend = backend(|_| {});
     let node = backend.create_node(&Name::new("a").unwrap()).unwrap();
     let marker = format!("marker-{}", backend.run_id());
-    let program = Program {
-        argv: vec![
-            "sh".to_owned(),
-            "-c".to_owned(),
-            "while :; do sleep 1; done".to_owned(),
-            marker.clone(),
-        ],
-    };
+    let program = Program::new(vec![
+        "sh".to_owned(),
+        "-c".to_owned(),
+        "while :; do sleep 1; done".to_owned(),
+        marker.clone(),
+    ]);
     backend.start_program(node, &program).unwrap();
     assert!(
         !support::processes_with(&marker).is_empty(),

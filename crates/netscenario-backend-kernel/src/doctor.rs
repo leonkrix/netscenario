@@ -187,6 +187,7 @@ pub fn inspect() -> Findings {
         ("tc", true, "-V"),
         ("unshare", true, "--version"),
         ("nsenter", true, "--version"),
+        ("prlimit", true, "--version"),
         ("kill", false, ""),
     ]
     .into_iter()

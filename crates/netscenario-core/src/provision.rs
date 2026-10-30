@@ -233,6 +233,18 @@ mod tests {
             unreachable!("not part of provisioning")
         }
 
+        fn poll_program(
+            &mut self,
+            _: ProgramHandle,
+            _: std::time::Duration,
+        ) -> Result<crate::backend::ProgramState, Error> {
+            unreachable!("not part of provisioning")
+        }
+
+        fn send_line(&mut self, _: ProgramHandle, _: &str) -> Result<(), Error> {
+            unreachable!("not part of provisioning")
+        }
+
         fn teardown(&mut self) -> Result<(), Error> {
             self.calls.push("teardown".to_owned());
             Ok(())

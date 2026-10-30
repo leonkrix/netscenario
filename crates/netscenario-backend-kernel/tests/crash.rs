@@ -31,14 +31,12 @@ const POINTS: &[&str] = &[
 ];
 
 fn spin(marker: &str) -> Program {
-    Program {
-        argv: vec![
-            "sh".to_owned(),
-            "-c".to_owned(),
-            "while :; do sleep 1; done".to_owned(),
-            marker.to_owned(),
-        ],
-    }
+    Program::new(vec![
+        "sh".to_owned(),
+        "-c".to_owned(),
+        "while :; do sleep 1; done".to_owned(),
+        marker.to_owned(),
+    ])
 }
 
 /// Runs the whole life of a run: build, start a program, tear down. Returns what failed first.
