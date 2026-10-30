@@ -1,0 +1,37 @@
+name: Set up the toolchain
+description: Rust (with the cache), the pinned command line tools, and optionally uv with a Python version
+
+inputs:
+  toolchain:
+    description: The Rust toolchain, `stable` or an exact version such as 1.85.0
+    default: stable
+  tools:
+    description: Command line tools to install with their exact versions (taiki-e/install-action syntax)
+    default: just@1.40.0,cargo-nextest@0.9.150,cargo-deny@0.20.2
+  python:
+    description: A Python version for uv (for example 3.12); empty means no uv
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Rust toolchain
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+      run: |
+        rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+        # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml for every later step of the job
+        echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        key: ${{ inputs.toolchain }}
+    - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+      with:
+        tool: ${{ inputs.tools }}
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      if: inputs.python != ''
+      with:
+        python-version: ${{ inputs.python }}
+        enable-cache: true
+        cache-dependency-glob: uv.lock
