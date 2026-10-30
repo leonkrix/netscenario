@@ -3,7 +3,7 @@ description: Rust (with the cache), the pinned command line tools, and optionall
 
 inputs:
   toolchain:
-    description: The Rust toolchain, `stable` or an exact version such as 1.85.0
+    description: The Rust toolchain, `stable` or an exact version such as 1.89.0
     default: stable
   tools:
     description: Command line tools to install with their exact versions (taiki-e/install-action syntax)

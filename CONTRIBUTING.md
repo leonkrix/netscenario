@@ -25,7 +25,7 @@ A choice that is hard to undo (a file format, a dependency of the core, a public
 The code is a Cargo workspace in `crates/` and two Python packages in `python/` (`netscenario`, the typed API built with maturin around `crates/netscenario-py`, and `pytest-netscenario`, the plugin). You need Linux (the emulation uses network namespaces), [rustup](https://rustup.rs), [uv](https://docs.astral.sh/uv/) and a few tools:
 
 ```bash
-rustup toolchain install 1.85.0 --profile minimal   # the lowest supported Rust, for `just msrv`
+rustup toolchain install 1.89.0 --profile minimal   # the lowest supported Rust (1.89), for `just msrv`
 cargo install --locked just cargo-nextest cargo-deny
 uv --version                                        # uv installs the Python packages and, if needed, Python itself
 just hooks                                          # once per clone: checks run before every commit
