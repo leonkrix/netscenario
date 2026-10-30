@@ -397,20 +397,27 @@ impl Provisioner {
             Way::Forward => &link.ends[0],
             Way::Reverse => &link.ends[1],
         };
-        let Some(arguments) = netem::arguments(impairments, seed)? else {
+        let Some(stages) = netem::arguments(impairments, seed)? else {
             return Ok(());
         };
         let pid = self.nodes[end.node].pid;
-        let mut command = vec![
-            "qdisc",
-            "replace",
-            "dev",
-            end.interface.as_str(),
-            "root",
-            "netem",
-        ];
-        command.extend(arguments.iter().map(String::as_str));
-        self.in_node(pid, &self.tools.tc, &command)?;
+        let interface = end.interface.as_str();
+        // `apply` builds the direction once, at time zero. The changes over time of release 0.2 have to remove
+        // the child when a change no longer needs it, because `replace` of the root keeps it.
+        let mut root = vec!["qdisc", "replace", "dev", interface, "root"];
+        if stages.second.is_some() {
+            root.extend(["handle", "1:"]);
+        }
+        root.push("netem");
+        root.extend(stages.first.iter().map(String::as_str));
+        self.in_node(pid, &self.tools.tc, &root)?;
+        if let Some(second) = &stages.second {
+            let mut child = vec![
+                "qdisc", "replace", "dev", interface, "parent", "1:1", "handle", "2:", "netem",
+            ];
+            child.extend(second.iter().map(String::as_str));
+            self.in_node(pid, &self.tools.tc, &child)?;
+        }
         self.failpoints.hit("apply:end");
         Ok(())
     }

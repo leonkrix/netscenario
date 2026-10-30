@@ -41,11 +41,33 @@ fn the_impairments_are_in_the_queues_of_the_right_interfaces() {
         backend.start_program(node, &sh(&script)).unwrap();
     }
     let client = wait_for(&dir.join("client.txt"), "netem");
-    assert!(client.contains("delay 20ms  5ms"), "{client}");
-    // `tc` does not print the name of the distribution, so that the normal one is in use is for the
-    // fidelity tests (QA-06) to show
-    assert!(client.contains("rate 2Mbit"), "{client}");
-    assert!(client.contains("limit 3500"), "{client}");
+    // A jitter with a rate is two qdiscs: the rate first, the delay with its jitter in its child (see
+    // `netem.rs` for why). `tc` does not print the name of the distribution, so that the normal one is in use
+    // is for the fidelity tests to show.
+    let root = client
+        .lines()
+        .find(|line| line.contains(" root "))
+        .unwrap_or_else(|| panic!("no root qdisc in: {client}"));
+    let child = client
+        .lines()
+        .find(|line| line.contains("parent 1:1"))
+        .unwrap_or_else(|| panic!("no child qdisc in: {client}"));
+    assert!(
+        root.contains("limit 1000") && root.contains("rate 2Mbit"),
+        "{root}"
+    );
+    assert!(
+        !root.contains("delay"),
+        "the delay must not be in the rate stage: {root}"
+    );
+    assert!(
+        child.contains("delay 20ms  5ms") && child.contains("limit 3500"),
+        "{child}"
+    );
+    assert!(
+        !child.contains("rate"),
+        "the rate must not be in the delay stage: {child}"
+    );
     let server = wait_for(&dir.join("server.txt"), "netem");
     assert!(server.contains("delay 1.5ms"), "{server}");
     assert!(!server.contains("rate"), "{server}");

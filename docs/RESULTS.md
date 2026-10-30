@@ -24,7 +24,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
   },
   "provenance": {
     "netscenario": "0.0.0",
-    "started_at": "2026-10-30T12:27:30Z",
+    "started_at": "2026-10-30T14:41:06Z",
     "backend": "kernel",
     "backend_details": {
       "rights": "user namespace",
@@ -69,33 +69,33 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
       "start_ns": 0,
       "duration_ns": 3000000000,
       "sent": 625,
-      "received": 620,
-      "lost": 5,
-      "loss_ratio": 0.008,
+      "received": 619,
+      "lost": 6,
+      "loss_ratio": 0.0096,
       "duplicates": 0,
-      "reordered": 0,
+      "reordered": 170,
       "unexpected": 0,
       "delay": {
-        "min_ns": 31168696,
-        "mean_ns": 42869547,
-        "p50_ns": 42615470,
-        "p90_ns": 48602048,
-        "p95_ns": 50225591,
-        "p99_ns": 54035378,
-        "p999_ns": 56984904,
-        "max_ns": 56984904
+        "min_ns": 28755827,
+        "mean_ns": 41232904,
+        "p50_ns": 41380790,
+        "p90_ns": 47206574,
+        "p95_ns": 49154956,
+        "p99_ns": 52603430,
+        "p999_ns": 56542754,
+        "max_ns": 56542754
       },
       "throughput": {
         "bin_ns": 1000000000,
         "bits_per_second": [
-          1910400.0,
+          1920000.0,
+          1968000.0,
           1977600.0,
-          1987200.0,
           76800.0
         ]
       },
       "sender": {
-        "max_lateness_ns": 189,
+        "max_lateness_ns": 143,
         "send_errors": 0,
         "first_error": null
       },
@@ -179,9 +179,9 @@ The seed of one direction is derived from the seed of the run, the index of the 
 One JSON object on each line, one line for each packet of the workload, in the order of the sequence numbers:
 
 ```jsonl
-{"workload":"media","sequence":0,"send_ns":0,"receive_ns":44769589,"delay_ns":44769589}
-{"workload":"media","sequence":1,"send_ns":4799877,"receive_ns":45736031,"delay_ns":40936154}
-{"workload":"media","sequence":2,"send_ns":9599885,"receive_ns":54536178,"delay_ns":44936293}
+{"workload":"media","sequence":0,"send_ns":0,"receive_ns":43634952,"delay_ns":43634952}
+{"workload":"media","sequence":1,"send_ns":4799944,"receive_ns":41036749,"delay_ns":36236805}
+{"workload":"media","sequence":2,"send_ns":9599959,"receive_ns":43161561,"delay_ns":33561602}
 {"workload":"media","sequence":17,"lost":true}
 {"workload":"media","sequence":18,"duplicate":true,"send_ns":86400000,"receive_ns":131000000,"delay_ns":44600000}
 ```

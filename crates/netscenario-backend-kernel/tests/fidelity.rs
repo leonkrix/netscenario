@@ -376,22 +376,28 @@ fn cases() -> Vec<Case> {
             seconds: 8,
             settle_seconds: 1,
             bounds: vec![
-                // The rate stage keeps the order: a packet leaves at the later of its own moment and the moment of
-                // its predecessor, plus its serialisation (0.994 ms for a frame of 1,242 bytes). A model of that
-                // gives a mean of 42.6 ms for these numbers.
+                // The rate first, then the delay with its jitter: the serialisation of a frame of 1,242 bytes at
+                // 10 mbit is 0.994 ms, and the jitter is the configured one
                 Bound {
                     metric: Metric::MeanDelayMs,
-                    expected: 42.6,
-                    lo: 41.8,
-                    hi: 43.6,
-                    reason: "KNOWN: not 40 + 1.0 ms. Because the rate stage forces the order, delays can only grow: a model of `sch_netem` gives 42.6 ms (see docs/FIDELITY.md)",
+                    expected: 41.0,
+                    lo: 40.5,
+                    hi: 41.8,
+                    reason: "40 ms plus the 0.994 ms that a frame needs at 10 mbit. The mean of 1,667 delays has a standard deviation of 0.12 ms. One qdisc for both gave 42.6 ms, because its rate stage cuts the jitter off (D-030)",
+                },
+                Bound {
+                    metric: Metric::StdevDelayMs,
+                    expected: 5.0,
+                    lo: 4.65,
+                    hi: 5.35,
+                    reason: "the amount is the standard deviation; the estimate over 1,667 delays has a standard deviation of 0.09 ms. One qdisc for both gave 4.1 ms",
                 },
                 Bound {
                     metric: Metric::ReorderedRatio,
-                    expected: 0.0,
-                    lo: 0.0,
-                    hi: 0.0,
-                    reason: "KNOWN: with a rate limit the packets stay in order, jitter or not",
+                    expected: 0.29,
+                    lo: 0.15,
+                    hi: 0.40,
+                    reason: "as for any jitter, packets overtake each other when the jitter is larger than the gap (4.8 ms here): the model of the series of the two stages gives 29 %",
                 },
                 Bound {
                     metric: Metric::LossRatio,
@@ -615,17 +621,38 @@ fn jitter_with_a_rate_limit_raises_the_mean_and_keeps_the_order() {
 
 // ---- the model behind the case of a jitter with a rate limit ----
 
-/// A model of `sch_netem` with a delay, a normal jitter and a rate limit: a packet leaves at the later of its
-/// own moment and the moment of its predecessor, plus its serialisation, while the predecessor is still
-/// queued (`netem_enqueue` in `net/sched/sch_netem.c`). Returns the mean delay in milliseconds over `n` packets.
-/// The numbers are drawn from a small generator with a fixed seed, so the answer is always the same.
-fn model_mean_delay_ms(
+/// What a model of a direction with a delay, a normal jitter and a rate limit gives for a stream.
+#[derive(Debug)]
+struct Modelled {
+    /// The delay of every packet, in the order of the stream.
+    delays_ms: Vec<f64>,
+    mean_ms: f64,
+    stdev_ms: f64,
+    reordered_ratio: f64,
+}
+
+/// How the rate and the delay with its jitter are put together.
+#[derive(Clone, Copy)]
+enum Composition {
+    /// One `netem` qdisc for both: a packet leaves at the later of its own moment and the moment of the packet
+    /// in front of it, plus its serialisation (`netem_enqueue` in `net/sched/sch_netem.c`). The rate stage
+    /// acts behind the jitter and keeps the order.
+    OneQdisc,
+    /// The rate first, in a queue of its own, then each packet travels for its own delay. This is what the
+    /// scenario says, and what the backend builds with two qdiscs.
+    Series,
+}
+
+/// Runs the model for `n` packets a gap of `interval_ms` apart. The numbers are drawn from a small generator
+/// with a fixed seed, so the answer is always the same.
+fn model(
+    composition: Composition,
     n: usize,
     interval_ms: f64,
     mean_ms: f64,
     sigma_ms: f64,
     serialisation_ms: f64,
-) -> f64 {
+) -> Modelled {
     let mut state = 0x9E37_79B9_7F4A_7C15_u64;
     let mut uniform = move || {
         // xorshift64*, mapped to (0, 1)
@@ -634,34 +661,89 @@ fn model_mean_delay_ms(
         state ^= state >> 27;
         ((state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64 + 0.5) / (1_u64 << 53) as f64
     };
-    let mut last_leaves: Option<f64> = None;
-    let mut total = 0.0;
+    let (mut last_leaves, mut serialised_until): (Option<f64>, f64) = (None, 0.0);
+    let (mut delays, mut highest_arrival, mut reordered) =
+        (Vec::with_capacity(n), f64::MIN, 0_usize);
     for i in 0..n {
-        let arrives = i as f64 * interval_ms;
+        let enters = i as f64 * interval_ms;
         // Box-Muller; the table of netem is cut off at four standard deviations
         let normal =
             (-2.0 * uniform().ln()).sqrt() * (2.0 * std::f64::consts::PI * uniform()).cos();
         let drawn = (mean_ms + sigma_ms * normal.clamp(-4.0, 4.0)).max(0.0);
-        let leaves = match last_leaves {
-            Some(before) if before > arrives => before.max(arrives + drawn) + serialisation_ms,
-            _ => arrives + drawn + serialisation_ms,
+        let arrives = match composition {
+            Composition::OneQdisc => {
+                let leaves = match last_leaves {
+                    Some(before) if before > enters => {
+                        before.max(enters + drawn) + serialisation_ms
+                    }
+                    _ => enters + drawn + serialisation_ms,
+                };
+                last_leaves = Some(leaves);
+                leaves
+            }
+            Composition::Series => {
+                serialised_until = serialised_until.max(enters) + serialisation_ms;
+                serialised_until + drawn
+            }
         };
-        last_leaves = Some(leaves);
-        total += leaves - arrives;
+        if arrives < highest_arrival {
+            reordered += 1;
+        }
+        highest_arrival = highest_arrival.max(arrives);
+        delays.push(arrives - enters);
     }
-    total / n as f64
+    let mean = delays.iter().sum::<f64>() / n as f64;
+    let variance = delays.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / n as f64;
+    Modelled {
+        delays_ms: delays,
+        mean_ms: mean,
+        stdev_ms: variance.sqrt(),
+        reordered_ratio: reordered as f64 / n as f64,
+    }
 }
 
-/// The 42.6 ms of the case are not a guess: the model gives them, and without the rate stage it gives the
-/// configured 40 ms.
+/// The numbers of the case of a jitter with a rate limit are not guesses: a model gives them. One qdisc for
+/// both gives a mean 1.6 ms too high, a jitter of 4.1 ms instead of 5 and no reordering, which is what was
+/// measured before the backend built two qdiscs. The series of the two stages gives what the scenario says.
 #[test]
-fn the_model_of_netem_gives_the_mean_of_a_jitter_with_a_rate_limit() {
+fn the_model_gives_the_numbers_of_a_jitter_with_a_rate_limit() {
     // 1,200 bytes of payload and 42 of headers at 10 mbit take 0.9936 ms; a packet every 4.8 ms
-    let with_rate = model_mean_delay_ms(200_000, 4.8, 40.0, 5.0, 0.9936);
-    assert!((42.5..42.7).contains(&with_rate), "{with_rate}");
-    // Canary: the model can say something else. Without the rate stage the jitter alone leaves the mean at 40
-    let spaced_out = model_mean_delay_ms(200_000, 400.0, 40.0, 5.0, 0.0);
-    assert!((39.95..40.05).contains(&spaced_out), "{spaced_out}");
+    let one = model(Composition::OneQdisc, 200_000, 4.8, 40.0, 5.0, 0.9936);
+    assert!((42.5..42.7).contains(&one.mean_ms), "{one:?}");
+    assert!((4.0..4.3).contains(&one.stdev_ms), "{one:?}");
+    assert!(one.reordered_ratio.abs() < f64::EPSILON, "{one:?}");
+    let series = model(Composition::Series, 200_000, 4.8, 40.0, 5.0, 0.9936);
+    assert!((40.95..41.05).contains(&series.mean_ms), "{series:?}");
+    assert!((4.95..5.05).contains(&series.stdev_ms), "{series:?}");
+    assert!((0.2..0.35).contains(&series.reordered_ratio), "{series:?}");
+    // Canary: the model can say something else. With a gap far longer than the jitter, one qdisc is as good
+    // as two, and with no rate the mean is the configured one
+    let spaced = model(Composition::OneQdisc, 200_000, 400.0, 40.0, 5.0, 0.0);
+    assert!((39.95..40.05).contains(&spaced.mean_ms), "{spaced:?}");
+}
+
+/// Canary: the bounds of the case would have caught the backend as it was before it built two qdiscs. The
+/// numbers of one qdisc for both (the model agrees with what was measured: a mean of 42.7 ms, a jitter of 4.2
+/// ms, no reordering) are judged with the bounds of the case, and every one of the three fails.
+#[test]
+fn canary_the_bounds_of_the_case_catch_a_rate_stage_behind_the_jitter() {
+    let one = model(Composition::OneQdisc, 1_667, 4.8, 40.0, 5.0, 0.9936);
+    let mut delays = one.delays_ms.clone();
+    delays.sort_by(f64::total_cmp);
+    let measurement = synthetic(&delays, 0.0, one.reordered_ratio, 0.0);
+    let failed = failing_metrics("6-jitter-and-rate", &measurement);
+    assert!(failed.contains(&Metric::MeanDelayMs), "{one:?} {failed:?}");
+    assert!(failed.contains(&Metric::StdevDelayMs), "{one:?} {failed:?}");
+    assert!(
+        failed.contains(&Metric::ReorderedRatio),
+        "{one:?} {failed:?}"
+    );
+    // and the series of the two stages passes, so the canary is not just a case that fails for everything
+    let series = model(Composition::Series, 1_667, 4.8, 40.0, 5.0, 0.9936);
+    let mut delays = series.delays_ms.clone();
+    delays.sort_by(f64::total_cmp);
+    let measurement = synthetic(&delays, 0.0, series.reordered_ratio, 0.0);
+    assert_eq!(failing_metrics("6-jitter-and-rate", &measurement), []);
 }
 
 // ---- the judging itself ----

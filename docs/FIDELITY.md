@@ -4,7 +4,7 @@ Does the network do what the scenario says, and by how much does it deviate? Thi
 
 ## How to read the tables
 
-- **Expected** is what the configuration predicts, or, for the three cases marked KNOWN, what a named mechanism of `netem` predicts.
+- **Expected** is what the configuration predicts or, where the configuration alone does not say, what a model of the scenario predicts (the mean, the deviation and the reordering of the case with a jitter and a rate). Two cases are marked KNOWN: that jitter reorders packets is a property of `netem`, and the expected share is what was seen.
 - **Measured** is what this run found. A ✔ means inside the bounds, a ✘ is a failure of the test.
 - **Deviation** is measured minus expected.
 - **Allowed** is the range in which the test passes, and **Why** says where it comes from.
@@ -35,8 +35,8 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| smallest delay | 20.000 ms | 20.010 ms ✔ | +0.010 ms | 20.000 ms to 20.500 ms | no packet can be faster than the link; the path adds 0.016 ms (spike S4) |
-| median delay | 20.000 ms | 20.017 ms ✔ | +0.017 ms | 20.000 ms to 20.500 ms | `netem` is exact to the microsecond; 0.5 ms leave room for a busy shared runner |
+| smallest delay | 20.000 ms | 20.008 ms ✔ | +0.008 ms | 20.000 ms to 20.500 ms | no packet can be faster than the link; the path adds 0.016 ms (spike S4) |
+| median delay | 20.000 ms | 20.015 ms ✔ | +0.015 ms | 20.000 ms to 20.500 ms | `netem` is exact to the microsecond; 0.5 ms leave room for a busy shared runner |
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a link without loss loses nothing |
 | reordered packets | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a fixed delay keeps the order |
 
@@ -67,10 +67,10 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
 | smallest delay | 15.000 ms | 15.010 ms ✔ | +0.010 ms | 15.000 ms to 15.500 ms | uniform jitter reaches down to the delay minus the amount and no further |
-| 99th percentile of the delay | 24.900 ms | 24.906 ms ✔ | +0.006 ms | 24.500 ms to 25.500 ms | the upper end of a uniform spread, 15 + 0.99 * 10 ms. The largest delay is not used: one packet disturbed by the machine would fail it, 60 are needed to fail the 99th percentile |
-| mean delay | 20.000 ms | 20.056 ms ✔ | +0.056 ms | 19.850 ms to 20.500 ms | the mean of 6,000 uniform delays has a standard deviation of 0.04 ms; four of them below, noise above |
-| standard deviation of the delay | 2.887 ms | 2.885 ms ✔ | -0.002 ms | 2.740 ms to 3.040 ms | 5 / sqrt(3) for a uniform distribution of width 10 ms; the estimate has a standard deviation of 0.02 ms, the bound is wider because the measurement adds noise |
-| reordered packets | 58.00 % | 58.87 % ✔ | +0.87 pp | 30.00 % to 80.00 % | KNOWN: jitter larger than the gap between packets (1 ms here) reorders them, because `netem` sends each packet at its own time; 58 % were seen |
+| 99th percentile of the delay | 24.900 ms | 24.901 ms ✔ | +0.001 ms | 24.500 ms to 25.500 ms | the upper end of a uniform spread, 15 + 0.99 * 10 ms. The largest delay is not used: one packet disturbed by the machine would fail it, 60 are needed to fail the 99th percentile |
+| mean delay | 20.000 ms | 19.978 ms ✔ | -0.022 ms | 19.850 ms to 20.500 ms | the mean of 6,000 uniform delays has a standard deviation of 0.04 ms; four of them below, noise above |
+| standard deviation of the delay | 2.887 ms | 2.865 ms ✔ | -0.022 ms | 2.740 ms to 3.040 ms | 5 / sqrt(3) for a uniform distribution of width 10 ms; the estimate has a standard deviation of 0.02 ms, the bound is wider because the measurement adds noise |
+| reordered packets | 58.00 % | 58.28 % ✔ | +0.28 pp | 30.00 % to 80.00 % | KNOWN: jitter larger than the gap between packets (1 ms here) reorders them, because `netem` sends each packet at its own time; 58 % were seen |
 
 #### A delay of 20 ms with a normal jitter of 5 ms
 
@@ -78,10 +78,10 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| mean delay | 20.000 ms | 20.083 ms ✔ | +0.083 ms | 19.700 ms to 20.500 ms | the mean of 6,000 normal delays has a standard deviation of 0.07 ms; four of them below, noise above |
-| standard deviation of the delay | 5.000 ms | 4.967 ms ✔ | -0.033 ms | 4.700 ms to 5.300 ms | the amount is the standard deviation (spike S4 measured 5.03); the table of `netem` is cut off at four standard deviations |
-| 99th percentile of the delay | 31.600 ms | 31.558 ms ✔ | -0.042 ms | 30.400 ms to 32.600 ms | the mean plus 2.326 standard deviations; the estimate has a standard deviation of 0.24 ms, four of them on each side, with noise on the upper side |
-| reordered packets | 72.00 % | 71.52 % ✔ | -0.48 pp | 40.00 % to 90.00 % | KNOWN: as with the uniform jitter; 72 % were seen |
+| mean delay | 20.000 ms | 19.977 ms ✔ | -0.023 ms | 19.700 ms to 20.500 ms | the mean of 6,000 normal delays has a standard deviation of 0.07 ms; four of them below, noise above |
+| standard deviation of the delay | 5.000 ms | 5.061 ms ✔ | +0.061 ms | 4.700 ms to 5.300 ms | the amount is the standard deviation (spike S4 measured 5.03); the table of `netem` is cut off at four standard deviations |
+| 99th percentile of the delay | 31.600 ms | 31.838 ms ✔ | +0.238 ms | 30.400 ms to 32.600 ms | the mean plus 2.326 standard deviations; the estimate has a standard deviation of 0.24 ms, four of them on each side, with noise on the upper side |
+| reordered packets | 72.00 % | 72.05 % ✔ | +0.05 pp | 40.00 % to 90.00 % | KNOWN: as with the uniform jitter; 72 % were seen |
 
 #### A delay of 40 ms with a normal jitter of 5 ms and a rate limit of 10 mbit
 
@@ -89,15 +89,16 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| mean delay | 42.600 ms | 42.823 ms ✔ | +0.223 ms | 41.800 ms to 43.600 ms | KNOWN: not 40 + 1.0 ms. Because the rate stage forces the order, delays can only grow: a model of `sch_netem` gives 42.6 ms (see docs/FIDELITY.md) |
-| reordered packets | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | KNOWN: with a rate limit the packets stay in order, jitter or not |
+| mean delay | 41.000 ms | 41.059 ms ✔ | +0.059 ms | 40.500 ms to 41.800 ms | 40 ms plus the 0.994 ms that a frame needs at 10 mbit. The mean of 1,667 delays has a standard deviation of 0.12 ms. One qdisc for both gave 42.6 ms, because its rate stage cuts the jitter off (D-030) |
+| standard deviation of the delay | 5.000 ms | 5.008 ms ✔ | +0.008 ms | 4.650 ms to 5.350 ms | the amount is the standard deviation; the estimate over 1,667 delays has a standard deviation of 0.09 ms. One qdisc for both gave 4.1 ms |
+| reordered packets | 29.00 % | 28.55 % ✔ | -0.45 pp | 15.00 % to 40.00 % | as for any jitter, packets overtake each other when the jitter is larger than the gap (4.8 ms here): the model of the series of the two stages gives 29 % |
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | the offered 2 mbit is far below the 10 mbit of the link |
 
 <!-- fidelity:end -->
 
 ## What to know when you write a scenario
 
-These are the findings behind the KNOWN rows. They are properties of `netem`, the reference of the project, and every one is in [COVERAGE.md](COVERAGE.md) as well.
+These are the findings behind the KNOWN rows and the case of the two qdiscs. They are properties of `netem`, the reference of the project, and every one is in [COVERAGE.md](COVERAGE.md) as well.
 
 **The rate counts Ethernet frames.** `rate 2mbit` limits the frames of the link, and a frame is the payload plus 8 bytes of UDP, 20 of IP and 14 of Ethernet. The payload that gets through is `rate × payload / (payload + 42)`: with payloads of 1,000 bytes 1.919 mbit, with payloads of 100 bytes 1.408 mbit. The case measured 1.9200 mbit against a prediction of 1.9194. A scenario that wants 2 mbit of payload has to ask for a rate that is higher by that factor, or use bigger packets.
 
@@ -105,7 +106,7 @@ These are the findings behind the KNOWN rows. They are properties of `netem`, th
 
 **Jitter reorders packets.** `netem` gives every packet its own random delay and sends it at its own moment. If the jitter is larger than the gap between two packets, a later packet overtakes an earlier one. In the jitter cases a packet every millisecond with 5 ms of jitter gave 58 % reordered packets for a uniform and 72 % for a normal jitter (`reordered` in the result counts the packets that arrived after a packet with a higher number, RFC 4737). The distribution of the delays is the configured one: the mean was within 0.13 ms of the configured one and the standard deviation within 0.04 ms of 5 ms (over the runs made while writing this page), and the uniform spread reached 15.01 ms at the lower end. If your program cannot cope with reordering, the jitter has to be smaller than the gap between its packets.
 
-**Jitter and a rate limit in one direction raise the mean delay.** With a rate limit the packets leave in order: a packet cannot leave before the one in front of it. So the delays can only grow, and the jitter is cut off from below. For a delay of 40 ms with a normal jitter of 5 ms, a rate of 10 mbit and a packet every 4.8 ms, a model of `netem_enqueue` (a packet leaves at the later of its own moment and its predecessor's moment, plus its serialisation of 0.99 ms) gives a mean of 42.6 ms; the model is a test in the file ([`the_model_of_netem_gives_the_mean_of_a_jitter_with_a_rate_limit`](../crates/netscenario-backend-kernel/tests/fidelity.rs)) and the measurement was 42.6 to 42.8 ms. Without the rate limit the same jitter gives 40 ms. The example scenario `lte-like.yaml` has exactly this combination, which is how it was found: its median delay is 42.5 ms, not 40. Whether such a scenario should be refused, run with a notice in the result, or counted as limited is open (PLAN, section 12a).
+**A rate and a jitter in one direction needed two qdiscs.** This is the finding that the fidelity tests were written to settle. The first version of the backend put everything of a direction into one `netem` qdisc, and the example `lte-like.yaml` (a delay of 40 ms, a normal jitter of 5 ms, a rate of 10 mbit) came out with a median of 42.5 ms. Measured one by one, the 0.99 ms of the rate was the serialisation of a frame, but the rest came from the combination: with a `rate`, `netem` sends a packet at the later of its own moment and the moment of the packet in front of it, so no packet can overtake another, the delays can only grow, and the jitter is cut off from below. The measured jitter was 4.1 ms instead of 5, the mean 42.7 instead of 41.0, the smallest delay 32 ms instead of 21 ms, and nothing was reordered. A model of this behaviour (`netem_enqueue`, a test in the file) gives 42.63 ms, 4.02 ms and no reordering. The scenario says something else: the packets wait for the rate in a queue, in order, and then each travels for its own delay. That is a rate stage followed by a delay stage, and the backend builds exactly that with two qdiscs, the rate in the root and the delay with its jitter in its child (`netem.rs`). Measured: 41.06 ms, 5.01 ms, the smallest delay 21 ms (the table of `netem` is cut off at four standard deviations), and 28.6 % reordered, against 41.01, 4.99 and 28.8 % from the model of the series. The case is in the tables above, and a canary judges the numbers of the old behaviour with its bounds: all three of them fail. A direction with only a jitter, only a rate, or a delay and a rate keeps its one qdisc, because there the two ways are the same.
 
 **The delay is exact; the noise is small.** A fixed delay was 20.010 ms at the smallest and 20.017 ms at the median in the reference run, which is the delay plus 0.01 ms for the path (spike S4 measured 0.016 ms). On the CI runners the path costs a little more; the bounds allow 0.5 ms.
 
@@ -114,6 +115,7 @@ These are the findings behind the KNOWN rows. They are properties of `netem`, th
 ## What is not measured yet
 
 - **The round trip time** (release 0.1 measures the one-way delay) and the **RFC 3550 jitter** (release 0.2).
+- **A uniform jitter with a rate, and the loss together with the two stages.** The code is the same and the unit tests cover the arguments; there is no case that measures them yet.
 - **Both directions at once, and several links.** Release 0.1 has one link. The cases impair the forward direction and measure the stream that goes that way.
 - **Burst loss, duplication, corruption, outages** (release 0.2) and the **timeline** (changes over time, release 0.2) have no cases yet. Each new impairment gets its case here in the release that brings it.
 - **Packet rates above about 1,000 per second** and long runs. The cases send 200 to 1,000 packets per second for 6 to 8 seconds.
