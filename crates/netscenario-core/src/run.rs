@@ -7,7 +7,9 @@
 //!
 //! The network is torn down whatever happens. If the run fails, the first error is returned.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use netscenario_agent::clock::monotonic_ns;
@@ -20,6 +22,7 @@ use crate::error::Error;
 use crate::export::write_packets;
 use crate::hash::sha256_hex;
 use crate::machine::collect;
+use crate::observe::{CancelToken, RunEvent, RunObserver};
 use crate::provision::{Provisioned, impairments_of, provision};
 use crate::result::{
     AcceptedRestriction, AddressInfo, RESULT_FORMAT, RESULT_VERSION, RunResult, ScenarioInfo,
@@ -37,7 +40,8 @@ const START_MARGIN: Duration = Duration::from_millis(500);
 const END_MARGIN: Duration = Duration::from_secs(30);
 
 /// The settings of a run.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[non_exhaustive]
 pub struct RunOptions {
     /// The agent program (`netscenario-agent`), started by path in the nodes.
     pub agent: PathBuf,
@@ -54,6 +58,26 @@ pub struct RunOptions {
     pub agent_memory_limit: u64,
     /// How long a receiver may take to say that it is ready.
     pub ready_timeout: Duration,
+    /// Told how the run is going (see [`RunEvent`]). Without it nobody is told.
+    pub observer: Option<Arc<dyn RunObserver>>,
+    /// Cancel it to stop the run: the network is torn down and the run returns [`Error::Cancelled`]. The run
+    /// looks at it at least every 200 milliseconds.
+    pub cancel: CancelToken,
+}
+
+impl std::fmt::Debug for RunOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunOptions")
+            .field("agent", &self.agent)
+            .field("out_dir", &self.out_dir)
+            .field("settle", &self.settle)
+            .field("export_packets", &self.export_packets)
+            .field("agent_memory_limit", &self.agent_memory_limit)
+            .field("ready_timeout", &self.ready_timeout)
+            .field("observer", &self.observer.as_ref().map(|_| "<observer>"))
+            .field("cancel", &self.cancel)
+            .finish()
+    }
 }
 
 impl RunOptions {
@@ -67,6 +91,103 @@ impl RunOptions {
             export_packets: false,
             agent_memory_limit: 1 << 30,
             ready_timeout: Duration::from_secs(10),
+            observer: None,
+            cancel: CancelToken::new(),
+        }
+    }
+
+    /// The same options, with an observer.
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<dyn RunObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    /// The same options, with a token that cancels the run.
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
+        self.cancel = cancel;
+        self
+    }
+}
+
+/// How often the progress of the workloads is reported.
+const PROGRESS_EVERY: Duration = Duration::from_secs(1);
+
+/// While the workloads run: when they started, how long they last, and when the next report is due.
+struct Workloads {
+    begin: Instant,
+    total: Duration,
+    next_report: Instant,
+}
+
+/// What a run looks at between its steps: whether it was cancelled, who is watching, and the progress.
+struct Control<'a> {
+    cancel: &'a CancelToken,
+    observer: Option<&'a dyn RunObserver>,
+    workloads: RefCell<Option<Workloads>>,
+}
+
+impl<'a> Control<'a> {
+    fn new(options: &'a RunOptions) -> Self {
+        Self {
+            cancel: &options.cancel,
+            observer: options.observer.as_deref(),
+            workloads: RefCell::new(None),
+        }
+    }
+
+    fn emit(&self, event: &RunEvent) {
+        if let Some(observer) = self.observer {
+            observer.event(event);
+        }
+    }
+
+    /// Called in every loop that waits and between the steps: stops the run if it was cancelled, and reports
+    /// the progress of the workloads once a second.
+    fn checkpoint(&self) -> Result<(), Error> {
+        if self.cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let report = {
+            let mut workloads = self.workloads.borrow_mut();
+            workloads.as_mut().and_then(|w| {
+                let now = Instant::now();
+                (now >= w.next_report).then(|| {
+                    while w.next_report <= now {
+                        w.next_report += PROGRESS_EVERY;
+                    }
+                    RunEvent::Progress {
+                        elapsed: now.saturating_duration_since(w.begin).min(w.total),
+                        total: w.total,
+                    }
+                })
+            })
+        };
+        if let Some(event) = report {
+            self.emit(&event);
+        }
+        Ok(())
+    }
+
+    /// The workloads begin at `begin` and last `total`.
+    fn workloads_started(&self, begin: Instant, total: Duration) {
+        *self.workloads.borrow_mut() = Some(Workloads {
+            begin,
+            total,
+            next_report: begin + PROGRESS_EVERY,
+        });
+        self.emit(&RunEvent::Started { duration: total });
+    }
+
+    /// The workloads are over: a last report at the full length.
+    fn workloads_done(&self) {
+        let done = self.workloads.borrow_mut().take();
+        if let Some(w) = done {
+            self.emit(&RunEvent::Progress {
+                elapsed: w.total,
+                total: w.total,
+            });
         }
     }
 }
@@ -105,13 +226,17 @@ struct Measured {
 /// - the errors of [`provision`] (the scenario is refused, or the network cannot be built),
 /// - [`Error::Run`] if an agent does not start, does not answer in time or ends badly, or a file cannot be
 ///   written,
-/// - [`Error::Backend`] if the backend fails while the run is going.
+/// - [`Error::Backend`] if the backend fails while the run is going,
+/// - [`Error::Cancelled`] if `options.cancel` was cancelled; the network is torn down all the same.
 pub fn run(
     backend: &mut dyn Backend,
     scenario: &Scenario,
     options: &RunOptions,
 ) -> Result<RunResult, Error> {
     let started = SystemTime::now();
+    let control = Control::new(options);
+    // A run that was cancelled before it began builds nothing
+    control.checkpoint()?;
     std::fs::create_dir_all(&options.out_dir).map_err(|error| {
         failure(
             "create the directory for the result",
@@ -119,7 +244,12 @@ pub fn run(
         )
     })?;
     let provisioned = provision(backend, scenario)?;
-    let measured = measure(backend, scenario, options, &provisioned);
+    control.emit(&RunEvent::Provisioned {
+        nodes: provisioned.nodes.len(),
+        links: provisioned.links.len(),
+    });
+    let measured = measure(backend, scenario, options, &provisioned, &control);
+    control.emit(&RunEvent::TearingDown);
     let torn_down = backend.teardown();
     let (measured, settle) = measured?;
     torn_down?;
@@ -177,6 +307,7 @@ pub fn run(
     let path = options.out_dir.join("result.json");
     std::fs::write(&path, result.to_json())
         .map_err(|error| failure("write the result", format!("{}: {error}", path.display())))?;
+    control.emit(&RunEvent::Finished);
     Ok(result)
 }
 
@@ -333,9 +464,11 @@ fn wait_for_line(
     program: ProgramHandle,
     within: Duration,
     what: &str,
+    control: &Control<'_>,
 ) -> Result<String, Error> {
     let deadline = Instant::now() + within;
     loop {
+        control.checkpoint()?;
         let state = backend.poll_program(program, Duration::from_millis(200))?;
         if let Some(line) = state.lines.into_iter().next() {
             return Ok(line);
@@ -364,9 +497,11 @@ fn wait_for_end(
     program: ProgramHandle,
     deadline: Instant,
     what: &str,
+    control: &Control<'_>,
 ) -> Result<Vec<String>, Error> {
     let mut lines = Vec::new();
     loop {
+        control.checkpoint()?;
         let state = backend.poll_program(program, Duration::from_millis(200))?;
         lines.extend(state.lines);
         if let Some(exit) = state.exit {
@@ -409,9 +544,11 @@ fn start_receivers(
     backend: &mut dyn Backend,
     flows: &[Flow<'_>],
     options: &RunOptions,
+    control: &Control<'_>,
 ) -> Result<Vec<ProgramHandle>, Error> {
     let mut receivers = Vec::new();
     for flow in flows {
+        control.checkpoint()?;
         let what = format!("start the receiver of '{}'", flow.workload.id);
         let mut arguments = strings(&["recv", "--bind", &flow.to_address, "--flow"]);
         arguments.push(flow.index.to_string());
@@ -420,7 +557,7 @@ fn start_receivers(
             &flow.records_file.display().to_string(),
         ]));
         let program = backend.start_program(flow.to_node, &agent_program(options, &arguments))?;
-        let line = wait_for_line(backend, program, options.ready_timeout, &what)?;
+        let line = wait_for_line(backend, program, options.ready_timeout, &what, control)?;
         match event(&line, &what)? {
             Event::Ready { .. } => {}
             other => {
@@ -470,7 +607,9 @@ fn measure(
     scenario: &Scenario,
     options: &RunOptions,
     provisioned: &Provisioned,
+    control: &Control<'_>,
 ) -> Result<(Vec<Measured>, Duration), Error> {
+    control.checkpoint()?;
     if !options.agent.is_file() {
         return Err(failure(
             "find the agent",
@@ -482,7 +621,12 @@ fn measure(
     }
     let flows = plan(scenario, provisioned, options)?;
 
-    let receivers = start_receivers(backend, &flows, options)?;
+    let receivers = start_receivers(backend, &flows, options, control)?;
+    control.emit(&RunEvent::ReceiversReady {
+        count: receivers.len(),
+    });
+    control.checkpoint()?;
+    let begin_at = Instant::now() + START_MARGIN;
     let begin = monotonic_ns() + nanos(START_MARGIN);
     let senders = start_senders(backend, &flows, options, begin)?;
 
@@ -491,10 +635,11 @@ fn measure(
         .map(|flow| flow.start + flow.duration)
         .max()
         .unwrap_or(Duration::ZERO);
+    control.workloads_started(begin_at, latest_end);
     let deadline = Instant::now() + START_MARGIN + latest_end + END_MARGIN;
     let mut sent = Vec::new();
     for (program, what) in &senders {
-        let lines = wait_for_end(backend, *program, deadline, what)?;
+        let lines = wait_for_end(backend, *program, deadline, what, control)?;
         match lines.last().map(|line| event(line, what)).transpose()? {
             Some(Event::Sent(summary)) => sent.push(summary),
             other => {
@@ -505,17 +650,35 @@ fn measure(
             }
         }
     }
+    control.workloads_done();
 
     // The packets that are still in the network arrive before the receivers are told to stop
     let settle = options
         .settle
         .unwrap_or_else(|| Duration::from_secs(1) + longest_hold(scenario) * 2);
-    std::thread::sleep(settle);
+    control.emit(&RunEvent::Settling { wait: settle });
+    let settled = Instant::now() + settle;
+    loop {
+        control.checkpoint()?;
+        let left = settled.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        std::thread::sleep(left.min(Duration::from_millis(100)));
+    }
+    control.emit(&RunEvent::Collecting);
     let mut measured = Vec::new();
     for ((receiver, flow), sent) in receivers.iter().zip(&flows).zip(sent) {
+        control.checkpoint()?;
         let what = format!("stop the receiver of '{}'", flow.workload.id);
         backend.send_line(*receiver, "stop")?;
-        let lines = wait_for_end(backend, *receiver, Instant::now() + END_MARGIN, &what)?;
+        let lines = wait_for_end(
+            backend,
+            *receiver,
+            Instant::now() + END_MARGIN,
+            &what,
+            control,
+        )?;
         let received = match lines.last().map(|line| event(line, &what)).transpose()? {
             Some(Event::Received(summary)) => summary,
             other => {
@@ -873,6 +1036,174 @@ mod tests {
         assert_eq!(backend.calls.last().map(String::as_str), Some("teardown"));
         assert!(!options.out_dir.join("result.json").exists());
         let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// An observer that keeps what it is told, and cancels when it hears `cancel_at`.
+    #[derive(Default)]
+    struct Recorder {
+        events: std::sync::Mutex<Vec<RunEvent>>,
+        cancel_at: Option<(RunEvent, CancelToken)>,
+    }
+
+    impl RunObserver for Recorder {
+        fn event(&self, event: &RunEvent) {
+            self.events.lock().unwrap().push(event.clone());
+            if let Some((when, token)) = &self.cancel_at
+                && when == event
+            {
+                token.cancel();
+            }
+        }
+    }
+
+    fn observed(
+        name: &str,
+        cancel_at: Option<RunEvent>,
+    ) -> (RunOptions, Arc<Recorder>, CancelToken) {
+        let token = CancelToken::new();
+        let recorder = Arc::new(Recorder {
+            events: std::sync::Mutex::default(),
+            cancel_at: cancel_at.map(|event| (event, token.clone())),
+        });
+        let options = options(name)
+            .with_observer(recorder.clone())
+            .with_cancel(token.clone());
+        (options, recorder, token)
+    }
+
+    #[test]
+    fn a_run_tells_its_phases_in_order() {
+        let mut backend = Fake::new(None);
+        let (options, recorder, _) = observed("events", None);
+        run(&mut backend, &scenario(), &options).unwrap();
+        assert_eq!(
+            *recorder.events.lock().unwrap(),
+            [
+                RunEvent::Provisioned { nodes: 2, links: 1 },
+                RunEvent::ReceiversReady { count: 1 },
+                RunEvent::Started {
+                    duration: Duration::from_secs(1)
+                },
+                // The fake finishes at once, so only the last report comes
+                RunEvent::Progress {
+                    elapsed: Duration::from_secs(1),
+                    total: Duration::from_secs(1)
+                },
+                RunEvent::Settling {
+                    wait: Duration::from_millis(1)
+                },
+                RunEvent::Collecting,
+                RunEvent::TearingDown,
+                RunEvent::Finished,
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// A run that was cancelled before it began builds nothing and says nothing.
+    #[test]
+    fn a_cancel_before_the_start_builds_nothing() {
+        let mut backend = Fake::new(None);
+        let (options, recorder, token) = observed("cancel-early", None);
+        token.cancel();
+        let error = run(&mut backend, &scenario(), &options).unwrap_err();
+        assert!(matches!(error, Error::Cancelled), "{error}");
+        assert_eq!(error.to_string(), "the run was cancelled");
+        assert!(backend.calls.is_empty(), "{:?}", backend.calls);
+        assert!(recorder.events.lock().unwrap().is_empty());
+        assert!(!options.out_dir.join("result.json").exists());
+    }
+
+    /// Canary: a cancel in any phase of the run stops it, tears the network down, writes no result and does
+    /// not say that it finished.
+    #[test]
+    fn a_cancel_in_any_phase_tears_down_and_returns_cancelled() {
+        for phase in [
+            RunEvent::Provisioned { nodes: 2, links: 1 },
+            RunEvent::ReceiversReady { count: 1 },
+            RunEvent::Started {
+                duration: Duration::from_secs(1),
+            },
+            RunEvent::Progress {
+                elapsed: Duration::from_secs(1),
+                total: Duration::from_secs(1),
+            },
+            RunEvent::Settling {
+                wait: Duration::from_millis(1),
+            },
+            RunEvent::Collecting,
+        ] {
+            let mut backend = Fake::new(None);
+            let (options, recorder, _) = observed("cancel-phase", Some(phase.clone()));
+            let error = run(&mut backend, &scenario(), &options).unwrap_err();
+            assert!(matches!(error, Error::Cancelled), "{phase:?}: {error}");
+            assert_eq!(
+                backend.calls.iter().filter(|c| *c == "teardown").count(),
+                1,
+                "{phase:?}: {:?}",
+                backend.calls
+            );
+            assert_eq!(backend.calls.last().map(String::as_str), Some("teardown"));
+            let events = recorder.events.lock().unwrap();
+            assert_eq!(events.last(), Some(&RunEvent::TearingDown), "{phase:?}");
+            assert!(!events.contains(&RunEvent::Finished), "{phase:?}");
+            assert!(!options.out_dir.join("result.json").exists(), "{phase:?}");
+            let _ = std::fs::remove_dir_all(&options.out_dir);
+        }
+    }
+
+    /// The progress is reported once a second, from the start of the workloads, and never past the end.
+    #[test]
+    fn the_progress_is_reported_once_a_second() {
+        let (options, recorder, _) = observed("progress", None);
+        let control = Control::new(&options);
+        // Nothing before the workloads
+        control.checkpoint().unwrap();
+        assert!(recorder.events.lock().unwrap().is_empty());
+        control.workloads_started(
+            Instant::now()
+                .checked_sub(Duration::from_millis(2500))
+                .unwrap(),
+            Duration::from_secs(10),
+        );
+        control.checkpoint().unwrap();
+        control.checkpoint().unwrap();
+        {
+            let events = recorder.events.lock().unwrap();
+            assert_eq!(
+                events.len(),
+                2,
+                "one Started and one Progress, not two: {events:?}"
+            );
+            let RunEvent::Progress { elapsed, total } = events[1] else {
+                panic!("{:?}", events[1]);
+            };
+            assert!((2.4..2.8).contains(&elapsed.as_secs_f64()), "{elapsed:?}");
+            assert_eq!(total, Duration::from_secs(10));
+        }
+        // A run that is long over is clamped to its length
+        control.workloads_started(
+            Instant::now().checked_sub(Duration::from_secs(60)).unwrap(),
+            Duration::from_secs(10),
+        );
+        control.checkpoint().unwrap();
+        let last = recorder.events.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(
+            last,
+            RunEvent::Progress {
+                elapsed: Duration::from_secs(10),
+                total: Duration::from_secs(10)
+            }
+        );
+        control.workloads_done();
+        control.workloads_done();
+        let events = recorder.events.lock().unwrap();
+        let done = events
+            .iter()
+            .filter(|e| matches!(e, RunEvent::Progress { elapsed, total } if elapsed == total))
+            .count();
+        // the clamped one and the one of `workloads_done`, which says it once
+        assert_eq!(done, 2, "{events:?}");
     }
 
     #[test]

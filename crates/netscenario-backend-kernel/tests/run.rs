@@ -12,7 +12,10 @@ mod support;
 
 use std::path::Path;
 
-use netscenario_core::{RunOptions, RunResult, run};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use netscenario_core::{CancelToken, Error, RunEvent, RunOptions, RunResult, run};
 use netscenario_model::Scenario;
 use support::{agent_exe, assert_nothing_left, backend, namespaces_available, work_dir};
 
@@ -254,6 +257,125 @@ fn workloads_run_together_and_a_window_limits_one_of_them() {
             delay.p50_ns
         );
     }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A real run tells its phases in order, and the progress once a second up to the full length.
+#[test]
+fn a_run_reports_its_phases_and_its_progress() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("run-events");
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&events);
+    let observer = move |event: &RunEvent| seen.lock().unwrap().push(event.clone());
+    let options = options(&dir, false).with_observer(Arc::new(observer));
+    let mut backend = backend(|_| {});
+    run(&mut backend, &scenario("", "", MEDIA), &options).unwrap();
+
+    let events = events.lock().unwrap();
+    let kinds: Vec<&str> = events
+        .iter()
+        .map(|event| match event {
+            RunEvent::Provisioned { .. } => "provisioned",
+            RunEvent::ReceiversReady { .. } => "receivers-ready",
+            RunEvent::Started { .. } => "started",
+            RunEvent::Progress { .. } => "progress",
+            RunEvent::Settling { .. } => "settling",
+            RunEvent::Collecting => "collecting",
+            RunEvent::TearingDown => "tearing-down",
+            RunEvent::Finished => "finished",
+            _ => "other",
+        })
+        .collect();
+    // The scenario lasts two seconds: one report on the way, and the last at the full length
+    let position = |name: &str| kinds.iter().position(|k| *k == name).unwrap();
+    assert!(
+        position("provisioned") < position("receivers-ready")
+            && position("receivers-ready") < position("started")
+            && position("started") < position("progress")
+            && position("settling") < position("collecting")
+            && position("collecting") < position("tearing-down")
+            && position("tearing-down") < position("finished"),
+        "{kinds:?}"
+    );
+    assert_eq!(kinds.last(), Some(&"finished"));
+    let progress: Vec<(Duration, Duration)> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::Progress { elapsed, total } => Some((*elapsed, *total)),
+            _ => None,
+        })
+        .collect();
+    assert!(progress.len() >= 2, "{progress:?}");
+    assert!(
+        progress
+            .iter()
+            .all(|(_, total)| *total == Duration::from_secs(2)),
+        "{progress:?}"
+    );
+    assert!(
+        progress.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+        "the progress goes back: {progress:?}"
+    );
+    assert_eq!(
+        progress.last().map(|(elapsed, _)| *elapsed),
+        Some(Duration::from_secs(2))
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A run of ten seconds is cancelled after about one, from the observer (as an interrupt from another thread
+/// would do): it returns `Cancelled` soon, the network is gone, and there is no result.
+#[test]
+fn a_run_can_be_cancelled_and_leaves_nothing() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("run-cancel");
+    let token = CancelToken::new();
+    let cancelled_at = Arc::new(Mutex::new(None::<Instant>));
+    let (cancel, when) = (token.clone(), Arc::clone(&cancelled_at));
+    let observer = move |event: &RunEvent| {
+        if matches!(event, RunEvent::Progress { .. }) && when.lock().unwrap().is_none() {
+            *when.lock().unwrap() = Some(Instant::now());
+            cancel.cancel();
+        }
+    };
+    let options = options(&dir, false)
+        .with_observer(Arc::new(observer))
+        .with_cancel(token);
+    let long = Scenario::from_yaml(
+        &format!(
+            "version: 0\nname: long\nduration: 10s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\nworkloads:\n{MEDIA}"
+        ),
+        "long.yaml",
+    )
+    .unwrap();
+    let mut backend = backend(|_| {});
+    let began = Instant::now();
+    let error = run(&mut backend, &long, &options).unwrap_err();
+    let finished = Instant::now();
+
+    assert!(matches!(error, Error::Cancelled), "{error}");
+    let cancelled = cancelled_at
+        .lock()
+        .unwrap()
+        .expect("the observer cancelled");
+    // Back within a moment of the cancel (a poll of 200 ms and the teardown), long before the ten seconds
+    assert!(
+        finished - cancelled < Duration::from_secs(3),
+        "{:?} from the cancel to the return",
+        finished - cancelled
+    );
+    assert!(
+        finished - began < Duration::from_secs(7),
+        "{:?}",
+        finished - began
+    );
+    assert!(!dir.join("result.json").exists());
+    assert_nothing_left(backend.run_id(), "after the cancel");
     let _ = std::fs::remove_dir_all(dir);
 }
 

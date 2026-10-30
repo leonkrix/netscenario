@@ -339,3 +339,50 @@ fn validate_answers_with_the_exit_code() -> io::Result<()> {
     assert!(String::from_utf8_lossy(&output.stderr).starts_with("error: "));
     Ok(())
 }
+
+/// On a terminal the run shows one line that is written over, and clears it before the summary. A terminal is
+/// made with `script` (util-linux), which runs the program in a pseudo-terminal.
+#[test]
+fn on_a_terminal_the_run_shows_a_progress_line_and_clears_it() {
+    if !can_run("on_a_terminal_the_run_shows_a_progress_line_and_clears_it") {
+        return;
+    }
+    if Command::new("script").arg("--version").output().is_err() {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "this test must run on the CI, but `script` is not installed"
+        );
+        eprintln!("SKIPPED: `script` is not installed");
+        return;
+    }
+    let dir = work_dir("terminal");
+    let file = write_scenario(&dir, SCENARIO);
+    let out = dir.join("result");
+    let line = format!(
+        "{} run {file} --out {} --settle 300ms",
+        env!("CARGO_BIN_EXE_netscenario"),
+        out.display()
+    );
+    let output = Command::new("script")
+        .args(["--quiet", "--return", "--command", &line, "/dev/null"])
+        .output()
+        .unwrap();
+    let shown = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{shown}");
+    for phase in [
+        "building the network",
+        "receivers ready, starting the senders",
+        "running, 0 of 2 s",
+        "waiting 0.3 s for the packets in the network",
+        "removing the network",
+    ] {
+        assert!(shown.contains(phase), "no '{phase}' in: {shown:?}");
+    }
+    // The line is erased before the summary, which starts at the beginning of a line
+    assert!(shown.contains("\x1b[2K"), "{shown:?}");
+    assert!(shown.contains("netscenario run: cli-test"), "{shown:?}");
+    assert!(shown.contains("sent 417  received 417"), "{shown:?}");
+    // On a terminal the plain line is not printed as well
+    assert!(!shown.contains("running cli-test for 2s"), "{shown:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}

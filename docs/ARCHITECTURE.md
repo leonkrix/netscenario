@@ -90,6 +90,8 @@ Planned layout of the repository (a Cargo workspace plus Python packages; create
 8. **Stop and tear down.** Orderly stop of programs with a timeout, then removal of everything. A watchdog does the same when a run hangs.
 9. **Assert.** Done by the test code or by the `expect` section, on the finished result. Repetitions and statistics happen above single runs.
 
+**Watching and stopping a run.** The steps above are reported as events to an observer that the caller passes in the options (`RunEvent`: the network is built, the receivers are ready, the workloads have started with their length, the progress once a second, the wait for the packets in the network, the collecting, the teardown, the end), and the caller can hand in a `CancelToken` that stops the run: the waiting loops look at it at least every 200 milliseconds, the network is torn down as always, and the run returns `Cancelled` without a result. The command line shows a progress line from the events when standard error is a terminal; the Python layer passes a callable and cancels on an interrupt (D-031).
+
 ## Backends and fidelity
 
 A backend implements a small interface: report capabilities, create a node, create a link, apply impairments to a link direction, start a program in a node, capture, tear down. The engine uses nothing else, so a new backend means implementing that interface and filling its column in the coverage matrix.

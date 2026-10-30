@@ -1,12 +1,13 @@
 //! `netscenario run`: run a scenario file and write its result.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
-use netscenario_core::{Error, RunOptions, agent_next_to, rfc3339_utc, run};
+use netscenario_core::{Error, RunEvent, RunObserver, RunOptions, agent_next_to, rfc3339_utc, run};
 use netscenario_model::Duration;
 
 use crate::args::{Parsed, Spec};
@@ -51,6 +52,57 @@ fn default_out(name: &str) -> PathBuf {
         .filter(|c| *c != '-' && *c != ':')
         .collect();
     PathBuf::from("netscenario-results").join(format!("{name}-{stamp}"))
+}
+
+/// What the progress line says about an event, or nothing for the end.
+fn describe(event: &RunEvent) -> Option<String> {
+    let seconds = |time: std::time::Duration| format!("{:.0}", time.as_secs_f64().ceil());
+    Some(match event {
+        RunEvent::Provisioned { nodes, links } => {
+            format!("network built ({nodes} nodes, {links} link), starting the receivers")
+        }
+        RunEvent::ReceiversReady { .. } => "receivers ready, starting the senders".to_owned(),
+        RunEvent::Started { duration } => format!("running, 0 of {} s", seconds(*duration)),
+        RunEvent::Progress { elapsed, total } => {
+            format!("running, {} of {} s", elapsed.as_secs(), seconds(*total))
+        }
+        RunEvent::Settling { wait } => {
+            format!(
+                "waiting {:.1} s for the packets in the network",
+                wait.as_secs_f64()
+            )
+        }
+        RunEvent::Collecting => "reading the records".to_owned(),
+        RunEvent::TearingDown => "removing the network".to_owned(),
+        // The line is cleared when the run returns; `Finished` and later events say nothing new
+        _ => return None,
+    })
+}
+
+/// The progress line on a terminal: one line that is written over again (D-031).
+struct ProgressLine;
+
+impl ProgressLine {
+    /// Erases the line, so that the summary or the error starts at the beginning of a line.
+    fn clear() {
+        let mut err = std::io::stderr().lock();
+        let _ = write!(err, "\r\x1b[2K");
+        let _ = err.flush();
+    }
+
+    fn show(text: &str) {
+        let mut err = std::io::stderr().lock();
+        let _ = write!(err, "\r\x1b[2K  {text}");
+        let _ = err.flush();
+    }
+}
+
+impl RunObserver for ProgressLine {
+    fn event(&self, event: &RunEvent) {
+        if let Some(text) = describe(event) {
+            Self::show(&text);
+        }
+    }
 }
 
 /// Writes what went wrong and returns the exit code that fits.
@@ -159,12 +211,23 @@ pub(crate) fn run_command<S: AsRef<str>>(
         Ok(backend) => backend,
         Err(error) => return report(&error, &loaded, err),
     };
-    let _ = writeln!(
-        err,
-        "running {} for {} ...",
-        scenario.name, scenario.duration
-    );
-    match run(&mut backend, &scenario, &options) {
+    // On a terminal one line shows how far the run is; elsewhere (a file, a CI log) one line says what runs
+    let on_terminal = std::io::stderr().is_terminal();
+    if on_terminal {
+        options = options.with_observer(Arc::new(ProgressLine));
+        ProgressLine::show("building the network");
+    } else {
+        let _ = writeln!(
+            err,
+            "running {} for {} ...",
+            scenario.name, scenario.duration
+        );
+    }
+    let outcome = run(&mut backend, &scenario, &options);
+    if on_terminal {
+        ProgressLine::clear();
+    }
+    match outcome {
         Ok(result) => {
             if parsed.flag("json") {
                 let _ = write!(out, "{}", result.to_json());
@@ -174,5 +237,49 @@ pub(crate) fn run_command<S: AsRef<str>>(
             exit::OK
         }
         Err(error) => report(&error, &loaded, err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn every_phase_of_a_run_has_a_line_and_the_end_has_none() {
+        let s = Duration::from_secs;
+        for (event, expected) in [
+            (
+                RunEvent::Provisioned { nodes: 2, links: 1 },
+                Some("network built (2 nodes, 1 link), starting the receivers"),
+            ),
+            (
+                RunEvent::ReceiversReady { count: 1 },
+                Some("receivers ready, starting the senders"),
+            ),
+            (
+                RunEvent::Started { duration: s(30) },
+                Some("running, 0 of 30 s"),
+            ),
+            (
+                RunEvent::Progress {
+                    elapsed: Duration::from_millis(12_900),
+                    total: Duration::from_millis(29_500),
+                },
+                Some("running, 12 of 30 s"),
+            ),
+            (
+                RunEvent::Settling {
+                    wait: Duration::from_millis(1120),
+                },
+                Some("waiting 1.1 s for the packets in the network"),
+            ),
+            (RunEvent::Collecting, Some("reading the records")),
+            (RunEvent::TearingDown, Some("removing the network")),
+            (RunEvent::Finished, None),
+        ] {
+            assert_eq!(describe(&event).as_deref(), expected, "{event:?}");
+        }
     }
 }

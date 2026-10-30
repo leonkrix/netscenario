@@ -15,6 +15,7 @@ mod export;
 mod feature;
 mod hash;
 mod machine;
+mod observe;
 mod provision;
 mod result;
 mod run;
@@ -31,6 +32,7 @@ pub use export::write_packets;
 pub use feature::{Feature, Requirement, requirements};
 pub use hash::sha256_hex;
 pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
+pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
 pub use result::{
     AcceptedRestriction, AddressInfo, RESULT_FORMAT, RESULT_VERSION, RunResult, ScenarioInfo,
