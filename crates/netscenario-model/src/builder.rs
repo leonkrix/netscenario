@@ -1,0 +1,336 @@
+//! Building a scenario in code (SCN-04). The result is the same model that a file produces, so a scenario
+//! built here and one read from a file are equal if they say the same.
+//!
+//! ```
+//! use netscenario_model::{Duration, Impairments, Probability, Rate, Scenario, Size};
+//!
+//! let scenario = Scenario::builder("lte-like")
+//!     .duration(Duration::from_secs(30).unwrap())
+//!     .seed(42)
+//!     .nodes("client", "server")
+//!     .link(
+//!         "access",
+//!         Some(Impairments::new().with_delay("40ms".parse().unwrap()).with_loss_random("1%".parse().unwrap())),
+//!         None,
+//!     )
+//!     .udp_cbr("media", "client", "server", "2mbit".parse().unwrap(), Size::from_bytes(1200))
+//!     .build()?;
+//! assert_eq!(scenario.workloads.len(), 1);
+//! # Ok::<(), Vec<netscenario_model::Problem>>(())
+//! ```
+
+use crate::error::Problem;
+use crate::scenario::{
+    Backend, FormatVersion, Impairments, Jitter, JitterDistribution, Link, Loss, LossModel,
+    Scenario, Topology, Workload, WorkloadKind,
+};
+use crate::units::{Duration, Name, Probability, Rate, Size};
+
+impl Impairments {
+    /// No impairment at all.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// With a fixed delay.
+    #[must_use]
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
+        self
+    }
+
+    /// With a variation of the delay (needs a delay; checked by [`Scenario::validate`]).
+    #[must_use]
+    pub fn with_jitter(mut self, amount: Duration, distribution: JitterDistribution) -> Self {
+        self.jitter = Some(Jitter {
+            amount,
+            distribution,
+        });
+        self
+    }
+
+    /// With independent packet loss.
+    #[must_use]
+    pub fn with_loss_random(mut self, p: Probability) -> Self {
+        self.loss = Some(Loss {
+            model: LossModel::Random,
+            p,
+        });
+        self
+    }
+
+    /// With a rate limit.
+    #[must_use]
+    pub fn with_rate(mut self, rate: Rate) -> Self {
+        self.rate = Some(rate);
+        self
+    }
+}
+
+/// Builds a [`Scenario`] step by step. Names are given as text and checked when the scenario is built, so a
+/// chain of calls does not need a `?` after each one.
+#[derive(Debug, Clone)]
+pub struct ScenarioBuilder {
+    name: Option<Name>,
+    seed: Option<u64>,
+    duration: Option<Duration>,
+    backend: Backend,
+    nodes: Vec<Name>,
+    links: Vec<Link>,
+    workloads: Vec<Workload>,
+    problems: Vec<Problem>,
+}
+
+impl Scenario {
+    /// Starts building a scenario with the given name.
+    #[must_use]
+    pub fn builder(name: &str) -> ScenarioBuilder {
+        let mut builder = ScenarioBuilder {
+            name: None,
+            seed: None,
+            duration: None,
+            backend: Backend::Auto,
+            nodes: Vec::new(),
+            links: Vec::new(),
+            workloads: Vec::new(),
+            problems: Vec::new(),
+        };
+        builder.name = builder.name_at(name, "name");
+        builder
+    }
+}
+
+impl ScenarioBuilder {
+    fn name_at(&mut self, text: &str, path: &str) -> Option<Name> {
+        match Name::new(text) {
+            Ok(name) => Some(name),
+            Err(error) => {
+                self.problems
+                    .push(Problem::new(error.to_string()).at_path(path));
+                None
+            }
+        }
+    }
+
+    /// The length of the measured phase.
+    #[must_use]
+    pub fn duration(mut self, duration: Duration) -> Self {
+        self.duration = Some(duration);
+        self
+    }
+
+    /// The seed of the scenario.
+    #[must_use]
+    pub fn seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// The backend.
+    #[must_use]
+    pub fn backend(mut self, backend: Backend) -> Self {
+        self.backend = backend;
+        self
+    }
+
+    /// The two nodes of release 0.1.
+    #[must_use]
+    pub fn nodes(mut self, first: &str, second: &str) -> Self {
+        for (index, text) in [first, second].into_iter().enumerate() {
+            let path = format!("topology.nodes[{index}]");
+            if let Some(name) = self.name_at(text, &path) {
+                self.nodes.push(name);
+            }
+        }
+        self
+    }
+
+    /// A link between the two nodes, with impairments for the direction from the first to the second and for
+    /// the way back. For the same values in both directions use [`ScenarioBuilder::link_both`].
+    #[must_use]
+    pub fn link(
+        mut self,
+        id: &str,
+        forward: Option<Impairments>,
+        reverse: Option<Impairments>,
+    ) -> Self {
+        let index = self.links.len();
+        let id = self.name_at(id, &format!("topology.links[{index}].id"));
+        if let (Some(id), [first, second]) = (id, self.nodes.as_slice()) {
+            let between = [first.clone(), second.clone()];
+            self.links.push(Link {
+                id,
+                between,
+                forward,
+                reverse,
+                both: None,
+            });
+        } else if self.nodes.len() != 2 {
+            self.problems.push(
+                Problem::new("call `nodes` with two valid names before `link`")
+                    .at_path(format!("topology.links[{index}]")),
+            );
+        }
+        self
+    }
+
+    /// A link with the same impairments in both directions.
+    #[must_use]
+    pub fn link_both(mut self, id: &str, both: Impairments) -> Self {
+        self = self.link(id, None, None);
+        if let Some(link) = self.links.last_mut() {
+            link.both = Some(both);
+        }
+        self
+    }
+
+    /// A workload that sends UDP at a constant bit rate from one node to the other.
+    #[must_use]
+    pub fn udp_cbr(
+        mut self,
+        id: &str,
+        from: &str,
+        to: &str,
+        rate: Rate,
+        packet_size: Size,
+    ) -> Self {
+        let index = self.workloads.len();
+        let id = self.name_at(id, &format!("workloads[{index}].id"));
+        let from = self.name_at(from, &format!("workloads[{index}].from"));
+        let to = self.name_at(to, &format!("workloads[{index}].to"));
+        if let (Some(id), Some(from), Some(to)) = (id, from, to) {
+            self.workloads.push(Workload {
+                id,
+                kind: WorkloadKind::UdpCbr,
+                from,
+                to,
+                rate,
+                packet_size,
+                start: None,
+                stop: None,
+            });
+        }
+        self
+    }
+
+    /// Sets when the last workload starts and stops, from the start of the measured phase.
+    #[must_use]
+    pub fn window(mut self, start: Duration, stop: Duration) -> Self {
+        if let Some(workload) = self.workloads.last_mut() {
+            workload.start = Some(start);
+            workload.stop = Some(stop);
+        }
+        self
+    }
+
+    /// Builds the scenario and checks it with [`Scenario::validate`].
+    ///
+    /// # Errors
+    ///
+    /// Returns every problem found: names that are not valid, a missing name or duration, and the rules of
+    /// [`Scenario::validate`].
+    pub fn build(mut self) -> Result<Scenario, Vec<Problem>> {
+        if self.duration.is_none() {
+            self.problems
+                .push(Problem::new("the duration is missing: call `duration`").at_path("duration"));
+        }
+        let (Some(name), Some(duration)) = (self.name, self.duration) else {
+            return Err(self.problems);
+        };
+        if !self.problems.is_empty() {
+            return Err(self.problems);
+        }
+        let scenario = Scenario {
+            version: FormatVersion,
+            name,
+            seed: self.seed,
+            duration,
+            backend: self.backend,
+            topology: Topology {
+                nodes: self.nodes,
+                links: self.links,
+            },
+            workloads: self.workloads,
+        };
+        let problems = scenario.validate();
+        if problems.is_empty() {
+            Ok(scenario)
+        } else {
+            Err(problems)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_built_scenario_equals_the_same_scenario_read_from_a_file() {
+        let built = Scenario::builder("minimal")
+            .duration(Duration::from_secs(5).unwrap())
+            .nodes("client", "server")
+            .link("access", None, None)
+            .udp_cbr(
+                "media",
+                "client",
+                "server",
+                "1mbit".parse().unwrap(),
+                Size::from_bytes(1200),
+            )
+            .build()
+            .unwrap();
+        let text = include_str!("../../../scenarios/minimal.yaml");
+        assert_eq!(built, Scenario::from_yaml(text, "minimal.yaml").unwrap());
+    }
+
+    #[test]
+    fn every_problem_is_reported_by_the_build() {
+        let problems = Scenario::builder("Bad Name")
+            .nodes("a", "b")
+            .link("access", None, None)
+            .udp_cbr(
+                "media",
+                "a",
+                "z",
+                "1mbit".parse().unwrap(),
+                Size::from_bytes(8),
+            )
+            .build()
+            .unwrap_err();
+        assert!(problems.iter().any(|p| p.path.as_deref() == Some("name")));
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.path.as_deref() == Some("duration"))
+        );
+    }
+
+    #[test]
+    fn the_rules_of_the_file_apply_to_a_built_scenario() {
+        let problems = Scenario::builder("t")
+            .duration(Duration::from_secs(10).unwrap())
+            .nodes("a", "b")
+            .link("access", None, None)
+            .udp_cbr(
+                "media",
+                "a",
+                "z",
+                "1mbit".parse().unwrap(),
+                Size::from_bytes(8),
+            )
+            .build()
+            .unwrap_err();
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.message.contains("the node 'z' does not exist"))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.message.contains("packet size 8 bytes"))
+        );
+    }
+}

@@ -1,0 +1,380 @@
+{
+  "$defs": {
+    "Backend": {
+      "description": "The backend that makes the network real. Only the Kernel backend exists in release 0.1.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "The backend is chosen by the tool: the Kernel backend in release 0.1.",
+          "type": "string"
+        },
+        {
+          "const": "kernel",
+          "description": "Network namespaces, virtual Ethernet pairs and `netem`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Duration": {
+      "description": "A length of time: a number and a unit (ns, us, ms, s, m, h), a whole number of nanoseconds.",
+      "examples": [
+        "40ms"
+      ],
+      "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$",
+      "type": "string"
+    },
+    "FormatVersion": {
+      "const": 0,
+      "description": "The version of the scenario format. Version 0 is the series before 1.0 and may change in any minor release.",
+      "type": "integer"
+    },
+    "Impairments": {
+      "additionalProperties": false,
+      "description": "What a direction of a link does to the packets. Everything that is not set is not impaired.",
+      "properties": {
+        "delay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A fixed delay (`netem delay`)."
+        },
+        "jitter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Jitter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Variation of the delay. Needs `delay`."
+        },
+        "loss": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Loss"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Packet loss."
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Rate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A limit on the data rate (`netem rate`)."
+        }
+      },
+      "type": "object"
+    },
+    "Jitter": {
+      "additionalProperties": false,
+      "description": "Variation of the delay.",
+      "properties": {
+        "amount": {
+          "$ref": "#/$defs/Duration",
+          "description": "How much the delay varies: the delay lies within this amount above and below the fixed delay\n(`uniform`) or has this standard deviation (`normal`)."
+        },
+        "distribution": {
+          "$ref": "#/$defs/JitterDistribution",
+          "description": "The distribution. `uniform` (the default) or `normal`."
+        }
+      },
+      "required": [
+        "amount"
+      ],
+      "type": "object"
+    },
+    "JitterDistribution": {
+      "description": "The distribution of the variation of the delay.",
+      "oneOf": [
+        {
+          "const": "uniform",
+          "description": "Every delay between delay minus amount and delay plus amount is equally likely.",
+          "type": "string"
+        },
+        {
+          "const": "normal",
+          "description": "A bell curve around the delay, cut at about four standard deviations.",
+          "type": "string"
+        }
+      ]
+    },
+    "Link": {
+      "additionalProperties": false,
+      "description": "A link between two nodes, with the impairments of each direction.",
+      "properties": {
+        "between": {
+          "description": "The two nodes. `forward` is the direction from the first to the second.",
+          "items": {
+            "$ref": "#/$defs/Name"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "both": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Impairments"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The same impairments in both directions. Cannot be combined with `forward` or `reverse`."
+        },
+        "forward": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Impairments"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The impairments from the first node to the second."
+        },
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the link."
+        },
+        "reverse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Impairments"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The impairments from the second node to the first."
+        }
+      },
+      "required": [
+        "id",
+        "between"
+      ],
+      "type": "object"
+    },
+    "Loss": {
+      "additionalProperties": false,
+      "description": "Packet loss.",
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/LossModel",
+          "description": "The loss model. Only `random` in release 0.1."
+        },
+        "p": {
+          "$ref": "#/$defs/Probability",
+          "description": "The chance that a packet is lost."
+        }
+      },
+      "required": [
+        "model",
+        "p"
+      ],
+      "type": "object"
+    },
+    "LossModel": {
+      "description": "How losses are distributed.",
+      "oneOf": [
+        {
+          "const": "random",
+          "description": "Every packet is lost with the same chance, independent of the others.",
+          "type": "string"
+        }
+      ]
+    },
+    "Name": {
+      "description": "A name of 1 to 32 characters: lower case letters, digits and '-', starting with a letter and not ending with '-'.",
+      "examples": [
+        "client"
+      ],
+      "pattern": "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$",
+      "type": "string"
+    },
+    "Probability": {
+      "description": "A probability from 0% to 100% with at most six digits after the point. Always with the percent sign.",
+      "examples": [
+        "2%"
+      ],
+      "pattern": "^[0-9]+(\\.[0-9]+)?%$",
+      "type": "string"
+    },
+    "Rate": {
+      "description": "A data rate in bits per second, greater than zero: a number and a decimal unit (bit, kbit, mbit, gbit, tbit).",
+      "examples": [
+        "10mbit"
+      ],
+      "pattern": "^[0-9]+(\\.[0-9]+)?(bit|kbit|mbit|gbit|tbit)$",
+      "type": "string"
+    },
+    "Size": {
+      "description": "An amount of data in bytes: a number and a unit (b, kb, mb, gb decimal; kib, mib, gib binary), a whole number of bytes.",
+      "examples": [
+        "1200b"
+      ],
+      "pattern": "^[0-9]+(\\.[0-9]+)?(b|kb|mb|gb|kib|mib|gib)$",
+      "type": "string"
+    },
+    "Topology": {
+      "additionalProperties": false,
+      "description": "The nodes and the links. In release 0.1: two nodes and one link (point to point).",
+      "properties": {
+        "links": {
+          "description": "The links between the nodes.",
+          "items": {
+            "$ref": "#/$defs/Link"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "description": "The names of the nodes.",
+          "items": {
+            "$ref": "#/$defs/Name"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodes",
+        "links"
+      ],
+      "type": "object"
+    },
+    "Workload": {
+      "additionalProperties": false,
+      "description": "A workload: something that sends traffic.",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that sends."
+        },
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the workload. Metrics are named after it."
+        },
+        "kind": {
+          "$ref": "#/$defs/WorkloadKind",
+          "description": "The kind of workload. Only `udp-cbr` in release 0.1."
+        },
+        "packet-size": {
+          "$ref": "#/$defs/Size",
+          "description": "The payload of one packet."
+        },
+        "rate": {
+          "$ref": "#/$defs/Rate",
+          "description": "The rate of the payload."
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload starts, from the start of the measured phase. Default `0s`."
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload stops. Default: the end of the measured phase."
+        },
+        "to": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that receives."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "from",
+        "to",
+        "rate",
+        "packet-size"
+      ],
+      "type": "object"
+    },
+    "WorkloadKind": {
+      "description": "The kind of a workload.",
+      "oneOf": [
+        {
+          "const": "udp-cbr",
+          "description": "UDP at a constant bit rate.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A scenario: a network, what runs in it, and for how long.",
+  "properties": {
+    "backend": {
+      "$ref": "#/$defs/Backend",
+      "description": "The backend. `auto` (the default) or `kernel`."
+    },
+    "duration": {
+      "$ref": "#/$defs/Duration",
+      "description": "The length of the measured phase, from the start of the workloads. Greater than zero."
+    },
+    "name": {
+      "$ref": "#/$defs/Name",
+      "description": "The name of the scenario. Appears in the result and names its files."
+    },
+    "seed": {
+      "description": "The seed from which the seeds of all random parts are derived. Without it the tool draws one and\nrecords it in the result.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "topology": {
+      "$ref": "#/$defs/Topology",
+      "description": "The nodes and the link between them."
+    },
+    "version": {
+      "$ref": "#/$defs/FormatVersion",
+      "description": "The format version: 0."
+    },
+    "workloads": {
+      "description": "What sends traffic. At least one.",
+      "items": {
+        "$ref": "#/$defs/Workload"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "version",
+    "name",
+    "duration",
+    "topology",
+    "workloads"
+  ],
+  "title": "netscenario scenario",
+  "type": "object"
+}

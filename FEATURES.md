@@ -29,16 +29,16 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| SCN-01 | Scenario file in YAML with a JSON Schema, versioned | M | 0.1 | designed |
-| SCN-02 | Validation with precise errors (line, column and source line for every error, the path in the file for errors of content, what was expected, how to fix it; reserved keys name their release) | M | 0.1 | designed |
-| SCN-03 | Units and durations parsed strictly (`40ms`, `10mbit`, `2%`) | M | 0.1 | designed |
-| SCN-04 | Scenarios built in code (Python and Rust builders), same model as the file | M | 0.1 | planned |
+| SCN-01 | Scenario file in YAML with a JSON Schema, versioned | M | 0.1 | done |
+| SCN-02 | Validation with precise errors (line, column and source line for every error, the path in the file for errors of content, what was expected, how to fix it; reserved keys name their release) | M | 0.1 | done |
+| SCN-03 | Units and durations parsed strictly (`40ms`, `10mbit`, `2%`) | M | 0.1 | done |
+| SCN-04 | Scenarios built in code (Python and Rust builders), same model as the file | M | 0.1 | in progress |
 | SCN-05 | Parameters, includes and templates (reuse a link, vary a value) | S | 0.3 | planned |
 | SCN-06 | Profile library: 3G, LTE, 5G, Wi-Fi, DSL, GEO and LEO satellite, datacenter, lossy radio | S | 0.3 | planned |
 | SCN-07 | Matrices and sweeps (grids, random sampling) | S | 0.5 | planned |
 | SCN-08 | Migration between schema versions (`netscenario migrate`) | S | 0.7 | planned |
 | SCN-09 | Convert to and from `tc netem` command lines | C | 0.7 | idea |
-| SCN-10 | Hints for misspelled names and keys ("did you mean 'server'?") | S | 0.2 | planned |
+| SCN-10 | Hints for misspelled names and keys ("did you mean 'server'?"); node names have them since 0.1, keys, units and values follow | S | 0.2 | in progress |
 
 ## Topology (TOP)
 

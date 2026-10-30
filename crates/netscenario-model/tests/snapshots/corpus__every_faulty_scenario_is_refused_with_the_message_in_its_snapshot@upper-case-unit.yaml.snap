@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/upper-case-unit.yaml
+---
+error: unknown unit 'Mbit' in '1Mbit' (use bit, kbit, mbit, gbit or tbit)
+  --> upper-case-unit.yaml:16:11
+   |
+15 |     to: server
+16 |     rate: 1Mbit
+   |           ^^^^^

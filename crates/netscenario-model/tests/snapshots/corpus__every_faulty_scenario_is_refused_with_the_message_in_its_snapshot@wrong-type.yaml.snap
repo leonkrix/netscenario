@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/wrong-type.yaml
+---
+error: invalid type: sequence, expected a duration with a unit, such as 40ms
+ --> wrong-type.yaml:3:1
+  |
+2 | name: t
+3 | duration: [10s]
+  | ^^^^^^^^

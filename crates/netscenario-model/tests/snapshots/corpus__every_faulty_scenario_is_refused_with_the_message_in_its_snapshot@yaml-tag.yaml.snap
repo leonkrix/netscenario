@@ -1,0 +1,12 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/yaml-tag.yaml
+---
+error: tags are not part of the scenario format
+  --> yaml-tag.yaml:10:22
+   |
+ 9 |       forward:
+10 |         delay: !!str 40ms
+   |                      ^^^^
+   = help: remove the tag; the type of a value follows from where it is

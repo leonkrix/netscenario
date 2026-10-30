@@ -23,6 +23,20 @@ netscenario-backend-kernel = { path = "crates/netscenario-backend-kernel", versi
 netscenario-agent = { path = "crates/netscenario-agent", version = "0.0.0" }
 netscenario-cli = { path = "crates/netscenario-cli", version = "0.0.0" }
 
+# Third-party dependencies are listed once here; a crate says `name.workspace = true`
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-saphyr = "2"
+# The parser that serde-saphyr uses; read directly to find the position of every value in the file
+granit-parser = "2"
+schemars = "1"
+thiserror = "2"
+# Test tools
+insta = { version = "1", features = ["glob"] }
+proptest = "1"
+# Checks that the example scenarios satisfy the generated schema
+jsonschema = { version = "0.60", default-features = false }
+
 [workspace.lints.rust]
 # A crate that needs `unsafe` (the engine, the bindings) overrides this in its own Cargo.toml and says why
 unsafe_code = "forbid"

@@ -1,7 +1,50 @@
-//! The scenario model: nodes, links, impairments, timeline and workloads as types, with strict units,
-//! validation, and the JSON Schema that is generated from them (SCN-01 to SCN-04, release 0.1).
+//! The scenario model: nodes, links, impairments and workloads as types, with strict units, validation, and
+//! the JSON Schema that is generated from them (SCN-01 to SCN-04, release 0.1).
 //!
-//! This crate has no access to the system: it parses, checks and describes scenarios, nothing more.
+//! This crate has no access to the system: it parses, checks and describes scenarios, nothing more. The
+//! format is defined in `docs/SCENARIO-FORMAT.md`.
 //!
-//! The crate is a skeleton. The types arrive with the model of release 0.1; see `FEATURES.md` and
-//! `docs/SCENARIO-FORMAT.md` for what they will be.
+//! ```
+//! use netscenario_model::Scenario;
+//!
+//! let yaml = "
+//! version: 0
+//! name: example
+//! duration: 10s
+//! topology:
+//!   nodes: [client, server]
+//!   links:
+//!     - id: access
+//!       between: [client, server]
+//!       both: { delay: 20ms }
+//! workloads:
+//!   - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1200b }
+//! ";
+//! let scenario = Scenario::from_yaml(yaml, "example.yaml")?;
+//! assert_eq!(scenario.name.as_str(), "example");
+//! # Ok::<(), netscenario_model::Error>(())
+//! ```
+
+mod builder;
+mod decimal;
+pub mod error;
+mod read;
+mod required;
+mod reserved;
+mod scenario;
+mod schema;
+mod source;
+mod suggest;
+pub mod units;
+mod validate;
+
+pub use builder::ScenarioBuilder;
+pub use error::{Error, Location, Problem};
+pub use read::MAX_FILE_BYTES;
+pub use scenario::{
+    Backend, FormatVersion, Impairments, Jitter, JitterDistribution, Link, Loss, LossModel,
+    Scenario, Topology, Workload, WorkloadKind,
+};
+pub use schema::json_schema;
+pub use units::{Duration, Name, Probability, Rate, Size, ValueError};
+pub use validate::{MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE};

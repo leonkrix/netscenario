@@ -172,23 +172,39 @@ These keys are not part of version 0 in release 0.1. A scenario that uses one is
 
 ## Errors
 
-Every error from reading a file has **the line and the column, and shows the source line** with a mark under the place. The errors that come from the contents and not from the syntax (a node that does not exist, `stop` before `start`) name in addition the **path** in the file, such as `topology.links[0].between[1]`. The text says what was found, what was expected, and how to fix it. Examples of what the tool prints:
+Every error from reading a file has **the line and the column, and shows the source line** with a mark under the place. The errors that come from the contents and not from the syntax (a node that does not exist, a `stop` before the start) name in addition the **path** in the file, such as `topology.links[0].between[1]`, and often a hint on how to fix them. The text says what was found and what was expected. All problems of the contents are reported together, in the order of the file; a syntax error is reported alone, because nothing after it can be read reliably. What the tool prints:
 
 ```text
-error: line 7 column 16: '40' has no unit (use ns, us, ms, s, m or h)
- --> access.yaml:7:16
+error: '40' has no unit (use ns, us, ms, s, m or h)
+  --> access.yaml:10:16
+   |
+ 9 |       forward:
+10 |         delay: 40
+   |                ^^
+
+error: the node 'sever' does not exist
+ --> access.yaml:8:25
   |
-6 |       forward:
-7 |         delay: 40
-  |                ^ '40' has no unit (use ns, us, ms, s, m or h)
+7 |     - id: access
+8 |       between: [client, sever]
+  |                         ^^^^^
+  = path: topology.links[0].between[1]
+  = help: did you mean 'server'? the nodes are: client, server
 
-error: topology.links[0].between[1]: the node 'sever' does not exist (line 4, column 28)
-  did you mean 'server'?   nodes are: client, server
-
-error: line 3: `timeline` is planned for release 0.2 (see FEATURES.md)
+error: `timeline` is planned for release 0.2 (see FEATURES.md)
+  --> access.yaml:18:1
+   |
+17 |     packet-size: 1200b
+18 | timeline:
+   | ^^^^^^^^
+   = path: timeline
 ```
 
-The messages of the parser (syntax, types, unknown and duplicate keys) come from the YAML library, the others from the validation of the model (D-020). A test holds the messages of a corpus of faulty files in snapshots (QA-01).
+The messages for syntax, types, unknown and duplicate keys come from the YAML library and are shown in the words of this format; the others come from the checks of the model (D-020). The scenarios in `scenarios/invalid/` are faulty on purpose, one fault per file (and one with several), and their messages are held in snapshots, so a change in a message is a change in a test (QA-01).
+
+A scenario that is built in code goes through the same checks ([`Scenario::validate`](../crates/netscenario-model/src/validate.rs)); its problems have the path but no line.
+
+The JSON Schema of the format is [`docs/schema/scenario-v0.json`](schema/scenario-v0.json), generated from the types; a test fails when it is out of date and `just schema` writes it. A schema can say what a shape is (keys, types, the pattern of a value) and not what the contents mean, so the checks above are not in it.
 
 ## Part 2: planned, not binding
 
@@ -251,4 +267,4 @@ expect:
 ## Open
 
 1. **Round-trip time (PRB-03).** The ledger lists it for 0.1, but `udp-cbr` is one-way. An option on the workload that makes the receiver echo each packet would give it, or the metric moves to the request/response workload of 0.3. To be decided with the agent (section 3.5 of the plan); the answer changes the ledger, not this format, if the option stays out.
-2. **Typo hints** ("did you mean 'server'?") for names and keys. Wanted; whether they come with 0.1 depends on the effort.
+2. **Typo hints beyond node names** (SCN-10, release 0.2). Release 0.1 suggests a node name when the one written is within one edit per three characters of a known name and no other name is as close (`sever` gives `server`, `srv` gives only the list). Still open: the same for unknown keys (today the message lists the allowed keys), for units (`40 ms`, `40Ms`) and for the values of enumerations. This needs either the message of the YAML library taken apart or the key tables of `required.rs` and `reserved.rs` extended with the allowed keys, and a decision on the distance limit per kind of name.

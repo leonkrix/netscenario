@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/three-nodes.yaml
+---
+error: release 0.1 needs exactly two nodes, found 3
+ --> three-nodes.yaml:5:10
+  |
+4 | topology:
+5 |   nodes: [client, server, extra]
+  |          ^
+  = path: topology.nodes
+  = help: more nodes (star, chain, dumbbell) arrive with release 0.3

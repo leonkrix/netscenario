@@ -1,0 +1,12 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/yaml-merge-key.yaml
+---
+error: merge keys (<<) are not part of the scenario format
+  --> yaml-merge-key.yaml:10:9
+   |
+ 9 |       forward:
+10 |         <<: { delay: 40ms }
+   |         ^^
+   = help: write the value out instead; reuse comes with parameters and includes in release 0.3

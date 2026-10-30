@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/unknown-key.yaml
+---
+error: unknown field `speed`, expected one of version, name, seed, duration, backend, topology, workloads
+ --> unknown-key.yaml:4:1
+  |
+3 | duration: 10s
+4 | speed: fast
+  | ^^^^^

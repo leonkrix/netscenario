@@ -1,0 +1,25 @@
+# A geostationary satellite hop: the same values in both directions, a long delay, a low rate, rare loss.
+# The stream starts after one second and ends before the measured phase does.
+version: 0
+name: geo-satellite
+backend: kernel
+duration: 60s
+topology:
+  nodes: [terminal, gateway]
+  links:
+    - id: hop
+      between: [terminal, gateway]
+      both:
+        delay: 300ms
+        jitter: { amount: 20ms }
+        loss: { model: random, p: 0.1% }
+        rate: 2mbit
+workloads:
+  - id: telemetry
+    kind: udp-cbr
+    from: terminal
+    to: gateway
+    rate: 256kbit
+    packet-size: 128b
+    start: 1s
+    stop: 50s
