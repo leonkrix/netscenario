@@ -112,7 +112,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| WRK-01 | UDP constant bit rate | M | 0.1 | done as a library (`netscenario_core::run` starts the agents from a scenario, tested in real namespaces, [AGENT.md](docs/AGENT.md)); the command `netscenario run` follows with CLI-01 |
+| WRK-01 | UDP constant bit rate | M | 0.1 | done (`netscenario run`, tested in real namespaces; [AGENT.md](docs/AGENT.md)) |
 | WRK-02 | UDP Poisson, on/off and bursty | M | 0.2 | planned |
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | planned |
 | WRK-04 | TCP bulk transfer | M | 0.3 | planned |
@@ -194,12 +194,12 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| CLI-01 | `run`, `validate`, `doctor`, `clean` | M | 0.1 | in progress (`doctor` and `clean` are done; `run` and `validate` follow in 3.7) |
+| CLI-01 | `run`, `validate`, `doctor`, `clean` | M | 0.1 | done ([CLI.md](docs/CLI.md), `tests/binary.rs`) |
 | CLI-02 | `report`: HTML and Markdown from result files | M | 0.2 | planned |
 | CLI-03 | `profiles` and `capabilities`: what exists, what a backend can do | S | 0.3 | planned |
-| CLI-04 | `schema`: print the JSON Schema | S | 0.1 | planned |
+| CLI-04 | `schema`: print the JSON Schema | S | 0.1 | done (`netscenario schema`) |
 | CLI-05 | Shell completions and man pages | S | 0.8 | planned |
-| CLI-06 | Machine-readable output and documented exit codes | M | 0.1 | in progress |
+| CLI-06 | Machine-readable output and documented exit codes | M | 0.1 | done (exit codes in [CLI.md](docs/CLI.md); `--json` on `run`, `validate`, `doctor`, `clean`; the code 1 comes with assertions) |
 
 ## Python (PYT)
 
@@ -225,7 +225,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| RPT-01 | Results as JSON, per-packet data as JSON Lines | M | 0.1 | done as a library; written by `netscenario run` with CLI-01 |
+| RPT-01 | Results as JSON, per-packet data as JSON Lines | M | 0.1 | done (`result.json`, `--packets`; [RESULTS.md](docs/RESULTS.md)) |
 | RPT-02 | JUnit XML | M | 0.2 | planned |
 | RPT-03 | HTML report with time series and distributions | M | 0.2 | planned |
 | RPT-04 | Markdown for the summary of a CI run | S | 0.2 | planned |

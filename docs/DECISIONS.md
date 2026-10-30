@@ -225,3 +225,17 @@ Accepted. The format is described field by field in [RESULTS.md](RESULTS.md).
 
 Alternatives: a JSON result with all packets inside (too large), CSV (no types, no versions), a hash from the `sha2` crate, a drain detection by watching the receiver go idle (cannot tell idle from lost, and a slow queue looks idle), starting the senders one after the other as soon as each is ready (the workloads would not start together).
 
+## D-028: The command line of release 0.1: one program that is also its own supervisor, and what each exit code means
+
+Accepted. The commands and options are in [CLI.md](CLI.md).
+
+- **`run`, `validate`, `schema`, `doctor`, `clean`.** `run` is `netscenario_core::run` with the Kernel backend (D-027); `validate` reads and checks a file and says what the scenario needs; `schema` prints the JSON Schema. `--json` on `run`, `validate`, `doctor` and `clean` makes standard output JSON and nothing else.
+- **The program is its own supervisor** (D-022): a run starts `netscenario supervise ...` and `netscenario hold ...` inside its namespaces. `main` answers these two before the command line is read; they are not in the help. `clean` recognises these processes by the name of the program (`netscenario...`), which this satisfies. The agent is a second program that belongs next to it (`netscenario_core::agent_next_to`), and `run` says where it looked when it is missing.
+- **Exit codes.** A scenario that is wrong, and a scenario that the backend cannot reproduce exactly, are both 2: both are about what the file asks for, and the capability error already names the feature, the backend and the way out. A backend that cannot be started (a tool or a permission missing, namespaces refused) is 3, with a line that points to `doctor`. A run that failed after it started is 4. 1 is reserved for a failed assertion and no command returns it yet.
+- **A run does not overwrite another.** Without `--out` the result goes to `netscenario-results/<name>-<UTC time>/`. `--seed` replaces the seed of the file, which is how a run that drew its own seed is repeated; the summary prints the flag to use.
+- **The summary is for people, `result.json` is for machines.** The summary shows the seed (and warns when the loss cannot be repeated), the packets, the delay and the throughput; for a run longer than six seconds it shows the average throughput and leaves the per-second series to the file, because fifty numbers in a row cannot be read.
+- **Problems are shown the same way everywhere.** A faulty file, a refused capability and the JSON of `validate` use the same rendering and the same fields (line, column, path, help) as the model.
+- **Tests run the real program.** `tests/binary.rs` starts the binary: a run in namespaces, `--json`, `--seed`, the default directory, a faulty file, a refusal by the backend, a program without its agent, the supervisor refusing to run on the host, and `validate`. Tests that need namespaces or the agent stop where the machine cannot, and fail on the CI.
+
+Alternatives: a separate binary for the supervisor (two programs to install and keep in step), a command per backend (`run` chooses by the `backend:` key), the exit code 3 for a capability refusal (it mixes "your machine" with "your file" and loses the line of the file), printing the whole throughput series (unreadable for a long run).
+

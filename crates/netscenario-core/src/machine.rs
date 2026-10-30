@@ -63,7 +63,7 @@ pub(crate) fn cpu_model(cpuinfo: &str) -> Option<String> {
 /// Seconds since 1970 as `YYYY-MM-DDTHH:MM:SSZ`, by the civil-from-days algorithm of the proleptic Gregorian
 /// calendar.
 #[must_use]
-pub(crate) fn rfc3339_utc(seconds: u64) -> String {
+pub fn rfc3339_utc(seconds: u64) -> String {
     let days = i64::try_from(seconds / 86_400).unwrap_or(0);
     let rest = seconds % 86_400;
     let z = days + 719_468;
