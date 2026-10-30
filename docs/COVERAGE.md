@@ -52,7 +52,7 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Duplication | ✔ 0.2 | ✔ 0.4 | ~ 0.5 (UDP only) |
 | Corruption | ✔ 0.2 | ✔ 0.4 | ✘ |
 | Rate limit | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
-| Queue limit | ✔ 0.3 | ✔ 0.4 | ~ 0.5 |
+| Queue limit | ✔ 0.3 (until then derived, see below) | ✔ 0.4 | ~ 0.5 |
 | Queue disciplines (CoDel, FQ-CoDel, PIE) | ✔ 0.3 | ✔ 0.4 | ✘ |
 | MTU, fragmentation | ✔ 0.3 | ✔ 0.4 | ✘ |
 | Different values per direction | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |

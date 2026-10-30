@@ -544,6 +544,8 @@ version = "0.0.0"
 dependencies = [
  "netscenario-core",
  "netscenario-model",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

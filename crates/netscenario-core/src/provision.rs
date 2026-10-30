@@ -6,6 +6,7 @@ use netscenario_model::{Impairments, Link, Name, Problem, Scenario};
 use crate::backend::{Backend, Direction, LinkHandle, NodeHandle};
 use crate::capability::{Accepted, check};
 use crate::error::Error;
+use crate::seed::derive_seed;
 
 /// What was created for a scenario.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +35,7 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
         return Err(Error::InvalidScenario(problems));
     }
     let accepted = check(scenario, &backend.capabilities(), false)?;
+    backend.check_values(scenario)?;
     match build(backend, scenario) {
         Ok((nodes, links)) => Ok(Provisioned {
             nodes,
@@ -62,7 +64,7 @@ fn build(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Built, Error>
             .map(|(_, handle)| *handle)
     };
     let mut links = Vec::new();
-    for link in &scenario.topology.links {
+    for (index, link) in scenario.topology.links.iter().enumerate() {
         let (Some(first), Some(second)) = (node(&link.between[0]), node(&link.between[1])) else {
             // `validate` has checked this, so it only happens if that check and this code disagree
             return Err(Error::InvalidScenario(vec![
@@ -76,7 +78,10 @@ fn build(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Built, Error>
         let handle = backend.create_link(&link.id, [first, second])?;
         for direction in [Direction::Forward, Direction::Reverse] {
             if let Some(impairments) = impairments_of(link, direction) {
-                backend.apply(handle, direction, impairments)?;
+                let seed = scenario
+                    .seed
+                    .map(|seed| derive_seed(seed, index, direction));
+                backend.apply(handle, direction, impairments, seed)?;
             }
         }
         links.push((link.id.clone(), handle));
@@ -171,9 +176,14 @@ mod tests {
             link: LinkHandle,
             direction: Direction,
             impairments: &Impairments,
+            seed: Option<u64>,
         ) -> Result<(), Error> {
             let delay = impairments.delay.map(|d| d.to_string()).unwrap_or_default();
-            self.step(format!("apply {} {direction:?} {delay}", link.0), "apply")
+            let seed = seed.map(|s| format!(" seed {s}")).unwrap_or_default();
+            self.step(
+                format!("apply {} {direction:?} {delay}{seed}", link.0),
+                "apply",
+            )
         }
 
         fn start_program(&mut self, _: NodeHandle, _: &Program) -> Result<ProgramHandle, Error> {

@@ -12,6 +12,14 @@ publish.workspace = true
 [dependencies]
 netscenario-core.workspace = true
 netscenario-model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# The helper that a test starts as the supervisor of a run (D-022). An application starts its own binary
+# that calls `supervisor::main`.
+[[bin]]
+name = "netscenario-kernel-supervisor"
+path = "src/bin/supervisor.rs"
 
 [lints]
 workspace = true

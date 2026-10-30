@@ -62,6 +62,13 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
           tools: just@1.40.0,cargo-nextest@0.9.150
+      # The tests of the Kernel backend create network namespaces as an unprivileged user. Ubuntu 24.04
+      # refuses that by default (AppArmor, spike S1); Ubuntu 22.04 has no such rule.
+      - name: Allow unprivileged user namespaces
+        run: |
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - run: just test
 
   docs:
