@@ -1,9 +1,9 @@
 //! The interface that every backend implements (BKD-03). The engine of a run uses nothing else, so a new
 //! backend means implementing this trait and filling its column in the coverage matrix.
 
-use netscenario_model::{Impairments, Name};
+use netscenario_model::{Impairments, Name, Scenario};
 
-use crate::capability::Capabilities;
+use crate::capability::{Capabilities, CapabilityError};
 use crate::error::Error;
 
 /// A node that a backend created. Only the backend knows what it is (a network namespace for the Kernel
@@ -64,7 +64,20 @@ pub trait Backend {
     /// [`Error::Backend`] if the link cannot be created.
     fn create_link(&mut self, name: &Name, between: [NodeHandle; 2]) -> Result<LinkHandle, Error>;
 
+    /// Checks the values of a scenario against what this backend can apply exactly, for example a delay in
+    /// nanoseconds where the kernel works in microseconds. It runs after the check of the features and before
+    /// anything is created, and refuses in the same way. The default accepts everything.
+    ///
+    /// # Errors
+    ///
+    /// A [`CapabilityError`] with one refusal for each value that cannot be applied exactly.
+    fn check_values(&self, _scenario: &Scenario) -> Result<(), CapabilityError> {
+        Ok(())
+    }
+
     /// Sets the impairments of one direction of a link. What is not set in `impairments` is not impaired.
+    /// `seed` seeds the random loss of this direction (see [`derive_seed`](crate::derive_seed)); without it
+    /// the loss is random from run to run.
     ///
     /// # Errors
     ///
@@ -74,6 +87,7 @@ pub trait Backend {
         link: LinkHandle,
         direction: Direction,
         impairments: &Impairments,
+        seed: Option<u64>,
     ) -> Result<(), Error>;
 
     /// Starts `program` in `node`.

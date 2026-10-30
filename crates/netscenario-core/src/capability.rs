@@ -116,6 +116,15 @@ pub struct CapabilityError {
 }
 
 impl CapabilityError {
+    /// An error for `backend` with the given refusals.
+    #[must_use]
+    pub fn new(backend: impl Into<String>, refusals: Vec<Refusal>) -> Self {
+        Self {
+            backend: backend.into(),
+            refusals,
+        }
+    }
+
     /// The name of the backend.
     #[must_use]
     pub fn backend(&self) -> &str {

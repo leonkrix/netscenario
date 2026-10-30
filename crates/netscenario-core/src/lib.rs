@@ -12,9 +12,11 @@ mod capability;
 mod error;
 mod feature;
 mod provision;
+mod seed;
 
 pub use backend::{Backend, Direction, LinkHandle, NodeHandle, Program, ProgramHandle};
 pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, check};
 pub use error::Error;
 pub use feature::{Feature, Requirement, requirements};
 pub use provision::{Provisioned, impairments_of, provision};
+pub use seed::derive_seed;
