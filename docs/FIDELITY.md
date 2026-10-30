@@ -24,7 +24,7 @@ A test that judges must be able to fail. Three tests run a scenario that is wron
 
 ## Measured
 
-What this machine measured. The numbers differ from run to run in the last digits and from machine to machine in the noise; the bounds do not. Each CI run uploads the same tables for its runner (the artifacts `fidelity-<os>-rust-<version>` of the run), and `just fidelity` rewrites this block with what the machine that runs it measures.
+What this machine measured. The numbers differ from run to run in the last digits and from machine to machine in the noise; the bounds do not. Each CI run uploads the same tables for its runner (the artifacts `fidelity-<os>-rust-<version>` of the run), compared below; `just fidelity` rewrites this block with what the machine that runs it measures.
 
 <!-- fidelity:begin -->
 Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
@@ -95,6 +95,43 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | the offered 2 mbit is far below the 10 mbit of the link |
 
 <!-- fidelity:end -->
+
+## On the CI runners
+
+The same twelve tests ran on the two images of the CI, each with the stable Rust and with 1.89 (run of the pull request that built the two qdiscs, 2026-10-30; the artifacts `fidelity-<os>-rust-<version>` of that run). The kernel of Ubuntu 22.04 is 6.8.0 and that of 24.04 is 7.0.0; the development machine has 6.12.113; all three use iproute2 6.15.0. Every one of the 4 × 23 quantities was inside its bounds. The cells show the range of the two jobs of an image.
+
+| Case | Quantity | Expected | Development machine | Ubuntu 22.04 | Ubuntu 24.04 |
+| --- | --- | --- | --- | --- | --- |
+| delay 20 ms | smallest delay | 20.000 ms | 20.008 ms | 20.007 to 20.013 ms | 20.027 to 20.029 ms |
+| delay 20 ms | median delay | 20.000 ms | 20.015 ms | 20.024 to 20.025 ms | 20.058 to 20.076 ms |
+| delay 20 ms | loss | 0.00 % | 0.00 % | 0.00 % | 0.00 % |
+| delay 20 ms | reordered packets | 0.00 % | 0.00 % | 0.00 % | 0.00 % |
+| loss 5 % | loss | 5.00 % | 4.90 % | 4.90 % | 4.90 % |
+| loss 5 % | median delay | 0.016 ms | 0.009 ms | 0.008 to 0.015 ms | 0.021 to 0.027 ms |
+| loss 5 % | reordered packets | 0.00 % | 0.00 % | 0.00 % | 0.00 % |
+| rate 2 mbit | steady payload rate | 1.9194 mbit/s | 1.9200 mbit/s | 1.9200 mbit/s | 1.9200 mbit/s |
+| rate 2 mbit | loss | 0.00 % | 0.00 % | 0.00 % | 0.00 % |
+| rate 2 mbit | reordered packets | 0.00 % | 0.00 % | 0.00 % | 0.00 % |
+| uniform jitter 5 ms | smallest delay | 15.000 ms | 15.010 ms | 15.016 to 15.022 ms | 15.031 to 15.038 ms |
+| uniform jitter 5 ms | 99th percentile of the delay | 24.900 ms | 24.901 ms | 24.894 to 24.943 ms | 24.943 to 25.019 ms |
+| uniform jitter 5 ms | mean delay | 20.000 ms | 19.978 ms | 20.012 to 20.026 ms | 20.032 to 20.046 ms |
+| uniform jitter 5 ms | standard deviation of the delay | 2.887 ms | 2.865 ms | 2.871 to 2.885 ms | 2.883 to 2.889 ms |
+| uniform jitter 5 ms | reordered packets | 58.00 % | 58.28 % | 58.77 to 59.00 % | 58.52 to 58.73 % |
+| normal jitter 5 ms | mean delay | 20.000 ms | 19.977 ms | 19.980 to 20.037 ms | 20.038 to 20.068 ms |
+| normal jitter 5 ms | standard deviation of the delay | 5.000 ms | 5.061 ms | 5.009 to 5.044 ms | 4.981 to 5.002 ms |
+| normal jitter 5 ms | 99th percentile of the delay | 31.600 ms | 31.838 ms | 31.863 to 31.994 ms | 31.672 to 31.914 ms |
+| normal jitter 5 ms | reordered packets | 72.00 % | 72.05 % | 72.68 to 72.85 % | 71.72 to 72.02 % |
+| normal jitter 5 ms + rate 10 mbit | mean delay | 41.000 ms | 41.059 ms | 41.020 to 41.086 ms | 41.067 to 41.266 ms |
+| normal jitter 5 ms + rate 10 mbit | standard deviation of the delay | 5.000 ms | 5.008 ms | 4.937 to 4.952 ms | 5.040 to 5.146 ms |
+| normal jitter 5 ms + rate 10 mbit | reordered packets | 29.00 % | 28.55 % | 28.49 to 29.39 % | 27.65 to 30.41 % |
+| normal jitter 5 ms + rate 10 mbit | loss | 0.00 % | 0.00 % | 0.00 % | 0.00 % |
+
+What the comparison shows:
+
+- **The noise is small and goes one way.** The median of a fixed delay of 20 ms was 20.015 ms on the development machine, 20.024 to 20.025 ms on 22.04 and 20.058 to 20.076 ms on 24.04, always above 20 and far inside the 0.5 ms that the bound allows. The smallest delay (the one that cannot be raised by a single late packet) was 20.007 to 20.029 ms on the runners.
+- **The rate and the count of lost packets did not change at all.** 1.9200 mbit/s of payload for a rate of 2 mbit (the Ethernet frame accounting) and 4.90 % (294 of 6,000 packets) lost for 5 % are the same on all five systems. That the seeded loss is the same *pattern* on the kernels 6.8, 6.12 and 7.0 was shown by spike S2; these tables show the same count.
+- **The statistics scatter as statistics do.** The standard deviation of the normal jitter was 4.98 to 5.06 ms for a configured 5 ms in its own case and 4.94 to 5.15 ms in the case with a rate. The share of reordered packets was 58.3 % to 59.0 % (uniform) and 71.7 % to 72.9 % (normal); in the case with a rate 27.7 % to 30.4 %, against the 28.8 % of the model.
+- **What differs is small.** Ubuntu 24.04 adds about 0.04 ms to the median of a fixed delay compared with 22.04, and the Rust version changes nothing that is measured here.
 
 ## What to know when you write a scenario
 

@@ -115,7 +115,7 @@ The scheduler asks the models for their steps ahead of time, so a run's timeline
 
 ## Python and pytest
 
-The Rust core is the only implementation of semantics. The Python package wraps it (PyO3, built with maturin) and adds the builder, the result objects, the statistics helpers and the pytest plugin (`pytest-netscenario`, a separate small distribution that depends on `netscenario`). Fixtures give a runner per test, scenario files are found by path or by marker, and results are attached to the test report. The plugin works with `pytest-xdist`: every run owns its namespaces, and names include the process, so parallel runs do not collide.
+The Rust core is the only implementation of semantics. The Python package calls it in the same process (PyO3, built with maturin; D-031) and adds the builder, the result objects, the statistics helpers and the pytest plugin (`pytest-netscenario`, a separate small distribution that depends on `netscenario`). Fixtures give a runner per test, scenario files are found by path or by marker, and results are attached to the test report. The plugin works with `pytest-xdist`: every run owns its namespaces, and names include the process, so parallel runs do not collide.
 
 ## Privileges
 
