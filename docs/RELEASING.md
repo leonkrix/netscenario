@@ -16,7 +16,7 @@ git switch main && git pull    # the squash commit is a new commit: tag that one
 just release-tag               # checks that it is main, clean and in step with origin; tags and pushes v0.1.0
 ```
 
-Then, on GitHub, **Actions, Release**: the checks and the builds run, and the two publishing jobs wait for you. Open the run and press **Review deployments**, tick `release`, **Approve and deploy**, once for crates.io and once for PyPI. When both are through, the job `GitHub release` creates the release with the notes of that version.
+Then, on GitHub, **Actions, Release**: the checks and the builds run, and the two publishing jobs wait for you. Open the run and press **Review deployments**, tick `release`, **Approve and deploy**, three times one after the other: crates.io, then the wheels on PyPI, then the plugin on PyPI. When all three are through, the job `GitHub release` creates the release with the notes of that version.
 
 ## What each step does
 
@@ -34,7 +34,7 @@ The changelog is made of the **titles of the pull requests** (squash merge: the 
 2. *Wheels*: the same workflow as the CI (`wheels.yml`) builds the wheels in the manylinux containers on both architectures and installs them into clean environments; the plugin is built; the four files (two wheels, plugin wheel, plugin source distribution) are checked for names and metadata (`twine check --strict`).
 3. *Package the crates*: `cargo publish --workspace --dry-run`.
 4. *Publish the crates* (after your approval): trusted publishing, in dependency order.
-5. *Publish the wheels* (after your approval, after the crates): trusted publishing with attestations (PEP 740: the provenance of each file).
+5. *Publish the wheels* (after your approval, after the crates): the two wheels of `netscenario`, by trusted publishing with attestations (PEP 740: the provenance of each file). Then *publish the plugin* (after your approval): `pytest-netscenario`, which needs exactly these wheels, so it comes second.
 6. *GitHub release*: the notes of the version, the four files attached; a version with a hyphen (`0.2.0-rc.1`) is marked as a pre-release.
 
 No token is stored anywhere. The registries accept an upload from this workflow, in the environment `release`, and from nothing else; the environment needs your approval.
@@ -47,7 +47,7 @@ No token is stored anywhere. The registries accept an upload from this workflow,
 
 - **A check fails before the publishing**: nothing is out. Fix it with a pull request; if the release commit changes, delete the tag (above) and tag again. A tag that was pushed but never approved can also stay: reject the deployment.
 - **The crates job fails halfway**: some crates may be on crates.io and others not. Run the job again; if cargo refuses because a crate with this version exists, publish the rest by hand in dependency order (`netscenario-agent`, `netscenario-model`, `netscenario-core`, `netscenario-backend-kernel`, `netscenario-cli`) with `cargo publish -p <crate>`, using a token you create for the purpose and delete afterwards.
-- **The PyPI job fails**: run the failed job again. Files that are already there are skipped.
+- **A PyPI job fails**: run the failed job again. Files that are already there are skipped. If the wheels are out and the plugin is not, the plugin job is the only one to repeat.
 - **A release is faulty**: **yank** it (`cargo yank --version X.Y.Z <crate>` for each crate, and *Yank* in the project's release page on pypi.org). A yanked version stays installable for those who pinned it. Fix with a patch release; a version number is never reused.
 
 ## One-time setup
@@ -62,13 +62,19 @@ No token is stored anywhere. The registries accept an upload from this workflow,
 ### PyPI
 
 1. An account with two-factor authentication.
-2. **Your account, Publishing**, add a **pending publisher** for each of the two projects: GitHub Actions; owner `leonkrix`; repository `netscenario`; workflow `release.yml`; environment `release`; project name `netscenario`, and again for `pytest-netscenario`. A pending publisher does not reserve the name; the first upload does. Check on the day that both names are still free.
+2. **Your account, Publishing**, section *Add a new pending publisher*, tab GitHub: owner `leonkrix`; repository `netscenario`; workflow `release.yml`; environment `release`; project name `netscenario`. A pending publisher does not reserve the name; the first upload does. Check on the day that both names (`netscenario`, `pytest-netscenario`) are still free.
+3. **Only one pending publisher can exist for this combination of repository, workflow and environment**: the form refuses the second one for `pytest-netscenario` with "already been registered for a different project name". So the plugin is registered later, in the middle of the first release (that is why the plugin has its own job):
+   1. Start the release and approve crates.io and the wheels. The upload of the wheels creates the project `netscenario`, and its pending publisher becomes an ordinary one.
+   2. **Before you approve the plugin job**, register the pending publisher for `pytest-netscenario` (the same form, the same values, the other project name).
+   3. Approve the plugin job. Its upload creates `pytest-netscenario`.
+
+   After that both projects trust the workflow, and later releases need no step in between. (Registering the same workflow for two projects that already exist is allowed; the limit is on the pending ones. If PyPI refuses at the second step, send me the text.)
 
 ### crates.io
 
 Trusted publishing exists only for a crate that has been published once, by hand. So the five names are taken with the version that the repository has before the first release, `0.0.0`, and then closed for tokens:
 
-1. An account (GitHub login) with a verified email address, and an API token with the scope *publish-new* and *publish-update* for the crates `netscenario-*`, valid for a day.
+1. An account (GitHub login) with a verified email address, and an API token with the scopes *publish-new*, *publish-update* and *yank* for the crates `netscenario-*`, valid for a day. (Without *yank* the command in step 3 answers 403 Forbidden; the same can be done on the page of each crate, *Versions*, *Yank*.)
 2. From a clean checkout of `main` (after the pull request with this setup is merged):
 
    ```bash
@@ -83,7 +89,7 @@ Trusted publishing exists only for a crate that has been published once, by hand
 
 ### Then
 
-Rehearse (above), and release `0.1.0`.
+Rehearse (above), and release `0.1.0-rc.1` and then `0.1.0`.
 
 ## What is not in a release yet
 
