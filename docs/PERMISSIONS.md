@@ -17,7 +17,7 @@ Python needs nothing more: the wheel carries the two programs of a run (`netscen
 
 ## The ways to get the right
 
-`doctor` tests two ways with the exact command that a run uses. **A run chooses by the user id of the process:** root uses its own rights, everyone else the user namespace.
+`doctor` tests two ways with the exact command that a run uses, and a run chooses the same way as `doctor` reports (D-035): **its own rights if the process has them and they work, else a user namespace.** A process has rights of its own if it is root, or if it has `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` in its ambient set (below).
 
 ### 1. An unprivileged user namespace (the default)
 
@@ -40,7 +40,7 @@ The three settings, and what to do if `doctor` names one:
 
 **What the Ubuntu setting costs.** Ubuntu restricts unprivileged user namespaces because they widen the attack surface of the kernel for every program on the machine. The sysctl lifts that for the whole machine, not for netscenario alone. On a developer laptop or a throw-away CI runner this is usually fine; on a shared or hardened server use the next way instead. A narrower way is an AppArmor profile that allows only the program that creates the namespace (`unshare`, not netscenario); this project has not tried it, and only the sysctl is tested.
 
-### 2. The rights of the process: root, or two capabilities
+### 2. The rights of the process: root, or two ambient capabilities
 
 Without a user namespace, a process that has `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` creates the namespaces itself. Root has them:
 
@@ -50,8 +50,17 @@ sudo netscenario run scenario.yaml
 
 `doctor` reports this way as `own rights`.
 
-- **Root** is tested: the CI of this project runs the whole Kernel backend a second time with `sudo`, so that both ways stay working (D-022). A container that runs as root with `SYS_ADMIN` is root in this sense.
-- **The two capabilities without root** are probed by `doctor` (a process that has `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` passes the probe), **but a run does not use them**: a process that is not root always takes the user namespace, whatever capabilities it has. So for a service or a container that runs as an ordinary user with the capabilities, `doctor` can say that `own rights` work and a run still fails if user namespaces are refused. **A known limit of release 0.1**, not hidden: until it is lifted, run as root, or allow user namespaces.
+- **Root** is tested: the CI of this project runs the whole Kernel backend a second time with `sudo`, so that both ways stay working (D-022). A container that runs as root with `SYS_ADMIN` is root in this sense. If root is refused and a user namespace works (a container without `SYS_ADMIN` on a kernel that allows user namespaces), the run uses the user namespace.
+- **An ordinary user with the two capabilities in the *ambient* set** is tested too: the CI starts the tests as an ordinary user with `setpriv --ambient-caps` and checks that the run takes its own rights, and that it does not with only one of the capabilities or with none. The ambient set is the one that survives `exec`, and a run starts `unshare`, which starts the supervisor; each has only what the one before gave it. Ways to give a process ambient capabilities:
+
+  ```bash
+  # From root: run as the user "ci", with the two capabilities as ambient capabilities
+  sudo setpriv --reuid=ci --regid=ci --init-groups \
+      --inh-caps=+net_admin,+sys_admin --ambient-caps=+net_admin,+sys_admin \
+      netscenario run scenario.yaml
+  ```
+
+  or in a systemd unit `AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN`. **Capabilities set on the file** (`setcap` on `netscenario`) do not help: they are gone for the programs that netscenario starts, and `doctor` shows `own rights` as not available. In Docker, `--cap-add` gives capabilities to root in the container; whether they are ambient for another user (`--user`) is not tested.
 
 With `sudo`, the environment matters: `sudo` drops the `PATH`, so a newer `tc` or a `netscenario` in `~/.cargo/bin` is not found. Use `sudo env "PATH=$PATH" netscenario ...` or give the full path.
 
@@ -62,7 +71,7 @@ With `sudo`, the environment matters: `sudo` drops the `PATH`, so a newer `tc` o
 | Your own machine, Debian or Ubuntu 22.04 | 1, nothing to do                                                              |
 | Your own machine, Ubuntu 24.04           | 1 after the sysctl, or 2 with `sudo` if you do not want to change the machine |
 | A CI on GitHub-hosted runners            | 1, see below                                                                  |
-| A shared or hardened server              | 2, as root                                                                    |
+| A shared or hardened server              | 2, as root or with the two ambient capabilities                               |
 | A container                              | See below                                                                     |
 
 ## Containers

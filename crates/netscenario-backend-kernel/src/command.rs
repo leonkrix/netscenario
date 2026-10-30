@@ -98,17 +98,72 @@ impl Toolbox {
     }
 }
 
-/// Whether this process is root, from `/proc/self/status` (no `unsafe` call to `geteuid`).
-pub(crate) fn running_as_root() -> bool {
-    std::fs::read_to_string("/proc/self/status")
-        .ok()
-        .and_then(|status| {
-            status
-                .lines()
-                .find_map(|line| line.strip_prefix("Uid:"))
-                .and_then(|ids| ids.split_whitespace().nth(1).map(|euid| euid == "0"))
-        })
-        .unwrap_or(false)
+/// The capability to create virtual Ethernet pairs and to set the queues on them (`CAP_NET_ADMIN`).
+const CAP_NET_ADMIN: u32 = 12;
+/// The capability to create namespaces and to enter them (`CAP_SYS_ADMIN`).
+const CAP_SYS_ADMIN: u32 = 21;
+
+/// Whether a process with this `/proc/<pid>/status` may create the namespaces of a run with its own rights,
+/// without a user namespace: it is root (an effective user id of 0), or it has `CAP_NET_ADMIN` and
+/// `CAP_SYS_ADMIN` in its **ambient** set.
+///
+/// The ambient set is the one that survives `exec`: a run starts `unshare`, and `unshare` starts the
+/// supervisor, and each of them has only what the one before passed on. Capabilities in the permitted or
+/// effective set alone (for example from `setcap` on the file) are gone after the first `exec`.
+pub(crate) fn own_rights_in(status: &str) -> bool {
+    let field = |name: &str| status.lines().find_map(|line| line.strip_prefix(name));
+    let root = field("Uid:")
+        .and_then(|ids| ids.split_whitespace().nth(1))
+        .is_some_and(|euid| euid == "0");
+    let ambient = field("CapAmb:")
+        .and_then(|mask| u64::from_str_radix(mask.trim(), 16).ok())
+        .is_some_and(|mask| {
+            [CAP_NET_ADMIN, CAP_SYS_ADMIN]
+                .iter()
+                .all(|capability| mask & (1 << capability) != 0)
+        });
+    root || ambient
+}
+
+/// Whether this process has the rights for [`own_rights_in`], from `/proc/self/status`. No `unsafe` call to
+/// `geteuid` or `capget`.
+pub(crate) fn has_own_rights() -> bool {
+    std::fs::read_to_string("/proc/self/status").is_ok_and(|status| own_rights_in(&status))
+}
+
+/// The way for a run, from what the process has and what works here: its own rights if it has them and they
+/// work, else a user namespace. A process without rights of its own never tries them. If neither works, the
+/// rights of the process are kept, so that the run fails with the answer of `unshare`.
+///
+/// `works(user_namespace)` tries the namespaces of a run once; it is only called when the process has rights.
+pub(crate) fn uses_own_rights(has_own_rights: bool, works: impl Fn(bool) -> bool) -> bool {
+    has_own_rights && (works(false) || !works(true))
+}
+
+/// The flags of `unshare` for the namespaces of a run: the user namespace (in which the process is root only
+/// inside) if `user_namespace`, then the network, mount and PID namespaces with the supervisor as the first
+/// process, which the kernel ends with everything in it when it dies (D-022).
+pub(crate) fn namespace_flags(user_namespace: bool) -> Vec<&'static str> {
+    let mut flags = Vec::new();
+    if user_namespace {
+        flags.extend(["--user", "--map-root-user"]);
+    }
+    flags.extend([
+        "--net",
+        "--mount",
+        "--pid",
+        "--fork",
+        "--kill-child",
+        "--mount-proc",
+    ]);
+    flags
+}
+
+/// Whether `unshare` creates the namespaces of a run with these flags, here, now.
+pub(crate) fn namespaces_work(unshare: &Path, user_namespace: bool) -> bool {
+    let mut arguments = namespace_flags(user_namespace);
+    arguments.extend(["--", "true"]);
+    run(unshare, &arguments).is_ok()
 }
 
 /// The places where a tool is looked for, as text for a message: the `PATH` and the directories that are added.
@@ -152,5 +207,78 @@ mod tests {
     fn a_program_that_does_not_exist_is_not_found() {
         assert_eq!(find("no-such-program-netscenario"), None);
         assert!(find("sh").is_some());
+    }
+
+    /// A `/proc/<pid>/status` with this user id and these ambient capabilities (the lines that matter).
+    fn status(euid: u32, ambient: u64) -> String {
+        format!("Name:\tx\nUid:\t{euid}\t{euid}\t{euid}\t{euid}\nCapAmb:\t{ambient:016x}\n")
+    }
+
+    const NET_ADMIN: u64 = 1 << 12;
+    const SYS_ADMIN: u64 = 1 << 21;
+
+    #[test]
+    fn root_has_rights_of_its_own() {
+        assert!(own_rights_in(&status(0, 0)));
+    }
+
+    #[test]
+    fn an_ordinary_user_with_both_ambient_capabilities_has_them_too() {
+        assert!(own_rights_in(&status(1000, NET_ADMIN | SYS_ADMIN)));
+        // Other capabilities in the set do not matter
+        assert!(own_rights_in(&status(1000, NET_ADMIN | SYS_ADMIN | 1 << 7)));
+    }
+
+    #[test]
+    fn canary_one_capability_is_not_enough_and_neither_is_none() {
+        assert!(!own_rights_in(&status(1000, NET_ADMIN)));
+        assert!(!own_rights_in(&status(1000, SYS_ADMIN)));
+        assert!(!own_rights_in(&status(1000, 0)));
+        // 0x201000 is the mask of the two; shifted by one bit it is two other capabilities
+        assert!(!own_rights_in(&status(1000, (NET_ADMIN | SYS_ADMIN) << 1)));
+    }
+
+    #[test]
+    fn a_status_that_cannot_be_read_gives_no_rights() {
+        assert!(!own_rights_in(""));
+        assert!(!own_rights_in(
+            "Uid:\t1000\t1000\t1000\t1000\nCapAmb:\tnot hex\n"
+        ));
+        // An old kernel has no CapAmb line
+        assert!(!own_rights_in("Uid:\t1000\t1000\t1000\t1000\n"));
+        // The effective user id counts, not the real one
+        assert!(own_rights_in("Uid:\t1000\t0\t1000\t0\n"));
+        assert!(!own_rights_in("Uid:\t0\t1000\t0\t1000\n"));
+    }
+
+    #[test]
+    fn the_way_follows_what_the_process_has_and_what_works() {
+        use std::cell::Cell;
+        // No rights of its own: the user namespace, and nothing is tried
+        let tried = Cell::new(0);
+        assert!(!uses_own_rights(false, |_| {
+            tried.set(tried.get() + 1);
+            true
+        }));
+        assert_eq!(tried.get(), 0);
+        // Rights that work are used, also when the user namespace would work too
+        assert!(uses_own_rights(true, |_| true));
+        // Rights that are refused (root in a container without SYS_ADMIN) give way to a user namespace
+        assert!(!uses_own_rights(true, |user_namespace| user_namespace));
+        // If nothing works, the rights are kept, and the run fails with the answer of unshare
+        assert!(uses_own_rights(true, |_| false));
+    }
+
+    #[test]
+    fn the_flags_of_a_run_have_the_user_namespace_only_when_asked() {
+        assert!(namespace_flags(true).starts_with(&["--user", "--map-root-user"]));
+        assert!(!namespace_flags(false).contains(&"--user"));
+        for flags in [namespace_flags(true), namespace_flags(false)] {
+            assert!(
+                flags.contains(&"--net")
+                    && flags.contains(&"--pid")
+                    && flags.contains(&"--kill-child")
+            );
+        }
     }
 }
