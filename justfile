@@ -24,8 +24,16 @@ clippy:
 
 # The tests of the Kernel backend alone. The CI runs them a second time as root (`sudo`); on a machine
 # without sudo, `unshare --user --map-root-user just test-kernel` takes the same code path as root.
+# The fidelity tests are left out here: they take a minute, say the same on every run, and the CI runs them
+# in the first pass already. `just fidelity` runs them.
 test-kernel:
-    cargo nextest run -p netscenario-backend-kernel -p netscenario-agent --all-features --no-tests=pass
+    cargo nextest run -p netscenario-backend-kernel -p netscenario-agent --all-features --no-tests=pass -E 'not binary(fidelity)'
+
+# The fidelity tests (QA-06) and a rewrite of the measured block in docs/FIDELITY.md with what this machine
+# measured. Commit the file only from a machine that you want to be the reference.
+fidelity:
+    rm -rf target/tmp/fidelity
+    UPDATE_FIDELITY=1 cargo nextest run -p netscenario-backend-kernel -p netscenario-agent --all-features -E 'binary(fidelity)'
 
 # Unit and doc tests (nextest does not run doc tests). The Python extension is a cdylib: cargo has no doc
 # tests for it and would say so on every run, so it is left out of the doc tests.

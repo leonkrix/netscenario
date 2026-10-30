@@ -1,0 +1,9 @@
+# Settings of cargo-nextest for this workspace.
+
+# The fidelity tests measure what the network does to a packet to within half a millisecond (QA-06,
+# docs/FIDELITY.md). The sender of the agent spins for the last stretch before every packet, so two such tests
+# side by side on a machine with four cores would disturb each other, and so would any other test. A test of
+# this binary therefore asks for all the threads: it runs alone.
+[[profile.default.overrides]]
+filter = 'binary(fidelity)'
+threads-required = "num-cpus"

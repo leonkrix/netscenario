@@ -92,9 +92,14 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
         ),
         workload.packet_size_bytes
     );
+    let reordered = if stats.reordered > 0 {
+        format!("  reordered {}", stats.reordered)
+    } else {
+        String::new()
+    };
     let _ = writeln!(
         text,
-        "  sent {}  received {}  lost {} ({:.2} %)",
+        "  sent {}  received {}  lost {} ({:.2} %){reordered}",
         stats.sent,
         stats.received,
         stats.lost,
@@ -169,7 +174,7 @@ mod tests {
         "id": "media", "kind": "udp-cbr", "from": "client", "to": "server",
         "from_address": "10.100.0.1", "to_address": "10.100.0.2:5000",
         "rate_bits_per_second": 2000000, "packet_size_bytes": 1200, "start_ns": 0, "duration_ns": 3000000000,
-        "sent": 625, "received": 620, "lost": 5, "loss_ratio": 0.008, "duplicates": 0, "unexpected": 0,
+        "sent": 625, "received": 620, "lost": 5, "loss_ratio": 0.008, "duplicates": 0, "reordered": 0, "unexpected": 0,
         "delay": {"min_ns": 31168696, "mean_ns": 42869547, "p50_ns": 42615470, "p90_ns": 48602048,
           "p95_ns": 50225591, "p99_ns": 54035378, "p999_ns": 56984904, "max_ns": 56984904},
         "throughput": {"bin_ns": 1000000000, "bits_per_second": [1910400.0, 1977600.0, 1987200.0, 76800.0]},
@@ -221,6 +226,17 @@ result: out/result.json
         assert!(
             text.contains("warning: the kernel refused 3 packets: no buffer space"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn reordering_is_shown_only_when_there_was_some() {
+        let mut result = result();
+        assert!(!summary(&result, Path::new("out")).contains("reordered"));
+        result.workloads[0].stats.reordered = 337;
+        assert!(
+            summary(&result, Path::new("out"))
+                .contains("sent 625  received 620  lost 5 (0.80 %)  reordered 337")
         );
     }
 

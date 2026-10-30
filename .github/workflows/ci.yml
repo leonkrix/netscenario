@@ -87,6 +87,15 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
       - run: just test
+      # What the fidelity tests measured on this runner (QA-06, docs/FIDELITY.md): one table for each test job,
+      # to be compared with the table in the repository.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: fidelity-${{ matrix.os }}-rust-${{ matrix.rust }}
+          path: target/tmp/fidelity/
+          if-no-files-found: warn
+          retention-days: 30
       # The same tests once more with the rights of root, so that both ways of running a scenario are tested
       # (an ordinary user runs it in a user namespace, root with its own rights, D-022). The environment is
       # passed on: `sudo` would drop the toolchain and the `PATH` with the newer `tc`.

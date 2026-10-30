@@ -115,6 +115,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [docs/COVERAGE.md](docs/COVERAGE.md): what is faithful on which backend.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the parts and how they fit.
 - [docs/CLI.md](docs/CLI.md): the commands, their options, the exit codes and the JSON they print.
+- [docs/FIDELITY.md](docs/FIDELITY.md): how close the Kernel backend is to what a scenario says, measured, and what it does that you may not expect.
 - [docs/RESULTS.md](docs/RESULTS.md): the result of a run, field by field.
 - [docs/AGENT.md](docs/AGENT.md): the agent in the nodes: the packet, the record file, the command line.
 - [docs/DOCTOR.md](docs/DOCTOR.md): `netscenario doctor` and `netscenario clean`: what they check, what they print, their exit codes.

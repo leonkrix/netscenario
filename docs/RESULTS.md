@@ -73,6 +73,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
       "lost": 5,
       "loss_ratio": 0.008,
       "duplicates": 0,
+      "reordered": 0,
       "unexpected": 0,
       "delay": {
         "min_ns": 31168696,
@@ -160,6 +161,7 @@ The seed of one direction is derived from the seed of the run, the index of the 
 | `lost` | `sent - received`. |
 | `loss_ratio` | `lost / sent` (0 if nothing was sent), a number between 0 and 1. |
 | `duplicates` | Arrivals of a packet that had arrived before. They are not counted in `received` and not in the delays. |
+| `reordered` | Packets that arrived after a packet with a higher sequence number (RFC 4737, type-P-reordered). A packet that is overtaken by several counts once; duplicates are not counted. `netem` reorders packets when the jitter is larger than the gap between them ([FIDELITY.md](FIDELITY.md)). |
 | `unexpected` | Records with a sequence number the sender never used. Always 0 with a correct sender and receiver; a value above 0 is a bug to report. |
 | `delay` | The one-way delay of the packets that arrived (the first arrival of each), in nanoseconds: `min_ns`, `mean_ns` (rounded down), `p50_ns`, `p90_ns`, `p95_ns`, `p99_ns`, `p999_ns`, `max_ns`; `null` if no packet arrived. |
 | `throughput` | `bin_ns` (one second) and `bits_per_second`: the payload bits that arrived in each second, counted from the moment the first packet was sent. See below. |
@@ -189,5 +191,5 @@ One JSON object on each line, one line for each packet of the workload, in the o
 ## What a result does not say
 
 - **Round trip time** (PRB-03) is not measured in release 0.1; the one-way delay is.
-- **Reordering** (PRB-04) is not counted; a reordered packet shows in the export as a sequence number whose `receive_ns` is smaller than that of an earlier one.
+- **The extent of reordering** (PRB-04: how far a packet is out of place, and the RFC 3550 jitter) is not measured; `reordered` counts the packets, and the export shows which ones (a sequence number that arrives after a higher one).
 - A packet that needed longer than `settle_ns` counts as lost. With a rate limit that builds a long queue, set the `settle` (the option exists in the library; the command line follows).
