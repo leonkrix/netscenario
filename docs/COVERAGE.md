@@ -14,7 +14,7 @@ Each cell is a mark and a release.
 | `?` | Not known until an [experiment](../spikes/README.md) is done. |
 | `·` | Does not apply. |
 
-Nothing is implemented yet. Every mark below is a plan, not a measurement. The backends:
+A mark is a plan until its cell has a link to the test that proves it; the links point to the fidelity tests of the Kernel backend ([FIDELITY.md](FIDELITY.md)), which measure each of these against its configuration. The backends:
 
 - **Kernel**: Linux network namespaces, virtual Ethernet pairs and `netem`/`tc`. The reference. Needs root or an unprivileged user namespace.
 - **Engine**: a packet-level emulator written for this project, running in userspace on virtual devices inside a user namespace. Linux, no root.
@@ -43,21 +43,28 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 
 | Feature | Kernel | Engine | Proxy |
 | --- | --- | --- | --- |
-| Fixed delay | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
-| Jitter (uniform, normal) | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
+| Fixed delay | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs): within 0.02 ms) | ✔ 0.4 | ✔ 0.5 |
+| Jitter (uniform, normal) | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs); reorders packets, and shifts the mean with a rate limit, see below) | ✔ 0.4 | ✔ 0.5 |
 | Jitter (pareto, tables) | ✔ 0.3 | ✔ 0.4 | ✔ 0.5 |
-| Independent loss | ✔ 0.1 | ✔ 0.4 | ~ 0.5 (UDP only) |
+| Independent loss | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs)) | ✔ 0.4 | ~ 0.5 (UDP only) |
 | Burst loss (Gilbert-Elliott, four-state) | ✔ 0.2 | ✔ 0.4 | ~ 0.5 (UDP only) |
 | Reordering | ✔ 0.2 | ✔ 0.4 | ~ 0.5 (UDP only) |
 | Duplication | ✔ 0.2 | ✔ 0.4 | ~ 0.5 (UDP only) |
 | Corruption | ✔ 0.2 | ✔ 0.4 | ✘ |
-| Rate limit | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
+| Rate limit | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs); counts Ethernet frames, see below) | ✔ 0.4 | ✔ 0.5 |
 | Queue limit | ✔ 0.3 (until then derived, see below) | ✔ 0.4 | ~ 0.5 |
 | Queue disciplines (CoDel, FQ-CoDel, PIE) | ✔ 0.3 | ✔ 0.4 | ✘ |
 | MTU, fragmentation | ✔ 0.3 | ✔ 0.4 | ✘ |
 | Different values per direction | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
 | Outages | ✔ 0.2 | ✔ 0.4 | ✔ 0.5 |
 | ECN marking | ? | ✔ 0.4 | ✘ |
+
+**What the Kernel backend does that a reader may not expect** (measured, [FIDELITY.md](FIDELITY.md)):
+
+- **The rate counts Ethernet frames.** `netem rate 2mbit` limits the frames of the link, and a frame is the payload plus 42 bytes (8 UDP, 20 IP, 14 Ethernet). With payloads of 1,000 bytes the payload rate that gets through is 2 mbit × 1,000 / 1,042 = 1.919 mbit, and the measured one was 1.920. A scenario that wants 2 mbit of payload has to ask for more; the rate of a workload is the rate of the payload (`docs/RESULTS.md`).
+- **Jitter reorders packets.** `netem` sends every packet at its own moment, so when the jitter is larger than the gap between two packets, a later packet can overtake an earlier one. With 5 ms of jitter and a packet every millisecond, 58 % of the packets (uniform) or 72 % (normal) arrived after a packet with a higher number. The results count them (`reordered`). The delay distribution itself is the configured one (mean, standard deviation and the ends were within the bounds of the tests).
+- **Jitter and a rate limit in one direction raise the mean delay.** The rate stage keeps the packets in order, so a packet cannot leave before the one in front of it, and the delays can only grow. With a delay of 40 ms, a normal jitter of 5 ms and `rate 10mbit` the mean delay is 42.6 ms, not 41 (40 ms plus the 1 ms that the rate adds), and nothing is reordered. A model of the code of `netem` gives the same number ([FIDELITY.md](FIDELITY.md), "Jitter and a rate limit"). Open: whether a scenario with both in one direction is refused, accepted with a notice in the result, or limited (`~`); today it runs and this page is the only place that says it.
+- **The delay is exact to the microsecond, and so is the smallest unit.** A time that is not a whole number of microseconds is refused, not rounded (see "Queue of the Kernel backend").
 
 **Restriction "UDP only" for the Proxy**: the proxy sits between the program and the network. For UDP it handles every datagram, so loss, reordering and duplication are exact. For TCP it ends the connection itself, so the TCP stack of the program never sees a lost packet. Delay, rate and outages act on the byte stream, but loss, reordering and duplication do not exist for TCP in this backend, and a scenario that asks for them with TCP traffic is refused.
 

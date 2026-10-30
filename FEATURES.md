@@ -130,7 +130,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PRB-01 | Per-packet records (sequence, send time, receive time) | M | 0.1 | done (record file, JSON Lines export; [RESULTS.md](docs/RESULTS.md)) |
 | PRB-02 | Loss and delivery ratio | M | 0.1 | done (`tests/run.rs`, canaries in `stats.rs`) |
 | PRB-03 | One-way delay and round trip time with percentiles | M | 0.1 | in progress (one-way delay with nearest-rank percentiles is done; the round trip time is open) |
-| PRB-04 | Jitter (as in RFC 3550) and reordering metrics | S | 0.2 | planned |
+| PRB-04 | Jitter (as in RFC 3550) and reordering metrics | S | 0.2 | in progress (the count of reordered packets is in the result; the extent and the RFC 3550 jitter are open) |
 | PRB-05 | Throughput and goodput over time | M | 0.1 | done (payload per second; for UDP throughput and goodput are the same number) |
 | PRB-06 | Burst statistics (length of loss runs) | S | 0.2 | planned |
 | PRB-07 | Time to recover after an event | M | 0.2 | planned |
@@ -251,7 +251,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | QA-03 | Fuzzing of the scenario parser | S | 0.3 | planned |
 | QA-04 | Snapshot tests for reports and the schema | S | 0.2 | planned |
 | QA-05 | Benchmarks of the engine (throughput, added delay) | S | 0.4 | planned |
-| QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | planned |
+| QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `tests/fidelity.rs`: delay, loss, rate, both jitters, jitter with a rate; three canaries; CI numbers per runner as artifacts) |
 | QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | in progress |
 | QA-08 | Supply chain: dependency audit and policy, OpenSSF Scorecard, actions pinned to commits | M | 0.1 | in progress |
 | QA-09 | Coverage figures (for information) | C | 0.3 | idea |

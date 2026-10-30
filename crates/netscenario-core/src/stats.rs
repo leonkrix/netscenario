@@ -64,6 +64,9 @@ pub struct FlowStats {
     pub loss_ratio: f64,
     /// Arrivals of a packet that had arrived before.
     pub duplicates: u64,
+    /// Packets that arrived after a packet with a higher sequence number (RFC 4737, type-P-reordered). A
+    /// packet that is late by a lot counts once, however many packets overtook it. Duplicates are not counted.
+    pub reordered: u64,
     /// Records whose sequence number is not below `sent`. This cannot happen with a correct sender and receiver.
     pub unexpected: u64,
     /// The delays of the packets that arrived (the first arrival of each), or `None` if none did.
@@ -89,7 +92,8 @@ pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -
     let mut seen = HashSet::with_capacity(records.len());
     let mut delays = Vec::with_capacity(records.len());
     let mut bins: Vec<u64> = Vec::new();
-    let (mut duplicates, mut unexpected) = (0_u64, 0_u64);
+    let (mut duplicates, mut unexpected, mut reordered) = (0_u64, 0_u64, 0_u64);
+    let mut highest: Option<u64> = None;
     for record in records {
         if record.sequence >= sent {
             unexpected += 1;
@@ -99,6 +103,10 @@ pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -
             duplicates += 1;
             continue;
         }
+        if highest.is_some_and(|top| record.sequence < top) {
+            reordered += 1;
+        }
+        highest = Some(highest.map_or(record.sequence, |top| top.max(record.sequence)));
         delays.push(record.delay_ns());
         let bin = usize::try_from(record.receive_ns.saturating_sub(start_ns) / THROUGHPUT_BIN_NS)
             .unwrap_or(usize::MAX);
@@ -134,6 +142,7 @@ pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -
             lost as f64 / sent as f64
         },
         duplicates,
+        reordered,
         unexpected,
         delay,
         throughput: Throughput {
@@ -224,6 +233,26 @@ mod tests {
         assert_eq!((stats.received, stats.lost, stats.duplicates), (2, 0, 1));
         let delay = stats.delay.unwrap();
         assert_eq!((delay.min_ns, delay.max_ns), (5_000_000, 6_000_000));
+    }
+
+    /// Packets 0 1 3 2 5 4: 2 arrived after 3, and 4 after 5. A packet that is overtaken by several still counts
+    /// once, and an in-order stream with losses has none.
+    #[test]
+    fn a_packet_that_arrives_after_a_higher_one_is_reordered() {
+        let order = |sequences: &[u64]| {
+            let records: Vec<Record> = sequences.iter().map(|&s| arrival(s, 0, 1)).collect();
+            analyse(10, &records, 1000, 0).reordered
+        };
+        assert_eq!(order(&[0, 1, 3, 2, 5, 4]), 2);
+        assert_eq!(
+            order(&[0, 5, 1, 2, 3, 4]),
+            4,
+            "each of the four was overtaken by packet 5"
+        );
+        assert_eq!(order(&[0, 2, 4, 6, 8]), 0, "losses are not reordering");
+        assert_eq!(order(&[]), 0);
+        // A second arrival of a packet is a duplicate, not a reordering
+        assert_eq!(order(&[0, 1, 2, 1]), 0);
     }
 
     #[test]

@@ -221,6 +221,7 @@ mod tests {
                     lost: 1,
                     loss_ratio: 0.5,
                     duplicates: 0,
+                    reordered: 0,
                     unexpected: 0,
                     delay: None,
                     throughput: Throughput {
