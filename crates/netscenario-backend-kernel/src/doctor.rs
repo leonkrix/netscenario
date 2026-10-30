@@ -16,7 +16,7 @@ use netscenario_core::{Feature, Support};
 use serde::Serialize;
 
 use crate::capabilities::{Environment, capabilities};
-use crate::command::{find, run, running_as_root, searched};
+use crate::command::{find, has_own_rights, namespace_flags, run, searched};
 use crate::tools::{Tool, Version, parse_tc_version};
 
 /// The first release of iproute2 whose `tc` knows the `seed` of `netem`.
@@ -124,8 +124,9 @@ pub struct WayFinding {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct System {
-    /// Whether the process is root.
-    pub root: bool,
+    /// Whether the process has rights of its own for the namespaces of a run: it is root, or it has
+    /// `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` in its ambient set.
+    pub own_rights: bool,
     /// `kernel.apparmor_restrict_unprivileged_userns` is 1 (Ubuntu 24.04 and newer).
     pub apparmor_restricts_userns: bool,
     /// `kernel.unprivileged_userns_clone` is 0 (some Debian and Arch kernels).
@@ -208,7 +209,7 @@ pub fn inspect() -> Findings {
     })
     .collect();
     let system = System {
-        root: running_as_root(),
+        own_rights: has_own_rights(),
         apparmor_restricts_userns: read_trimmed(
             "/proc/sys/kernel/apparmor_restrict_unprivileged_userns",
         )
@@ -228,7 +229,7 @@ pub fn inspect() -> Findings {
     };
     let ways = match (located("unshare"), located("ip"), located("tc"), find("sh")) {
         (Some(unshare), Some(ip), Some(tc), Some(sh)) => {
-            let order = if system.root {
+            let order = if system.own_rights {
                 [Way::OwnRights, Way::UserNamespace]
             } else {
                 [Way::UserNamespace, Way::OwnRights]
@@ -252,22 +253,11 @@ pub fn inspect() -> Findings {
 
 /// Runs the probe in the namespaces of `way`, with the flags of a run.
 fn probe(way: Way, unshare: &Path, sh: &Path, ip: &Path, tc: &Path) -> Result<Vec<Step>, String> {
-    let mut arguments: Vec<String> = Vec::new();
-    if way == Way::UserNamespace {
-        arguments.extend(["--user", "--map-root-user"].map(String::from));
-    }
-    arguments.extend(
-        [
-            "--net",
-            "--mount",
-            "--pid",
-            "--fork",
-            "--kill-child",
-            "--mount-proc",
-            "--",
-        ]
-        .map(String::from),
-    );
+    let mut arguments: Vec<String> = namespace_flags(way == Way::UserNamespace)
+        .into_iter()
+        .map(String::from)
+        .collect();
+    arguments.push("--".to_owned());
     arguments.push(sh.display().to_string());
     arguments.extend(["-c", PROBE, "probe"].map(String::from));
     arguments.push(ip.display().to_string());
@@ -350,11 +340,12 @@ fn how_to_get_namespaces(system: &System) -> String {
                 .to_owned(),
         );
     }
-    options.push(if system.root {
-        "this process is root and still refused, so the kernel or a security module forbids namespaces here (see the answers above)"
+    options.push(if system.own_rights {
+        "this process has the rights of root (it is root, or has CAP_NET_ADMIN and CAP_SYS_ADMIN as ambient capabilities) and is still refused, so the kernel or a security module forbids namespaces here (see the answers above)"
             .to_owned()
     } else {
-        "run netscenario as root (`sudo`), which needs no user namespace".to_owned()
+        "run netscenario as root (`sudo`), or with CAP_NET_ADMIN and CAP_SYS_ADMIN as ambient capabilities (`setpriv --ambient-caps`, `AmbientCapabilities=` in systemd), which need no user namespace"
+            .to_owned()
     });
     options.join("; or ")
 }
@@ -844,7 +835,7 @@ mod tests {
     #[test]
     fn root_that_is_refused_does_not_get_told_to_become_root() {
         let mut findings = good();
-        findings.system.root = true;
+        findings.system.own_rights = true;
         findings.ways = [Way::OwnRights, Way::UserNamespace]
             .into_iter()
             .map(|way| WayFinding {
@@ -858,6 +849,27 @@ mod tests {
             .expect("a fix");
         assert!(!fix.contains("run netscenario as root"), "{fix}");
         assert!(fix.contains("security module"), "{fix}");
+    }
+
+    #[test]
+    fn a_process_without_rights_is_told_about_root_and_about_ambient_capabilities() {
+        let mut findings = good();
+        findings.ways = [Way::UserNamespace, Way::OwnRights]
+            .into_iter()
+            .map(|way| WayFinding {
+                way,
+                outcome: Err("refused".to_owned()),
+            })
+            .collect();
+        let fix = assess(&findings)
+            .check("can-create-namespaces")
+            .and_then(|c| c.fix.clone())
+            .expect("a fix");
+        assert!(fix.contains("run netscenario as root"), "{fix}");
+        assert!(
+            fix.contains("ambient capabilities") && fix.contains("setpriv --ambient-caps"),
+            "{fix}"
+        );
     }
 
     #[test]

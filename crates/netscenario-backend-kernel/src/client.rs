@@ -16,7 +16,9 @@ use netscenario_core::{
 use netscenario_model::{Impairments, Name, Scenario};
 
 use crate::capabilities::{Environment, capabilities};
-use crate::command::{Toolbox, run, running_as_root};
+use crate::command::{
+    Toolbox, has_own_rights, namespace_flags, namespaces_work, run, uses_own_rights,
+};
 use crate::protocol::{Exit, Request, Response, Way};
 use crate::provisioner::link_address;
 use crate::supervisor::FAIL_AT;
@@ -27,12 +29,14 @@ const BACKEND: &str = "kernel";
 /// How the run gets its rights to create namespaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
-    /// As root if the process is root, else in an unprivileged user namespace.
+    /// With the rights of the process if it has them and they work, else in an unprivileged user namespace.
+    /// A process has them if it is root, or has `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` in its ambient set.
     #[default]
     Auto,
     /// In an unprivileged user namespace, where the process is root only inside.
     Unprivileged,
-    /// With the rights of the process, which must be root or have `CAP_NET_ADMIN` and `CAP_SYS_ADMIN`.
+    /// With the rights of the process, which must be root or have `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` in its
+    /// ambient set.
     Root,
 }
 
@@ -143,6 +147,8 @@ pub struct KernelBackend {
     tools: Toolbox,
     environment: Environment,
     run_id: String,
+    /// Whether the run uses the rights of this process (else a user namespace), decided once in `new`.
+    own_rights: bool,
     session: Option<Session>,
 }
 
@@ -178,11 +184,19 @@ impl KernelBackend {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |since| since.subsec_nanos())
         );
+        let own_rights = match options.mode {
+            Mode::Auto => uses_own_rights(has_own_rights(), |user_namespace| {
+                namespaces_work(&tools.unshare, user_namespace)
+            }),
+            Mode::Unprivileged => false,
+            Mode::Root => true,
+        };
         Ok(Self {
             options,
             tools,
             environment,
             run_id,
+            own_rights,
             session: None,
         })
     }
@@ -210,24 +224,9 @@ impl KernelBackend {
 
     fn start(&mut self) -> Result<(), Error> {
         let mut command = Command::new(&self.tools.unshare);
-        let root = match self.options.mode {
-            Mode::Auto => running_as_root(),
-            Mode::Unprivileged => false,
-            Mode::Root => true,
-        };
-        if !root {
-            command.args(["--user", "--map-root-user"]);
-        }
         command
-            .args([
-                "--net",
-                "--mount",
-                "--pid",
-                "--fork",
-                "--kill-child",
-                "--mount-proc",
-                "--",
-            ])
+            .args(namespace_flags(!self.own_rights))
+            .arg("--")
             .arg(&self.options.supervisor)
             .args([
                 "supervise",
@@ -522,14 +521,9 @@ impl Backend for KernelBackend {
                 Tool::Missing => "missing".to_owned(),
             },
         );
-        let own_rights = match self.options.mode {
-            Mode::Auto => running_as_root(),
-            Mode::Unprivileged => false,
-            Mode::Root => true,
-        };
         details.insert(
             "rights".to_owned(),
-            if own_rights {
+            if self.own_rights {
                 "own rights"
             } else {
                 "user namespace"

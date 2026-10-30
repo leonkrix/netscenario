@@ -156,7 +156,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | in progress (tested in the root code path locally; the CI runs the tests as root with `sudo`, to be confirmed by its first run) |
+| BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | in progress (tested in the root code path locally; the CI runs the tests as root with `sudo`, to be confirmed by its first run; also for an ordinary user with the two ambient capabilities, D-035) |
 | BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | in progress (tested; to be confirmed on both CI images) |
 | BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | in progress |
 | BKD-04 | Cleanup guarantee: no leftovers after a crash (PID namespace, D-022), and `netscenario clean` as a safety net | M | 0.1 | done (the guarantee is tested at 18 steps in `tests/crash.rs`; `clean` in `tests/clean.rs`, D-024) |
@@ -235,8 +235,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Continuous integration (CIX)
 
-| ID     | Feature | Prio | Release | Status |
-| ------ | --- | --- | --- | --- |
+| ID | Feature | Prio | Release | Status |
+| --- | --- | --- | --- | --- |
 | CIX-01 | GitHub Actions example and composite action | S | 0.5 | planned |
 | CIX-02 | GitLab CI example | C | 0.5 | idea |
 | CIX-03 | Container image with everything installed | S | 0.5 | planned |
@@ -259,8 +259,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Documentation (DOC)
 
-| ID     | Feature | Prio | Release | Status |
-| ------ | --- | --- | --- | --- |
+| ID | Feature | Prio | Release | Status |
+| --- | --- | --- | --- | --- |
 | DOC-01 | README, architecture, decisions, scenario format, coverage | M | 0.1 | done for 0.1 ([README.md](README.md), [examples/](examples/); later releases add to it) |
 | DOC-02 | User guide with tutorials | M | 0.3 | planned |
 | DOC-03 | Cookbook: QUIC, WebRTC, games, IoT, satellite | S | 0.7 | planned |
