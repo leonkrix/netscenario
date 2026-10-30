@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  fmt:
+    name: Format (Rust)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          tools: just@1.40.0
+      - run: just fmt-check
+
+  clippy:
+    name: Lints (clippy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          tools: just@1.40.0
+      - run: just clippy
+
+  # The tests run on both Ubuntu images that the project supports and with the current stable Rust and
+  # with the lowest supported one (rust-version in Cargo.toml, 1.85)
+  test:
+    name: Tests (${{ matrix.os }}, Rust ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        rust: [stable, 1.85.0]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          toolchain: ${{ matrix.rust }}
+          tools: just@1.40.0,cargo-nextest@0.9.150
+      - run: just test
+
+  docs:
+    name: Documentation (rustdoc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          tools: just@1.40.0
+      - run: just doc
+
+  deny:
+    name: Supply chain (cargo-deny)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          tools: just@1.40.0,cargo-deny@0.20.2
+      - run: just deny
+
+  # The Python packages build the native module with maturin, so this job needs Rust as well
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python: ${{ matrix.python }}
+          tools: just@1.40.0
+      - run: just py-check
+
+  # The workflows are code too: syntax, expressions and the shell scripts in them. The binary is pinned
+  # by version and checksum.
+  actionlint:
+    name: Workflows (actionlint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install actionlint 1.7.12
+        run: |
+          curl --fail --silent --show-error --location --output actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz" | sha256sum --check
+          tar --extract --gzip --file actionlint.tar.gz actionlint
+      - run: ./actionlint -color
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  # Branch protection requires only this job, so new jobs are added to "needs" without touching the
+  # repository settings. Every job has to succeed; only the dependency review may be skipped, because it
+  # runs on pull requests alone.
+  ci-ok:
+    name: CI passed
+    if: always()
+    needs: [fmt, clippy, test, docs, deny, python, actionlint, dependency-review]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Check the result of every job
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          # Every job has to succeed; only the dependency review may be skipped (push to main)
+          if echo "$NEEDS" | jq -e 'to_entries | map(select(.value.result != "success" and (.key != "dependency-review" or .value.result != "skipped"))) | length == 0' > /dev/null; then
+            echo "All required jobs succeeded"
+          else
+            echo "A required job did not succeed"
+            exit 1
+          fi

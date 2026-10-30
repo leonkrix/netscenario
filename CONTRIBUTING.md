@@ -44,6 +44,8 @@ The development toolchain is the current stable Rust (`rust-toolchain.toml` inst
 | `just msrv` | Build with the lowest supported Rust |
 | `just spikes` | Run the experiments of [spikes/](spikes/) (they need `iproute2`, `python3` and user namespaces) |
 
+The CI (`.github/workflows/ci.yml`) runs the same commands: format, clippy, the tests on Ubuntu 22.04 and 24.04 with the current stable Rust and with the lowest supported one, the documentation, the supply chain policy, the Python packages with Python 3.11 to 3.14, the workflows themselves (actionlint) and, on pull requests, a review of new dependencies. One job, `CI passed`, collects them all and is the only one that a pull request has to pass. CodeQL and the OpenSSF Scorecard run in their own workflows. Every action is pinned to a full commit hash and the tools are pinned to a version, so a run does not change by itself.
+
 The crates and what they are for are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Python is typed strictly (`py.typed`, pyright in strict mode) and every public item has a docstring. Library code does not print and does not use `unwrap`; a crate that needs `unsafe` says why in its own `Cargo.toml`. A new dependency is a decision for the supply chain: `deny.toml` lists the allowed licences.
 
 By contributing you agree that your contribution is licensed under the terms in the README (Apache-2.0 or MIT, at the choice of the user).

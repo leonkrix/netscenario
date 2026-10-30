@@ -20,7 +20,7 @@ while IFS= read -r file; do
       name="$(echo "$file" | cut -d/ -f2)"
       case " ${crates[*]:-} " in *" $name "*) ;; *) crates+=("$name") ;; esac
       ;;
-    Cargo.toml | Cargo.lock | rust-toolchain.toml | rustfmt.toml | clippy.toml | deny.toml) workspace=1 ;;
+    Cargo.toml | Cargo.lock | rust-toolchain.toml | rustfmt.toml | clippy.toml | deny.toml | .cargo/config.toml) workspace=1 ;;
     *.py | pyproject.toml | uv.lock) python=1 ;;
   esac
 done <<<"$staged"

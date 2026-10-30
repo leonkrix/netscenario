@@ -12,10 +12,14 @@ publish.workspace = true
 [lib]
 name = "_native"
 crate-type = ["cdylib"]
+# An extension module cannot be linked into a test program without Python, and it has no Rust tests: the
+# Python tests in python/ cover it
+test = false
+doctest = false
 
 [dependencies]
-# abi3: one wheel per platform serves every Python version from 3.11 on (D-017). The `extension-module`
-# feature is not set here: maturin sets it when it builds the wheel, so that `cargo test` still links.
+# abi3: one wheel per platform serves every Python version from 3.11 on (D-017). The build as an extension
+# module is switched on in .cargo/config.toml and by maturin, not by a feature of this crate.
 pyo3 = { version = "0.30", features = ["abi3-py311"] }
 
 [lints]
