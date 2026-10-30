@@ -559,6 +559,8 @@ name = "netscenario-cli"
 version = "0.0.0"
 dependencies = [
  "netscenario-backend-kernel",
+ "netscenario-core",
+ "netscenario-model",
  "serde_json",
 ]
 

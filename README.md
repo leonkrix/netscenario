@@ -11,7 +11,7 @@
 
 Describe a network, run your program in it, measure what happens, and assert on it. In a test, in your CI, or on your laptop.
 
-> **Status: planning.** Nothing here runs yet. This repository holds the design, the plan and the first experiments. The sections below describe what netscenario is going to be; the [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea. Examples are marked as sketches until they are real.
+> **Status: pre-alpha.** The Kernel backend and the command line work on Linux: you can describe a point-to-point link in a file, run it in network namespaces, and get loss, delay percentiles and throughput back, with the seed and the versions that produced them. There is no release, no Python package and no pytest plugin yet, and most of what is below under "How it is going to work" does not exist. The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
 
 ## Why
 
@@ -25,9 +25,46 @@ netscenario is meant to make this a normal, repeatable test:
 - **Assertions understand noise.** Network measurements vary. Assertions can use repetitions, confidence intervals and baselines instead of one fragile number.
 - **It fits the tools you have.** A `pytest` plugin and a command line, results as JUnit, JSON and HTML, and a CI that does not need a special machine.
 
+## What works today
+
+Build it (Rust 1.89 or newer, and `ip`, `tc`, `unshare`, `nsenter`, `prlimit` from iproute2 and util-linux), then ask the machine what it can do and run an example. Nothing needs root on a machine that allows user namespaces; `netscenario doctor` says what to change if yours does not.
+
+```bash
+cargo build --release          # target/release/netscenario and netscenario-agent
+target/release/netscenario doctor
+target/release/netscenario run scenarios/lte-like.yaml --seed 42
+```
+
+```text
+running lte-like for 30s ...
+netscenario run: lte-like
+  backend kernel (user namespace, iproute2 6.15.0)
+  seed 42
+
+workload media  client -> server  2 mbit/s, 1200 byte packets
+  sent 6250  received 6197  lost 53 (0.85 %)
+  delay  min 30.4 ms  median 42.5 ms  p95 49.5 ms  p99 52.7 ms  max 58.6 ms
+  throughput  1.98 mbit/s on average over 30 s (31 bins of one second in result.json)
+
+result: out/result.json
+```
+
+The commands are `run`, `validate`, `schema`, `doctor` and `clean`, described in [docs/CLI.md](docs/CLI.md). The result is described field by field in [docs/RESULTS.md](docs/RESULTS.md). A scenario file that is wrong is refused with the line, the column and a hint:
+
+```text
+error: `both` cannot be combined with `forward` or `reverse`
+ --> scenarios/invalid/both-and-forward.yaml:9:13
+  |
+8 |       between: [client, server]
+9 |       both: { delay: 10ms }
+  |             ^
+  = path: topology.links[0].both
+  = help: use `both` for the same values in both directions, or `forward` and `reverse` for different ones
+```
+
 ## How it is going to work
 
-A sketch, **not implemented**. The real format is described in [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md) and will change before 0.1.
+A sketch, **not implemented** (no timeline, no Gilbert-Elliott loss, no Python). The real format of release 0.1 is described in [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md).
 
 ```yaml
 # scenarios/lte-burst-loss.yaml
@@ -77,6 +114,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [FEATURES.md](FEATURES.md): every planned feature, its priority, its release and its status.
 - [docs/COVERAGE.md](docs/COVERAGE.md): what is faithful on which backend.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the parts and how they fit.
+- [docs/CLI.md](docs/CLI.md): the commands, their options, the exit codes and the JSON they print.
 - [docs/RESULTS.md](docs/RESULTS.md): the result of a run, field by field.
 - [docs/AGENT.md](docs/AGENT.md): the agent in the nodes: the packet, the record file, the command line.
 - [docs/DOCTOR.md](docs/DOCTOR.md): `netscenario doctor` and `netscenario clean`: what they check, what they print, their exit codes.
