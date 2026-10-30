@@ -64,15 +64,15 @@ py-programs:
 
 # Python: format, lints, types (pyright, strict) and tests
 py-check: py-sync py-programs
-    uv run ruff format --check python
-    uv run ruff check python
+    uv run ruff format --check python examples
+    uv run ruff check python examples
     uv run pyright
     uv run pytest
 
 # Format the Python code and fix what ruff can fix
 py-fmt: py-sync
-    uv run ruff check --fix python
-    uv run ruff format python
+    uv run ruff check --fix python examples
+    uv run ruff format python examples
 
 # Run the Python tests with the lowest supported Python (3.11, uv fetches it)
 py-test-min:

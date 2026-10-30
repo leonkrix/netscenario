@@ -46,11 +46,27 @@ fn validator() -> jsonschema::Validator {
 #[test]
 fn every_example_scenario_satisfies_the_schema() {
     let validator = validator();
-    for entry in fs::read_dir(root().join("scenarios")).unwrap() {
+    let mut paths = Vec::new();
+    let mut folders = vec![root().join("scenarios")];
+    for entry in fs::read_dir(root().join("examples")).unwrap() {
         let path = entry.unwrap().path();
-        if path.extension().is_none_or(|extension| extension != "yaml") {
-            continue;
+        if path.is_dir() {
+            folders.push(path);
         }
+    }
+    for folder in folders {
+        for entry in fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "yaml")
+            {
+                paths.push(path);
+            }
+        }
+    }
+    assert!(paths.len() >= 6, "the examples are missing: {paths:?}");
+    for path in paths {
         let instance = as_json(&fs::read_to_string(&path).unwrap());
         let errors: Vec<String> = validator
             .iter_errors(&instance)

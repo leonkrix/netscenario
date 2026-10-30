@@ -1,0 +1,25 @@
+# A video call over a good Wi-Fi link: a stream of 1200 byte packets at 1.5 mbit/s for five seconds.
+version: 0
+name: video-call
+seed: 11
+duration: 5s
+topology:
+  nodes: [caller, callee]
+  links:
+    - id: wifi
+      between: [caller, callee]
+      forward:                     # caller -> callee
+        delay: 30ms
+        jitter: { amount: 5ms, distribution: normal }
+        loss: { model: random, p: 1% }
+        rate: 20mbit
+      reverse:                     # callee -> caller
+        delay: 30ms
+        rate: 20mbit
+workloads:
+  - id: video
+    kind: udp-cbr
+    from: caller
+    to: callee
+    rate: 1500kbit
+    packet-size: 1200b

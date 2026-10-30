@@ -16,6 +16,7 @@ __pycache__/
 
 # Results of runs and spikes
 /results/
+/netscenario-results/
 /spikes/out*/
 /spikes/*/target/
 *.pcap
