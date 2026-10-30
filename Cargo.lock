@@ -541,6 +541,10 @@ version = "0.0.0"
 [[package]]
 name = "netscenario-backend-kernel"
 version = "0.0.0"
+dependencies = [
+ "netscenario-core",
+ "netscenario-model",
+]
 
 [[package]]
 name = "netscenario-cli"
@@ -549,6 +553,10 @@ version = "0.0.0"
 [[package]]
 name = "netscenario-core"
 version = "0.0.0"
+dependencies = [
+ "netscenario-model",
+ "thiserror",
+]
 
 [[package]]
 name = "netscenario-model"
