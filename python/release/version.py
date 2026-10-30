@@ -34,8 +34,9 @@ _CARGO_LOCK = "Cargo.lock"
 _UV_LOCK = "uv.lock"
 
 # `version = "x"` in the table [workspace.package]
+# (Each step of the loop takes one whole line that does not start a table: one way to match.)
 _WORKSPACE_VERSION = re.compile(
-    r'(?ms)(^\[workspace\.package\]\n(?:(?!^\[).*\n)*?version = ")([^"]*)(")'
+    r'(?m)(^\[workspace\.package\]\n(?:(?!\[)[^\n]*\n)*?version = ")([^"]*)(")'
 )
 # `netscenario-core = { path = "crates/netscenario-core", version = "x" }`
 _INTERNAL_DEPENDENCY = re.compile(

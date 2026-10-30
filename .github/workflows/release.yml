@@ -116,8 +116,11 @@ jobs:
           PYTHON_VERSION: ${{ needs.verify.outputs.python-version }}
         run: |
           ls -l dist
-          test "$(ls dist | wc -l)" -eq 4
-          ls dist | grep -c "^netscenario-${PYTHON_VERSION}-cp311-abi3-manylinux" | grep -qx 2
+          shopt -s nullglob
+          files=(dist/*)
+          test "${#files[@]}" -eq 4
+          wheels=("dist/netscenario-${PYTHON_VERSION}-cp311-abi3-manylinux"*.whl)
+          test "${#wheels[@]}" -eq 2
           test -f "dist/pytest_netscenario-${PYTHON_VERSION}-py3-none-any.whl"
           test -f "dist/pytest_netscenario-${PYTHON_VERSION}.tar.gz"
       - name: Metadata that PyPI accepts

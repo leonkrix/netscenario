@@ -2,6 +2,7 @@
 
 import importlib.util
 import shutil
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -134,6 +135,30 @@ def test_the_command_line_exit_codes(copy: Path, capsys: pytest.CaptureFixture[s
     version.set_version(copy, "0.3.0-rc.2")
     assert version.main(["--root", str(copy), "show", "--python"]) == 0
     assert capsys.readouterr().out.strip() == "0.3.0rc2"
+
+
+def test_the_pattern_for_the_workspace_version_finds_the_right_line() -> None:
+    text = (
+        "[workspace]\nmembers = []\n\n"
+        '[workspace.package]\nrust-version = "1.89"\nversion = "1.2.3"\n\n'
+        '[other]\nversion = "9"\n'
+    )
+    match = version._WORKSPACE_VERSION.search(text)
+    assert match is not None
+    assert match.group(2) == "1.2.3"
+    # Canary: a `version` in a later table is not the version of the workspace
+    assert (
+        version._WORKSPACE_VERSION.search('[workspace.package]\n\n[other]\nversion = "9"\n') is None
+    )
+
+
+def test_the_pattern_for_the_workspace_version_does_not_backtrack() -> None:
+    # CodeQL found a pattern here that took exponential time on empty lines (py/redos): 40 lines
+    # would run for days. A table without a `version` is the worst case.
+    text = "[workspace.package]\n" + "\n" * 40
+    started = time.perf_counter()
+    assert version._WORKSPACE_VERSION.search(text) is None
+    assert time.perf_counter() - started < 1.0
 
 
 def test_every_published_package_carries_the_licence_texts_of_the_repository() -> None:
