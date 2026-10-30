@@ -185,3 +185,17 @@ Accepted. `netscenario doctor` (ENV-04) and `netscenario clean` (BKD-04) are des
 
 Alternatives: deciding the rights from the user id and a table of distributions (wrong for containers and for every new restriction, and untested), probing in the namespace of the host (against SAF-01), `clean` by name prefix of namespaces (nothing is named, D-022), `clean` that also ends runs whose caller is gone (a supervisor that is waiting on a slow caller would be killed).
 
+## D-025: The agent reads CLOCK_MONOTONIC through rustix, counts payload, and records in a binary file
+
+Accepted (the three choices were put to the maintainer on 2026-10-30 and taken as proposed). The agent is described in [AGENT.md](AGENT.md).
+
+- **The clock is `CLOCK_MONOTONIC`, read through `rustix`.** Sender and receiver are different processes in different namespaces on one machine, so they must read the same clock, and it must not jump when the time is adjusted. `rustix` offers `clock_gettime` and the socket options as a safe interface, so no crate of ours needs `unsafe` (the spike S8 used `libc` with `unsafe`). The wall clock (`SystemTime`) was rejected because an NTP step in the middle of a run would falsify delays without a sign.
+- **`packet-size` is the UDP payload.** As in `iperf`. The rate counts payload bits, so the packets per second are `rate / (size × 8)`. The headers of IPv4 and UDP (28 bytes) come on top on the wire; the largest payload without fragmentation is 1472 (MTU 1500). The model already refused sizes outside 16 to 1472 and rates over 100,000 packets per second.
+- **The record file is binary, JSON Lines is an export.** 24 bytes per packet (sequence, send time, receive time), a documented header, a parser that refuses a cut-off file. The run computes statistics from it and writes JSON Lines only on request. Alternative: JSON Lines straight from the receiver (one format, but about three times the size and slower in the receiver at high rates).
+- **The sequence number on the wire has 32 bits** to fit the header of 16 bytes that the model announced. The sender refuses a stream that would wrap it (about 11.9 hours at 100,000 packets per second) instead of wrapping it.
+- **The sender spins for the last stretch before each packet** (150 microseconds) and so uses a core. A sleep alone wakes up tens of microseconds late, which would show as a gap in every result. The summary reports the largest lateness.
+- **The agent is not static in the Kernel backend.** The nodes there share the file system of the host. The musl build comes with the release.
+- **The agent is a separate program, started by path, and speaks JSON lines on standard output**; the types of these lines are shared with the starting side, so they cannot drift apart. It resolves no units.
+
+Alternatives: `libc` with `unsafe` in the agent crate (as the spike; more control over socket options, but unsafe code in the project for two calls), the wall clock, the clock of the supervisor passed in packets (needs a handshake), `SO_TIMESTAMPNS` for the receive time (more exact by a few microseconds, needs control messages; later if QA-06 shows it matters).
+

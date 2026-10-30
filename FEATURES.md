@@ -112,7 +112,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| WRK-01 | UDP constant bit rate | M | 0.1 | planned |
+| WRK-01 | UDP constant bit rate | M | 0.1 | in progress (the agent sends and receives, tested over loopback and as programs, [AGENT.md](docs/AGENT.md); starting it in the nodes of a run follows) |
 | WRK-02 | UDP Poisson, on/off and bursty | M | 0.2 | planned |
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | planned |
 | WRK-04 | TCP bulk transfer | M | 0.3 | planned |
@@ -127,7 +127,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| PRB-01 | Per-packet records (sequence, send time, receive time) | M | 0.1 | planned |
+| PRB-01 | Per-packet records (sequence, send time, receive time) | M | 0.1 | in progress (the record file and its reader are done; the export as JSON Lines and the use in a run follow) |
 | PRB-02 | Loss and delivery ratio | M | 0.1 | planned |
 | PRB-03 | One-way delay and round trip time with percentiles | M | 0.1 | planned |
 | PRB-04 | Jitter (as in RFC 3550) and reordering metrics | S | 0.2 | planned |
