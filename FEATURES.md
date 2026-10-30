@@ -42,71 +42,71 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Topology (TOP)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| TOP-01 | Point to point (two nodes, one link) | M | 0.1 | planned |
-| TOP-02 | Star (nodes around a hub) | M | 0.3 | planned |
-| TOP-03 | Chain with routing (several hops, router nodes) | M | 0.3 | planned |
-| TOP-04 | Dumbbell (shared bottleneck) | M | 0.3 | planned |
-| TOP-05 | Multipath and multi-homing (several links between nodes) | M | 0.3 | planned |
-| TOP-06 | Arbitrary graph with static routes | M | 0.3 | planned |
-| TOP-07 | Dynamic topology: links up and down (0.2), nodes joining and leaving (0.6) | M | 0.2 | planned |
-| TOP-08 | IPv4 (0.1) and IPv6 (0.3) | M | 0.1 | planned |
-| TOP-09 | NAT and firewall nodes | C | 0.8 | idea |
-| TOP-10 | Shared segments, broadcast, multicast | C | 0.8 | idea |
-| TOP-11 | Shared wireless medium (contention, hidden terminals) | C | 1.x | idea |
+| ID     | Feature                                                                    | Prio | Release | Status  |
+| ------ | -------------------------------------------------------------------------- | ---- | ------- | ------- |
+| TOP-01 | Point to point (two nodes, one link)                                       | M    | 0.1     | planned |
+| TOP-02 | Star (nodes around a hub)                                                  | M    | 0.3     | planned |
+| TOP-03 | Chain with routing (several hops, router nodes)                            | M    | 0.3     | planned |
+| TOP-04 | Dumbbell (shared bottleneck)                                               | M    | 0.3     | planned |
+| TOP-05 | Multipath and multi-homing (several links between nodes)                   | M    | 0.3     | planned |
+| TOP-06 | Arbitrary graph with static routes                                         | M    | 0.3     | planned |
+| TOP-07 | Dynamic topology: links up and down (0.2), nodes joining and leaving (0.6) | M    | 0.2     | planned |
+| TOP-08 | IPv4 (0.1) and IPv6 (0.3)                                                  | M    | 0.1     | planned |
+| TOP-09 | NAT and firewall nodes                                                     | C    | 0.8     | idea    |
+| TOP-10 | Shared segments, broadcast, multicast                                      | C    | 0.8     | idea    |
+| TOP-11 | Shared wireless medium (contention, hidden terminals)                      | C    | 1.x     | idea    |
 
 ## Link impairments (LNK)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| LNK-01 | Fixed delay | M | 0.1 | planned |
-| LNK-02 | Jitter: uniform and normal (0.1), pareto and tables (0.3) | M | 0.1 | planned |
-| LNK-03 | Independent loss | M | 0.1 | planned |
-| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov | M | 0.2 | planned |
-| LNK-05 | Reordering | M | 0.2 | planned |
-| LNK-06 | Duplication | S | 0.2 | planned |
-| LNK-07 | Corruption | S | 0.2 | planned |
-| LNK-08 | Rate limit (token bucket) | M | 0.1 | planned |
-| LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M | 0.3 | planned |
-| LNK-10 | MTU and fragmentation | S | 0.3 | planned |
-| LNK-11 | Different values per direction | M | 0.1 | planned |
-| LNK-12 | Outages (windows without any delivery) | M | 0.2 | planned |
-| LNK-13 | ECN marking | C | 0.4 | idea |
+| ID     | Feature                                                        | Prio | Release | Status  |
+| ------ | -------------------------------------------------------------- | ---- | ------- | ------- |
+| LNK-01 | Fixed delay                                                    | M    | 0.1     | planned |
+| LNK-02 | Jitter: uniform and normal (0.1), pareto and tables (0.3)      | M    | 0.1     | planned |
+| LNK-03 | Independent loss                                               | M    | 0.1     | planned |
+| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov              | M    | 0.2     | planned |
+| LNK-05 | Reordering                                                     | M    | 0.2     | planned |
+| LNK-06 | Duplication                                                    | S    | 0.2     | planned |
+| LNK-07 | Corruption                                                     | S    | 0.2     | planned |
+| LNK-08 | Rate limit (token bucket)                                      | M    | 0.1     | planned |
+| LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M    | 0.3     | planned |
+| LNK-10 | MTU and fragmentation                                          | S    | 0.3     | planned |
+| LNK-11 | Different values per direction                                 | M    | 0.1     | planned |
+| LNK-12 | Outages (windows without any delivery)                         | M    | 0.2     | planned |
+| LNK-13 | ECN marking                                                    | C    | 0.4     | idea    |
 
 ## Link models over time (LMD)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| LMD-01 | Static model | M | 0.1 | planned |
-| LMD-02 | Scheduled steps | M | 0.2 | planned |
-| LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces) | M | 0.3 | planned |
-| LMD-04 | Markov models with states and transitions | S | 0.3 | planned |
-| LMD-05 | Periodic patterns (a satellite pass, a duty cycle) | S | 0.3 | planned |
-| LMD-06 | Geometry-based: distance to loss, delay and rate (free space, log-distance) | M | 0.6 | planned |
-| LMD-07 | Plug-in interface for your own model | S | 0.7 | planned |
+| ID     | Feature                                                                     | Prio | Release | Status  |
+| ------ | --------------------------------------------------------------------------- | ---- | ------- | ------- |
+| LMD-01 | Static model                                                                | M    | 0.1     | planned |
+| LMD-02 | Scheduled steps                                                             | M    | 0.2     | planned |
+| LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces)     | M    | 0.3     | planned |
+| LMD-04 | Markov models with states and transitions                                   | S    | 0.3     | planned |
+| LMD-05 | Periodic patterns (a satellite pass, a duty cycle)                          | S    | 0.3     | planned |
+| LMD-06 | Geometry-based: distance to loss, delay and rate (free space, log-distance) | M    | 0.6     | planned |
+| LMD-07 | Plug-in interface for your own model                                        | S    | 0.7     | planned |
 
 ## Timeline (TML)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| TML-01 | Events at times: change parameters | M | 0.2 | planned |
-| TML-02 | Link down and up | M | 0.2 | planned |
-| TML-03 | Repeating events | S | 0.3 | planned |
-| TML-04 | Events tied to a milestone of a workload (after N packets) | C | 0.7 | idea |
-| TML-05 | Change a link from test code while the run is going | S | 0.3 | planned |
+| ID     | Feature                                                    | Prio | Release | Status  |
+| ------ | ---------------------------------------------------------- | ---- | ------- | ------- |
+| TML-01 | Events at times: change parameters                         | M    | 0.2     | planned |
+| TML-02 | Link down and up                                           | M    | 0.2     | planned |
+| TML-03 | Repeating events                                           | S    | 0.3     | planned |
+| TML-04 | Events tied to a milestone of a workload (after N packets) | C    | 0.7     | idea    |
+| TML-05 | Change a link from test code while the run is going        | S    | 0.3     | planned |
 
 ## Mobility (MOB)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| MOB-01 | Static positions | M | 0.6 | planned |
-| MOB-02 | Paths through waypoints with speed | M | 0.6 | planned |
-| MOB-03 | Random waypoint, random walk, Gauss-Markov | S | 0.6 | planned |
-| MOB-04 | Import of mobility traces (CSV, BonnMotion, ns-2 setdest) | S | 0.6 | planned |
-| MOB-05 | Orbital motion from orbit files (satellites) | C | 0.6 | idea |
-| MOB-06 | Handover between access links | M | 0.6 | planned |
-| MOB-07 | Three dimensions: altitude, airborne scenarios, delay change from motion | S | 0.6 | planned |
+| ID     | Feature                                                                  | Prio | Release | Status  |
+| ------ | ------------------------------------------------------------------------ | ---- | ------- | ------- |
+| MOB-01 | Static positions                                                         | M    | 0.6     | planned |
+| MOB-02 | Paths through waypoints with speed                                       | M    | 0.6     | planned |
+| MOB-03 | Random waypoint, random walk, Gauss-Markov                               | S    | 0.6     | planned |
+| MOB-04 | Import of mobility traces (CSV, BonnMotion, ns-2 setdest)                | S    | 0.6     | planned |
+| MOB-05 | Orbital motion from orbit files (satellites)                             | C    | 0.6     | idea    |
+| MOB-06 | Handover between access links                                            | M    | 0.6     | planned |
+| MOB-07 | Three dimensions: altitude, airborne scenarios, delay change from motion | S    | 0.6     | planned |
 
 ## Workloads (WRK)
 
@@ -141,16 +141,16 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Assertions and statistics (ASR)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| ASR-01 | Threshold assertions on metrics | M | 0.1 | planned |
-| ASR-02 | Repetitions with derived seeds | M | 0.2 | planned |
-| ASR-03 | Confidence intervals (bootstrap) | M | 0.2 | planned |
-| ASR-04 | Baselines and regression detection (effect size, interval, "erratic" marking) | M | 0.7 | planned |
-| ASR-05 | Statistical comparison of two sets of runs (rank test) | S | 0.7 | planned |
-| ASR-06 | Policy for flaky runs: rerun and report it | S | 0.5 | planned |
-| ASR-07 | Declarative `expect` section in the scenario file | S | 0.3 | planned |
-| ASR-08 | Sweeps with shape checks (goodput does not rise with loss) | C | 0.8 | idea |
+| ID     | Feature                                                                       | Prio | Release | Status  |
+| ------ | ----------------------------------------------------------------------------- | ---- | ------- | ------- |
+| ASR-01 | Threshold assertions on metrics                                               | M    | 0.1     | planned |
+| ASR-02 | Repetitions with derived seeds                                                | M    | 0.2     | planned |
+| ASR-03 | Confidence intervals (bootstrap)                                              | M    | 0.2     | planned |
+| ASR-04 | Baselines and regression detection (effect size, interval, "erratic" marking) | M    | 0.7     | planned |
+| ASR-05 | Statistical comparison of two sets of runs (rank test)                        | S    | 0.7     | planned |
+| ASR-06 | Policy for flaky runs: rerun and report it                                    | S    | 0.5     | planned |
+| ASR-07 | Declarative `expect` section in the scenario file                             | S    | 0.3     | planned |
+| ASR-08 | Sweeps with shape checks (goodput does not rise with loss)                    | C    | 0.8     | idea    |
 
 ## Backends (BKD)
 
@@ -216,10 +216,10 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Rust API (RST)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| RST-01 | Documented library API for `cargo test` | S | 0.7 | planned |
-| RST-02 | Test macros | C | 0.8 | idea |
+| ID     | Feature                                 | Prio | Release | Status  |
+| ------ | --------------------------------------- | ---- | ------- | ------- |
+| RST-01 | Documented library API for `cargo test` | S    | 0.7     | planned |
+| RST-02 | Test macros                             | C    | 0.8     | idea    |
 
 ## Reports (RPT)
 
@@ -259,24 +259,24 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Documentation (DOC)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| DOC-01 | README, architecture, decisions, scenario format, coverage | M | 0.1 | in progress |
-| DOC-02 | User guide with tutorials | M | 0.3 | planned |
-| DOC-03 | Cookbook: QUIC, WebRTC, games, IoT, satellite | S | 0.7 | planned |
-| DOC-04 | API documentation for Rust and Python | M | 0.1 | planned |
-| DOC-05 | Troubleshooting (permissions, kernels, containers) | M | 0.1 | planned |
-| DOC-06 | Chapter on fidelity and limits, generated from the coverage matrix | M | 0.4 | planned |
-| DOC-07 | Validation report: how well the emulation matches what it claims | C | 0.9 | idea |
+| ID     | Feature                                                            | Prio | Release | Status      |
+| ------ | ------------------------------------------------------------------ | ---- | ------- | ----------- |
+| DOC-01 | README, architecture, decisions, scenario format, coverage         | M    | 0.1     | in progress |
+| DOC-02 | User guide with tutorials                                          | M    | 0.3     | planned     |
+| DOC-03 | Cookbook: QUIC, WebRTC, games, IoT, satellite                      | S    | 0.7     | planned     |
+| DOC-04 | API documentation for Rust and Python                              | M    | 0.1     | planned     |
+| DOC-05 | Troubleshooting (permissions, kernels, containers)                 | M    | 0.1     | planned     |
+| DOC-06 | Chapter on fidelity and limits, generated from the coverage matrix | M    | 0.4     | planned     |
+| DOC-07 | Validation report: how well the emulation matches what it claims   | C    | 0.9     | idea        |
 
 ## Releases and maintenance (REL)
 
-| ID | Feature | Prio | Release | Status |
-| --- | --- | --- | --- | --- |
-| REL-01 | Release by tag to crates.io and PyPI with provenance and a staged approval | M | 0.1 | planned |
-| REL-02 | Automatic changelog from the history | M | 0.1 | planned |
-| REL-03 | Compatibility policy for the scenario format, the result format, the APIs | M | 0.1 | planned |
-| REL-04 | Review list for 1.0 | M | 0.9 | planned |
+| ID     | Feature                                                                    | Prio | Release | Status  |
+| ------ | -------------------------------------------------------------------------- | ---- | ------- | ------- |
+| REL-01 | Release by tag to crates.io and PyPI with provenance and a staged approval | M    | 0.1     | planned |
+| REL-02 | Automatic changelog from the history                                       | M    | 0.1     | planned |
+| REL-03 | Compatibility policy for the scenario format, the result format, the APIs  | M    | 0.1     | planned |
+| REL-04 | Review list for 1.0                                                        | M    | 0.9     | planned |
 
 ## Integration with other projects (INT)
 

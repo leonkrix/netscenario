@@ -46,11 +46,11 @@ A run can be interrupted: Ctrl-C and `pytest-timeout` stop it, the network is to
 
 A run needs network namespaces. Before the first run of a session the plugin asks `netscenario.doctor()` (once) and, if the machine cannot run scenarios, **skips** the test with the reason and the fix, or **fails** it. `--netscenario-environment` chooses:
 
-| Value | Meaning |
-| --- | --- |
+| Value                | Meaning                                            |
+| -------------------- | -------------------------------------------------- |
 | `auto` (the default) | fail when the variable `CI` is set, skip otherwise |
-| `skip` | always skip |
-| `fail` | always fail |
+| `skip`               | always skip                                        |
+| `fail`               | always fail                                        |
 
 The rule behind `auto` is the one of the project's own tests: on a laptop without the right to create namespaces a test is skipped with a reason, but on a CI a test that never runs proves nothing, so it fails. Tests that only `load` scenarios are not affected.
 
@@ -64,10 +64,10 @@ A run that drew its own seed says so (`seed 123 (drawn)`), and a test can repeat
 
 ## Options
 
-| Option | Meaning |
-| --- | --- |
+| Option                                       | Meaning                                                          |
+| -------------------------------------------- | ---------------------------------------------------------------- |
 | `--netscenario-environment {auto,skip,fail}` | What a test does on a machine that cannot run scenarios (above). |
-| ini `netscenario_scenarios` | Directories in which scenario files are looked for. |
+| `netscenario_scenarios` (ini option)         | Directories in which scenario files are looked for.              |
 
 ## Not yet
 

@@ -22,18 +22,18 @@ The sequence number has 32 bits. The sender refuses a stream with more than 2Â³Â
 
 The receiver writes a binary file: a header of 16 bytes, then one record of 24 bytes for each packet in the order of arrival. A packet that did not arrive has no record; the sender's `packets` says how many were sent.
 
-| Header bytes | Field | Meaning |
-| --- | --- | --- |
-| 0 to 7 | magic | `NSRECORD` |
-| 8 to 9 | version | `1` |
-| 10 to 11 | record size | `24` |
-| 12 to 15 | flow | The number of the workload |
+| Header bytes | Field       | Meaning                    |
+| ------------ | ----------- | -------------------------- |
+| 0 to 7       | magic       | `NSRECORD`                 |
+| 8 to 9       | version     | `1`                        |
+| 10 to 11     | record size | `24`                       |
+| 12 to 15     | flow        | The number of the workload |
 
-| Record bytes | Field | Meaning |
-| --- | --- | --- |
-| 0 to 7 | sequence | From the packet |
-| 8 to 15 | send time | From the packet |
-| 16 to 23 | receive time | `CLOCK_MONOTONIC` in nanoseconds |
+| Record bytes | Field        | Meaning                          |
+| ------------ | ------------ | -------------------------------- |
+| 0 to 7       | sequence     | From the packet                  |
+| 8 to 15      | send time    | From the packet                  |
+| 16 to 23     | receive time | `CLOCK_MONOTONIC` in nanoseconds |
 
 A file that ends inside a record is an error when it is read, not a shorter file, because a lost record would look like a lost packet. The library `netscenario_agent::records` reads and writes it; a test pins the exact bytes. The run turns the file into statistics and, on request, into JSON Lines (RPT-01). It is binary because 100,000 packets per second for 30 seconds are 72 MB in this form and about three times that as JSON.
 

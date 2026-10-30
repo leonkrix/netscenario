@@ -4,13 +4,13 @@
 netscenario <command> [options]
 ```
 
-| Command | What it does |
-| --- | --- |
-| `run <file>` | Runs a scenario in network namespaces and writes the result. |
-| `validate <file>` | Checks a scenario file without running it. |
-| `schema` | Prints the JSON Schema of the scenario format. |
-| `doctor` | Reports what this machine can do and how to fix what it cannot ([DOCTOR.md](DOCTOR.md)). |
-| `clean` | Ends what a run without a supervisor left behind ([DOCTOR.md](DOCTOR.md)). |
+| Command           | What it does                                                                             |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `run <file>`      | Runs a scenario in network namespaces and writes the result.                             |
+| `validate <file>` | Checks a scenario file without running it.                                               |
+| `schema`          | Prints the JSON Schema of the scenario format.                                           |
+| `doctor`          | Reports what this machine can do and how to fix what it cannot ([DOCTOR.md](DOCTOR.md)). |
+| `clean`           | Ends what a run without a supervisor left behind ([DOCTOR.md](DOCTOR.md)).               |
 
 From Python, `pip install` of the wheel puts the same program on the `PATH` as the command `netscenario` (it starts the program that the wheel carries; [PYTHON.md](PYTHON.md)).
 

@@ -6,15 +6,17 @@ What each backend reproduces **faithfully**, what it reproduces **only in part**
 
 Each cell is a mark and a release.
 
-| Mark | Meaning |
-| --- | --- |
-| `✔ 0.1` | Faithful, planned for that release. When it ships, the cell gets a link to the test that proves it. |
-| `~ 0.4` | Limited: it works with a restriction that is written next to the table. The scenario must accept the restriction explicitly (`allow-limited`), otherwise it is refused. |
-| `✘` | Refused with an error that says why and which backend can do it. |
-| `?` | Not known until an [experiment](../spikes/README.md) is done. |
-| `·` | Does not apply. |
+| Mark    | Meaning                                                      |
+| ------- | ------------------------------------------------------------ |
+| `✔ 0.1` | Faithful, planned for release 0.1                            |
+| `~ 0.4` | Limited, planned for release 0.4                             |
+| `✘`     | Refused with an error                                        |
+| `?`     | Not known until an [experiment](../spikes/README.md) is done |
+| `·`     | Does not apply                                               |
 
-A mark is a plan until its cell has a link to the test that proves it; the links point to the fidelity tests of the Kernel backend ([FIDELITY.md](FIDELITY.md)), which measure each of these against its configuration. The backends:
+A faithful mark is a plan until its cell links to the test that proves it. A limited mark works with a restriction that is written next to the table; the scenario must accept the restriction explicitly (`allow-limited`), otherwise it is refused. A refusal names the reason and a backend that can do it.
+
+The links to the proof point to the fidelity tests of the Kernel backend ([FIDELITY.md](FIDELITY.md)), which measure each of these against its configuration. The backends:
 
 - **Kernel**: Linux network namespaces, virtual Ethernet pairs and `netem`/`tc`. The reference. Needs root or an unprivileged user namespace.
 - **Engine**: a packet-level emulator written for this project, running in userspace on virtual devices inside a user namespace. Linux, no root.
@@ -24,20 +26,20 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 
 ## Topology
 
-| Feature | Kernel | Engine | Proxy |
-| --- | --- | --- | --- |
-| Point to point | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
-| Star | ✔ 0.3 | ✔ 0.4 | ~ 0.5 |
-| Chain with routing | ✔ 0.3 | ✔ 0.4 | ✘ |
-| Dumbbell (shared bottleneck) | ✔ 0.3 | ✔ 0.4 | ✘ |
-| Multipath, multi-homing | ✔ 0.3 | ✔ 0.4 | ✘ |
-| Arbitrary graph | ✔ 0.3 | ✔ 0.4 | ✘ |
-| Links up and down | ✔ 0.2 | ✔ 0.4 | ✔ 0.5 |
-| Nodes joining and leaving | ✔ 0.6 | ✔ 0.6 | ✘ |
-| IPv4 | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
-| IPv6 | ✔ 0.3 | ✔ 0.4 | ~ 0.5 |
-| NAT, firewall | ? | ? | ✘ |
-| Broadcast, multicast | ? | ? | ✘ |
+| Feature                      | Kernel | Engine | Proxy |
+| ---------------------------- | ------ | ------ | ----- |
+| Point to point               | ✔ 0.1  | ✔ 0.4  | ✔ 0.5 |
+| Star                         | ✔ 0.3  | ✔ 0.4  | ~ 0.5 |
+| Chain with routing           | ✔ 0.3  | ✔ 0.4  | ✘     |
+| Dumbbell (shared bottleneck) | ✔ 0.3  | ✔ 0.4  | ✘     |
+| Multipath, multi-homing      | ✔ 0.3  | ✔ 0.4  | ✘     |
+| Arbitrary graph              | ✔ 0.3  | ✔ 0.4  | ✘     |
+| Links up and down            | ✔ 0.2  | ✔ 0.4  | ✔ 0.5 |
+| Nodes joining and leaving    | ✔ 0.6  | ✔ 0.6  | ✘     |
+| IPv4                         | ✔ 0.1  | ✔ 0.4  | ✔ 0.5 |
+| IPv6                         | ✔ 0.3  | ✔ 0.4  | ~ 0.5 |
+| NAT, firewall                | ?      | ?      | ✘     |
+| Broadcast, multicast         | ?      | ?      | ✘     |
 
 ## Impairments
 
@@ -72,59 +74,59 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 
 ## Change over time
 
-| Feature | Kernel | Engine | Proxy |
-| --- | --- | --- | --- |
-| Scheduled steps | ✔ 0.2 | ✔ 0.4 | ✔ 0.5 |
-| Trace-driven rate, delay, loss | ~ 0.3 | ✔ 0.4 | ✔ 0.5 |
-| Markov models | ~ 0.3 | ✔ 0.4 | ✔ 0.5 |
-| Periodic patterns | ✔ 0.3 | ✔ 0.4 | ✔ 0.5 |
-| Geometry-based links | ~ 0.6 | ✔ 0.6 | ~ 0.6 |
+| Feature                        | Kernel | Engine | Proxy |
+| ------------------------------ | ------ | ------ | ----- |
+| Scheduled steps                | ✔ 0.2  | ✔ 0.4  | ✔ 0.5 |
+| Trace-driven rate, delay, loss | ~ 0.3  | ✔ 0.4  | ✔ 0.5 |
+| Markov models                  | ~ 0.3  | ✔ 0.4  | ✔ 0.5 |
+| Periodic patterns              | ✔ 0.3  | ✔ 0.4  | ✔ 0.5 |
+| Geometry-based links           | ~ 0.6  | ✔ 0.6  | ~ 0.6 |
 
 **Restriction "trace-driven" for the Kernel**: `netem` has no clock of its own, so the tool changes its parameters at the steps of the trace. The resolution is limited by how fast the kernel accepts changes (to be measured by the experiment S5), and the delivery is not per packet.
 
 ## Mobility
 
-| Feature | Kernel | Engine | Proxy |
-| --- | --- | --- | --- |
-| Static positions | ✔ 0.6 | ✔ 0.6 | ✔ 0.6 |
-| Waypoint paths, random models | ✔ 0.6 | ✔ 0.6 | ✔ 0.6 |
-| Imported mobility traces | ✔ 0.6 | ✔ 0.6 | ✔ 0.6 |
-| Orbital motion | ✔ 0.6 | ✔ 0.6 | ✔ 0.6 |
-| Handover between access links | ✔ 0.6 | ✔ 0.6 | ~ 0.6 |
+| Feature                       | Kernel | Engine | Proxy |
+| ----------------------------- | ------ | ------ | ----- |
+| Static positions              | ✔ 0.6  | ✔ 0.6  | ✔ 0.6 |
+| Waypoint paths, random models | ✔ 0.6  | ✔ 0.6  | ✔ 0.6 |
+| Imported mobility traces      | ✔ 0.6  | ✔ 0.6  | ✔ 0.6 |
+| Orbital motion                | ✔ 0.6  | ✔ 0.6  | ✔ 0.6 |
+| Handover between access links | ✔ 0.6  | ✔ 0.6  | ~ 0.6 |
 
 Mobility only changes the parameters of links over time (through the geometry-based models), so it inherits the restrictions of "Change over time".
 
 ## Workloads and measurement
 
-| Feature | Kernel | Engine | Proxy |
-| --- | --- | --- | --- |
-| UDP traffic generators | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
-| TCP traffic generators | ✔ 0.3 | ✔ 0.4 | ~ 0.5 |
-| Request and response | ✔ 0.3 | ✔ 0.4 | ✔ 0.5 |
-| Your program as a node | ✔ 0.2 | ✔ 0.4 | ~ 0.5 (addresses are the proxy's) |
-| A container as a node | ✔ 0.5 | ? | ✘ |
-| Per-packet records | ✔ 0.1 | ✔ 0.4 | ~ 0.5 (what passes the proxy) |
-| One-way delay | ✔ 0.1 | ✔ 0.4 | ~ 0.5 |
-| Packet capture | ✔ 0.2 | ✔ 0.4 | ✘ |
-| Kernel queue statistics | ✔ 0.3 | · | · |
+| Feature                 | Kernel | Engine | Proxy                             |
+| ----------------------- | ------ | ------ | --------------------------------- |
+| UDP traffic generators  | ✔ 0.1  | ✔ 0.4  | ✔ 0.5                             |
+| TCP traffic generators  | ✔ 0.3  | ✔ 0.4  | ~ 0.5                             |
+| Request and response    | ✔ 0.3  | ✔ 0.4  | ✔ 0.5                             |
+| Your program as a node  | ✔ 0.2  | ✔ 0.4  | ~ 0.5 (addresses are the proxy's) |
+| A container as a node   | ✔ 0.5  | ?      | ✘                                 |
+| Per-packet records      | ✔ 0.1  | ✔ 0.4  | ~ 0.5 (what passes the proxy)     |
+| One-way delay           | ✔ 0.1  | ✔ 0.4  | ~ 0.5                             |
+| Packet capture          | ✔ 0.2  | ✔ 0.4  | ✘                                 |
+| Kernel queue statistics | ✔ 0.3  | ·      | ·                                 |
 
 One-way delay is exact because all nodes share one machine and one clock. For the Proxy the delay includes the time spent in the proxy itself, which the result states.
 
 ## Protocol behaviour
 
-| Feature | Kernel | Engine | Proxy |
-| --- | --- | --- | --- |
-| UDP and everything on it (QUIC, RTP, custom protocols) | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
-| TCP behaviour under loss and delay (congestion control) | ✔ 0.3 | ✔ 0.4 | ✘ |
-| ICMP | ✔ 0.1 | ✔ 0.4 | ✘ |
+| Feature                                                 | Kernel | Engine | Proxy |
+| ------------------------------------------------------- | ------ | ------ | ----- |
+| UDP and everything on it (QUIC, RTP, custom protocols)  | ✔ 0.1  | ✔ 0.4  | ✔ 0.5 |
+| TCP behaviour under loss and delay (congestion control) | ✔ 0.3  | ✔ 0.4  | ✘     |
+| ICMP                                                    | ✔ 0.1  | ✔ 0.4  | ✘     |
 
 ## Reproducibility
 
-| Feature | Kernel | Engine | Proxy |
-| --- | --- | --- | --- |
-| Same seed, same loss pattern | ✔ 0.1 (needs iproute2 6.6.0 or newer) | ✔ 0.4 | ✔ 0.5 |
-| Same seed, same timing | ~ (scheduling noise) | ✔ 0.4 (optional virtual time) | ~ |
-| Provenance in every result | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
+| Feature                      | Kernel                                | Engine                        | Proxy |
+| ---------------------------- | ------------------------------------- | ----------------------------- | ----- |
+| Same seed, same loss pattern | ✔ 0.1 (needs iproute2 6.6.0 or newer) | ✔ 0.4                         | ✔ 0.5 |
+| Same seed, same timing       | ~ (scheduling noise)                  | ✔ 0.4 (optional virtual time) | ~     |
+| Provenance in every result   | ✔ 0.1                                 | ✔ 0.4                         | ✔ 0.5 |
 
 ## Where it can run
 

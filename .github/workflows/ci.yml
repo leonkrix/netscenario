@@ -80,6 +80,11 @@ jobs:
       - name: Kernel backend tests as root
         run: |
           sudo env "PATH=$PATH" "HOME=$HOME" "CI=$CI" "RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN" "TC_LIB_DIR=$TC_LIB_DIR" just test-kernel
+      # The step above left files in target/ that belong to root. The cache is saved at the end of the job by
+      # the user of the runner, and `tar` fails on files it may not read (the cache was silently not saved).
+      - name: Give target/ back to the runner user
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" target
 
   docs:
     name: Documentation (rustdoc)
