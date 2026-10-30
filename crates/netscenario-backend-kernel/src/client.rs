@@ -234,6 +234,8 @@ impl KernelBackend {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // The tools answer in English whatever the language of the user is: the hints below look for their words
+        command.env("LC_ALL", "C");
         if let Some(point) = &self.options.fail_at {
             command.env(FAIL_AT, point);
         }

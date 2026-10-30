@@ -137,6 +137,17 @@ impl CapabilityError {
         &self.refusals
     }
 
+    /// The error as a person sees it when the text of the scenario is at hand: every refusal with the line
+    /// of the file and a mark under the place (the same form as the errors of reading a file). [`Display`]
+    /// shows the path only.
+    ///
+    /// [`Display`]: std::fmt::Display
+    #[must_use]
+    pub fn render(&self, source_name: &str, source: &str) -> String {
+        netscenario_model::Error::in_source(source_name, source, self.problems())
+            .map_or_else(String::new, |error| error.render())
+    }
+
     /// The refusals as problems with a path, in the form that the reading of a file uses.
     #[must_use]
     pub fn problems(&self) -> Vec<Problem> {

@@ -22,6 +22,11 @@ fmt-check:
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+# The tests of the Kernel backend alone. The CI runs them a second time as root (`sudo`); on a machine
+# without sudo, `unshare --user --map-root-user just test-kernel` takes the same code path as root.
+test-kernel:
+    cargo nextest run -p netscenario-backend-kernel --all-features --no-tests=pass
+
 # Unit and doc tests (nextest does not run doc tests)
 test:
     cargo nextest run --workspace --all-features --no-tests=pass

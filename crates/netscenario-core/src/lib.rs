@@ -19,4 +19,4 @@ pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, 
 pub use error::Error;
 pub use feature::{Feature, Requirement, requirements};
 pub use provision::{Provisioned, impairments_of, provision};
-pub use seed::derive_seed;
+pub use seed::{derive_seed, draw_seed};

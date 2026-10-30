@@ -147,3 +147,13 @@ pub(crate) fn program(name: &str) -> Option<PathBuf> {
         .map(|dir| dir.join(name))
         .find(|path| path.is_file())
 }
+
+/// Whether this process is root (an effective user id of 0), from `/proc/self/status`.
+pub(crate) fn is_root() -> bool {
+    std::fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))
+        .and_then(|ids| ids.split_whitespace().nth(1).map(|euid| euid == "0"))
+        .unwrap_or(false)
+}

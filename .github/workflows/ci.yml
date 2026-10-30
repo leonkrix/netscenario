@@ -62,6 +62,19 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
           tools: just@1.40.0,cargo-nextest@0.9.150
+      # Neither iproute2 5.15 (Ubuntu 22.04) nor 6.1.0 (Ubuntu 24.04) knows the `seed` of `netem` (D-013), and
+      # the tests of reproducible loss need it. Build the release that the development machine has, from the
+      # tarball of kernel.org, checked against the checksum that kernel.org publishes (sha256sums.asc).
+      - name: Build iproute2 6.15.0 (for netem seed)
+        run: |
+          sudo apt-get install -y --no-install-recommends bison flex pkg-config libelf-dev libmnl-dev
+          curl --fail --silent --show-error --location --output iproute2.tar.xz \
+            https://www.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.15.0.tar.xz
+          echo "8041854a882583ad5263466736c9c8c68c74b1a35754ab770d23343f947528fb  iproute2.tar.xz" | sha256sum --check
+          tar --extract --xz --file iproute2.tar.xz
+          make -C iproute2-6.15.0 -j"$(nproc)"
+          "$PWD/iproute2-6.15.0/tc/tc" -V
+          echo "$PWD/iproute2-6.15.0/tc" >> "$GITHUB_PATH"
       # The tests of the Kernel backend create network namespaces as an unprivileged user. Ubuntu 24.04
       # refuses that by default (AppArmor, spike S1); Ubuntu 22.04 has no such rule.
       - name: Allow unprivileged user namespaces
@@ -70,6 +83,12 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
       - run: just test
+      # The same tests once more with the rights of root, so that both ways of running a scenario are tested
+      # (an ordinary user runs it in a user namespace, root with its own rights, D-022). The environment is
+      # passed on: `sudo` would drop the toolchain and the `PATH` with the newer `tc`.
+      - name: Kernel backend tests as root
+        run: |
+          sudo env "PATH=$PATH" "HOME=$HOME" "CI=$CI" "RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN" just test-kernel
 
   docs:
     name: Documentation (rustdoc)

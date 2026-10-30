@@ -20,6 +20,7 @@ pub(crate) fn line(program: &Path, args: &[&str]) -> String {
 pub(crate) fn run(program: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(args)
+        .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .output()
         .map_err(|error| format!("cannot run `{}`: {error}", line(program, args)))?;

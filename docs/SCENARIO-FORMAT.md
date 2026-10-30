@@ -68,7 +68,7 @@ workloads:
 | --- | --- | --- |
 | `version` | yes | The integer `0`. Any other number is an error that says which versions this tool reads. |
 | `name` | yes | A Name. Appears in the result and names its files. |
-| `seed` | no | An unsigned 64-bit integer. Without it the tool draws one and records it in the result, so every run can be repeated (ENV-01). |
+| `seed` | no | An unsigned 64-bit integer. Without it the tool draws one and records it in the result, so every run can be repeated (ENV-01), provided the backend can apply a seed to its loss (the Kernel backend with iproute2 6.6.0 or newer). Where it cannot, a scenario with loss still runs, and the result says that the loss is not reproducible. |
 | `duration` | yes | A Duration greater than zero. The measured phase runs from the start of the workloads to this time. The setup and the teardown are not part of it. |
 | `backend` | no | `auto` (the default) or `kernel`. `engine` and `proxy` are refused until releases 0.4 and 0.5. |
 | `topology` | yes | See below. |
