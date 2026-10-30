@@ -1,0 +1,58 @@
+# The changelog is written from the Conventional Commits of main (git-cliff, REL-02). Every pull request is
+# squash merged and its title is the commit subject, so the titles are the lines of the changelog.
+# `just changelog` writes CHANGELOG.md; the release pull request shows the result for review.
+
+[changelog]
+header = """
+# Changelog
+
+Every release of netscenario, newest first. The lines are the titles of the pull requests; the rules for what
+a version may change are in [docs/VERSIONING.md](docs/VERSIONING.md).
+"""
+body = """
+{% if version -%}
+## {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
+{% else -%}
+## Unreleased
+{% endif -%}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.breaking %}**Breaking:** {% endif %}{% if commit.scope %}{{ commit.scope }}: {% endif %}{{ commit.message | upper_first }}\
+{% endfor %}
+{% endfor -%}
+"""
+footer = ""
+trim = false
+# A pull request number becomes a link to the pull request
+postprocessors = [
+  { pattern = '\(#(\d+)\)', replace = "([#${1}](https://github.com/leonkrix/netscenario/pull/${1}))" },
+]
+
+[git]
+conventional_commits = true
+# A title that is not a Conventional Commit is not dropped: it shows under "Other", where the release pull
+# request makes it visible
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = true
+filter_commits = false
+topo_order = false
+sort_commits = "oldest"
+tag_pattern = "v[0-9]*"
+commit_parsers = [
+  # The experiments that came before the workspace (Phase 0): their fixes are not changes of the product
+  { sha = "21561d51502c5da9bcff0d5030d170e602697170", skip = true },
+  { sha = "f5b5fa38f2aa89ec8ca386be93cb7c61994860ad", skip = true },
+  { sha = "972a7ce9abbd5c84fb6fce5aed8e39cb884d9a85", skip = true },
+  { sha = "afe73fb4691fb43316d6c5b76c0f4874e59e5be2", skip = true },
+  { sha = "e786511f93e35a847cec6c064240bcadcb1d67b2", skip = true },
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = "^revert", group = "Reverted" },
+  # What does not change the product for a user is not in the changelog; a breaking change always is
+  { message = "^(docs|test|ci|chore|build|refactor|style)", breaking = false, skip = true },
+  { message = "^(docs|test|ci|chore|build|refactor|style)", group = "Other changes" },
+  { message = ".*", group = "Other" },
+]

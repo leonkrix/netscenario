@@ -7,6 +7,8 @@ name = "netscenario"
 description = "Declarative network scenarios for tests: describe a network, run a program in it, measure per packet, assert with statistics"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-*"]
+readme = "README.md"
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Operating System :: POSIX :: Linux",

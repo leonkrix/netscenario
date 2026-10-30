@@ -132,6 +132,8 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [docs/DOCTOR.md](docs/DOCTOR.md): `netscenario doctor` and `netscenario clean`: what they check, what they print, their exit codes.
 - [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md): the scenario file, draft.
 - [docs/PRIOR-ART.md](docs/PRIOR-ART.md): what exists, and where netscenario differs.
+- [docs/VERSIONING.md](docs/VERSIONING.md): what a version number promises, and what a release may break.
+- [docs/RELEASING.md](docs/RELEASING.md): how a release is made, and the one-time setup of the registries.
 - [docs/DECISIONS.md](docs/DECISIONS.md): the decisions made so far, with reasons.
 - [spikes/](spikes/): experiments that check what the Linux kernel allows, to run before building.
 

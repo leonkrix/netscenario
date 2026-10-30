@@ -7,7 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-publish.workspace = true
+# Shipped as the wheels of the package netscenario (maturin), not as a crate (REL-01)
+publish = false
 
 [lib]
 name = "_native"
