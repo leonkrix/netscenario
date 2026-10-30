@@ -158,8 +158,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | planned |
 | BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | planned |
-| BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | designed |
-| BKD-04 | Cleanup guarantee: no leftovers after a crash, and `netscenario clean` | M | 0.1 | planned |
+| BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | in progress |
+| BKD-04 | Cleanup guarantee: no leftovers after a crash (PID namespace, D-022), and `netscenario clean` as a safety net | M | 0.1 | designed |
 | BKD-05 | Netlink instead of calls to `ip` and `tc` | S | 0.4 | planned |
 | BKD-06 | Packet engine in userspace (deterministic, no root) | M | 0.4? | planned |
 | BKD-07 | Kernel and engine compared by differential tests | M | 0.4 | planned |

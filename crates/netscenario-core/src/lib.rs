@@ -1,5 +1,20 @@
-//! The run lifecycle: checking the capabilities of a backend, the timeline and link models, the
-//! supervision of a run, statistics and results (see `docs/ARCHITECTURE.md`, "The life of a run").
+//! The run lifecycle: what a backend must provide, the check of a scenario against what it reproduces
+//! faithfully, and the building of the network (see `docs/ARCHITECTURE.md`, "The life of a run").
 //!
-//! The crate is a skeleton. Its content arrives with the backend interface (BKD-03) and the results
-//! (RPT-01) of release 0.1.
+//! A backend implements [`Backend`] and declares its [`Capabilities`]. [`provision`] checks a scenario
+//! against them, so that a scenario the backend cannot reproduce exactly is refused before anything is
+//! created (BKD-03), and then builds the nodes, links and impairments through the trait.
+//!
+//! The timeline, the link models, statistics and results arrive with the later parts of release 0.1.
+
+mod backend;
+mod capability;
+mod error;
+mod feature;
+mod provision;
+
+pub use backend::{Backend, Direction, LinkHandle, NodeHandle, Program, ProgramHandle};
+pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, check};
+pub use error::Error;
+pub use feature::{Feature, Requirement, requirements};
+pub use provision::{Provisioned, impairments_of, provision};
