@@ -11,20 +11,20 @@ How netscenario is put together, and why. This is the design the code will follo
 
 ## Vocabulary
 
-| Term | Meaning |
-| --- | --- |
-| Scenario | The whole description: topology, impairments, timeline, workloads, and optionally expectations |
-| Node | A place where programs run (a network namespace) |
-| Link | A connection between two nodes with its own impairments in each direction |
-| Impairment | Delay, jitter, loss, reordering, duplication, corruption, rate limit, queue behaviour |
-| Link model | A function from time (and state, such as positions) to the impairments of a link |
-| Timeline | Events that change the scenario at given times |
-| Workload | Something that runs on a node: a built-in traffic generator or your program |
-| Probe | Something that measures: per-packet records, packet capture, metrics from your program |
-| Backend | The thing that makes the network real: Kernel, Engine or Proxy |
-| Run | One execution of a scenario with one seed |
-| Experiment | Several runs of one scenario (repetitions, a sweep) |
-| Fidelity | What a backend reproduces faithfully |
+| Term       | Meaning                                                                                        |
+| ---------- | ---------------------------------------------------------------------------------------------- |
+| Scenario   | The whole description: topology, impairments, timeline, workloads, and optionally expectations |
+| Node       | A place where programs run (a network namespace)                                               |
+| Link       | A connection between two nodes with its own impairments in each direction                      |
+| Impairment | Delay, jitter, loss, reordering, duplication, corruption, rate limit, queue behaviour          |
+| Link model | A function from time (and state, such as positions) to the impairments of a link               |
+| Timeline   | Events that change the scenario at given times                                                 |
+| Workload   | Something that runs on a node: a built-in traffic generator or your program                    |
+| Probe      | Something that measures: per-packet records, packet capture, metrics from your program         |
+| Backend    | The thing that makes the network real: Kernel, Engine or Proxy                                 |
+| Run        | One execution of a scenario with one seed                                                      |
+| Experiment | Several runs of one scenario (repetitions, a sweep)                                            |
+| Fidelity   | What a backend reproduces faithfully                                                           |
 
 ## The parts
 
@@ -62,21 +62,21 @@ How netscenario is put together, and why. This is the design the code will follo
 
 Planned layout of the repository (a Cargo workspace plus Python packages; created in Phase 1):
 
-| Path | Purpose |
-| --- | --- |
-| `crates/netscenario-model` | Scenario types, units, validation, JSON Schema. No system access. |
-| `crates/netscenario-core` | Run lifecycle, timeline, link models, statistics, results |
-| `crates/netscenario-backend-kernel` | Namespaces, links, `netem`, cleanup |
-| `crates/netscenario-backend-packet` | Packet-level emulator (from 0.4) |
-| `crates/netscenario-backend-proxy` | Portable proxy (from 0.5) |
-| `crates/netscenario-agent` | Traffic generators and probes that run inside the nodes |
-| `crates/netscenario-cli` | The command `netscenario` |
-| `crates/netscenario-py` | Python bindings (PyO3, built with maturin) |
-| `python/netscenario` | Python API (builder, results, assertions) |
-| `python/pytest-netscenario` | The pytest plugin |
-| `scenarios/` | Example and test scenarios, which are also used by the tests |
-| `docs/` | These documents, and later the user guide |
-| `spikes/` | Experiments that check what the system allows |
+| Path                                | Purpose                                                           |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| `crates/netscenario-model`          | Scenario types, units, validation, JSON Schema. No system access. |
+| `crates/netscenario-core`           | Run lifecycle, timeline, link models, statistics, results         |
+| `crates/netscenario-backend-kernel` | Namespaces, links, `netem`, cleanup                               |
+| `crates/netscenario-backend-packet` | Packet-level emulator (from 0.4)                                  |
+| `crates/netscenario-backend-proxy`  | Portable proxy (from 0.5)                                         |
+| `crates/netscenario-agent`          | Traffic generators and probes that run inside the nodes           |
+| `crates/netscenario-cli`            | The command `netscenario`                                         |
+| `crates/netscenario-py`             | Python bindings (PyO3, built with maturin)                        |
+| `python/netscenario`                | Python API (builder, results, assertions)                         |
+| `python/pytest-netscenario`         | The pytest plugin                                                 |
+| `scenarios/`                        | Example and test scenarios, which are also used by the tests      |
+| `docs/`                             | These documents, and later the user guide                         |
+| `spikes/`                           | Experiments that check what the system allows                     |
 
 ## The life of a run
 

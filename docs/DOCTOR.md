@@ -12,7 +12,7 @@ netscenario doctor --json     # the same checks as JSON
 It looks at the machine and prints one line per check, in four groups, and for everything that is not as it should be a line `fix:` that says what to do. The exit code is **0** if scenarios can run here and **3** if something has to be fixed first (the codes are listed in `netscenario --help`). A warning does not change the exit code: it means a scenario can run, with a limit that the line names.
 
 | Group | Check (`id`) | What it tests | Not as it should be |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Tools | `tool-ip`, `tool-tc`, `tool-unshare`, `tool-nsenter`, `tool-prlimit` | The tool is found (in the `PATH` and in `/usr/sbin`, `/sbin`, `/usr/local/sbin`, `/usr/bin`, `/bin`; the line says where it looked) and prints its version (`prlimit` limits the memory of the programs of a run) | `FAIL`, with the package to install |
 | Tools | `tool-kill` | Needed by `clean` only | `warn` |
 | Rights | `way-user-namespace`, `way-own-rights` | Whether the exact `unshare` command of a run works, once in an unprivileged user namespace and once with the rights of the process (root or the capabilities `CAP_NET_ADMIN` and `CAP_SYS_ADMIN`). The probe runs inside the namespaces it creates | `info` for the way that is not available, with the answer of `unshare` |
