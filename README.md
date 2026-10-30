@@ -123,6 +123,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [FEATURES.md](FEATURES.md): every planned feature, its priority, its release and its status.
 - [docs/COVERAGE.md](docs/COVERAGE.md): what is faithful on which backend.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the parts and how they fit.
+- [docs/PYTEST.md](docs/PYTEST.md): the pytest plugin: the fixture, the marker, the guard for machines that cannot run scenarios, the report.
 - [docs/PYTHON.md](docs/PYTHON.md): the Python package: scenarios, builder, results in SI units, errors, observing and stopping a run.
 - [docs/CLI.md](docs/CLI.md): the commands, their options, the exit codes and the JSON they print.
 - [docs/FIDELITY.md](docs/FIDELITY.md): how close the Kernel backend is to what a scenario says, measured, and what it does that you may not expect.

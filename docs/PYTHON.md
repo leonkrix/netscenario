@@ -101,4 +101,4 @@ Python cannot be the supervisor of a run (it has several threads and cannot move
 
 ## Not yet
 
-Starting your own program in a node (release 0.2), repetitions and confidence intervals (0.2), `asyncio` (0.3), per-packet data as frames (0.3). The pytest plugin (`pytest-netscenario`) is the next step.
+Starting your own program in a node (release 0.2), repetitions and confidence intervals (0.2), `asyncio` (0.3), per-packet data as frames (0.3). The pytest plugin is described in [PYTEST.md](PYTEST.md).
