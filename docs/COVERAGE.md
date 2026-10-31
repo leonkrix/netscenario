@@ -70,6 +70,7 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 
 **What release 0.2 will do, as the spikes S11 to S14 measured it** (none of this is in 0.1; the decisions are [D-038](DECISIONS.md), D-040, D-047 and D-048):
 
+- **The format reads the impairments of this list since step 4.1b; the Kernel backend refuses them until step 4.2 builds them** (the cells above say `✔ 0.2`, and a scenario that asks for one is refused with the feature, the backend and the line of the file; [D-049](DECISIONS.md)).
 - **Events happen between packets.** A change of the timeline is applied before the first packet of its workload at or after its moment, so the same seed gives the same lost packets (one workload in the direction). A timer would put the change one to eight packets late and, with a loss of 0 in between, move the whole pattern.
 - **Corruption looks like loss to the program, and the result says which.** A bit flipped by `netem corrupt` (anywhere in the frame, the Ethernet header included) makes the receiver drop the packet, with the UDP checksum on (the normal case). The result separates the packets lost in the queue from the corrupted ones, exactly for the node, and by sequence number for most of them (94 to 99 percent in the spike). A workload that switches the checksum off sees the corrupted payload arrive.
 - **`duplicate P` doubles a packet with probability P, and the copy is lost, delayed or corrupted on its own.** With other impairments the share of packets that arrive twice is lower than P.

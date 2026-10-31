@@ -6,7 +6,7 @@
 
 use netscenario_model::{
     Backend, Duration, FormatVersion, Impairments, Jitter, JitterDistribution, Link, Loss,
-    LossModel, MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, Name, Probability, Rate,
+    MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, Name, Probability, Rate, Reorder,
     Scenario, Size, Topology, Workload, WorkloadKind,
 };
 use proptest::prelude::*;
@@ -62,43 +62,96 @@ proptest! {
     }
 }
 
+fn probability(millionths: u32) -> Probability {
+    Probability::from_micro_percent(millionths).unwrap()
+}
+
+/// A loss of any model, with parameters that the format accepts: the two transitions out of one state of the
+/// four-state model add up to at most 100 %.
+fn loss() -> impl Strategy<Value = Loss> {
+    const WHOLE: u32 = 100_000_000;
+    prop_oneof![
+        (0..=WHOLE).prop_map(|p| Loss::Random { p: probability(p) }),
+        (0..=WHOLE, 0..=WHOLE, 0..=WHOLE, 0..=WHOLE).prop_map(|(p, r, loss_bad, loss_good)| {
+            Loss::GilbertElliott {
+                p: probability(p),
+                r: probability(r),
+                loss_bad: probability(loss_bad),
+                loss_good: probability(loss_good),
+            }
+        }),
+        (
+            0..=WHOLE,
+            any::<u32>(),
+            0..=WHOLE,
+            any::<u32>(),
+            0..=WHOLE,
+            0..=WHOLE
+        )
+            .prop_map(|(p13, p14_part, p31, p32_part, p23, _)| {
+                Loss::Markov4 {
+                    p13: probability(p13),
+                    p14: probability(p14_part % (WHOLE - p13 + 1)),
+                    p31: probability(p31),
+                    p32: probability(p32_part % (WHOLE - p31 + 1)),
+                    p23: probability(p23),
+                }
+            }),
+    ]
+}
+
 fn impairments() -> impl Strategy<Value = Impairments> {
     (
-        proptest::option::of(1..=10_000_000_000u64),
-        any::<bool>(),
-        proptest::option::of(0..=100_000_000u32),
-        proptest::option::of(1..=u64::MAX / 2),
-        any::<u32>(),
+        (
+            proptest::option::of(1..=10_000_000_000u64),
+            any::<bool>(),
+            proptest::option::of(loss()),
+            proptest::option::of(1..=u64::MAX / 2),
+            any::<u32>(),
+        ),
+        (
+            proptest::option::of((0..=100_000_000u32, proptest::option::of(1..=1000u32))),
+            proptest::option::of(0..=100_000_000u32),
+            proptest::option::of(0..=100_000_000u32),
+        ),
     )
-        .prop_map(|(delay, normal, loss, rate, jitter_part)| {
-            let delay = delay.map(Duration::from_nanos);
-            // A jitter that stays within what the format accepts: at most the delay, or a quarter of it if normal
-            let jitter = delay.map(|delay| {
-                let limit = if normal {
-                    delay.as_nanos() / 4
-                } else {
-                    delay.as_nanos()
-                };
-                let amount = u64::from(jitter_part) % (limit + 1);
-                Jitter {
-                    amount: Duration::from_nanos(amount),
-                    distribution: if normal {
-                        JitterDistribution::Normal
+        .prop_map(
+            |((delay, normal, loss, rate, jitter_part), (reorder, duplicate, corrupt))| {
+                let delay = delay.map(Duration::from_nanos);
+                // A jitter that stays within what the format accepts: at most the delay, or a quarter of it if normal
+                let jitter = delay.map(|delay| {
+                    let limit = if normal {
+                        delay.as_nanos() / 4
                     } else {
-                        JitterDistribution::Uniform
-                    },
+                        delay.as_nanos()
+                    };
+                    let amount = u64::from(jitter_part) % (limit + 1);
+                    Jitter {
+                        amount: Duration::from_nanos(amount),
+                        distribution: if normal {
+                            JitterDistribution::Normal
+                        } else {
+                            JitterDistribution::Uniform
+                        },
+                    }
+                });
+                Impairments {
+                    delay,
+                    jitter,
+                    loss,
+                    // Reordering holds packets back for the delay, so it needs one
+                    reorder: reorder
+                        .filter(|_| delay.is_some())
+                        .map(|(share, gap)| Reorder {
+                            share: probability(share),
+                            gap,
+                        }),
+                    duplicate: duplicate.map(probability),
+                    corrupt: corrupt.map(probability),
+                    rate: rate.map(|bits| Rate::from_bits_per_second(bits).unwrap()),
                 }
-            });
-            Impairments {
-                delay,
-                jitter,
-                loss: loss.map(|millionths| Loss {
-                    model: LossModel::Random,
-                    p: Probability::from_micro_percent(millionths).unwrap(),
-                }),
-                rate: rate.map(|bits| Rate::from_bits_per_second(bits).unwrap()),
-            }
-        })
+            },
+        )
 }
 
 fn workload(index: usize, duration_nanos: u64) -> impl Strategy<Value = Workload> {
@@ -192,4 +245,31 @@ fn canary_a_broken_scenario_is_refused() {
     assert_eq!(scenario.validate(), Vec::new());
     scenario.workloads[0].packet_size = Size::from_bytes(1);
     assert_ne!(scenario.validate(), Vec::new());
+}
+
+/// Canary: the two rules that the generator keeps are rules of the format, so the property can fail on them.
+#[test]
+fn canary_reordering_without_a_delay_and_a_four_state_model_above_100_percent_are_refused() {
+    let yaml = |both: &str| {
+        format!(
+            "version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: {both}\nworkloads:\n  - {{ id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }}\n"
+        )
+    };
+    let text = |both: &str| {
+        Scenario::from_yaml(&yaml(both), "t.yaml")
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(text("{ reorder: { share: 25% } }").contains("`reorder` needs a `delay`"));
+    assert!(
+        text("{ loss: { model: markov4, p13: 60%, p31: 30%, p32: 10%, p23: 20%, p14: 50% } }")
+            .contains("`p13` (60%) and `p14` (50%) add up to more than 100%")
+    );
+    assert!(
+        Scenario::from_yaml(
+            &yaml("{ delay: 10ms, reorder: { share: 25%, gap: 5 } }"),
+            "t.yaml"
+        )
+        .is_ok()
+    );
 }

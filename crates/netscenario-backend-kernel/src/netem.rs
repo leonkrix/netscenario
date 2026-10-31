@@ -9,7 +9,7 @@
 //! from two `netem` qdiscs, the rate in the first and the delay with its jitter in the second, which is its
 //! child. Every other direction needs only one.
 
-use netscenario_model::{Duration, Impairments, JitterDistribution, MAX_PACKETS_PER_SECOND};
+use netscenario_model::{Duration, Impairments, JitterDistribution, Loss, MAX_PACKETS_PER_SECOND};
 
 /// The most packets a queue may hold. A queue this long at the largest packet size takes 1.4 GB, so a sender
 /// that overruns a slow link cannot use all the memory of the machine.
@@ -87,19 +87,29 @@ fn delay_arguments(impairments: &Impairments) -> Result<Vec<String>, String> {
 }
 
 /// The arguments of the loss: `loss random P% [seed S]`. The seed is used only with loss (D-013).
-fn loss_arguments(impairments: &Impairments, seed: Option<u64>) -> Vec<String> {
+///
+/// Only `random` is built so far; the other models and the other impairments arrive with step 4.2 of
+/// release 0.2, and the capabilities of the backend say so before a run gets here.
+fn loss_arguments(impairments: &Impairments, seed: Option<u64>) -> Result<Vec<String>, String> {
     let mut arguments = Vec::new();
-    if let Some(loss) = &impairments.loss {
-        arguments.push("loss".to_owned());
-        arguments.push("random".to_owned());
-        arguments.push(percent(loss.p.micro_percent()));
-        if let Some(seed) = seed {
-            arguments.push("seed".to_owned());
-            arguments.push(seed.to_string());
+    match &impairments.loss {
+        None => {}
+        Some(Loss::Random { p }) => {
+            arguments.push("loss".to_owned());
+            arguments.push("random".to_owned());
+            arguments.push(percent(p.micro_percent()));
+            if let Some(seed) = seed {
+                arguments.push("seed".to_owned());
+                arguments.push(seed.to_string());
+            }
         }
+        Some(_) => return Err(NOT_BUILT.to_owned()),
     }
-    arguments
+    Ok(arguments)
 }
+
+/// What a direction is told that asks for an impairment that this build of the backend does not apply yet.
+const NOT_BUILT: &str = "this loss model, reordering, duplication and corruption are built into the Kernel backend in step 4.2 of release 0.2 and are not applied yet";
 
 /// The arguments of the rate: `rate Nbit`.
 fn rate_arguments(impairments: &Impairments) -> Vec<String> {
@@ -117,6 +127,12 @@ pub(crate) fn arguments(
     impairments: &Impairments,
     seed: Option<u64>,
 ) -> Result<Option<Stages>, String> {
+    if impairments.reorder.is_some()
+        || impairments.duplicate.is_some()
+        || impairments.corrupt.is_some()
+    {
+        return Err(NOT_BUILT.to_owned());
+    }
     if impairments.delay.is_none() && impairments.loss.is_none() && impairments.rate.is_none() {
         return Ok(None);
     }
@@ -125,7 +141,7 @@ pub(crate) fn arguments(
     if jitter.is_some() && impairments.rate.is_some() {
         // The rate first, with the loss in front of it, then the delay with its jitter
         let mut first = limit(LINK_QUEUE);
-        first.extend(loss_arguments(impairments, seed));
+        first.extend(loss_arguments(impairments, seed)?);
         first.extend(rate_arguments(impairments));
         let mut second = limit(queue_limit(impairments.delay, jitter.map(|j| j.amount)));
         second.extend(delay_arguments(impairments)?);
@@ -136,7 +152,7 @@ pub(crate) fn arguments(
     }
     let mut first = limit(queue_limit(impairments.delay, jitter.map(|j| j.amount)));
     first.extend(delay_arguments(impairments)?);
-    first.extend(loss_arguments(impairments, seed));
+    first.extend(loss_arguments(impairments, seed)?);
     first.extend(rate_arguments(impairments));
     Ok(Some(Stages {
         first,

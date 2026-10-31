@@ -1,0 +1,17 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward:
+        loss: { model: markov4, p13: 60%, p31: 30%, p32: 80%, p23: 20%, p14: 50% }
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 1mbit
+    packet-size: 1200b

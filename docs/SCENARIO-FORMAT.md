@@ -1,6 +1,6 @@
 # Scenario format, version 0 (release 0.1)
 
-**Status: the contract for release 0.1.** Part 1 describes exactly what a scenario file may contain in release 0.1. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01, committed as `docs/schema/scenario-v0.json`); that schema and the tests are the final authority, and this page is checked against them.
+**Status: the contract for release 0.1, with the impairments of release 0.2 added** (the format reads them; the Kernel backend applies them from step 4.2 of release 0.2, until then it refuses them and says so). Part 1 describes exactly what a scenario file may contain. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01, committed as `docs/schema/scenario-v0.json`); that schema and the tests are the final authority, and this page is checked against them.
 
 The format is versioned with the line `version: 0`. **Version 0 is the series before 1.0: it may change in any minor release, and the changelog says how.** From 1.0 on the version is 1, and a change that breaks files raises it (SCN-08 adds `netscenario migrate`).
 
@@ -108,7 +108,7 @@ topology:
 
 ### Impairments of a direction
 
-The stages of a direction act in this order, whatever order the keys have in the file: **`loss`** (a packet may be dropped when it enters the direction and then uses no capacity), **`rate`** (the packets that are kept are sent one after the other at the rate, in a queue, in the order they came), **`delay` with `jitter`** (each packet then travels for its own delay, drawn independently). So a jitter does not slow the stream down, and it can make a packet overtake the one before it when the jitter is larger than the gap between them: the result counts such packets (`reordered`, [RESULTS.md](RESULTS.md)). A backend that cannot build exactly this refuses the scenario; the Kernel backend builds it ([COVERAGE.md](COVERAGE.md), [FIDELITY.md](FIDELITY.md)).
+The stages of a direction act in this order, whatever order the keys have in the file: **`duplicate`** (a packet may be sent twice, and the copy goes through everything that follows on its own, so with a loss of 10 % a duplicated packet is lost twice as often as it is lost once, D-048), **`loss`** (a packet may be dropped when it enters the direction and then uses no capacity), **`corrupt`** (a bit of the packet may be flipped), **`rate`** (the packets that are kept are sent one after the other at the rate, in a queue, in the order they came), **`delay` with `jitter`** (each packet then travels for its own delay, drawn independently; with **`reorder`** a share of the packets is not delayed at all). So a jitter does not slow the stream down, and it can make a packet overtake the one before it when the jitter is larger than the gap between them: the result counts such packets (`reordered`, [RESULTS.md](RESULTS.md)). A backend that cannot build exactly this refuses the scenario; the Kernel backend builds it ([COVERAGE.md](COVERAGE.md), [FIDELITY.md](FIDELITY.md)).
 
 ```yaml
 forward:
@@ -118,12 +118,40 @@ forward:
   rate: 10mbit
 ```
 
+and with the impairments of release 0.2:
+
+```yaml
+forward:
+  delay: 40ms
+  loss: { model: gilbert-elliott, p: 2%, r: 30%, loss-bad: 50%, loss-good: 0.1% }
+  reorder: { share: 95%, gap: 5 }
+  duplicate: 0.5%
+  corrupt: 0.2%
+```
+
 | Key | Value | Meaning in the Kernel backend |
 | --- | --- | --- |
 | `delay` | Duration | `netem delay` (LNK-01). |
 | `jitter` | `amount`: Duration, `distribution`: `uniform` (default) or `normal` | `netem delay D J`, with `distribution normal` for the second one (LNK-02). **Needs `delay`.** A delay below zero cannot exist, and `netem` would silently clamp it to zero, so the format refuses a jitter that reaches below zero: `uniform` needs `amount` not greater than `delay`, `normal` needs `delay` at least four times `amount` (the tables of `netem` are cut at about four sigma, which is also why a normal jitter never reaches its far tail, see COVERAGE). |
-| `loss` | `model: random`, `p`: Probability | `netem loss` (LNK-03). Other models (`gilbert-elliott`, `markov4`, `trace`) are planned for 0.2 and 0.3. |
+| `loss` | `model` and its parameters, see below | `netem loss` (LNK-03, LNK-04). `trace` is planned for 0.3. |
+| `reorder` | `share`: Probability, `gap`: whole number, at least 1 (optional, default 1) | `netem reorder P gap G` (LNK-05). **Needs `delay`** (`tc` refuses it without). `share` is the share of the packets that are sent on at once; the others wait for the delay and arrive after later ones. With `gap` the share sent on at once is `1 / (gap - 1 + 1 / share)`: 25 % with `gap: 5` is 12.5 %. Measured in D-048. |
+| `duplicate` | Probability | `netem duplicate` (LNK-06). The copy is impaired on its own. |
+| `corrupt` | Probability | `netem corrupt` (LNK-07). One bit of the frame is flipped, anywhere in it; a receiver with the UDP checksum on drops the packet (D-040), so the program sees loss, and the result tells the two apart. |
 | `rate` | Rate | `netem rate` (LNK-08). |
+
+**The loss models.** The parameters are those of `netem` and have its names, without aliases; every parameter of a model is required (a default of `tc` that the file does not show would be a value nobody wrote). There is no `correlation` key for any loss, duplication or reordering, because the correlation argument of `netem` does not keep the probability (D-048).
+
+| `model` | Parameters | `netem` |
+| --- | --- | --- |
+| `random` | `p`: the chance that a packet is lost | `loss random p` |
+| `gilbert-elliott` | `p`: the chance, for each packet, to go from the good to the bad state; `r`: from the bad to the good state; `loss-bad`: the chance that a packet is lost in the bad state; `loss-good`: the same in the good state | `loss gemodel p r loss-bad loss-good` (the third and fourth argument, measured in S12). The mean stay in the bad state is `1 / r` packets. |
+| `markov4` | `p13`, `p31`, `p32`, `p23`, `p14`: the transitions between four states (1 receiving in a gap, 2 receiving inside a burst, 3 losing inside a burst, 4 losing a single packet in a gap) | `loss state p13 p31 p32 p23 p14`. From state 1 the chances `p13` and `p14` are two ways out of one draw, and so are `p31` and `p32` from state 3: each pair adds up to at most 100 %, and the reader refuses more. |
+
+```yaml
+loss: { model: gilbert-elliott, p: 2%, r: 30%, loss-bad: 50%, loss-good: 0.1% }
+loss: { model: markov4, p13: 2%, p31: 30%, p32: 10%, p23: 20%, p14: 0.5% }
+```
+
 
 The queue of the link is the default of the kernel (`limit 1000` packets) and is recorded in the result. A `queue` key (limit and discipline, LNK-09) arrives with release 0.3.
 
@@ -235,14 +263,7 @@ timeline:
   - { at: 20s, link: access, outage: 2s }
 ```
 
-**More loss models (0.2).** The parameters follow the `netem` documentation so that the mapping can be checked; there are no aliases. In `gilbert-elliott` `loss-bad` and `loss-good` are the loss probabilities in the two states (the third and fourth argument of `netem loss gemodel`, measured in S12); in `markov4` the five numbers are the transitions in the order of the names. There is no `correlation` key for any loss, duplication or reordering (D-048).
-
-```yaml
-loss: { model: gilbert-elliott, p: 2%, r: 30%, loss-bad: 50%, loss-good: 0.1% }
-loss: { model: markov4, p13: 2%, p31: 30%, p32: 10%, p23: 20%, p14: 0.5% }
-```
-
-**Corruption and reordering (0.2).** `corrupt: 1%` flips a bit in the frame; a receiver with the UDP checksum on drops it (D-040), so the program sees loss, and the result tells it from a loss in the queue. `udp-checksum: off` on a `udp-cbr` workload lets the corrupted payload arrive, and the result then counts `corrupted`. `reorder: { share: 25%, gap: 5 }` needs a `delay`: the share is the share of packets sent on at once (D-048).
+**Corruption that arrives (0.2).** `udp-checksum: off` on a `udp-cbr` workload lets the corrupted payload arrive, and the result then counts `corrupted` (D-040). The keys `corrupt`, `reorder`, `duplicate` and the loss models are in Part 1.
 
 **Your program as a node (0.2).**
 

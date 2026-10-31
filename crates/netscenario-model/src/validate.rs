@@ -2,9 +2,9 @@
 //! exactly. Every problem names the path of the value in the scenario.
 
 use crate::error::Problem;
-use crate::scenario::{Impairments, Jitter, JitterDistribution, Scenario};
+use crate::scenario::{Impairments, Jitter, JitterDistribution, Loss, Scenario};
 use crate::suggest::closest;
-use crate::units::{Duration, Name};
+use crate::units::{Duration, Name, Probability};
 
 /// The packets per second that a workload may send: what the agent was measured to deliver (spike S8).
 pub const MAX_PACKETS_PER_SECOND: u64 = 100_000;
@@ -227,6 +227,30 @@ fn check_window(
 }
 
 fn check_impairments(impairments: &Impairments, base: &str, problems: &mut Vec<Problem>) {
+    if let Some(Loss::Markov4 { p13, p14, .. }) = &impairments.loss {
+        check_sum("p13", *p13, "p14", *p14, &format!("{base}.loss"), problems);
+    }
+    if let Some(Loss::Markov4 { p31, p32, .. }) = &impairments.loss {
+        check_sum("p31", *p31, "p32", *p32, &format!("{base}.loss"), problems);
+    }
+    if let Some(reorder) = &impairments.reorder {
+        if reorder.gap == Some(0) {
+            problems.push(
+                Problem::new("the `gap` of `reorder` must be at least 1")
+                    .at_path(format!("{base}.reorder.gap"))
+                    .with_help("leave `gap` out for the default of 1"),
+            );
+        }
+        if impairments.delay.is_none() {
+            problems.push(
+                Problem::new(
+                    "`reorder` needs a `delay`: packets are reordered by holding some back",
+                )
+                .at_path(format!("{base}.reorder"))
+                .with_help("add `delay` next to `reorder`; without it `tc` refuses the setting"),
+            );
+        }
+    }
     let Some(jitter) = &impairments.jitter else {
         return;
     };
@@ -240,6 +264,28 @@ fn check_impairments(impairments: &Impairments, base: &str, problems: &mut Vec<P
         return;
     };
     problems.extend(check_jitter(jitter, delay, &path));
+}
+
+/// Two transitions out of the same state of the four-state model are chances of one draw, so they cannot add
+/// up to more than 100 %.
+fn check_sum(
+    first_name: &str,
+    first: Probability,
+    second_name: &str,
+    second: Probability,
+    path: &str,
+    problems: &mut Vec<Problem>,
+) {
+    let sum = u64::from(first.micro_percent()) + u64::from(second.micro_percent());
+    if sum > 100_000_000 {
+        problems.push(
+            Problem::new(format!(
+                "`{first_name}` ({first}) and `{second_name}` ({second}) add up to more than 100%"
+            ))
+            .at_path(format!("{path}.{second_name}"))
+            .with_help("they are the two ways out of one state, so together they are at most 100%"),
+        );
+    }
 }
 
 /// A delay below zero cannot exist, and `netem` would silently clamp it. The format refuses a jitter that

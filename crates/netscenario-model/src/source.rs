@@ -49,7 +49,6 @@ pub(crate) struct SourceIndex {
 }
 
 impl SourceIndex {
-    #[cfg(test)]
     pub(crate) fn get(&self, path: &str) -> Option<&Entry> {
         self.entries.get(path)
     }

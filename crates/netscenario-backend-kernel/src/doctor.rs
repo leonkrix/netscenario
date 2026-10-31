@@ -575,13 +575,23 @@ fn kernel_checks(findings: &Findings, tc: &Tool, checks: &mut Vec<Check>) {
 /// The features, as the backend declares them for this machine.
 fn feature_checks(tc: Tool, checks: &mut Vec<Check>) {
     let declared = capabilities(&Environment { tc });
+    let complete = capabilities(&Environment::complete());
     for feature in Feature::ALL {
         let (status, detail, fix) = match declared.support(*feature) {
             Support::Exact => (Status::Ok, "exact".to_owned(), None),
             Support::Limited { restriction } => {
                 (Status::Warn, format!("only in part: {restriction}"), None)
             }
-            Support::Unsupported { reason, fix } => (Status::Warn, reason, Some(fix)),
+            // Not on a complete machine either: the backend does not have it yet, which is no fault of this
+            // machine and nothing to fix on it
+            Support::Unsupported { reason, fix } => {
+                let missing_here = complete.support(*feature) != declared.support(*feature);
+                if missing_here {
+                    (Status::Warn, reason, Some(fix))
+                } else {
+                    (Status::Info, reason, None)
+                }
+            }
         };
         checks.push(check(
             "features",
@@ -739,6 +749,20 @@ mod tests {
         // The way that is not available is information, not a problem
         assert_eq!(status(&report, "way-own-rights"), Status::Info);
         assert_eq!(status(&report, "way-user-namespace"), Status::Ok);
+    }
+
+    /// A feature that the backend does not have yet is information on every machine, and one that this machine
+    /// lacks (here: `tc` is too old for the seed) is a warning.
+    #[test]
+    fn a_feature_the_backend_lacks_is_information_and_one_the_machine_lacks_is_a_warning() {
+        let report = assess(&good());
+        assert_eq!(status(&report, "burst-loss"), Status::Info);
+        assert_eq!(status(&report, "corruption"), Status::Info);
+        let mut old = good();
+        old.tools[1].printed = "tc utility, iproute2-5.15.0".to_owned();
+        let report = assess(&old);
+        assert_eq!(status(&report, "seeded-loss"), Status::Warn);
+        assert_eq!(status(&report, "burst-loss"), Status::Info);
     }
 
     /// Canary: the judging can fail. A machine without a tool is not ok, and the line says where it looked.

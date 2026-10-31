@@ -34,6 +34,16 @@ const NEEDS_TC: &[Feature] = &[
     Feature::RateLimit,
 ];
 
+/// The features that the Kernel backend gets in step 4.2 of release 0.2: the format knows them, the backend does
+/// not apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says
+/// `✔ 0.2` for them.
+const PLANNED: &[Feature] = &[
+    Feature::BurstLoss,
+    Feature::Reordering,
+    Feature::Duplication,
+    Feature::Corruption,
+];
+
 /// What the Kernel backend reproduces on a machine with `environment`.
 #[must_use]
 pub fn capabilities(environment: &Environment) -> Capabilities {
@@ -43,6 +53,17 @@ pub fn capabilities(environment: &Environment) -> Capabilities {
         .with(Feature::UdpGenerators, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
+    }
+    for feature in PLANNED {
+        capabilities = capabilities.with(
+            *feature,
+            Support::Unsupported {
+                reason: "the Kernel backend applies this from release 0.2, and this build does not yet"
+                    .to_owned(),
+                fix: "leave it out of the scenario for now (see docs/COVERAGE.md for the release that has it)"
+                    .to_owned(),
+            },
+        );
     }
     capabilities.with(
         Feature::SeededLoss,
@@ -86,11 +107,30 @@ mod tests {
     fn a_complete_machine_supports_every_feature() {
         let capabilities = capabilities(&Environment::complete());
         for feature in Feature::ALL {
+            if PLANNED.contains(feature) {
+                continue;
+            }
             assert_eq!(
                 capabilities.support(*feature),
                 Support::Exact,
                 "{feature:?}"
             );
+        }
+    }
+
+    /// Canary for the list above: a feature that is planned is refused with a reason that says when, and it
+    /// is refused whatever `tc` is there. Without the declaration it would be "not declared", which reads as a
+    /// bug.
+    #[test]
+    fn a_planned_feature_is_refused_with_the_release_that_brings_it() {
+        for feature in PLANNED {
+            let Support::Unsupported { reason, fix } =
+                support(Tool::Found(Version::new(6, 15, 0)), *feature)
+            else {
+                panic!("{feature:?} is not built yet");
+            };
+            assert!(reason.contains("release 0.2"), "{reason}");
+            assert!(fix.contains("COVERAGE.md"), "{fix}");
         }
     }
 
