@@ -8,10 +8,13 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](docs/DECISIONS.md)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux&logoColor=white)](docs/COVERAGE.md)
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-red)](FEATURES.md)
+[![Release](https://img.shields.io/github/v/release/leonkrix/netscenario)](https://github.com/leonkrix/netscenario/releases)
+[![PyPI](https://img.shields.io/pypi/v/netscenario?label=PyPI)](https://pypi.org/project/netscenario/)
+[![crates.io](https://img.shields.io/crates/v/netscenario-cli?label=crates.io)](https://crates.io/crates/netscenario-cli)
 
 Describe a network, send traffic through it, measure what happens, and assert on it. In a test, in your CI, or on your laptop. (Running your own program inside the network comes with release 0.2.)
 
-> **Status: pre-alpha, release 0.1 is being prepared.** The Kernel backend, the command line, the Python package and the pytest plugin work on Linux: you describe a point-to-point link in a file, run it in network namespaces, and get loss, delay percentiles and throughput back, with the seed and the versions that produced them. What is not there yet is listed under "What 0.1 does not do". The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
+> **Status: pre-alpha, release 0.1.** The Kernel backend, the command line, the Python package and the pytest plugin work on Linux: you describe a point-to-point link in a file, run it in network namespaces, and get loss, delay percentiles and throughput back, with the seed and the versions that produced them. What is not there yet is listed under "What 0.1 does not do". The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
 
 ## Why
 
@@ -26,8 +29,6 @@ netscenario is meant to make this a normal, repeatable test:
 
 ## Install
 
-> **Release 0.1.0 is not published yet.** Until it is, use "From source" below. The commands in the first two blocks are what will work after the release.
-
 Linux, with the tools `ip`, `tc`, `unshare`, `nsenter` and `prlimit` (packages `iproute2` and `util-linux`) and the right to create network namespaces. Debian and Ubuntu 22.04 give a user that right; Ubuntu 24.04 needs one setting; a container needs more ([docs/PERMISSIONS.md](docs/PERMISSIONS.md)).
 
 ```bash
@@ -40,7 +41,7 @@ cargo install netscenario-cli netscenario-agent    # the programs `netscenario` 
 
 The wheel of `netscenario` carries the two programs, so the Python package needs nothing else. The command line needs both programs side by side, which is why both crates are installed.
 
-**From source** (a checkout of this repository):
+**From source** (a checkout of this repository, for development):
 
 ```bash
 cargo build --release          # target/release/netscenario and netscenario-agent
