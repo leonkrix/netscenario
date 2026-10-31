@@ -33,7 +33,7 @@ Accepted. The real emulation needs Linux. The development happens on Linux. Wind
 
 ## D-007: The scenario format is versioned YAML with a generated JSON Schema
 
-Proposed (confirm with the first implementation). Readable, diffable, familiar. The schema is generated from the Rust types so that code and documentation cannot drift. Values have strict units. Scenarios are data and cannot run code except through an explicit `command` workload.
+Accepted (2026-10-31). It was proposed until the first implementation could confirm it, and release 0.1.0 did: the model reads and writes the format, the JSON Schema is generated from the same types and a test compares it with the committed one (D-020, [SCENARIO-FORMAT.md](SCENARIO-FORMAT.md)), every file of the corpus gets the error it should (with line, column and path), and `command` stays the only way for a file to run code (release 0.2). Readable, diffable, familiar. The schema is generated from the Rust types so that code and documentation cannot drift. Values have strict units. Scenarios are data and cannot run code except through an explicit `command` workload.
 Alternatives: TOML (worse for nested time lines), a Python DSL only (ties the format to one language), a custom language (cost without benefit).
 
 ## D-008: Traffic and measurement come from agents inside the nodes
@@ -94,7 +94,7 @@ Accepted. The `Spikes` workflow ran S7 to S10 on `ubuntu-22.04` (kernel 6.8, 4 v
 Accepted. The phase of the spikes ends with D-008 accepted and D-007 open on purpose.
 
 - **D-008 (agents inside the nodes) holds.** The sender and the receiver of spike S8 are small Rust programs that run inside a node, put a sequence number and the send time into every packet, and record the arrival time. At 100,000 packets per second they measured the one-way delay of a direct veth pair as 2 microseconds on average (p99 3 microseconds) on the development machine and 4 to 5 microseconds on the CI runners, with no packet lost, and a delay of 20 ms through the engine within 0.04 ms (p99). No tool had to be installed in the node. Not yet checked: that the agent is a static binary (musl) that the supervisor can start by path in any node, the documented wire format, and the delivery of the binary next to the command line; these were built for release 0.1 ([AGENT.md](AGENT.md)).
-- **D-007 (versioned YAML with a generated JSON Schema) stays proposed.** No experiment can show whether the format is good; the first implementation of the model (SCN-01 to SCN-04) and the tests of its error messages will. The decision is confirmed or replaced when the model of release 0.1 is finished.
+- **D-007 (versioned YAML with a generated JSON Schema) stays proposed** (it was accepted with release 0.1.0, see D-007). No experiment can show whether the format is good; the first implementation of the model (SCN-01 to SCN-04) and the tests of its error messages will. The decision is confirmed or replaced when the model of release 0.1 is finished.
 
 Alternatives: accepting D-007 now (would record a decision that nothing has tested), leaving D-008 proposed (the measurement it waited for exists).
 
