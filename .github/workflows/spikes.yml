@@ -4,6 +4,11 @@ name: Spikes
 # By hand only. The results are in the log of the run and in the artifact.
 on:
   workflow_dispatch:
+    inputs:
+      only_new:
+        description: "Run only S11 to S14 (release 0.2), not the spikes of release 0.1"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,12 +31,15 @@ jobs:
       # Three cases: as the runner user with the defaults of the image, as root, and as the runner
       # user after relaxing the AppArmor rule that blocks unprivileged user namespaces on Ubuntu 24.04.
       - name: Run the spikes as an unprivileged user
+        if: ${{ !inputs.only_new }}
         run: bash spikes/run-all.sh
         continue-on-error: true
       - name: Run the spikes as root
+        if: ${{ !inputs.only_new }}
         run: sudo SPIKE_OUT="$PWD/spikes/out-root" bash spikes/run-all.sh
         continue-on-error: true
       - name: Run the spikes as an unprivileged user, AppArmor restriction off
+        if: ${{ !inputs.only_new }}
         run: |
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -40,6 +48,11 @@ jobs:
         continue-on-error: true
       # S2 asked for `netem ... seed`, which neither iproute2 5.15 (22.04) nor 6.1.0 (24.04) knows.
       # Build the current iproute2 and run S2 with it, to separate "old tool" from "old kernel".
+      - name: Allow unprivileged user namespaces (Ubuntu 24.04 forbids them by default)
+        run: |
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - name: S2 with a current tc built from source
         run: |
           sudo apt-get install -y --no-install-recommends bison flex pkg-config libelf-dev libmnl-dev build-essential git ca-certificates
@@ -51,6 +64,7 @@ jobs:
           sudo env PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-newtc" bash spikes/s2-netem-seed.sh
         continue-on-error: true
       - name: Which options does tc know?
+        if: ${{ !inputs.only_new }}
         run: |
           tc -V || true
           ip -V || true
@@ -60,6 +74,7 @@ jobs:
       # The Rust and Python experiments (S7 to S10) run as the runner user. On Ubuntu 24.04 the AppArmor
       # restriction was relaxed by the step above, and the setting stays for the rest of the job.
       - name: S10 Toolchain of this image
+        if: ${{ !inputs.only_new }}
         run: |
           mkdir -p spikes/out-rust
           {
@@ -79,11 +94,13 @@ jobs:
           } 2>&1 | tee spikes/out-rust/s10.txt
         continue-on-error: true
       - name: S7 Netlink (nlink) against tc
+        if: ${{ !inputs.only_new }}
         run: |
           mkdir -p spikes/out-rust
           bash spikes/rust-netlink/run.sh 2>&1 | tee spikes/out-rust/s7.txt
         continue-on-error: true
       - name: S9 PyO3 and maturin
+        if: ${{ !inputs.only_new }}
         run: |
           mkdir -p spikes/out-rust
           bash spikes/rust-pyo3/run.sh 2>&1 | tee spikes/out-rust/s9.txt
@@ -91,6 +108,7 @@ jobs:
       # The engine series pins three cores; on a runner with fewer than four it is skipped. A shared virtual
       # machine is noisier than a development machine, which is the point of running it here as well.
       - name: S8 Packet engine
+        if: ${{ !inputs.only_new }}
         run: |
           mkdir -p spikes/out-rust
           if [ "$(nproc)" -lt 4 ]; then

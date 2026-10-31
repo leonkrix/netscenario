@@ -253,7 +253,9 @@ struct Outcome {
 fn run_once(plan: &Plan, mode: Mode, kind: Kind, ns_pid: &str) -> Outcome {
     // The applier warms up with a change of its own, so it is made first; the parameters of the run and the
     // seed come after it, or the warm-up would overwrite them
-    tc(&["qdisc", "replace", "dev", "v0", "root", "netem", "limit", "10000"]);
+    // A fresh qdisc: netem keeps some settings across a change (D-048)
+    let _ = Command::new("tc").args(["qdisc", "del", "dev", "v0", "root"]).output();
+    tc(&["qdisc", "add", "dev", "v0", "root", "netem", "limit", "10000"]);
     let applier = Applier::new(kind);
     let seed = plan.seed.to_string();
     let initial: Vec<&str> = plan.initial.split_whitespace().collect();

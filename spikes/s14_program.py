@@ -23,7 +23,7 @@ def report(kind: str, ident: str, text: str) -> None:
 
 
 def start(argv: list[str], **kw) -> subprocess.Popen:
-    # The same shape as Provisioner::start_program (a new process group is the proposal being tested)
+    # The same shape as Provisioner::start_program (a new session, so a process group of its own, is the proposal being tested)
     return subprocess.Popen(["nsenter", f"--net=/proc/{HOLDER}/ns/net", "--", *argv], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
 
 
@@ -159,7 +159,7 @@ def stop() -> None:
         os.kill(grandchild, signal.SIGKILL)
 
     # The proposal: a process group of its own, TERM to the group, KILL after the grace time
-    program = start([sys.executable, "-c", STUBBORN], process_group=0)
+    program = start([sys.executable, "-c", STUBBORN], start_new_session=True)
     assert program.stdout is not None
     grandchild = int(program.stdout.readline())
     group = os.getpgid(program.pid)
@@ -180,7 +180,7 @@ def stop() -> None:
         f"a program that ignores TERM: TERM {'worked' if term_worked else 'was ignored'}, KILL to the process group after 0.5 s ended it and its child ({elapsed:.2f} s in all); child left: {alive(grandchild)}",
     )
     # A program that obeys TERM ends at once and says how
-    polite = start([sys.executable, "-c", "import time; time.sleep(60)"], process_group=0)
+    polite = start([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
     began = time.monotonic()
     os.killpg(os.getpgid(polite.pid), signal.SIGTERM)
     code = polite.wait()
