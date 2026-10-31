@@ -82,6 +82,14 @@ sleep 1
 sleep 0.8
 kill -TERM "$reference" 2>/dev/null
 wait "$ours" "$reference" "$sinking" 2>/dev/null
+# tcpdump 4.99.1 (Ubuntu 22.04) cannot run in a user namespace, not even to read a file: it fails to drop its
+# rights ("Couldn't change to 'root'"). That is a fact about that tcpdump, not about our file. The pcap is then
+# kept (S13_KEEP) and the workflow reads it outside the namespace, where tcpdump works (S13.3, second part).
+if grep -q "Couldn't change to" "$work/ref.log" 2>/dev/null; then
+  info S13.3 "$(tcpdump --version 2>&1 | head -n 1) cannot capture or read in a user namespace (it cannot drop its rights); the file is read outside the namespace"
+  [ -n "${S13_KEEP:-}" ] && cp "$work/ours.pcap" "$S13_KEEP"
+  exit 0
+fi
 count_ref="$(tcpdump -Z root -nn -r "$work/ref.pcap" 2>/dev/null | wc -l)"
 count_ours="$(tcpdump -Z root -nn -r "$work/ours.pcap" 2>"$work/ours.err" | wc -l)"
 warnings="$(grep -vc '^reading from file' "$work/ours.err" || true)"
