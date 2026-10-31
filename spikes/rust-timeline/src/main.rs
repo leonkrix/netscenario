@@ -11,9 +11,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::UdpSocket;
 use std::os::unix::net::UnixStream;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -63,48 +64,90 @@ impl Kind {
 
 enum Applier {
     Process,
-    Batch { child: Child, stdin: ChildStdin, stdout: BufReader<ChildStdout> },
+    Batch { child: Child, stdin: ChildStdin, lines: Receiver<String> },
 }
+
+/// How long `tc -batch -` may take to answer before the spike says it does not
+const ANSWER_WITHIN: Duration = Duration::from_secs(5);
 
 impl Applier {
     fn new(kind: Kind) -> Applier {
+        Self::try_new(kind).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    fn try_new(kind: Kind) -> Result<Applier, String> {
         match kind {
-            Kind::Process => Applier::Process,
+            Kind::Process => Ok(Applier::Process),
             Kind::Batch => {
-                let mut child = Command::new("tc")
-                    .args(["-batch", "-"])
+                // `stdbuf -oL` makes the answer of tc leave at the end of each line even where a version of tc
+                // would hold it back in a pipe
+                let mut command = if Command::new("stdbuf").arg("--version").output().is_ok() {
+                    let mut c = Command::new("stdbuf");
+                    c.args(["-oL", "tc", "-batch", "-"]);
+                    c
+                } else {
+                    let mut c = Command::new("tc");
+                    c.args(["-batch", "-"]);
+                    c
+                };
+                let mut child = command
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
+                    .stderr(Stdio::inherit())
                     .spawn()
-                    .expect("tc starts");
+                    .map_err(|e| format!("cannot start tc -batch: {e}"))?;
                 let stdin = child.stdin.take().unwrap();
-                let stdout = BufReader::new(child.stdout.take().unwrap());
-                let mut applier = Applier::Batch { child, stdin, stdout };
+                let stdout = child.stdout.take().unwrap();
+                let (tx, lines) = mpsc::channel();
+                thread::spawn(move || {
+                    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                        if tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                });
+                let mut applier = Applier::Batch { child, stdin, lines };
                 // The first line pays for the start of the process; a run should not
-                applier.apply("delay 1ms limit 10000");
-                applier
+                applier.try_apply("delay 1ms limit 10000")?;
+                Ok(applier)
             }
         }
     }
 
     /// Returns when the kernel has the change
     fn apply(&mut self, params: &str) {
+        self.try_apply(params).unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    fn try_apply(&mut self, params: &str) -> Result<(), String> {
         match self {
             Applier::Process => {
                 let status = Command::new("tc")
                     .args(["qdisc", "change", "dev", "v0", "root", "netem"])
                     .args(params.split_whitespace())
                     .status()
-                    .expect("tc runs");
-                assert!(status.success(), "tc refused: {params}");
+                    .map_err(|e| format!("tc does not run: {e}"))?;
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("tc refused: {params}"))
+                }
             }
-            Applier::Batch { stdin, stdout, .. } => {
+            Applier::Batch { stdin, lines, .. } => {
                 // `show ... root` would fail the second time (tc keeps the parent between lines of a batch)
-                write!(stdin, "qdisc change dev v0 root netem {params}\nqdisc show dev v0\n").unwrap();
-                stdin.flush().unwrap();
-                let mut line = String::new();
-                stdout.read_line(&mut line).unwrap();
-                assert!(line.contains("netem"), "tc -batch answered {line:?} to {params}");
+                write!(stdin, "qdisc change dev v0 root netem {params}\nqdisc show dev v0\n").map_err(|e| format!("tc -batch is gone: {e}"))?;
+                stdin.flush().map_err(|e| format!("tc -batch is gone: {e}"))?;
+                loop {
+                    match lines.recv_timeout(ANSWER_WITHIN) {
+                        Ok(line) if line.contains("netem") => return Ok(()),
+                        Ok(line) => return Err(format!("tc -batch answered {line:?} to {params}")),
+                        Err(RecvTimeoutError::Timeout) => {
+                            let version = Command::new("tc").arg("-V").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
+                            return Err(format!("tc -batch gave no answer within {} s to {params} ({version})", ANSWER_WITHIN.as_secs()));
+                        }
+                        Err(RecvTimeoutError::Disconnected) => return Err(format!("tc -batch ended without an answer to {params}")),
+                    }
+                }
             }
         }
     }
@@ -117,6 +160,13 @@ impl Drop for Applier {
             let _ = child.wait();
         }
     }
+}
+
+/// The kind of applier that the runs use for "a persistent tc": the batch if it answers, else a process each time
+static BATCH_KIND: OnceLock<Kind> = OnceLock::new();
+
+fn batch_kind() -> Kind {
+    *BATCH_KIND.get().unwrap_or(&Kind::Batch)
 }
 
 fn tc(args: &[&str]) {
@@ -384,12 +434,21 @@ fn latency(quick: bool, threads: usize) {
         thread::sleep(Duration::from_millis(200));
         for kind in [Kind::Process, Kind::Batch] {
             tc(&["qdisc", "replace", "dev", "v0", "root", "netem", "delay", "10ms", "limit", "10000"]);
-            let mut applier = Applier::new(kind);
+            let mut applier = match Applier::try_new(kind) {
+                Ok(applier) => applier,
+                Err(error) => {
+                    report("FAIL", "S11.1", format!("{}: {error}", kind.name()));
+                    continue;
+                }
+            };
             let mut took = Vec::new();
             for i in 0..n {
                 let params = if i % 2 == 0 { "delay 11ms limit 10000" } else { "delay 12ms loss 1% limit 10000" };
                 let start = now_ns();
-                applier.apply(params);
+                if let Err(error) = applier.try_apply(params) {
+                    report("FAIL", "S11.1", format!("{}: {error}", kind.name()));
+                    break;
+                }
                 took.push(now_ns() - start);
                 // not back to back: a real timeline has gaps, and the next change meets a cold cache
                 thread::sleep(Duration::from_micros(300));
@@ -404,7 +463,7 @@ fn boundaries(quick: bool, ns_pid: &str, threads: usize) {
     let plan = Plan { initial: "delay 5ms", events: vec![(300, "delay 25ms")], packets: 600, gap_ns: 1_000_000, seed: 1, };
     let mut barrier_exact = true;
     let mut clock_exact = true;
-    for (busy, kind) in [(false, Kind::Batch), (true, Kind::Batch), (false, Kind::Process)] {
+    for (busy, kind) in [(false, batch_kind()), (true, batch_kind()), (false, Kind::Process)] {
         for mode in [Mode::BarrierAtSlot, Mode::BarrierAhead, Mode::Clock] {
             let _load = busy.then(|| Busy::start(threads));
             thread::sleep(Duration::from_millis(100));
@@ -496,7 +555,7 @@ fn reproducible(quick: bool, ns_pid: &str, threads: usize) {
                 let _load = busy.then(|| Busy::start(threads));
                 thread::sleep(Duration::from_millis(100));
                 let plan = Plan { initial: case.initial, events: case.events.clone(), packets: 1000, gap_ns: 1_000_000, seed: 1234 };
-                let sets: Vec<BTreeSet<u64>> = (0..runs).map(|_| lost(&run_once(&plan, mode, Kind::Batch, ns_pid), plan.packets)).collect();
+                let sets: Vec<BTreeSet<u64>> = (0..runs).map(|_| lost(&run_once(&plan, mode, batch_kind(), ns_pid), plan.packets)).collect();
                 let distinct: BTreeSet<&BTreeSet<u64>> = sets.iter().collect();
                 let mean_lost = sets.iter().map(|s| s.len()).sum::<usize>() as f64 / runs as f64;
                 // How far apart two runs are: packets that were lost in one and not in the other
@@ -556,6 +615,16 @@ fn main() {
         Some("all") => {
             let ns_pid = &args[2];
             report("INFO", "S11.0", format!("{threads} processors, quick={quick}"));
+            tc(&["qdisc", "replace", "dev", "v0", "root", "netem", "limit", "10000"]);
+            match Applier::try_new(Kind::Batch) {
+                Ok(_) => {
+                    let _ = BATCH_KIND.set(Kind::Batch);
+                }
+                Err(error) => {
+                    report("FAIL", "S11.0", format!("a persistent tc -batch does not work here: {error}; the runs below use a tc process for each change"));
+                    let _ = BATCH_KIND.set(Kind::Process);
+                }
+            }
             latency(quick, threads);
             boundaries(quick, ns_pid, threads);
             reproducible(quick, ns_pid, threads);

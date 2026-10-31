@@ -18,4 +18,6 @@ if ! pair_up; then
   exit 0
 fi
 export QUICK="${QUICK:-0}"
-"$here/target/release/spike-timeline" all "$NS_PID" | tee -a "$RESULTS"
+# A hung tc or a hung run must end the script with a message, not the time limit of the whole job
+timeout 1500 "$here/target/release/spike-timeline" all "$NS_PID" | tee -a "$RESULTS"
+[ "${PIPESTATUS[0]}" -eq 124 ] && fail S11.0 "the run took more than 25 minutes and was stopped"
