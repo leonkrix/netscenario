@@ -42,7 +42,7 @@ The steps after `veth` are not blamed on the kernel when no pair could be create
 
 ### Known limit
 
-The feature lines come from the declaration of the backend, which depends on the version of `tc` only. Missing tables for `distribution normal` show as the warning of `tables`; the declaration of "Jitter" stays `exact`, so a scenario with a normal jitter on such a machine is refused when the run applies it (the error names the table), not before. Making the declaration depend on a probe is open (PLAN.md, 12a).
+The feature lines come from the declaration of the backend, which depends on the version of `tc` only. Missing tables for `distribution normal` show as the warning of `tables`; the declaration of "Jitter" stays `exact`, so a scenario with a normal jitter on such a machine is refused when the run applies it (the error names the table), not before. Making the declaration depend on a probe is open.
 
 A run takes the way that `doctor` reports: its own rights if the process is root or has `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` in its ambient set and they work, else the user namespace (D-035, [PERMISSIONS.md](PERMISSIONS.md)). The result of a run says which one it used (`provenance.backend_details.rights`).
 

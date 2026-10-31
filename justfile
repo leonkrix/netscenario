@@ -131,9 +131,13 @@ changelog version:
         uvx git-cliff@2.14.2 --unreleased --tag v{{version}} --output CHANGELOG.md
     fi
 
-# Everything that cargo checks before it uploads the crates, in dependency order (nothing is uploaded)
+# Everything that cargo checks before it uploads the crates, in dependency order (nothing is uploaded).
+# It builds in a directory of its own that is emptied first: cargo treats the sources of a registry as
+# unchangeable, so a crate that was built in an earlier run under the same version number is not built again,
+# and the check would run against the code of that earlier run.
 publish-dry-run:
-    cargo publish --workspace --dry-run --locked --allow-dirty
+    rm -rf target/publish-check
+    CARGO_TARGET_DIR=target/publish-check cargo publish --workspace --dry-run --locked --allow-dirty
 
 # Tag the release commit on main and push the tag, which starts the release workflow (docs/RELEASING.md)
 release-tag:

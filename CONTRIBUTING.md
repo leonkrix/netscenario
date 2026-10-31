@@ -2,7 +2,7 @@
 
 Thank you for looking at this. Bug reports, ideas, measurements from your own setup and code are all welcome.
 
-The project is in its planning phase (see [FEATURES.md](FEATURES.md)). That makes ideas, review of the design documents and results from the [spikes](spikes/README.md) the most useful contributions right now.
+The project is working towards its first release (see [FEATURES.md](FEATURES.md) for what exists and what comes next). Reports of what does not work on your machine ([docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) says what to include), review of the design documents and results of the [spikes](spikes/README.md) on other kernels and distributions are the most useful contributions right now.
 
 ## How a change gets in
 
