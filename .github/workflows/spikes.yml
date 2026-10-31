@@ -102,28 +102,33 @@ jobs:
       # S11 to S14 (release 0.2). They use `netem ... seed`, which the tc of the images does not know, so they run
       # with the tc built above, as the runner user (the AppArmor restriction was relaxed by an earlier step).
       - name: S11 Timeline precision
+        timeout-minutes: 30
         run: |
           mkdir -p spikes/out-rust
           PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s11" bash spikes/rust-timeline/run.sh 2>&1 | tee spikes/out-rust/s11.txt
         continue-on-error: true
       - name: S12 The netem models against their theory
+        timeout-minutes: 20
         run: |
           mkdir -p spikes/out-rust
           PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s12" bash spikes/s12-netem-models.sh 2>&1 | tee spikes/out-rust/s12.txt
         continue-on-error: true
       - name: S13 Capture
+        timeout-minutes: 10
         run: |
           mkdir -p spikes/out-rust
           PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s13" bash spikes/rust-capture/run.sh > spikes/out-rust/s13.txt 2>&1
           cat spikes/out-rust/s13.txt
         continue-on-error: true
       - name: S13b Corruption accounting
+        timeout-minutes: 5
         run: |
           mkdir -p spikes/out-rust
           PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s13b" bash spikes/s13b-corruption-accounting.sh > spikes/out-rust/s13b.txt 2>&1
           cat spikes/out-rust/s13b.txt
         continue-on-error: true
       - name: S14 A program as a node
+        timeout-minutes: 5
         run: |
           mkdir -p spikes/out-rust
           SPIKE_OUT="$PWD/spikes/out-rust/s14" bash spikes/s14-program-node.sh 2>&1 | tee spikes/out-rust/s14.txt
