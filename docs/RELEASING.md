@@ -35,18 +35,32 @@ The changelog is made of the **titles of the pull requests** (squash merge: the 
 3. *Package the crates*: `cargo publish --workspace --dry-run`.
 4. *Publish the crates* (after your approval): trusted publishing, in dependency order.
 5. *Publish to PyPI* (after your approval, after the crates): the two wheels of `netscenario`, then the plugin `pytest-netscenario`, which needs exactly these wheels, so it comes second. Trusted publishing with attestations (PEP 740: the provenance of each file).
-6. *GitHub release*: the notes of the version, the four files attached; a version with a hyphen (`0.2.0-rc.1`) is marked as a pre-release.
+6. *GitHub release*: the provenance of the four files is attested (`actions/attest-build-provenance`: GitHub signs a statement that this workflow, at this tag, produced these bytes, with the identity of the workflow through Sigstore; no key is stored), the release gets the notes of the version, the four files and the attestation as `provenance.intoto.jsonl`; a version with a hyphen (`0.2.0-rc.1`) is marked as a pre-release.
 
 No token is stored anywhere. Each registry accepts an upload from this workflow, in its own environment (`crates-io` for crates.io, `pypi` for PyPI), and from nothing else; the environment needs your approval. Two environments mean that the job for one registry cannot ask for the token of the other.
 
+## Checking a release
+
+The files of a release can be checked against what the workflow signed, from outside:
+
+```bash
+gh release download v0.2.0 --repo leonkrix/netscenario --pattern '*.whl' --dir check
+gh attestation verify check/netscenario-0.2.0-cp311-abi3-manylinux_2_28_x86_64.whl --repo leonkrix/netscenario
+```
+
+`provenance.intoto.jsonl` is the same attestation as a file: a Sigstore bundle (lines of JSON) with an in-toto statement of SLSA provenance, which `gh attestation verify <file> --repo leonkrix/netscenario --bundle provenance.intoto.jsonl` reads without asking GitHub. The name ends in `.intoto.jsonl` because the OpenSSF Scorecard (check *Signed-Releases*) looks for that, and it is not the format of `slsa-verifier` (the generator `slsa-github-generator` makes that one, and has to be called by a tag and not by a commit, which this repository does not allow). The wheels on PyPI carry their own attestations (PEP 740), which pip and PyPI show; crates.io has none.
+
+The releases before the attestation was added (0.1.0 and its candidates) have no such file. An attestation made later would say that a later run saw these bytes, not that a run built them, so it is not added.
+
 ## A rehearsal
 
-**Actions, Release, Run workflow**, on any branch, does steps 1 (without the checks about the tag), 2 and 3 and stops before the publishing: it needs no tag and no approval. Do this once before the first real release, and again when `wheels.yml`, `release.yml` or the packaging changed. For a rehearsal that includes the publishing, use a pre-release version (`0.1.0-rc.1`): crates.io and PyPI keep it, but nobody gets it by default.
+**Actions, Release, Run workflow**, on any branch, does steps 1 (without the checks about the tag), 2 and 3 and stops before the publishing: it needs no tag and no approval. The attestation of step 6 is not part of it: it runs for the first time with a real tag. Do this once before the first real release, and again when `wheels.yml`, `release.yml` or the packaging changed. For a rehearsal that includes the publishing, use a pre-release version (`0.1.0-rc.1`): crates.io and PyPI keep it, but nobody gets it by default.
 
 ## When something goes wrong
 
 - **A check fails before the publishing**: nothing is out. Fix it with a pull request; if the release commit changes, delete the tag (above) and tag again. A tag that was pushed but never approved can also stay: reject the deployment.
 - **The crates job fails halfway**: some crates may be on crates.io and others not. Run the job again; if cargo refuses because a crate with this version exists, publish the rest by hand in dependency order (`netscenario-agent`, `netscenario-model`, `netscenario-core`, `netscenario-backend-kernel`, `netscenario-cli`) with `cargo publish -p <crate>`, using a token you create for the purpose and delete afterwards.
+- **The GitHub release job fails** (after both registries have the version): run the job again; it attests again and creates the release. If the release exists already, delete it on GitHub first, or add the missing files with `gh release upload`.
 - **The PyPI job fails**: run the failed job again. Files that are already there are skipped, so if the wheels are out and the plugin is not, the repeat uploads only the plugin.
 - **A release is faulty**: **yank** it (`cargo yank --version X.Y.Z <crate>` for each crate, and *Yank* in the project's release page on pypi.org). A yanked version stays installable for those who pinned it. Fix with a patch release; a version number is never reused.
 
