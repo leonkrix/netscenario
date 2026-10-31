@@ -253,7 +253,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | QA-04 | Snapshot tests for reports and the schema | S | 0.2 | planned |
 | QA-05 | Benchmarks of the engine (throughput, added delay) | S | 0.4 | planned |
 | QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `tests/fidelity.rs`: delay, loss, rate, both jitters, jitter with a rate; three canaries; CI numbers per runner as artifacts) |
-| QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | in progress (the Rust version is checked on the CI with 1.89; `cargo-semver-checks` needs a published release to compare with, so it is added after 0.1.0) |
+| QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | done (the Rust version is checked on the CI with 1.89; `cargo-semver-checks` compares the public API of `netscenario-model` and `netscenario-core` with `main` in every pull request and with the last release in a release, D-037) |
 | QA-08 | Supply chain: dependency audit and policy, OpenSSF Scorecard, actions pinned to commits | M | 0.1 | done (`cargo deny` in every pull request and weekly, OpenSSF Scorecard, CodeQL, pinned actions, Dependabot) |
 | QA-09 | Coverage figures (for information) | C | 0.3 | idea |
 | QA-10 | Tests on several kernels and distributions | S | 0.5 | planned |

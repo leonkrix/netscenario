@@ -33,7 +33,7 @@ The numbers a run produces are **not** compared across versions: for the same se
 The version is `0.y.z`.
 
 - **A patch release** (`0.1.1`) fixes errors. It does not break any interface on purpose, and a scenario that ran in `0.1.0` runs in it.
-- **A minor release** (`0.2.0`) may break any interface above, and adds features. Every break is named in the changelog under the line of its pull request, and the title of that pull request has an exclamation mark (`feat!:`), which the changelog shows as **Breaking**. A breaking change to the scenario format also says how to rewrite a file.
+- **A minor release** (`0.2.0`) may break any interface above, and adds features. Every break is named in the changelog under the line of its pull request, and the title of that pull request has an exclamation mark (`feat!:`), which the changelog shows as **Breaking**. A breaking change to the scenario format also says how to rewrite a file. For the Rust API of the two libraries the CI checks this (`cargo-semver-checks`): a pull request that breaks the public API of `netscenario-model` or `netscenario-core` fails unless its title has the exclamation mark, and the pull request of a release fails if its version number is too small for what changed since the last release (D-037).
 - **The formats stay at version 0** until 1.0. A reader refuses a version it does not know, so a file from a newer tool does not run silently on an older one.
 - If you depend on netscenario, pin the minor release: `netscenario~=0.1.0` in Python (any `0.1.x`), and `"0.1"` in `Cargo.toml`, which Cargo reads as any `0.1.x` as well.
 - A pre-release (`-rc.N`) is for trying the release; it is not announced as a version to depend on.
