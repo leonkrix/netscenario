@@ -1,23 +1,28 @@
 //! Hints for misspelled names: the one known name that is close enough to what was written.
 
-/// The number of single-character edits (insert, delete, replace) that turn `a` into `b`.
+/// The number of edits that turn `a` into `b`: inserting, deleting or replacing a character, or swapping two
+/// neighbours (`dealy` for `delay` is one edit, because that is the commonest slip of the fingers).
 fn distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.chars().enumerate() {
-        let mut diagonal = row[0];
-        row[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let above = row[j + 1];
-            row[j + 1] = if ca == *cb {
-                diagonal
-            } else {
-                1 + diagonal.min(above).min(row[j])
-            };
-            diagonal = above;
+    // The rows before the previous one, the previous one and the current one
+    let mut before: Vec<usize> = vec![0; b.len() + 1];
+    let mut previous: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut row = vec![i; b.len() + 1];
+        for j in 1..=b.len() {
+            let replace = usize::from(a[i - 1] != b[j - 1]);
+            row[j] = (previous[j] + 1)
+                .min(row[j - 1] + 1)
+                .min(previous[j - 1] + replace);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                row[j] = row[j].min(before[j - 2] + 1);
+            }
         }
+        before = previous;
+        previous = row;
     }
-    row[b.len()]
+    previous[b.len()]
 }
 
 /// The name in `known` that `written` was most likely meant to be, if there is exactly one.
@@ -57,10 +62,15 @@ mod tests {
     fn distance_counts_edits() {
         assert_eq!(distance("server", "server"), 0);
         assert_eq!(distance("sever", "server"), 1);
-        assert_eq!(distance("sevrer", "server"), 2);
+        assert_eq!(distance("sevrer", "server"), 1);
+        assert_eq!(distance("sxxver", "server"), 2);
         assert_eq!(distance("", "abc"), 3);
         assert_eq!(distance("abc", ""), 3);
         assert_eq!(distance("kitten", "sitting"), 3);
+        // two neighbours that were swapped are one edit, two letters far apart are two
+        assert_eq!(distance("dealy", "delay"), 1);
+        assert_eq!(distance("ab", "ba"), 1);
+        assert_eq!(distance("abc", "cba"), 2);
     }
 
     #[test]

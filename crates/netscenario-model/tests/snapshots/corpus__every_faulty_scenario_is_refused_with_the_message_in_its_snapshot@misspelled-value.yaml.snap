@@ -1,0 +1,12 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/misspelled-value.yaml
+---
+error: unknown variant `kernal`, expected one of auto, kernel
+ --> misspelled-value.yaml:4:10
+  |
+3 | duration: 10s
+4 | backend: kernal
+  |          ^^^^^^
+  = help: did you mean 'kernel'?

@@ -7,6 +7,7 @@ use crate::required;
 use crate::reserved;
 use crate::scenario::Scenario;
 use crate::source::{self, SourceIndex};
+use crate::suggest::closest;
 
 /// A scenario file may be at most this large.
 pub const MAX_FILE_BYTES: usize = 1024 * 1024;
@@ -191,7 +192,23 @@ fn clean_message(rendered: &str) -> (String, Option<String>) {
             ),
         );
     }
-    (text.trim().to_owned(), None)
+    let text = text.trim();
+    (text.to_owned(), unknown_name_hint(text))
+}
+
+/// For "unknown field `dealy`, expected one of delay, jitter" (or "unknown variant"): the name that was most
+/// likely meant, if exactly one is close enough.
+fn unknown_name_hint(message: &str) -> Option<String> {
+    let rest = message
+        .strip_prefix("unknown field `")
+        .or_else(|| message.strip_prefix("unknown variant `"))?;
+    let (written, rest) = rest.split_once('`')?;
+    let list = rest.strip_prefix(", expected one of ")?;
+    let known: Vec<&str> = list
+        .split(", ")
+        .map(|name| name.trim_matches('`'))
+        .collect();
+    closest(written, &known).map(|near| format!("did you mean '{near}'?"))
 }
 
 #[cfg(test)]
@@ -212,7 +229,26 @@ mod tests {
         assert!(Error::in_source("t.yaml", source, Vec::new()).is_none());
     }
 
-    use super::clean_message;
+    use super::{clean_message, unknown_name_hint};
+
+    #[test]
+    fn a_misspelled_field_or_value_is_named_and_a_far_one_is_not() {
+        let hint = |written: &str| {
+            unknown_name_hint(&format!(
+                "unknown field `{written}`, expected one of delay, jitter, loss, rate"
+            ))
+        };
+        assert_eq!(hint("dealy").as_deref(), Some("did you mean 'delay'?"));
+        assert_eq!(hint("Delay").as_deref(), Some("did you mean 'delay'?"));
+        assert_eq!(hint("speed"), None);
+        assert_eq!(
+            unknown_name_hint("unknown variant `kernal`, expected one of auto, kernel").as_deref(),
+            Some("did you mean 'kernel'?")
+        );
+        // not a message of this kind
+        assert_eq!(unknown_name_hint("invalid type: integer"), None);
+        assert_eq!(unknown_name_hint("unknown field `x`"), None);
+    }
 
     #[test]
     fn the_position_and_the_advice_about_options_are_removed() {

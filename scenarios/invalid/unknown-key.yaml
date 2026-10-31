@@ -1,7 +1,7 @@
 version: 0
 name: t
 duration: 10s
-speed: fast
+bandwidth: fast
 topology:
   nodes: [client, server]
   links:
