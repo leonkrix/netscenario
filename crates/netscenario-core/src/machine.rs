@@ -11,6 +11,7 @@ use crate::backend::BackendInfo;
 
 /// The provenance block of a result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Provenance {
     /// The version of netscenario that made the result.
     pub netscenario: String,

@@ -21,6 +21,7 @@ pub const THROUGHPUT_BIN_NS: u64 = 1_000_000_000;
 /// rank `ceil(p * n / 100)` (the first is rank 1). It is always a delay that was measured, never an
 /// interpolation between two.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DelaySummary {
     /// The smallest delay.
     pub min_ns: u64,
@@ -42,6 +43,7 @@ pub struct DelaySummary {
 
 /// The payload that came through in each second.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Throughput {
     /// The width of a bin in nanoseconds (always one second in format version 0).
     pub bin_ns: u64,
@@ -53,6 +55,7 @@ pub struct Throughput {
 
 /// What came of one workload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FlowStats {
     /// How many packets the sender handed to the kernel.
     pub sent: u64,

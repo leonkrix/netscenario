@@ -226,12 +226,9 @@ result: out/result.json
     fn a_queue_that_counted_a_packet_too_many_is_named() {
         let mut result = result();
         result.seed.loss_reproducible = false;
-        result.seed.queue_checks = vec![netscenario_core::QueueCheck {
-            link: "access".to_owned(),
-            direction: "forward".to_owned(),
-            expected: 417,
-            counted: 418,
-        }];
+        result.seed.queue_checks = vec![netscenario_core::QueueCheck::new(
+            "access", "forward", 417, 418,
+        )];
         let text = summary(&result, Path::new("out"));
         assert!(
             text.contains("the queue of link 'access' (forward) counted 418 packets and the workloads sent 417"),

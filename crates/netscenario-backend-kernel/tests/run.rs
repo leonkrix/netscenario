@@ -224,12 +224,9 @@ fn assert_queues_saw_the_workloads(result: &RunResult, packets: u64) {
     assert!(result.seed.loss_reproducible, "{:?}", result.seed);
     assert_eq!(
         result.seed.queue_checks,
-        [netscenario_core::QueueCheck {
-            link: "access".to_owned(),
-            direction: "forward".to_owned(),
-            expected: packets,
-            counted: packets,
-        }]
+        [netscenario_core::QueueCheck::new(
+            "access", "forward", packets, packets
+        )]
     );
 }
 
