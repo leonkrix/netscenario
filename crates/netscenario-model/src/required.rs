@@ -20,14 +20,29 @@ pub(crate) const REQUIRED: &[(&str, &str, &[&str])] = &[
     ("topology.links[].forward.jitter", "Jitter", &["amount"]),
     ("topology.links[].reverse.jitter", "Jitter", &["amount"]),
     ("topology.links[].both.jitter", "Jitter", &["amount"]),
-    ("topology.links[].forward.loss", "Loss", &["model", "p"]),
-    ("topology.links[].reverse.loss", "Loss", &["model", "p"]),
-    ("topology.links[].both.loss", "Loss", &["model", "p"]),
+    ("topology.links[].forward.reorder", "Reorder", &["share"]),
+    ("topology.links[].reverse.reorder", "Reorder", &["share"]),
+    ("topology.links[].both.reorder", "Reorder", &["share"]),
     (
         "workloads[]",
         "Workload",
         &["id", "kind", "from", "to", "rate", "packet-size"],
     ),
+];
+
+/// The mappings of a loss; the keys they need depend on the value of `model`, so they are not in the table above.
+const LOSS_PATHS: &[&str] = &[
+    "topology.links[].forward.loss",
+    "topology.links[].reverse.loss",
+    "topology.links[].both.loss",
+];
+
+/// The keys that each model needs besides `model` itself, in the order of the format. A test compares this
+/// table with the variants of `Loss` in the JSON Schema.
+pub(crate) const LOSS_MODELS: &[(&str, &[&str])] = &[
+    ("random", &["p"]),
+    ("gilbert-elliott", &["p", "r", "loss-bad", "loss-good"]),
+    ("markov4", &["p13", "p31", "p32", "p23", "p14"]),
 ];
 
 /// Finds the mappings in the file that lack a required key.
@@ -46,12 +61,30 @@ pub(crate) fn check(index: &SourceIndex) -> Vec<Problem> {
             continue;
         }
         let generic = source::generic(path);
-        let Some((_, _, required)) = REQUIRED.iter().find(|(pattern, _, _)| *pattern == generic)
-        else {
+        let required: Vec<&str> = if let Some((_, _, required)) =
+            REQUIRED.iter().find(|(pattern, _, _)| *pattern == generic)
+        {
+            required.to_vec()
+        } else if LOSS_PATHS.contains(&generic.as_str()) {
+            // `model` first; the rest only if the model is one that is known (an unknown one is reported
+            // by the reader, with a hint)
+            let model = index
+                .get(&format!("{path}.model"))
+                .and_then(|entry| entry.text.as_deref());
+            let mut needed = vec!["model"];
+            if let Some((_, keys)) = LOSS_MODELS.iter().find(|(name, _)| Some(*name) == model) {
+                needed.extend(*keys);
+            }
+            needed
+        } else {
             continue;
         };
         let present = keys.get(path.as_str());
-        for key in *required {
+        if LOSS_PATHS.contains(&generic.as_str()) {
+            problems.extend(keys_of_another_model(path, &required, present, index));
+        }
+        for key in &required {
+            let key = *key;
             if !present.is_some_and(|present| present.contains(key)) {
                 // A key of the mapping that is not required and is close to the missing one is probably it
                 let written = present.and_then(|present| {
@@ -84,9 +117,65 @@ pub(crate) fn check(index: &SourceIndex) -> Vec<Problem> {
     problems
 }
 
+/// The keys of a loss that belong to another model (`r` in a `random` loss), each at its own place. A key that
+/// no model has is left to the reader, which names the keys that exist.
+fn keys_of_another_model(
+    path: &str,
+    required: &[&str],
+    present: Option<&HashSet<&str>>,
+    index: &SourceIndex,
+) -> Vec<Problem> {
+    let Some(present) = present else {
+        return Vec::new();
+    };
+    let Some(model) = index
+        .get(&format!("{path}.model"))
+        .and_then(|entry| entry.text.as_deref())
+        .filter(|model| LOSS_MODELS.iter().any(|(name, _)| name == model))
+    else {
+        return Vec::new();
+    };
+    let mut others: Vec<&str> = present
+        .iter()
+        .copied()
+        .filter(|key| *key != "model" && !required.contains(key))
+        .filter(|key| LOSS_MODELS.iter().any(|(_, keys)| keys.contains(key)))
+        .collect();
+    others.sort_unstable();
+    others
+        .into_iter()
+        .filter_map(|key| {
+            let (location, length) = index.locate(&format!("{path}.{key}"))?;
+            let entry = index.get(&format!("{path}.{key}"))?;
+            let (location, length) = entry.key.unwrap_or((location, length));
+            let owners: Vec<&str> = LOSS_MODELS
+                .iter()
+                .filter(|(_, keys)| keys.contains(&key))
+                .map(|(name, _)| *name)
+                .collect();
+            Some(
+                Problem::new(format!(
+                    "the key `{key}` is not used by the loss model `{model}`"
+                ))
+                .at_location(location, length)
+                .at_path(format!("{path}.{key}"))
+                .with_help(format!(
+                    "the model `{model}` has {}; `{key}` belongs to {}",
+                    required[1..]
+                        .iter()
+                        .map(|key| format!("`{key}`"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    owners.join(" and ")
+                )),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::REQUIRED;
+    use super::{LOSS_MODELS, REQUIRED};
     use crate::json_schema;
 
     /// The keys that the schema requires, by the name of the type, must be the keys of the table.
@@ -116,6 +205,27 @@ mod tests {
                 required_of(definition),
                 "the required keys of {definition} differ from the schema"
             );
+        }
+        // The keys of each loss model are those of the variants of `Loss`, and every variant is in the table
+        let variants = schema["$defs"]["Loss"]["oneOf"].as_array().unwrap();
+        assert_eq!(variants.len(), LOSS_MODELS.len());
+        for variant in variants {
+            let model = variant["properties"]["model"]["const"].as_str().unwrap();
+            let mut in_schema: Vec<&str> = variant["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|key| key.as_str().unwrap())
+                .filter(|key| *key != "model")
+                .collect();
+            in_schema.sort_unstable();
+            let (_, keys) = LOSS_MODELS
+                .iter()
+                .find(|(name, _)| *name == model)
+                .unwrap_or_else(|| panic!("the model {model} is not in the table"));
+            let mut table: Vec<&str> = keys.to_vec();
+            table.sort_unstable();
+            assert_eq!(table, in_schema, "the required keys of {model} differ");
         }
         // Every type of the schema that has required keys is in the table
         let defined = schema["$defs"].as_object().unwrap();

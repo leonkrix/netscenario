@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/reorder-gap-zero.yaml
+---
+error: the `gap` of `reorder` must be at least 1
+  --> reorder-gap-zero.yaml:11:37
+   |
+10 |         delay: 10ms
+11 |         reorder: { share: 25%, gap: 0 }
+   |                                     ^
+   = path: topology.links[0].forward.reorder.gap
+   = help: leave `gap` out for the default of 1

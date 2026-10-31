@@ -48,9 +48,12 @@ fn what_is_exact_here_is_a_check_mark_for_release_0_1_there() {
                 "'{}' is limited in the code, but the page says '{cell}'",
                 feature.label()
             ),
-            Support::Unsupported { .. } => {
-                panic!("'{}' is unsupported on a complete machine", feature.label())
-            }
+            // Planned: the format has it, the backend gets it in release 0.2
+            Support::Unsupported { reason, .. } => assert!(
+                cell.starts_with("✔ 0.2") && reason.contains("release 0.2"),
+                "'{}' is unsupported on a complete machine, but the page says '{cell}': {reason}",
+                feature.label()
+            ),
         }
     }
 }
@@ -87,6 +90,10 @@ fn every_faithful_mark_of_the_kernel_links_to_a_test_that_exists() {
         .chain(places);
     for label in labels {
         let cell = kernel_cell(COVERAGE, label).unwrap_or_else(|| panic!("no row '{label}'"));
+        if cell.starts_with("✔ 0.2") {
+            // Not built yet: no test, no check mark, and the cell has none (the test above says why it is 0.2)
+            continue;
+        }
         assert!(cell.starts_with("✔ 0.1"), "'{label}': {cell}");
         let target = link_in(&cell).unwrap_or_else(|| panic!("'{label}' has no link: {cell}"));
         assert!(

@@ -7,7 +7,7 @@ topology:
     - id: access
       between: [client, server]
       forward:
-        loss: { model: gilbert-elliott, p: 2% }
+        loss: { model: trace }
 workloads:
   - id: media
     kind: udp-cbr

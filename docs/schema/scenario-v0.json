@@ -32,6 +32,17 @@
       "additionalProperties": false,
       "description": "What a direction of a link does to the packets. Everything that is not set is not impaired.",
       "properties": {
+        "corrupt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The chance that one bit of a packet is flipped (`netem corrupt`). A receiver with the UDP checksum\non drops the packet (D-040)."
+        },
         "delay": {
           "anyOf": [
             {
@@ -42,6 +53,17 @@
             }
           ],
           "description": "A fixed delay (`netem delay`)."
+        },
+        "duplicate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The chance that a packet is sent twice (`netem duplicate`). The copy is impaired on its own."
         },
         "jitter": {
           "anyOf": [
@@ -63,7 +85,7 @@
               "type": "null"
             }
           ],
-          "description": "Packet loss."
+          "description": "Packet loss: independent, or in bursts."
         },
         "rate": {
           "anyOf": [
@@ -75,6 +97,17 @@
             }
           ],
           "description": "A limit on the data rate (`netem rate`)."
+        },
+        "reorder": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reorder"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Packets that are sent on at once while the others are held back for the delay (`netem reorder`).\nNeeds `delay`."
         }
       },
       "type": "object"
@@ -170,31 +203,99 @@
       "type": "object"
     },
     "Loss": {
-      "additionalProperties": false,
-      "description": "Packet loss.",
-      "properties": {
-        "model": {
-          "$ref": "#/$defs/LossModel",
-          "description": "The loss model. Only `random` in release 0.1."
-        },
-        "p": {
-          "$ref": "#/$defs/Probability",
-          "description": "The chance that a packet is lost."
-        }
-      },
-      "required": [
-        "model",
-        "p"
-      ],
-      "type": "object"
-    },
-    "LossModel": {
-      "description": "How losses are distributed.",
+      "description": "Packet loss. The model is chosen by `model`, and the parameters are those of `netem`, without aliases\n(D-048).\n\nIt is read by hand (see `LossFields`), not by a derived reader for a tagged enum: that one collects the\nmapping first, and an error in a value is then reported at the start of the mapping and not at the value.",
       "oneOf": [
         {
-          "const": "random",
-          "description": "Every packet is lost with the same chance, independent of the others.",
-          "type": "string"
+          "additionalProperties": false,
+          "description": "Every packet is lost with the same chance, independent of the others (`netem loss random`).",
+          "properties": {
+            "model": {
+              "const": "random",
+              "type": "string"
+            },
+            "p": {
+              "$ref": "#/$defs/Probability",
+              "description": "The chance that a packet is lost."
+            }
+          },
+          "required": [
+            "model",
+            "p"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Two states, a good and a bad one, with a loss in each (`netem loss gemodel p r 1-h 1-k`). The mean\ntime in the bad state is `1 / r` packets. All four are required: a missing value would be a default\nof `tc` that the file does not show.",
+          "properties": {
+            "loss-bad": {
+              "$ref": "#/$defs/Probability",
+              "description": "The chance that a packet is lost while in the bad state (the third argument of `gemodel`)."
+            },
+            "loss-good": {
+              "$ref": "#/$defs/Probability",
+              "description": "The chance that a packet is lost while in the good state (the fourth argument of `gemodel`)."
+            },
+            "model": {
+              "const": "gilbert-elliott",
+              "type": "string"
+            },
+            "p": {
+              "$ref": "#/$defs/Probability",
+              "description": "The chance, for each packet, to go from the good to the bad state."
+            },
+            "r": {
+              "$ref": "#/$defs/Probability",
+              "description": "The chance, for each packet, to go from the bad to the good state."
+            }
+          },
+          "required": [
+            "model",
+            "p",
+            "r",
+            "loss-bad",
+            "loss-good"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Four states (`netem loss state p13 p31 p32 p23 p14`): 1 receiving in a gap, 2 receiving inside a\nburst, 3 losing inside a burst, 4 losing a single packet in a gap. The numbers are the transitions\nbetween the states they name. From state 1 the chances of `p13` and `p14` add up, and from state 3\nthose of `p31` and `p32`; neither sum may be above 100 %.",
+          "properties": {
+            "model": {
+              "const": "markov4",
+              "type": "string"
+            },
+            "p13": {
+              "$ref": "#/$defs/Probability",
+              "description": "From state 1 to state 3."
+            },
+            "p14": {
+              "$ref": "#/$defs/Probability",
+              "description": "From state 1 to state 4."
+            },
+            "p23": {
+              "$ref": "#/$defs/Probability",
+              "description": "From state 2 to state 3."
+            },
+            "p31": {
+              "$ref": "#/$defs/Probability",
+              "description": "From state 3 to state 1."
+            },
+            "p32": {
+              "$ref": "#/$defs/Probability",
+              "description": "From state 3 to state 2."
+            }
+          },
+          "required": [
+            "model",
+            "p13",
+            "p31",
+            "p32",
+            "p23",
+            "p14"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -221,6 +322,29 @@
       ],
       "pattern": "^[0-9]+(\\.[0-9]+)?(bit|kbit|mbit|gbit|tbit)$",
       "type": "string"
+    },
+    "Reorder": {
+      "additionalProperties": false,
+      "description": "Reordering by holding packets back (`netem reorder P gap G`).\n\nWith a `delay`, a share of the packets is sent on at once and the others wait for the delay, so the ones\nthat wait arrive after later packets. Measured in D-048: `share` is the share sent on at once, and with\n`gap` it is `1 / (gap - 1 + 1 / share)`.",
+      "properties": {
+        "gap": {
+          "description": "After a packet that was sent on at once, the next `gap - 1` packets are held back before another one\ncan be sent on at once; 1 (the default) means no such rule. At least 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "share": {
+          "$ref": "#/$defs/Probability",
+          "description": "The chance that a packet is sent on at once."
+        }
+      },
+      "required": [
+        "share"
+      ],
+      "type": "object"
     },
     "Size": {
       "description": "An amount of data in bytes: a number and a unit (b, kb, mb, gb decimal; kib, mib, gib binary), a whole number of bytes.",

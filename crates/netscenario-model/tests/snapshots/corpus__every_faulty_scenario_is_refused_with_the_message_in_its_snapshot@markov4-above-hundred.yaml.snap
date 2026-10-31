@@ -1,0 +1,22 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/markov4-above-hundred.yaml
+---
+error: `p31` (30%) and `p32` (80%) add up to more than 100%
+  --> markov4-above-hundred.yaml:10:58
+   |
+ 9 |       forward:
+10 |         loss: { model: markov4, p13: 60%, p31: 30%, p32: 80%, p23: 20%, p14: 50% }
+   |                                                          ^^^
+   = path: topology.links[0].forward.loss.p32
+   = help: they are the two ways out of one state, so together they are at most 100%
+
+error: `p13` (60%) and `p14` (50%) add up to more than 100%
+  --> markov4-above-hundred.yaml:10:78
+   |
+ 9 |       forward:
+10 |         loss: { model: markov4, p13: 60%, p31: 30%, p32: 80%, p23: 20%, p14: 50% }
+   |                                                                              ^^^
+   = path: topology.links[0].forward.loss.p14
+   = help: they are the two ways out of one state, so together they are at most 100%

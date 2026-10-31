@@ -21,8 +21,8 @@
 
 use crate::error::Problem;
 use crate::scenario::{
-    Backend, FormatVersion, Impairments, Jitter, JitterDistribution, Link, Loss, LossModel,
-    Scenario, Topology, Workload, WorkloadKind,
+    Backend, FormatVersion, Impairments, Jitter, JitterDistribution, Link, Loss, Reorder, Scenario,
+    Topology, Workload, WorkloadKind,
 };
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
@@ -53,10 +53,67 @@ impl Impairments {
     /// With independent packet loss.
     #[must_use]
     pub fn with_loss_random(mut self, p: Probability) -> Self {
-        self.loss = Some(Loss {
-            model: LossModel::Random,
+        self.loss = Some(Loss::Random { p });
+        self
+    }
+
+    /// With bursts of loss from two states (Gilbert-Elliott): `p` and `r` are the chances to go to the bad and
+    /// back to the good state, `loss_bad` and `loss_good` the chances that a packet is lost in each.
+    #[must_use]
+    pub fn with_loss_gilbert_elliott(
+        mut self,
+        p: Probability,
+        r: Probability,
+        loss_bad: Probability,
+        loss_good: Probability,
+    ) -> Self {
+        self.loss = Some(Loss::GilbertElliott {
             p,
+            r,
+            loss_bad,
+            loss_good,
         });
+        self
+    }
+
+    /// With bursts of loss from four states, the five transitions in the order of `netem loss state`.
+    #[must_use]
+    pub fn with_loss_markov4(
+        mut self,
+        p13: Probability,
+        p31: Probability,
+        p32: Probability,
+        p23: Probability,
+        p14: Probability,
+    ) -> Self {
+        self.loss = Some(Loss::Markov4 {
+            p13,
+            p31,
+            p32,
+            p23,
+            p14,
+        });
+        self
+    }
+
+    /// With reordering (needs a delay; checked by [`Scenario::validate`]).
+    #[must_use]
+    pub fn with_reorder(mut self, share: Probability, gap: Option<u32>) -> Self {
+        self.reorder = Some(Reorder { share, gap });
+        self
+    }
+
+    /// With duplication.
+    #[must_use]
+    pub fn with_duplicate(mut self, p: Probability) -> Self {
+        self.duplicate = Some(p);
+        self
+    }
+
+    /// With corruption.
+    #[must_use]
+    pub fn with_corrupt(mut self, p: Probability) -> Self {
+        self.corrupt = Some(p);
         self
     }
 

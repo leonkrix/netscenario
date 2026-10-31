@@ -166,9 +166,20 @@ pub struct Impairments {
     /// Variation of the delay. Needs `delay`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<Jitter>,
-    /// Packet loss.
+    /// Packet loss: independent, or in bursts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loss: Option<Loss>,
+    /// Packets that are sent on at once while the others are held back for the delay (`netem reorder`).
+    /// Needs `delay`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reorder: Option<Reorder>,
+    /// The chance that a packet is sent twice (`netem duplicate`). The copy is impaired on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate: Option<Probability>,
+    /// The chance that one bit of a packet is flipped (`netem corrupt`). A receiver with the UDP checksum
+    /// on drops the packet (D-040).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corrupt: Option<Probability>,
     /// A limit on the data rate (`netem rate`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate: Option<Rate>,
@@ -205,22 +216,152 @@ impl JitterDistribution {
     }
 }
 
-/// Packet loss.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Loss {
-    /// The loss model. Only `random` in release 0.1.
-    pub model: LossModel,
-    /// The chance that a packet is lost.
-    pub p: Probability,
+/// Packet loss. The model is chosen by `model`, and the parameters are those of `netem`, without aliases
+/// (D-048).
+///
+/// It is read by hand (see `LossFields`), not by a derived reader for a tagged enum: that one collects the
+/// mapping first, and an error in a value is then reported at the start of the mapping and not at the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(
+    tag = "model",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum Loss {
+    /// Every packet is lost with the same chance, independent of the others (`netem loss random`).
+    Random {
+        /// The chance that a packet is lost.
+        p: Probability,
+    },
+    /// Two states, a good and a bad one, with a loss in each (`netem loss gemodel p r 1-h 1-k`). The mean
+    /// time in the bad state is `1 / r` packets. All four are required: a missing value would be a default
+    /// of `tc` that the file does not show.
+    GilbertElliott {
+        /// The chance, for each packet, to go from the good to the bad state.
+        p: Probability,
+        /// The chance, for each packet, to go from the bad to the good state.
+        r: Probability,
+        /// The chance that a packet is lost while in the bad state (the third argument of `gemodel`).
+        loss_bad: Probability,
+        /// The chance that a packet is lost while in the good state (the fourth argument of `gemodel`).
+        loss_good: Probability,
+    },
+    /// Four states (`netem loss state p13 p31 p32 p23 p14`): 1 receiving in a gap, 2 receiving inside a
+    /// burst, 3 losing inside a burst, 4 losing a single packet in a gap. The numbers are the transitions
+    /// between the states they name. From state 1 the chances of `p13` and `p14` add up, and from state 3
+    /// those of `p31` and `p32`; neither sum may be above 100 %.
+    Markov4 {
+        /// From state 1 to state 3.
+        p13: Probability,
+        /// From state 3 to state 1.
+        p31: Probability,
+        /// From state 3 to state 2.
+        p32: Probability,
+        /// From state 2 to state 3.
+        p23: Probability,
+        /// From state 1 to state 4.
+        p14: Probability,
+    },
 }
 
-/// How losses are distributed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+/// The name of a loss model in the file.
+#[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum LossModel {
-    /// Every packet is lost with the same chance, independent of the others.
+enum LossName {
     Random,
+    GilbertElliott,
+    Markov4,
+}
+
+/// Every key that a loss can have, for the reader: which of them belong to the model is checked after.
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct LossFields {
+    model: LossName,
+    p: Option<Probability>,
+    r: Option<Probability>,
+    loss_bad: Option<Probability>,
+    loss_good: Option<Probability>,
+    p13: Option<Probability>,
+    p31: Option<Probability>,
+    p32: Option<Probability>,
+    p23: Option<Probability>,
+    p14: Option<Probability>,
+}
+
+impl<'de> Deserialize<'de> for Loss {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let fields = LossFields::deserialize(deserializer)?;
+        let given = [
+            ("p", fields.p),
+            ("r", fields.r),
+            ("loss-bad", fields.loss_bad),
+            ("loss-good", fields.loss_good),
+            ("p13", fields.p13),
+            ("p31", fields.p31),
+            ("p32", fields.p32),
+            ("p23", fields.p23),
+            ("p14", fields.p14),
+        ];
+        let (name, wanted): (&str, &[&str]) = match fields.model {
+            LossName::Random => ("random", &["p"]),
+            LossName::GilbertElliott => ("gilbert-elliott", &["p", "r", "loss-bad", "loss-good"]),
+            LossName::Markov4 => ("markov4", &["p13", "p31", "p32", "p23", "p14"]),
+        };
+        // Every key of the model, and no other (a file is checked for both before it gets here, with the place)
+        for (key, value) in given {
+            match (value.is_some(), wanted.contains(&key)) {
+                (true, false) => {
+                    return Err(Error::custom(format!(
+                        "the key `{key}` is not used by the loss model `{name}`"
+                    )));
+                }
+                (false, true) => return Err(Error::missing_field(key)),
+                _ => {}
+            }
+        }
+        let value = |key: &str| {
+            given
+                .iter()
+                .find(|(name, _)| *name == key)
+                .and_then(|(_, value)| *value)
+                .ok_or_else(|| Error::missing_field("loss"))
+        };
+        Ok(match fields.model {
+            LossName::Random => Loss::Random { p: value("p")? },
+            LossName::GilbertElliott => Loss::GilbertElliott {
+                p: value("p")?,
+                r: value("r")?,
+                loss_bad: value("loss-bad")?,
+                loss_good: value("loss-good")?,
+            },
+            LossName::Markov4 => Loss::Markov4 {
+                p13: value("p13")?,
+                p31: value("p31")?,
+                p32: value("p32")?,
+                p23: value("p23")?,
+                p14: value("p14")?,
+            },
+        })
+    }
+}
+
+/// Reordering by holding packets back (`netem reorder P gap G`).
+///
+/// With a `delay`, a share of the packets is sent on at once and the others wait for the delay, so the ones
+/// that wait arrive after later packets. Measured in D-048: `share` is the share sent on at once, and with
+/// `gap` it is `1 / (gap - 1 + 1 / share)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Reorder {
+    /// The chance that a packet is sent on at once.
+    pub share: Probability,
+    /// After a packet that was sent on at once, the next `gap - 1` packets are held back before another one
+    /// can be sent on at once; 1 (the default) means no such rule. At least 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<u32>,
 }
 
 /// A workload: something that sends traffic.

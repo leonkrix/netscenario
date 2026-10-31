@@ -1,7 +1,7 @@
 //! The features of a backend that a scenario can ask for, as the rows of the coverage matrix
 //! (`docs/COVERAGE.md`), and which of them a scenario needs.
 
-use netscenario_model::{JitterDistribution, LossModel, Scenario, WorkloadKind};
+use netscenario_model::{JitterDistribution, Loss, Scenario, WorkloadKind};
 
 /// Something a backend reproduces faithfully, in part, or not at all. Each feature is a row of the coverage
 /// matrix; [`Feature::label`] is the text of that row, and a test keeps the two in step.
@@ -22,6 +22,14 @@ pub enum Feature {
     Jitter,
     /// Each packet is lost with the same probability.
     IndependentLoss,
+    /// Losses in bursts: the Gilbert-Elliott model and the four-state model.
+    BurstLoss,
+    /// Packets that arrive after later ones (`reorder`).
+    Reordering,
+    /// Packets that arrive twice (`duplicate`).
+    Duplication,
+    /// Packets with a flipped bit (`corrupt`).
+    Corruption,
     /// A limit on the rate.
     RateLimit,
     /// The `udp-cbr` workload.
@@ -39,6 +47,10 @@ impl Feature {
         Feature::FixedDelay,
         Feature::Jitter,
         Feature::IndependentLoss,
+        Feature::BurstLoss,
+        Feature::Reordering,
+        Feature::Duplication,
+        Feature::Corruption,
         Feature::RateLimit,
         Feature::UdpGenerators,
         Feature::SeededLoss,
@@ -54,6 +66,10 @@ impl Feature {
             Feature::FixedDelay => "fixed-delay",
             Feature::Jitter => "jitter",
             Feature::IndependentLoss => "independent-loss",
+            Feature::BurstLoss => "burst-loss",
+            Feature::Reordering => "reordering",
+            Feature::Duplication => "duplication",
+            Feature::Corruption => "corruption",
             Feature::RateLimit => "rate-limit",
             Feature::UdpGenerators => "udp-generators",
             Feature::SeededLoss => "seeded-loss",
@@ -70,6 +86,10 @@ impl Feature {
             Feature::FixedDelay => "Fixed delay",
             Feature::Jitter => "Jitter (uniform, normal)",
             Feature::IndependentLoss => "Independent loss",
+            Feature::BurstLoss => "Burst loss (Gilbert-Elliott, four-state)",
+            Feature::Reordering => "Reordering",
+            Feature::Duplication => "Duplication",
+            Feature::Corruption => "Corruption",
             Feature::RateLimit => "Rate limit",
             Feature::UdpGenerators => "UDP traffic generators",
             Feature::SeededLoss => "Same seed, same loss pattern",
@@ -124,9 +144,21 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             }
             if let Some(loss) = &impairments.loss {
                 has_loss = true;
-                match loss.model {
-                    LossModel::Random => need(Feature::IndependentLoss, format!("{path}.loss")),
+                match loss {
+                    Loss::Random { .. } => need(Feature::IndependentLoss, format!("{path}.loss")),
+                    Loss::GilbertElliott { .. } | Loss::Markov4 { .. } => {
+                        need(Feature::BurstLoss, format!("{path}.loss"));
+                    }
                 }
+            }
+            if impairments.reorder.is_some() {
+                need(Feature::Reordering, format!("{path}.reorder"));
+            }
+            if impairments.duplicate.is_some() {
+                need(Feature::Duplication, format!("{path}.duplicate"));
+            }
+            if impairments.corrupt.is_some() {
+                need(Feature::Corruption, format!("{path}.corrupt"));
             }
             if impairments.rate.is_some() {
                 need(Feature::RateLimit, format!("{path}.rate"));
@@ -199,6 +231,47 @@ mod tests {
         assert_eq!(at(Feature::RateLimit), Some("topology.links[0].both.rate"));
         assert_eq!(at(Feature::DifferentValuesPerDirection), None);
         assert_eq!(at(Feature::SeededLoss), None);
+    }
+
+    #[test]
+    fn the_impairments_of_release_0_2_name_their_features_and_their_places() {
+        let s = with_link(
+            "      forward: { delay: 20ms, loss: { model: gilbert-elliott, p: 2%, r: 30%, loss-bad: 50%, loss-good: 0.1% }, reorder: { share: 25%, gap: 5 }, duplicate: 1%, corrupt: 0.5% }\n      reverse: { loss: { model: markov4, p13: 2%, p31: 30%, p32: 10%, p23: 20%, p14: 0.5% } }\n",
+            "",
+        );
+        let found = requirements(&s);
+        let at = |f: Feature| {
+            found
+                .iter()
+                .find(|r| r.feature == f)
+                .map(|r| r.path.as_str())
+        };
+        // the first place that asks for the feature
+        assert_eq!(
+            at(Feature::BurstLoss),
+            Some("topology.links[0].forward.loss")
+        );
+        assert_eq!(
+            at(Feature::Reordering),
+            Some("topology.links[0].forward.reorder")
+        );
+        assert_eq!(
+            at(Feature::Duplication),
+            Some("topology.links[0].forward.duplicate")
+        );
+        assert_eq!(
+            at(Feature::Corruption),
+            Some("topology.links[0].forward.corrupt")
+        );
+        assert_eq!(at(Feature::IndependentLoss), None);
+        // each feature once
+        assert_eq!(
+            found
+                .iter()
+                .filter(|r| r.feature == Feature::BurstLoss)
+                .count(),
+            1
+        );
     }
 
     #[test]

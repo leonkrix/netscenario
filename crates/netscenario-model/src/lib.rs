@@ -42,8 +42,8 @@ pub use builder::ScenarioBuilder;
 pub use error::{Error, Location, Problem};
 pub use read::MAX_FILE_BYTES;
 pub use scenario::{
-    Backend, FormatVersion, Impairments, Jitter, JitterDistribution, Link, Loss, LossModel,
-    Scenario, Topology, Workload, WorkloadKind,
+    Backend, FormatVersion, Impairments, Jitter, JitterDistribution, Link, Loss, Reorder, Scenario,
+    Topology, Workload, WorkloadKind,
 };
 pub use schema::json_schema;
 pub use units::{Duration, Name, Probability, Rate, Size, ValueError};
