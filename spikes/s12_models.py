@@ -87,7 +87,11 @@ def counters(pid: str) -> dict[str, int]:
 
 
 def measure(pid: str, netem: str, seed: int, size: int = 200, count: int = N, no_check: bool = False) -> dict:
-    tc("qdisc", "replace", "dev", "v0", "root", "netem", "limit", "100000", *netem.split(), "seed", str(seed))
+    # A fresh qdisc for every measurement: netem keeps corrupt, reorder, rate and slot across a change (D-048), and a
+    # corruption left over from an earlier section made the first run on the CI runners lose 18.7 % instead of 10 %
+    # and duplicate 16.3 % instead of 20 % in the correlation section
+    subprocess.run(["tc", "qdisc", "del", "dev", "v0", "root"], capture_output=True)
+    tc("qdisc", "add", "dev", "v0", "root", "netem", "limit", "100000", *netem.split(), "seed", str(seed))
     out = os.path.join(tempfile.gettempdir(), f"s12-{os.getpid()}.json")
     receiver = subprocess.Popen(
         ["nsenter", "-t", pid, "-n", sys.executable, os.path.abspath(__file__), "recv", out], stdout=subprocess.PIPE, text=True
@@ -272,7 +276,8 @@ def corruption(pid: str) -> None:
             if no_check:
                 # a flip in the payload arrives corrupted; one in the IP header is dropped by the header checksum; in
                 # the source port or the checksum field it arrives intact; in the length or the destination port it is dropped
-                judge("S12.6", label, p * size / (size + 28), visible, "share that arrived with a corrupted payload", 100, relative=0.05)
+                # the frame is the Ethernet header (14), IP (20), UDP (8) and the payload: netem picks a byte of all of it
+                judge("S12.6", label, p * size / (size + 42), visible, "share that arrived with a corrupted payload", 100, relative=0.05)
             else:
                 judge("S12.6", label, 0.0, visible, "share that arrived with a corrupted payload", 100)
             gone = [1 - m["datagrams"] / count for m in runs]
@@ -307,6 +312,23 @@ def correlations(pid: str) -> None:
             report("INFO", "S12.7", f"{netem}: {text}")
 
 
+def duplicate_check(pid: str) -> None:
+    """Why did `duplicate 20%` give 20.1 % in 20,000 packets and 16.3 % in 100,000? Look at what the receiver lost."""
+    for count in (20000, 100000):
+        for gap_ns in (50_000, 100_000):
+            global GAP_NS
+            GAP_NS = gap_ns
+            m = measure(pid, "duplicate 20%", 11, count=count)
+            d = m["delta"]
+            report(
+                "INFO",
+                "S12.8",
+                f"duplicate 20%, {count} packets, one every {gap_ns // 1000} us: duplicates {m['duplicates'] / count * 100:.2f}%, datagrams that reached the program {m['datagrams']} (the queue sent {int(count * 1.2)} expected), "
+                f"packets never seen {len(m['lost'])}, Udp.RcvbufErrors {d.get('Udp.RcvbufErrors', 0)}, Udp.InDatagrams {d.get('Udp.InDatagrams', 0)}",
+            )
+    GAP_NS = 50_000
+
+
 def main() -> None:
     pid = sys.argv[1]
     report("INFO", "S12.0", f"{N} packets per loss run, seeds {SEEDS}, one packet every {GAP_NS / 1000:.0f} us")
@@ -319,6 +341,8 @@ def main() -> None:
         corruption(pid)
     if only in ("", "correlation"):
         correlations(pid)
+    if only in ("", "dupcheck"):
+        duplicate_check(pid)
 
 
 if __name__ == "__main__":

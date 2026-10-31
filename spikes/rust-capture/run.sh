@@ -73,7 +73,7 @@ busy_pids=()
 tc qdisc replace dev v0 root netem limit 100000 delay 1ms seed 5
 in_ns "$bin" sink 1500 &
 sinking=$!
-in_ns tcpdump -Z root -i v1 -U -nn -w "$work/ref.pcap" 'udp port 5000' >/dev/null 2>&1 &
+in_ns tcpdump -Z root -i v1 -U -nn -w "$work/ref.pcap" 'udp port 5000' >"$work/ref.log" 2>&1 &
 reference=$!
 in_ns "$bin" capture v1 "$work/ours.pcap" 600 >"$work/ours.txt" 2>&1 &
 ours=$!
@@ -88,7 +88,7 @@ warnings="$(grep -vc '^reading from file' "$work/ours.err" || true)"
 if [ "$count_ref" -eq "$count_ours" ] && [ "$count_ours" -gt 0 ]; then
   pass S13.3 "tcpdump reads our pcap without a complaint ($warnings warnings) and counts $count_ours packets, the same as the capture of tcpdump itself ($count_ref)"
 else
-  fail S13.3 "tcpdump counts $count_ours packets in our pcap and $count_ref in its own capture (warnings: $warnings)"
+  fail S13.3 "tcpdump counts $count_ours packets in our pcap and $count_ref in its own capture (warnings: $warnings); tcpdump said on reading ours: $(head -c 400 "$work/ours.err" | tr '\n' ' '); its own capture said: $(head -c 400 "$work/ref.log" | tr '\n' ' '); sizes ours $(stat -c %s "$work/ours.pcap" 2>/dev/null) ref $(stat -c %s "$work/ref.pcap" 2>/dev/null)"
 fi
 # the timestamps are those of the kernel, so the same packet has the same time in both files
 paste <(tcpdump -Z root -tt -nn -r "$work/ref.pcap" 2>/dev/null | awk '{print $1}') <(tcpdump -Z root -tt -nn -r "$work/ours.pcap" 2>/dev/null | awk '{print $1}') |

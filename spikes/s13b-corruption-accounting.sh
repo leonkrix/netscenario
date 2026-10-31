@@ -12,7 +12,8 @@ bin="$here/rust-capture/target/release/spike-capture"
 rx() { in_ns awk '$1=="v1:"{print $3}' /proc/net/dev; }
 for size in 64 200 1200; do
   for netem in "corrupt 10%" "loss 10%" "loss 5% corrupt 5%"; do
-    tc qdisc replace dev v0 root netem limit 100000 $netem seed 9
+    tc qdisc del dev v0 root 2>/dev/null
+    tc qdisc add dev v0 root netem limit 100000 $netem seed 9
     in_ns "$bin" sink 900 "$work/delivered.txt" & s=$!
     in_ns "$bin" capture v1 "$work/c.pcap" 600 "$work/seen.txt" >"$work/c.txt" 2>&1 & o=$!
     sleep 0.4
