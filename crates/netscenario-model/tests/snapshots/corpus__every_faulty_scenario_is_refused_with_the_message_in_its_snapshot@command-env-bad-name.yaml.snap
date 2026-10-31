@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/command-env-bad-name.yaml
+---
+error: '1ST' is not the name of an environment variable
+  --> command-env-bad-name.yaml:21:12
+   |
+20 |     env:
+21 |       1ST: x
+   |            ^
+   = path: workloads[1].env.1ST
+   = help: letters, digits and '_', not starting with a digit

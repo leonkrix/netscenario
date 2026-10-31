@@ -45,6 +45,7 @@ const PLANNED: &[Feature] = &[
     Feature::ScheduledSteps,
     Feature::Outages,
     Feature::LinkDownUp,
+    Feature::Program,
 ];
 
 /// What the Kernel backend reproduces on a machine with `environment`.

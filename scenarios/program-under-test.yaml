@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A program of your own in a node: the scenario starts `my-server` in the node `server`, waits until it has a
+# UDP socket open, and a stream goes from the client to the node. `{server.addr}` is the address of the node.
+# A `command` runs code, so it is written in the file where everybody can see it (SECURITY.md).
+# The Kernel backend starts programs from release 0.2 (step 4.6); until then `netscenario run` refuses the
+# file and names the feature, and `validate` accepts it.
+version: 0
+name: program-under-test
+seed: 5
+duration: 20s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      both:
+        delay: 30ms
+workloads:
+  - id: app
+    kind: command
+    node: server
+    run: ["./target/release/my-server", "--listen", "{server.addr}:4433"]
+    env:
+      RUST_LOG: info
+    ready: { udp-port: 4433, within: 5s }
+    shutdown: { signal: TERM, within: 3s }
+  - id: probe
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 500kbit
+    packet-size: 200b

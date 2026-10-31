@@ -1,0 +1,12 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/command-ready-misspelled-key.yaml
+---
+error: unknown field `udp_port`, expected one of udp-port, tcp-port, stdout-line, file, delay, within
+  --> command-ready-misspelled-key.yaml:20:14
+   |
+19 |     run: ["./server"]
+20 |     ready: { udp_port: 4433, within: 5s }
+   |              ^^^^^^^^
+   = help: did you mean 'udp-port'?

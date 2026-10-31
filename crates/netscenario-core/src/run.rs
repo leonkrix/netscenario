@@ -15,7 +15,7 @@ use std::time::{Duration, Instant, SystemTime};
 use netscenario_agent::clock::monotonic_ns;
 use netscenario_agent::events::{Event, ReceiveSummary, SendSummary};
 use netscenario_agent::records;
-use netscenario_model::{Impairments, Scenario, Workload};
+use netscenario_model::{Impairments, Scenario, UdpCbr, Workload};
 
 use crate::backend::{Backend, Direction, NodeHandle, Program, ProgramHandle};
 use crate::error::Error;
@@ -202,7 +202,7 @@ fn failure(action: impl Into<String>, message: impl Into<String>) -> Error {
 /// What one workload needs to be started.
 struct Flow<'a> {
     index: usize,
-    workload: &'a Workload,
+    workload: &'a UdpCbr,
     from_node: NodeHandle,
     to_node: NodeHandle,
     to_address: String,
@@ -255,7 +255,13 @@ pub fn run(
     torn_down?;
 
     let mut workloads = Vec::new();
-    for (index, (workload, flow)) in scenario.workloads.iter().zip(&measured).enumerate() {
+    for (index, (workload, flow)) in scenario
+        .workloads
+        .iter()
+        .filter_map(Workload::as_udp_cbr)
+        .zip(&measured)
+        .enumerate()
+    {
         workloads.push(workload_result(
             index,
             workload,
@@ -318,7 +324,7 @@ pub fn run(
 /// The result of one workload: its statistics, and the files that belong to it.
 fn workload_result(
     index: usize,
-    workload: &Workload,
+    workload: &UdpCbr,
     flow: &Measured,
     scenario: &Scenario,
     provisioned: &Provisioned,
@@ -387,7 +393,7 @@ fn records_name(index: usize) -> String {
 }
 
 /// The address of the sending node and of the receiving node of a workload.
-fn addresses_of(provisioned: &Provisioned, workload: &Workload) -> (String, String) {
+fn addresses_of(provisioned: &Provisioned, workload: &UdpCbr) -> (String, String) {
     let address = |node: &netscenario_model::Name| {
         provisioned
             .addresses
@@ -441,6 +447,7 @@ fn plan<'a>(
     scenario
         .workloads
         .iter()
+        .filter_map(Workload::as_udp_cbr)
         .enumerate()
         .map(|(index, workload)| {
             let start = workload.start.map_or(Duration::ZERO, Duration::from);

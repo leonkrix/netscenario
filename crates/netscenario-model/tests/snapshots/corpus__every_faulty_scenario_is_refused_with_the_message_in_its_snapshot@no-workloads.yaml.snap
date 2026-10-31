@@ -10,4 +10,4 @@ error: a scenario needs at least one workload, found none
 11 | workloads: []
    |            ^
    = path: workloads
-   = help: add a workload of kind udp-cbr
+   = help: add a workload of kind udp-cbr, or a command

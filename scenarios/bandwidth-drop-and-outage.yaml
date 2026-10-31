@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
 # A link that is limited to 2 mbit from the tenth second, goes quiet for two seconds, and is not limited any more
 # from the twenty-fifth (`null` takes an impairment away).
 # The timeline arrives with release 0.2: the Kernel backend applies it from step 4.3, until then

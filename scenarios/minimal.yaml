@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
 # The smallest scenario: two nodes, one link without any impairment, one stream.
 version: 0
 name: minimal

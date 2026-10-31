@@ -40,6 +40,8 @@ pub enum Feature {
     LinkDownUp,
     /// The `udp-cbr` workload.
     UdpGenerators,
+    /// A program of your own as a node (`kind: command`).
+    Program,
     /// A `seed` is written in the file and the scenario has loss: the same seed must give the same lost packets.
     SeededLoss,
 }
@@ -62,6 +64,7 @@ impl Feature {
         Feature::Outages,
         Feature::LinkDownUp,
         Feature::UdpGenerators,
+        Feature::Program,
         Feature::SeededLoss,
     ];
 
@@ -84,6 +87,7 @@ impl Feature {
             Feature::Outages => "outages",
             Feature::LinkDownUp => "link-down-up",
             Feature::UdpGenerators => "udp-generators",
+            Feature::Program => "program",
             Feature::SeededLoss => "seeded-loss",
         }
     }
@@ -107,6 +111,7 @@ impl Feature {
             Feature::Outages => "Outages",
             Feature::LinkDownUp => "Link down and up",
             Feature::UdpGenerators => "UDP traffic generators",
+            Feature::Program => "Your program as a node",
             Feature::SeededLoss => "Same seed, same loss pattern",
         }
     }
@@ -193,8 +198,9 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
         }
     }
     for (index, workload) in scenario.workloads.iter().enumerate() {
-        match workload.kind {
+        match workload.kind() {
             WorkloadKind::UdpCbr => need(Feature::UdpGenerators, format!("workloads[{index}]")),
+            WorkloadKind::Command => need(Feature::Program, format!("workloads[{index}]")),
         }
     }
     if has_loss && scenario.seed.is_some() {

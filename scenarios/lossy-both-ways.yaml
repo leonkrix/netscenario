@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
 # Loss in both directions and two streams, one in each direction.
 version: 0
 name: lossy-both-ways

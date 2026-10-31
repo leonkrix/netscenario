@@ -5,10 +5,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use netscenario_model::{
-    Backend, Change, Direction, Duration, Edit, Event, FormatVersion, Impairments,
+    Backend, Change, Command, Direction, Duration, Edit, Event, FormatVersion, Impairments,
     ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, MAX_PACKET_SIZE,
-    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, Name, Probability, Rate, Reorder, Scenario, Size,
-    Topology, Workload, WorkloadKind,
+    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, Name, Probability, Rate, Ready, Reorder, Scenario,
+    Shutdown, Signal, Size, Topology, UdpCbr, Workload,
 };
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -175,17 +175,65 @@ fn workload(index: usize, duration_nanos: u64) -> impl Strategy<Value = Workload
             } else {
                 (None, None)
             };
-            Workload {
+            Workload::UdpCbr(UdpCbr {
                 id: Name::new(&format!("stream-{index}")).unwrap(),
-                kind: WorkloadKind::UdpCbr,
                 from: Name::new("a").unwrap(),
                 to: Name::new("b").unwrap(),
                 rate,
                 packet_size: Size::from_bytes(size),
                 start,
                 stop,
-            }
+            })
         })
+}
+
+/// A program of your own, with a way to be ready that the format accepts, placeholders for both nodes, an
+/// environment and a shutdown. The braces that mean braces are written twice.
+fn command(way: u8, port: u16, within: u64) -> Workload {
+    let within = Duration::from_nanos(within.max(1));
+    let ready = match way {
+        0 => None,
+        1 => Some(Ready {
+            udp_port: Some(port.max(1)),
+            within: Some(within),
+            ..Ready::default()
+        }),
+        2 => Some(Ready {
+            tcp_port: Some(port.max(1)),
+            within: Some(within),
+            ..Ready::default()
+        }),
+        3 => Some(Ready {
+            stdout_line: Some("listening {{on}} 4433".to_owned()),
+            within: Some(within),
+            ..Ready::default()
+        }),
+        4 => Some(Ready {
+            file: Some("ready.flag".to_owned()),
+            within: Some(within),
+            ..Ready::default()
+        }),
+        _ => Some(Ready {
+            delay: Some(within),
+            ..Ready::default()
+        }),
+    };
+    Workload::Command(Command {
+        id: Name::new("app").unwrap(),
+        node: Name::new("b").unwrap(),
+        run: vec![
+            "./server".to_owned(),
+            "--listen".to_owned(),
+            "{b.addr}:4433".to_owned(),
+            "--peer={a.addr}".to_owned(),
+        ],
+        env: std::iter::once(("PEER".to_owned(), "{a.addr}".to_owned())).collect(),
+        ready,
+        shutdown: Some(Shutdown {
+            signal: Some(Signal::Int),
+            within: Some(within),
+        }),
+    })
 }
 
 fn valid_scenario() -> impl Strategy<Value = Scenario> {
@@ -195,11 +243,13 @@ fn valid_scenario() -> impl Strategy<Value = Scenario> {
         0..3usize,
         any::<bool>(),
         proptest::collection::vec((0..3u8, 0..=100_000_000u32), 0..4),
+        proptest::option::of((0..6u8, any::<u16>(), any::<u64>())),
     )
-        .prop_flat_map(|(duration, seed, extra, kernel, steps)| {
+        .prop_flat_map(|(duration, seed, extra, kernel, steps, program)| {
             let workloads: Vec<_> = (0..=extra).map(|index| workload(index, duration)).collect();
+            let program = program.map(|(way, port, within)| command(way, port, within));
             (
-                Just((duration, seed, kernel, steps)),
+                Just((duration, seed, kernel, steps, program)),
                 impairments(),
                 impairments(),
                 prop_oneof![Just(0u8), Just(1), Just(2)],
@@ -207,7 +257,8 @@ fn valid_scenario() -> impl Strategy<Value = Scenario> {
             )
         })
         .prop_map(
-            |((duration, seed, kernel, steps), forward, reverse, shape, workloads)| {
+            |((duration, seed, kernel, steps, program), forward, reverse, shape, mut workloads)| {
+                workloads.extend(program);
                 let (forward, reverse, both) = match shape {
                     0 => (Some(forward), Some(reverse), None),
                     1 => (None, None, Some(forward)),
@@ -292,7 +343,10 @@ fn canary_a_broken_scenario_is_refused() {
     let mut runner = proptest::test_runner::TestRunner::deterministic();
     let mut scenario = valid_scenario().new_tree(&mut runner).unwrap().current();
     assert_eq!(scenario.validate(), Vec::new());
-    scenario.workloads[0].packet_size = Size::from_bytes(1);
+    let Workload::UdpCbr(workload) = &mut scenario.workloads[0] else {
+        panic!("the first workload is a udp-cbr");
+    };
+    workload.packet_size = Size::from_bytes(1);
     assert_ne!(scenario.validate(), Vec::new());
 }
 

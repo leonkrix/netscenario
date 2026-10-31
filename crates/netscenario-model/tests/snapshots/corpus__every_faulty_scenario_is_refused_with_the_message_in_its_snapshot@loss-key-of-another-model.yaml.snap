@@ -10,4 +10,4 @@ error: the key `r` is not used by the loss model `random`
 10 |         loss: { model: random, p: 2%, r: 30% }
    |                                       ^
    = path: topology.links[0].forward.loss.r
-   = help: the model `random` has `p`; `r` belongs to gilbert-elliott
+   = help: the loss model `random` has `p`; `r` belongs to gilbert-elliott

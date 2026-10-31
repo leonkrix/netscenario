@@ -9,6 +9,9 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [satellite.yaml](satellite.yaml) | A geostationary hop with `both`, a window for the stream, and `backend: kernel` |
 | [lossy-both-ways.yaml](lossy-both-ways.yaml) | Loss in both directions and one stream each way |
 | [bandwidth-drop-and-outage.yaml](bandwidth-drop-and-outage.yaml) | A timeline: a rate limit from a moment on, an outage of two seconds, the limit taken away with `null`; applied by the Kernel backend from release 0.2 |
+| [program-under-test.yaml](program-under-test.yaml) | A program of your own in a node (`kind: command`) with a readiness check and a shutdown; started by the Kernel backend from release 0.2 |
 | [noisy-radio.yaml](noisy-radio.yaml) | Bursts of loss (both models), reordering, duplication and corruption; applied by the Kernel backend from release 0.2 |
+
+Each file starts with a line `# yaml-language-server: $schema=...` that points an editor at the JSON Schema of this checkout, for completion and checking while you write (docs/CLI.md has the form for your own files).
 
 `invalid/` holds files that are faulty on purpose, one fault per file, with the message that each must produce in `crates/netscenario-model/tests/snapshots/`. A new kind of fault is a new file there and a new snapshot (`just snapshots`).

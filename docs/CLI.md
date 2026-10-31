@@ -78,6 +78,15 @@ netscenario schema
 
 Prints the JSON Schema of the scenario format ([`schema/scenario-v0.json`](schema/scenario-v0.json) is the same text). Point an editor at it to get completion and checking while you write a scenario.
 
+**In an editor.** Editors with the YAML language server (VS Code with the Red Hat YAML extension, JetBrains IDEs, Neovim with `yaml-language-server`) take the schema from a comment on the first line of the file:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/leonkrix/netscenario/main/docs/schema/scenario-v0.json
+version: 0
+```
+
+They then complete the keys and values (the loss models, the signals, the directions), show the description of each key, and mark a wrong value while you type. The example scenarios of this repository carry the same line with a relative path to the schema of their own checkout. The schema describes the shape; the rules between values (a node must exist, a jitter needs a delay) are checked by `netscenario validate`, which an editor does not run. The URL above follows `main`, so it can be ahead of the release you have installed; for a fixed version use the file of that tag, or `netscenario schema > scenario.schema.json` and a path to it.
+
 ## `doctor` and `clean`
 
 See [DOCTOR.md](DOCTOR.md).

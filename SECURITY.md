@@ -18,7 +18,7 @@ netscenario creates network namespaces, virtual network devices and traffic-cont
 
 - **It never touches the network of the host.** All devices and rules live in namespaces that netscenario creates and removes. A rule that would apply to a host interface is refused.
 - **It asks for the least privilege that works.** The preferred way is an unprivileged user namespace. Where that is not possible, it says what it needs and why.
-- **Scenario files are data, not code.** A scenario cannot run commands on its own. A workload that runs a command says so explicitly, and that command is yours.
+- **Scenario files are data, not code.** A scenario cannot run commands on its own. A workload of kind `command` says so explicitly, runs the program of its `run` list as you (without a shell, in the namespace of its node), and that program is yours. Running a scenario file that you did not write is running its programs: read the `command` entries before you run it.
 - **It sends nothing anywhere.** No telemetry, no network access of its own beyond the emulated network in the namespaces.
 
 Reports about escaping a namespace, about a scenario file that makes the tool act outside what it was told, or about unsafe handling of the files and sockets it creates are especially welcome.

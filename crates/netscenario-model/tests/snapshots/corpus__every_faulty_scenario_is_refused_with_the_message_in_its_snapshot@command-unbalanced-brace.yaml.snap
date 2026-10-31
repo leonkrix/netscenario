@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/command-unbalanced-brace.yaml
+---
+error: '{"a": 1}' is not a placeholder
+  --> command-unbalanced-brace.yaml:19:23
+   |
+18 |     node: server
+19 |     run: ["./server", "--json={\"a\": 1}"]
+   |                       ^^^^^^^^^^^^^^^^^^^
+   = path: workloads[1].run[1]
+   = help: the only placeholder is `{node.addr}`, the address of a node; a brace that is meant as a brace is written twice

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
 # A geostationary satellite hop: the same values in both directions, a long delay, a low rate, rare loss.
 # The stream starts after one second and ends before the measured phase does.
 version: 0
