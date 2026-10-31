@@ -1,0 +1,20 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward:
+        delay: 40ms
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 1mbit
+    packet-size: 1200b
+timeline:
+  - { at: 2s, link: access, outage: 4s }
+  - { at: 3s, link: access, set: { both: { loss: { model: random, p: 5% } } } }

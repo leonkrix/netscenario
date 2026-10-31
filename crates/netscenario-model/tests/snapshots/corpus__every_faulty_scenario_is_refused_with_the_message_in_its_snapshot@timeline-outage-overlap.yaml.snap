@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/timeline-outage-overlap.yaml
+---
+error: the outage overlaps the outage of timeline[0] (2s to 5s)
+  --> timeline-outage-overlap.yaml:20:11
+   |
+19 |   - { at: 2s, link: access, outage: 3s }
+20 |   - { at: 4s, link: access, outage: 2s }
+   |           ^^
+   = path: timeline[1].at
+   = help: two outages at once have no clear end of the first; make one outage of them

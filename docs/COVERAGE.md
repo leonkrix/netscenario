@@ -88,6 +88,7 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Feature                        | Kernel | Engine | Proxy |
 | ------------------------------ | ------ | ------ | ----- |
 | Scheduled steps                | ✔ 0.2  | ✔ 0.4  | ✔ 0.5 |
+| Link down and up               | ✔ 0.2  | ✔ 0.4  | ?     |
 | Trace-driven rate, delay, loss | ~ 0.3  | ✔ 0.4  | ✔ 0.5 |
 | Markov models                  | ~ 0.3  | ✔ 0.4  | ✔ 0.5 |
 | Periodic patterns              | ✔ 0.3  | ✔ 0.4  | ✔ 0.5 |

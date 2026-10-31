@@ -1,0 +1,22 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/timeline-after-end.yaml
+---
+error: the moment 12s is not before the end of the measured phase (10s)
+  --> timeline-after-end.yaml:19:11
+   |
+18 | timeline:
+19 |   - { at: 12s, link: access, outage: 1s }
+   |           ^^^
+   = path: timeline[0].at
+   = help: an event at or after the end would change nothing that is measured
+
+error: the outage ends at 13s, after the end of the measured phase (10s)
+  --> timeline-after-end.yaml:19:38
+   |
+18 | timeline:
+19 |   - { at: 12s, link: access, outage: 1s }
+   |                                      ^^
+   = path: timeline[0].outage
+   = help: make it shorter, or start it earlier

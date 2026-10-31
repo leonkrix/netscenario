@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/timeline-two-actions.yaml
+---
+error: an event does exactly one of `set`, `outage`, `down` and `up`, found outage, down
+  --> timeline-two-actions.yaml:19:5
+   |
+18 | timeline:
+19 |   - { at: 5s, link: access, outage: 1s, down: true }
+   |     ^
+   = path: timeline[0]
+   = help: write one event for each thing that happens

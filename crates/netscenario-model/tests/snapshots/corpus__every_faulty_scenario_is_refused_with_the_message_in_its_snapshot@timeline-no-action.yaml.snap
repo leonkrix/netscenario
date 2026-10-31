@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/timeline-no-action.yaml
+---
+error: an event does exactly one of `set`, `outage`, `down` and `up`, found none
+  --> timeline-no-action.yaml:19:5
+   |
+18 | timeline:
+19 |   - { at: 5s, link: access }
+   |     ^
+   = path: timeline[0]
+   = help: write one event for each thing that happens

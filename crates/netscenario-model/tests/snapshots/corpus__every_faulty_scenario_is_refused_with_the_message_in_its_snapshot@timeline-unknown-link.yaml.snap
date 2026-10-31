@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/timeline-unknown-link.yaml
+---
+error: the link 'acces' does not exist
+  --> timeline-unknown-link.yaml:19:21
+   |
+18 | timeline:
+19 |   - { at: 5s, link: acces, down: true }
+   |                     ^^^^^
+   = path: timeline[0].link
+   = help: did you mean 'access'? the links are: access
