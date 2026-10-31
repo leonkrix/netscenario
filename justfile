@@ -118,6 +118,9 @@ release-prepare version:
     python3 python/release/version.py set {{version}}
     cargo update --workspace
     uv lock
+    # The version of netscenario comes from Cargo.toml, and uv does not see it change: install it again, or the
+    # environment keeps the metadata of the old version and the tests that compare versions fail
+    uv sync --reinstall-package netscenario
     python3 python/release/version.py check
     just changelog {{version}}
 

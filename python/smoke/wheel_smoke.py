@@ -8,6 +8,7 @@ and a run must work with the plugin installed next to it.
 
 from __future__ import annotations
 
+import importlib.metadata
 import subprocess
 import sys
 import tempfile
@@ -15,7 +16,8 @@ import textwrap
 from pathlib import Path
 
 import netscenario as ns
-from netscenario import _binaries
+from netscenario import _binaries, _native
+from netscenario._version import pep440
 
 SCENARIO = textwrap.dedent(
     """\
@@ -66,7 +68,9 @@ def main() -> None:
         assert program.stat().st_mode & 0o111, f"{program} is not executable"
 
     version = run(str(supervisor), "--version")
-    assert version.stdout.strip() == f"netscenario {ns.__version__}", version
+    # The programs write the version as Cargo does (0.1.0-rc.1), the package as pip does (0.1.0rc1)
+    assert version.stdout.strip() == f"netscenario {_native.version()}", version
+    assert pep440(_native.version()) == ns.__version__ == importlib.metadata.version("netscenario")
     command = Path(sys.executable).parent / "netscenario"
     step(f"the command: {command}")
     assert run(str(command), "--version").stdout == version.stdout, "the command starts the program"

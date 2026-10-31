@@ -54,6 +54,14 @@ def test_python_spells_a_version_as_pep_440(semantic: str, python: str) -> None:
     assert version.python_version(semantic) == python
 
 
+@pytest.mark.parametrize("text", ["0.1.0", "0.1.0-rc.1", "9.8.7-beta.12", "0.0.1-alpha.3"])
+def test_the_package_and_the_release_script_spell_a_version_alike(text: str) -> None:
+    # Two copies of one rule (the package cannot import a build tool): they must not drift apart
+    from netscenario._version import pep440
+
+    assert pep440(text) == version.python_version(text)
+
+
 @pytest.mark.parametrize("text", ["1", "1.2", "v1.2.3", "1.2.3-dev", "1.2.3-rc", "01.2.3.4", ""])
 def test_a_version_that_is_not_one_is_refused(text: str) -> None:
     with pytest.raises(ValueError, match="not a version"):
@@ -72,38 +80,43 @@ def test_set_writes_every_place_that_is_written_by_hand(copy: Path) -> None:
 
 
 def test_the_lock_files_are_reported_until_they_are_refreshed(copy: Path) -> None:
-    version.set_version(copy, "0.2.0")
+    version.set_version(copy, "9.9.9")
     problems = version.check(copy)
     assert problems
     assert all(problem.startswith(("Cargo.lock", "uv.lock")) for problem in problems)
 
 
-# Canaries: the check can fail
+def _current(root: Path) -> str:
+    """The version the files of `root` have: the tests must not depend on which release this is."""
+    return version.collect(root)["Cargo.toml workspace.package"]
+
+
+# Canaries: the check can fail. `{v}` is the version of the files, `{p}` its spelling in Python.
 @pytest.mark.parametrize(
     ("name", "old", "new", "place"),
     [
         (
             "Cargo.toml",
-            'netscenario-core = { path = "crates/netscenario-core", version = "0.0.0"',
-            'netscenario-core = { path = "crates/netscenario-core", version = "0.0.1"',
+            'netscenario-core = {{ path = "crates/netscenario-core", version = "{v}"',
+            'netscenario-core = {{ path = "crates/netscenario-core", version = "9.9.9"',
             "dependency netscenario-core",
         ),
         (
             "python/pytest-netscenario/pyproject.toml",
-            '"netscenario==0.0.0"',
-            '"netscenario==0.0.1"',
+            '"netscenario=={p}"',
+            '"netscenario==9.9.9"',
             "pin on netscenario",
         ),
         (
             "python/pytest-netscenario/pyproject.toml",
-            '\nversion = "0.0.0"',
-            '\nversion = "0.0.1"',
+            '\nversion = "{p}"',
+            '\nversion = "9.9.9"',
             "pyproject.toml version",
         ),
         (
             "Cargo.lock",
-            'name = "netscenario-cli"\nversion = "0.0.0"',
-            'name = "netscenario-cli"\nversion = "0.0.1"',
+            'name = "netscenario-cli"\nversion = "{v}"',
+            'name = "netscenario-cli"\nversion = "9.9.9"',
             "netscenario-cli",
         ),
     ],
@@ -111,6 +124,9 @@ def test_the_lock_files_are_reported_until_they_are_refreshed(copy: Path) -> Non
 def test_a_place_that_disagrees_is_found(
     copy: Path, name: str, old: str, new: str, place: str
 ) -> None:
+    current = _current(copy)
+    spelled = {"v": current, "p": version.python_version(current)}
+    old, new = old.format(**spelled), new.format(**spelled)
     path = copy / name
     text = path.read_text(encoding="utf-8")
     assert old in text
@@ -121,17 +137,19 @@ def test_a_place_that_disagrees_is_found(
 
 
 def test_a_tag_that_does_not_name_the_version_is_found(copy: Path) -> None:
-    assert version.check(copy, tag="v0.0.0") == []
-    assert len(version.check(copy, tag="v0.0.1")) == 1
+    current = _current(copy)
+    assert version.check(copy, tag=f"v{current}") == []
+    assert len(version.check(copy, tag="v9.9.9")) == 1
 
 
 def test_the_command_line_exit_codes(copy: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    current = _current(copy)
     assert version.main(["--root", str(copy), "check"]) == 0
     assert version.main(["--root", str(copy), "check", "--tag", "v9.9.9"]) == 1
     assert "v9.9.9" in capsys.readouterr().err
     assert version.main(["--root", str(copy), "set", "banana"]) == 2
     assert version.main(["--root", str(copy), "show"]) == 0
-    assert capsys.readouterr().out.strip() == "0.0.0"
+    assert capsys.readouterr().out.strip() == current
     version.set_version(copy, "0.3.0-rc.2")
     assert version.main(["--root", str(copy), "show", "--python"]) == 0
     assert capsys.readouterr().out.strip() == "0.3.0rc2"

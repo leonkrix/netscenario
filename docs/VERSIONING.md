@@ -4,7 +4,7 @@ What a version number promises, and what a release may break (REL-03, D-034). Th
 
 ## One version for everything that is released
 
-The crates, the Python package `netscenario`, the plugin `pytest-netscenario` and the programs inside the wheel (`netscenario` and `netscenario-agent`) are built from one repository and released together under one [semantic version](https://semver.org) (D-004). The version is written once, in `Cargo.toml`; `python/release/version.py` writes and checks the other places, and `pytest-netscenario` depends on exactly the same version of `netscenario`. A pre-release is `0.2.0-rc.1` in Cargo and on GitHub, and `0.2.0rc1` on PyPI (the same version, spelled as Python spells it).
+The crates, the Python package `netscenario`, the plugin `pytest-netscenario` and the programs inside the wheel (`netscenario` and `netscenario-agent`) are built from one repository and released together under one [semantic version](https://semver.org) (D-004). The version is written once, in `Cargo.toml`; `python/release/version.py` writes and checks the other places, and `pytest-netscenario` depends on exactly the same version of `netscenario`. A pre-release is `0.2.0-rc.1` in Cargo and on GitHub, and `0.2.0rc1` on PyPI (the same version, spelled as Python spells it). The programs and `result.json` write it as Cargo does (`netscenario --version` prints `0.2.0-rc.1`); `netscenario.__version__` and `pip` write it as Python does.
 
 Besides the release there are the versions of the **formats**. They are separate numbers because a file outlives a release.
 

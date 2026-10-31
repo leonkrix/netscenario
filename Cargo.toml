@@ -5,7 +5,7 @@ members = ["crates/*"]
 exclude = ["spikes"]
 
 [workspace.package]
-version = "0.0.0"
+version = "0.1.0-rc.1"
 edition = "2024"
 # The lowest supported Rust version (D-020, which raised it from 1.85 of D-014). It is what serde-saphyr, the
 # YAML parser of the scenario files, needs.
@@ -18,11 +18,11 @@ keywords = ["network", "emulation", "netem", "testing", "scenario"]
 categories = ["development-tools::testing", "network-programming", "simulation"]
 
 [workspace.dependencies]
-netscenario-model = { path = "crates/netscenario-model", version = "0.0.0" }
-netscenario-core = { path = "crates/netscenario-core", version = "0.0.0" }
-netscenario-backend-kernel = { path = "crates/netscenario-backend-kernel", version = "0.0.0" }
-netscenario-agent = { path = "crates/netscenario-agent", version = "0.0.0" }
-netscenario-cli = { path = "crates/netscenario-cli", version = "0.0.0" }
+netscenario-model = { path = "crates/netscenario-model", version = "0.1.0-rc.1" }
+netscenario-core = { path = "crates/netscenario-core", version = "0.1.0-rc.1" }
+netscenario-backend-kernel = { path = "crates/netscenario-backend-kernel", version = "0.1.0-rc.1" }
+netscenario-agent = { path = "crates/netscenario-agent", version = "0.1.0-rc.1" }
+netscenario-cli = { path = "crates/netscenario-cli", version = "0.1.0-rc.1" }
 
 # Third-party dependencies are listed once here; a crate says `name.workspace = true`
 serde = { version = "1", features = ["derive"] }
