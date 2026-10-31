@@ -12,6 +12,7 @@ Example:
 """
 
 from netscenario import _native, events
+from netscenario._version import pep440
 from netscenario.errors import (
     BackendError,
     Cancelled,
@@ -37,8 +38,11 @@ from netscenario.results import (
 from netscenario.run import CancelToken, Check, DoctorReport, doctor, run
 from netscenario.scenario import Impairments, Jitter, Loss, Scenario, ScenarioBuilder
 
-__version__: str = _native.version()
-"""The version of the package, the same as that of the native library."""
+__version__: str = pep440(_native.version())
+"""The version of the package as pip knows it (``0.1.0rc1``).
+
+The library and the programs write the same version as Cargo does (``0.1.0-rc.1``).
+"""
 
 __all__ = [
     "Address",
