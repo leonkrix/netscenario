@@ -14,6 +14,7 @@ pub const RESULT_VERSION: u32 = 0;
 
 /// Everything a run found out.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RunResult {
     /// Always `netscenario-result`.
     pub format: String,
@@ -37,6 +38,7 @@ pub struct RunResult {
 
 /// Which scenario a result belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ScenarioInfo {
     /// The name in the scenario.
     pub name: String,
@@ -47,6 +49,7 @@ pub struct ScenarioInfo {
 
 /// The seed of the run (ENV-01).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SeedInfo {
     /// The seed from which the seeds of all random parts were derived, or none if the backend cannot apply one.
     pub value: Option<u64>,
@@ -67,6 +70,7 @@ pub struct SeedInfo {
 /// The packets of one direction of a link that drew a number for the random loss: counted by the queue, and
 /// sent by the workloads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct QueueCheck {
     /// The link.
     pub link: String,
@@ -79,6 +83,22 @@ pub struct QueueCheck {
 }
 
 impl QueueCheck {
+    /// A check of one direction: the packets the workloads sent into it against the packets its queue counted.
+    #[must_use]
+    pub fn new(
+        link: impl Into<String>,
+        direction: impl Into<String>,
+        expected: u64,
+        counted: u64,
+    ) -> Self {
+        Self {
+            link: link.into(),
+            direction: direction.into(),
+            expected,
+            counted,
+        }
+    }
+
     /// Whether the queue saw exactly the packets of the workloads.
     #[must_use]
     pub fn agrees(&self) -> bool {
@@ -88,6 +108,7 @@ impl QueueCheck {
 
 /// A restriction of the backend that the scenario accepted (`allow-limited`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AcceptedRestriction {
     /// The id of the feature.
     pub feature: String,
@@ -97,6 +118,7 @@ pub struct AcceptedRestriction {
 
 /// The address of a node on a link.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AddressInfo {
     /// The node.
     pub node: String,
@@ -108,6 +130,7 @@ pub struct AddressInfo {
 
 /// The times of a run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Timing {
     /// The length of the measured phase in the scenario, in nanoseconds.
     pub duration_ns: u64,
@@ -118,6 +141,7 @@ pub struct Timing {
 
 /// What the sending side did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SenderInfo {
     /// The most that a packet left later than its moment, in nanoseconds. A value that is large against the
     /// interval between packets means that the machine, not the network, shaped the stream.
@@ -130,6 +154,7 @@ pub struct SenderInfo {
 
 /// The result of one workload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct WorkloadResult {
     /// The id in the scenario.
     pub id: String,
