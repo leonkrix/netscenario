@@ -70,6 +70,7 @@ Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`,
 | `w.throughput.bits_per_second` | payload bit/s in each second, counted from the first packet sent |
 | `w.sender.max_lateness` | seconds; large against the gap between packets means the machine shaped the stream |
 | `result.seed.value`, `.drawn`, `.loss_reproducible` | the seed, and whether the loss can be repeated |
+| `result.seed.queue_checks` | for each direction with loss, the packets its queue counted against the packets the workloads sent (`.link`, `.direction`, `.expected`, `.counted`, `.agrees`) |
 | `result.provenance` | netscenario version, time, backend and its details, kernel, processor |
 | `result.raw` | the decoded `result.json`, unchanged |
 

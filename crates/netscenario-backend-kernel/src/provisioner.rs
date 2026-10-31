@@ -422,6 +422,27 @@ impl Provisioner {
         Ok(())
     }
 
+    /// How many packets entered the queue that holds the loss of a direction: the root queue of the interface
+    /// of its sender (D-036). The packets that were sent on, the ones the queue dropped and the ones it still
+    /// holds are all packets that drew a number for the loss, so together they are the packets that entered.
+    pub(crate) fn queue_packets(&self, link: u32, way: Way) -> Result<u64, String> {
+        let link = self
+            .links
+            .get(link as usize)
+            .ok_or_else(|| format!("the link {link} does not exist in this run"))?;
+        let end = match way {
+            Way::Forward => &link.ends[0],
+            Way::Reverse => &link.ends[1],
+        };
+        let pid = self.nodes[end.node].pid;
+        let shown = self.in_node(
+            pid,
+            &self.tools.tc,
+            &["-j", "-s", "qdisc", "show", "dev", end.interface.as_str()],
+        )?;
+        packets_entered(&shown)
+    }
+
     pub(crate) fn start_program(
         &mut self,
         node: u32,
@@ -590,6 +611,31 @@ impl Provisioner {
     }
 }
 
+/// The packets that entered the root queue, from the JSON of `tc -j -s qdisc show dev <interface>`: what it
+/// sent on (`packets`), dropped (`drops`) and still holds (`qlen`). A child queue (the delay and jitter stage
+/// of a direction that also has a rate) is behind the root and does not draw the loss, so it is not counted.
+fn packets_entered(json: &str) -> Result<u64, String> {
+    let qdiscs: serde_json::Value = serde_json::from_str(json)
+        .map_err(|error| format!("cannot read the statistics of the queue: {error}"))?;
+    let root = qdiscs
+        .as_array()
+        .and_then(|qdiscs| {
+            qdiscs
+                .iter()
+                .find(|qdisc| qdisc.get("root").and_then(serde_json::Value::as_bool) == Some(true))
+        })
+        .ok_or_else(|| "the interface has no root queue".to_owned())?;
+    if root.get("kind").and_then(serde_json::Value::as_str) != Some("netem") {
+        return Err("the root queue of the interface is not a netem queue".to_owned());
+    }
+    let count = |name: &str| {
+        root.get(name)
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| format!("the statistics of the queue have no '{name}'"))
+    };
+    Ok(count("packets")? + count("drops")? + count("qlen")?)
+}
+
 /// Switches IPv6 off for the interfaces that are created from now on in the network namespace of the caller.
 pub(crate) fn disable_ipv6() -> Result<(), String> {
     for file in [
@@ -609,6 +655,42 @@ pub(crate) fn disable_ipv6() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `tc -j -s qdisc show` printed for a root queue with a child behind it (a direction with a loss, a
+    /// rate and a jitter), after 3 packets had entered the root: 1 sent on, 2 dropped.
+    const ROOT_AND_CHILD: &str = r#"[{"kind":"netem","handle":"1:","root":true,"refcnt":17,"options":{"limit":1000},"bytes":90,"packets":1,"drops":2,"overlimits":0,"requeues":0,"backlog":0,"qlen":0},{"kind":"netem","handle":"2:","parent":"1:1","options":{"limit":1000},"bytes":90,"packets":1,"drops":0,"overlimits":0,"requeues":0,"backlog":0,"qlen":0}]"#;
+
+    #[test]
+    fn the_packets_that_entered_are_those_sent_on_dropped_and_held() {
+        assert_eq!(packets_entered(ROOT_AND_CHILD), Ok(3));
+        // A packet that still waits in the queue entered it too
+        let waiting = ROOT_AND_CHILD.replace(r#""qlen":0},{"kind""#, r#""qlen":4},{"kind""#);
+        assert_eq!(packets_entered(&waiting), Ok(7));
+    }
+
+    #[test]
+    fn canary_the_child_is_not_counted_and_what_is_not_a_netem_root_is_refused() {
+        // The child has 1 packet and no drops: counting it as well would give 4
+        assert_ne!(packets_entered(ROOT_AND_CHILD), Ok(4));
+        let only_child =
+            r#"[{"kind":"netem","handle":"2:","parent":"1:1","packets":1,"drops":0,"qlen":0}]"#;
+        assert!(
+            packets_entered(only_child)
+                .unwrap_err()
+                .contains("no root queue")
+        );
+        let other =
+            r#"[{"kind":"fq_codel","handle":"1:","root":true,"packets":1,"drops":0,"qlen":0}]"#;
+        assert!(packets_entered(other).unwrap_err().contains("not a netem"));
+        let without = r#"[{"kind":"netem","handle":"1:","root":true,"packets":1,"qlen":0}]"#;
+        assert!(packets_entered(without).unwrap_err().contains("'drops'"));
+        assert!(
+            packets_entered("not json")
+                .unwrap_err()
+                .contains("cannot read")
+        );
+        assert!(packets_entered("[]").unwrap_err().contains("no root queue"));
+    }
 
     #[test]
     fn a_failpoint_fires_only_at_its_point_and_count() {

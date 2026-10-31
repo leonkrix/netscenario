@@ -178,6 +178,7 @@ fn the_same_seed_gives_the_same_lost_packets() {
     );
     assert_eq!(first, again, "the same seed must lose the same packets");
     assert_ne!(first, other, "another seed must lose other packets");
+    assert_queues_saw_the_workloads(&result, 417);
 }
 
 /// The loss stays in front of the rate in a direction that is built from two qdiscs (a jitter and a rate), so
@@ -214,6 +215,143 @@ fn the_same_seed_loses_the_same_packets_through_a_jitter_and_a_rate() {
     // The jitter reached the packets that were kept: they were not all delayed by exactly 20 ms
     let delay = media.stats.delay.as_ref().unwrap();
     assert!(delay.max_ns - delay.min_ns > 2_000_000, "{delay:?}");
+    assert_queues_saw_the_workloads(&result, 417);
+}
+
+/// ENV-07: the queue of the direction with loss counted the 417 packets of the workload, none more, and the
+/// run says that the loss is reproducible. The reverse direction has no loss and is not counted.
+fn assert_queues_saw_the_workloads(result: &RunResult, packets: u64) {
+    assert!(result.seed.loss_reproducible, "{:?}", result.seed);
+    assert_eq!(
+        result.seed.queue_checks,
+        [netscenario_core::QueueCheck {
+            link: "access".to_owned(),
+            direction: "forward".to_owned(),
+            expected: packets,
+            counted: packets,
+        }]
+    );
+}
+
+/// Canary: a packet that no workload sent (here from a program of the test, in the node of the sender, into
+/// the same link) enters the queue, shifts the pattern of lost packets, and the run says so.
+#[test]
+fn a_packet_that_no_workload_sent_makes_the_run_not_reproducible() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("run-extra-packet");
+    let mut backend = Disturbed(backend(|_| {}));
+    let lossy = "      forward: { loss: { model: random, p: 20% } }\n";
+    let result = run(
+        &mut backend,
+        &scenario("seed: 42\n", lossy, MEDIA),
+        &options(&dir, false),
+    )
+    .unwrap();
+    assert!(!result.seed.loss_reproducible, "{:?}", result.seed);
+    let check = &result.seed.queue_checks[0];
+    assert_eq!(check.direction, "forward");
+    assert_eq!(
+        check.counted,
+        check.expected + 1,
+        "exactly the one extra packet: {check:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A Kernel backend that, when the sender of a workload starts, also puts one more datagram into the link
+/// from the same node: the packet that the check has to find.
+struct Disturbed(netscenario_backend_kernel::KernelBackend);
+
+impl netscenario_core::Backend for Disturbed {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+    fn capabilities(&self) -> netscenario_core::Capabilities {
+        self.0.capabilities()
+    }
+    fn create_node(
+        &mut self,
+        name: &netscenario_model::Name,
+    ) -> Result<netscenario_core::NodeHandle, Error> {
+        self.0.create_node(name)
+    }
+    fn create_link(
+        &mut self,
+        name: &netscenario_model::Name,
+        between: [netscenario_core::NodeHandle; 2],
+    ) -> Result<netscenario_core::LinkHandle, Error> {
+        self.0.create_link(name, between)
+    }
+    fn apply(
+        &mut self,
+        link: netscenario_core::LinkHandle,
+        direction: netscenario_core::Direction,
+        impairments: &netscenario_model::Impairments,
+        seed: Option<u64>,
+    ) -> Result<(), Error> {
+        self.0.apply(link, direction, impairments, seed)
+    }
+    fn start_program(
+        &mut self,
+        node: netscenario_core::NodeHandle,
+        program: &netscenario_core::Program,
+    ) -> Result<netscenario_core::ProgramHandle, Error> {
+        if program.argv.get(1).map(String::as_str) == Some("send") {
+            // One datagram of the agent's own kind to a port nobody listens on: the receiver counts it as
+            // foreign, the queue counts it as a packet
+            let mut extra = program.clone();
+            let to = extra.argv[extra.argv.iter().position(|a| a == "--to").unwrap() + 1]
+                .replace(":5000", ":5999");
+            for (name, value) in [
+                ("--flow", "99"),
+                ("--to", to.as_str()),
+                ("--rate", "1000"),
+                ("--size", "125"),
+                ("--duration-ns", "1000000000"),
+            ] {
+                let at = extra.argv.iter().position(|a| a == name).unwrap();
+                value.clone_into(&mut extra.argv[at + 1]);
+            }
+            self.0.start_program(node, &extra)?;
+        }
+        self.0.start_program(node, program)
+    }
+    fn address(
+        &self,
+        link: netscenario_core::LinkHandle,
+        end: usize,
+    ) -> Result<std::net::Ipv4Addr, Error> {
+        self.0.address(link, end)
+    }
+    fn describe(&self) -> netscenario_core::BackendInfo {
+        self.0.describe()
+    }
+    fn queue_packets(
+        &mut self,
+        link: netscenario_core::LinkHandle,
+        direction: netscenario_core::Direction,
+    ) -> Result<Option<u64>, Error> {
+        self.0.queue_packets(link, direction)
+    }
+    fn poll_program(
+        &mut self,
+        program: netscenario_core::ProgramHandle,
+        wait: Duration,
+    ) -> Result<netscenario_core::ProgramState, Error> {
+        self.0.poll_program(program, wait)
+    }
+    fn send_line(
+        &mut self,
+        program: netscenario_core::ProgramHandle,
+        line: &str,
+    ) -> Result<(), Error> {
+        self.0.send_line(program, line)
+    }
+    fn teardown(&mut self) -> Result<(), Error> {
+        self.0.teardown()
+    }
 }
 
 #[test]

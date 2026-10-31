@@ -39,6 +39,11 @@ pub(crate) enum Request {
         impairments: Impairments,
         seed: Option<u64>,
     },
+    /// How many packets entered the queue of one direction, which draws its random loss.
+    QueuePackets {
+        link: u32,
+        direction: Way,
+    },
     StartProgram {
         node: u32,
         argv: Vec<String>,
@@ -67,6 +72,8 @@ pub(crate) enum Response {
     Ok { id: Option<u32> },
     /// Refused or failed. The text says what and why.
     Error { message: String },
+    /// The answer to `QueuePackets`.
+    Count { packets: u64 },
     /// What a program has done since the last poll.
     Program {
         lines: Vec<String>,

@@ -63,10 +63,25 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
         }
     }
     if !result.seed.loss_reproducible {
-        let _ = writeln!(
-            text,
-            "  warning: the loss of this run is not reproducible: the backend cannot apply a seed (iproute2 6.6.0 or newer can)"
-        );
+        let differing: Vec<_> = result
+            .seed
+            .queue_checks
+            .iter()
+            .filter(|check| !check.agrees())
+            .collect();
+        if differing.is_empty() {
+            let _ = writeln!(
+                text,
+                "  warning: the loss of this run is not reproducible: the backend cannot apply a seed (iproute2 6.6.0 or newer can)"
+            );
+        }
+        for check in differing {
+            let _ = writeln!(
+                text,
+                "  warning: the loss of this run is not reproducible: the queue of link '{}' ({}) counted {} packets and the workloads sent {}, so something else entered it and the lost packets are not those of the seed",
+                check.link, check.direction, check.counted, check.expected
+            );
+        }
     }
     for workload in &result.workloads {
         workload_text(&mut text, workload);
@@ -204,6 +219,29 @@ workload media  client -> server  2 mbit/s, 1200 byte packets
 result: out/result.json
 "
         );
+    }
+
+    /// Canary: a queue that counted other packets than the workloads sent is named, with the numbers.
+    #[test]
+    fn a_queue_that_counted_a_packet_too_many_is_named() {
+        let mut result = result();
+        result.seed.loss_reproducible = false;
+        result.seed.queue_checks = vec![netscenario_core::QueueCheck {
+            link: "access".to_owned(),
+            direction: "forward".to_owned(),
+            expected: 417,
+            counted: 418,
+        }];
+        let text = summary(&result, Path::new("out"));
+        assert!(
+            text.contains("the queue of link 'access' (forward) counted 418 packets and the workloads sent 417"),
+            "{text}"
+        );
+        assert!(!text.contains("cannot apply a seed"), "{text}");
+        // Queues that agree say nothing
+        result.seed.loss_reproducible = true;
+        result.seed.queue_checks[0].counted = 417;
+        assert!(!summary(&result, Path::new("out")).contains("warning"));
     }
 
     /// Canary: the things that must not be hidden are shown.

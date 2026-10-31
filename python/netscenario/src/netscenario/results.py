@@ -135,6 +135,28 @@ class Workload:
 
 
 @dataclass(frozen=True)
+class QueueCheck:
+    """The packets of one direction of a link that drew a number for the random loss.
+
+    Counted by the queue, and sent by the workloads.
+    """
+
+    link: str
+    """The link."""
+    direction: str
+    """``"forward"`` (from the first node of ``between`` to the second) or ``"reverse"``."""
+    expected: int
+    """The packets the workloads sent into the direction (those the kernel took)."""
+    counted: int
+    """The packets that entered the queue of the direction."""
+
+    @property
+    def agrees(self) -> bool:
+        """Whether the queue saw exactly the packets of the workloads."""
+        return self.expected == self.counted
+
+
+@dataclass(frozen=True)
 class SeedInfo:
     """The seed of the run."""
 
@@ -145,7 +167,15 @@ class SeedInfo:
     """Whether the run drew the seed because the scenario has none. Pass ``value`` as ``seed`` to
     repeat it."""
     loss_reproducible: bool
-    """Whether the same seed gives the same lost packets in this run."""
+    """Whether the same seed gives the same lost packets in this run.
+
+    ``False`` if the backend cannot apply a seed, or if a queue counted packets that the workloads
+    did not send.
+    """
+    queue_checks: tuple[QueueCheck, ...] = ()
+    """For each direction with random loss, the packets its queue counted against the packets the
+    workloads sent. The pattern of lost packets depends on this number as well as on the seed. Empty
+    if the backend cannot count, or the run has no seed."""
 
 
 @dataclass(frozen=True)
@@ -261,7 +291,15 @@ class Result:
                 cpu_model=provenance["cpu_model"],
                 cpus=provenance["cpus"],
             ),
-            seed=SeedInfo(seed["value"], seed["drawn"], seed["loss_reproducible"]),
+            seed=SeedInfo(
+                seed["value"],
+                seed["drawn"],
+                seed["loss_reproducible"],
+                tuple(
+                    QueueCheck(c["link"], c["direction"], c["expected"], c["counted"])
+                    for c in seed.get("queue_checks", ())
+                ),
+            ),
             accepted_restrictions=tuple(
                 Restriction(r["feature"], r["restriction"]) for r in raw["accepted_restrictions"]
             ),

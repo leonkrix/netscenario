@@ -180,6 +180,23 @@ pub trait Backend {
         program: &Program,
     ) -> Result<ProgramHandle, Error>;
 
+    /// How many packets entered the queue that draws the random loss of one direction of a link, since the
+    /// impairments were applied (ENV-07). The pattern of the lost packets depends on this number as well as on
+    /// the seed, so a packet that was not sent by the workloads shifts it, and a run compares the number with
+    /// the packets it sent. `None` if the backend cannot count them, which is the default; then no comparison
+    /// is made.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist or the queue cannot be read.
+    fn queue_packets(
+        &mut self,
+        _link: LinkHandle,
+        _direction: Direction,
+    ) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
+
     /// The address of one end of a link, as the programs in the nodes use it. `end` is 0 for the first node of
     /// `between` and 1 for the second. The addresses are the backend's to assign (TOP-08) and are recorded in
     /// the result.

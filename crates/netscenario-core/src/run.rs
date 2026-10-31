@@ -17,7 +17,7 @@ use netscenario_agent::events::{Event, ReceiveSummary, SendSummary};
 use netscenario_agent::records;
 use netscenario_model::{Impairments, Scenario, Workload};
 
-use crate::backend::{Backend, NodeHandle, Program, ProgramHandle};
+use crate::backend::{Backend, Direction, NodeHandle, Program, ProgramHandle};
 use crate::error::Error;
 use crate::export::write_packets;
 use crate::hash::sha256_hex;
@@ -25,8 +25,8 @@ use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
 use crate::provision::{Provisioned, impairments_of, provision};
 use crate::result::{
-    AcceptedRestriction, AddressInfo, RESULT_FORMAT, RESULT_VERSION, RunResult, ScenarioInfo,
-    SeedInfo, SenderInfo, Timing, WorkloadResult,
+    AcceptedRestriction, AddressInfo, QueueCheck, RESULT_FORMAT, RESULT_VERSION, RunResult,
+    ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
 };
 use crate::stats::analyse;
 
@@ -251,7 +251,7 @@ pub fn run(
     let measured = measure(backend, scenario, options, &provisioned, &control);
     control.emit(&RunEvent::TearingDown);
     let torn_down = backend.teardown();
-    let (measured, settle) = measured?;
+    let (measured, settle, queue_checks) = measured?;
     torn_down?;
 
     let mut workloads = Vec::new();
@@ -279,7 +279,11 @@ pub fn run(
         seed: SeedInfo {
             value: provisioned.seed,
             drawn: provisioned.seed_drawn,
-            loss_reproducible: provisioned.loss_reproducible,
+            // The queues have counted the packets that drew a number for the loss; if one saw more or fewer than
+            // the workloads sent, the pattern of lost packets is not the one of this seed (ENV-07)
+            loss_reproducible: provisioned.loss_reproducible
+                && queue_checks.iter().all(QueueCheck::agrees),
+            queue_checks,
         },
         accepted_restrictions: provisioned
             .accepted
@@ -608,7 +612,7 @@ fn measure(
     options: &RunOptions,
     provisioned: &Provisioned,
     control: &Control<'_>,
-) -> Result<(Vec<Measured>, Duration), Error> {
+) -> Result<(Vec<Measured>, Duration, Vec<QueueCheck>), Error> {
     control.checkpoint()?;
     if !options.agent.is_file() {
         return Err(failure(
@@ -666,6 +670,8 @@ fn measure(
         }
         std::thread::sleep(left.min(Duration::from_millis(100)));
     }
+    // After the wait, every packet has passed its queue; the receivers still run and the network still stands
+    let queue_checks = check_queues(backend, scenario, provisioned, &flows, &sent)?;
     control.emit(&RunEvent::Collecting);
     let mut measured = Vec::new();
     for ((receiver, flow), sent) in receivers.iter().zip(&flows).zip(sent) {
@@ -706,7 +712,60 @@ fn measure(
             records,
         });
     }
-    Ok((measured, settle))
+    Ok((measured, settle, queue_checks))
+}
+
+/// Asks the backend how many packets entered the queue of each direction with random loss, and sets it
+/// against the packets that the senders put into the direction (ENV-07). A sender that the kernel refused a
+/// packet for did not put that packet in. Nothing is checked without a seed (the loss is not repeatable
+/// anyway) or when the backend cannot count.
+fn check_queues(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+    flows: &[Flow<'_>],
+    sent: &[SendSummary],
+) -> Result<Vec<QueueCheck>, Error> {
+    let mut checks = Vec::new();
+    if provisioned.seed.is_none() {
+        return Ok(checks);
+    }
+    for (link, (name, handle)) in scenario.topology.links.iter().zip(&provisioned.links) {
+        for (direction, from, to, word) in [
+            (
+                Direction::Forward,
+                &link.between[0],
+                &link.between[1],
+                "forward",
+            ),
+            (
+                Direction::Reverse,
+                &link.between[1],
+                &link.between[0],
+                "reverse",
+            ),
+        ] {
+            if impairments_of(link, direction).is_none_or(|impairments| impairments.loss.is_none())
+            {
+                continue;
+            }
+            let expected = flows
+                .iter()
+                .zip(sent)
+                .filter(|(flow, _)| flow.workload.from == *from && flow.workload.to == *to)
+                .map(|(_, summary)| summary.packets.saturating_sub(summary.errors))
+                .sum();
+            if let Some(counted) = backend.queue_packets(*handle, direction)? {
+                checks.push(QueueCheck {
+                    link: name.to_string(),
+                    direction: word.to_owned(),
+                    expected,
+                    counted,
+                });
+            }
+        }
+    }
+    Ok(checks)
 }
 
 /// The path of the agent that belongs to the program at `exe`: the file `netscenario-agent` next to it.
@@ -734,6 +793,8 @@ mod tests {
         programs: Vec<Played>,
         /// A failure to play: `recv-exits-early` or `send-fails`.
         trouble: Option<&'static str>,
+        /// What the queues of the forward and the reverse direction say they counted, if they can count.
+        counts: Option<[u64; 2]>,
     }
 
     struct Played {
@@ -749,6 +810,14 @@ mod tests {
                 calls: Vec::new(),
                 programs: Vec::new(),
                 trouble,
+                counts: None,
+            }
+        }
+
+        fn counting(counts: [u64; 2]) -> Self {
+            Self {
+                counts: Some(counts),
+                ..Self::new(None)
             }
         }
     }
@@ -794,6 +863,18 @@ mod tests {
         ) -> Result<(), Error> {
             self.calls.push("apply".to_owned());
             Ok(())
+        }
+
+        fn queue_packets(
+            &mut self,
+            _: LinkHandle,
+            direction: Direction,
+        ) -> Result<Option<u64>, Error> {
+            self.calls.push(format!("count {direction:?}"));
+            Ok(self.counts.map(|counts| match direction {
+                Direction::Forward => counts[0],
+                Direction::Reverse => counts[1],
+            }))
         }
 
         fn address(&self, link: LinkHandle, end: usize) -> Result<Ipv4Addr, Error> {
@@ -945,6 +1026,8 @@ mod tests {
                 "apply",
                 "start recv 0",
                 "start send 0",
+                "count Forward",
+                "count Reverse",
                 "line stop",
                 "teardown"
             ]
@@ -972,6 +1055,89 @@ mod tests {
         // The file on disk is the result that was returned
         let written = std::fs::read_to_string(options.out_dir.join("result.json")).unwrap();
         assert_eq!(RunResult::from_json(&written).unwrap(), result);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    #[test]
+    fn a_queue_that_saw_the_packets_of_the_workloads_and_nothing_else_keeps_the_run_reproducible() {
+        // The fake sender sent 10 packets from a to b: the forward queue saw those, the reverse queue none
+        let mut backend = Fake::counting([10, 0]);
+        let options = options("queues-agree");
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        assert!(result.seed.loss_reproducible, "{:?}", result.seed);
+        assert_eq!(
+            result.seed.queue_checks,
+            [
+                QueueCheck {
+                    link: "l".to_owned(),
+                    direction: "forward".to_owned(),
+                    expected: 10,
+                    counted: 10
+                },
+                QueueCheck {
+                    link: "l".to_owned(),
+                    direction: "reverse".to_owned(),
+                    expected: 0,
+                    counted: 0
+                }
+            ]
+        );
+        // The counting happens after the senders are done and before the receivers are stopped
+        let calls = backend.calls.join(",");
+        assert!(
+            calls.contains("start send 0,count Forward,count Reverse,line stop"),
+            "{calls}"
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Canary: a queue that counts a packet more, or fewer, or one in the direction where nothing was sent,
+    /// makes the run not reproducible and says which queue.
+    #[test]
+    fn canary_a_packet_that_the_workloads_did_not_send_makes_the_run_not_reproducible() {
+        for (counts, wrong) in [
+            ([11, 0], "forward"),
+            ([9, 0], "forward"),
+            ([10, 1], "reverse"),
+        ] {
+            let mut backend = Fake::counting(counts);
+            let options = options("queues-differ");
+            let result = run(&mut backend, &scenario(), &options).unwrap();
+            assert!(!result.seed.loss_reproducible, "{counts:?}");
+            let differing: Vec<&str> = result
+                .seed
+                .queue_checks
+                .iter()
+                .filter(|check| !check.agrees())
+                .map(|check| check.direction.as_str())
+                .collect();
+            assert_eq!(differing, [wrong], "{counts:?}");
+            let _ = std::fs::remove_dir_all(&options.out_dir);
+        }
+    }
+
+    #[test]
+    fn a_backend_that_cannot_count_leaves_the_result_as_it_was() {
+        let mut backend = Fake::new(None);
+        let options = options("queues-unknown");
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        assert!(result.seed.loss_reproducible && result.seed.queue_checks.is_empty());
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    #[test]
+    fn a_direction_without_loss_is_not_counted() {
+        let without_loss = Scenario::from_yaml(
+            "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { delay: 20ms, loss: { model: random, p: 20% } }\n      reverse: { delay: 20ms }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n",
+            "t.yaml",
+        )
+        .unwrap();
+        let mut backend = Fake::counting([10, 99]);
+        let options = options("queues-no-loss");
+        let result = run(&mut backend, &without_loss, &options).unwrap();
+        assert_eq!(result.seed.queue_checks.len(), 1);
+        assert_eq!(result.seed.queue_checks[0].direction, "forward");
+        assert!(result.seed.loss_reproducible);
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 
