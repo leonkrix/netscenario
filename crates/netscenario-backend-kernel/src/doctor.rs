@@ -164,8 +164,11 @@ step() {
   if out=$("$@" 2>&1); then echo "ok $name"; else echo "fail $name $(printf %s "$out" | tr '\n' ' ')"; fi
 }
 step veth "$1" link add np0 type veth peer name np1
+# netem keeps corrupt, reorder, rate and slot across a change, so every step starts from a bare interface (D-048)
 step netem "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us loss random 1% rate 1mbit
+"$2" qdisc del dev np0 root >/dev/null 2>&1
 step tables "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us 500us distribution normal
+"$2" qdisc del dev np0 root >/dev/null 2>&1
 step seed "$2" qdisc replace dev np0 root netem limit 1000 loss random 1% seed 1
 "#;
 
