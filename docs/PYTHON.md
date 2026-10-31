@@ -4,9 +4,13 @@
 
 ## Installing
 
-There is no release on PyPI yet (the release machinery is REL-01). What exists:
+```bash
+pip install netscenario
+```
 
-- **A wheel** of the package for Linux on x86_64 and aarch64, built by every run of the CI in the manylinux_2_28 containers of the PyPA (the artifacts `wheel-x86_64` and `wheel-aarch64`) and installed into a clean environment on other images as a test. One wheel serves every Python from 3.11 on (the stable ABI). It carries the extension module, the supervisor `netscenario`, the agent `netscenario-agent` and the command line; `pip install` of it gives you `import netscenario` and a command `netscenario` on the `PATH` (the same program as `docs/CLI.md` describes). The plugin, `pytest-netscenario`, is a second, pure Python wheel.
+There are two ways to get the package:
+
+- **A wheel** from PyPI, for Linux on x86_64 and aarch64, built in the manylinux_2_28 containers of the PyPA and installed into a clean environment on other images as a test by every run of the CI. One wheel serves every Python from 3.11 on (the stable ABI). It carries the extension module, the supervisor `netscenario`, the agent `netscenario-agent` and the command line; `pip install` of it gives you `import netscenario` and a command `netscenario` on the `PATH` (the same program as `docs/CLI.md` describes). The plugin, `pytest-netscenario`, is a second, pure Python wheel.
 - **A checkout**, for development:
 
 ```bash

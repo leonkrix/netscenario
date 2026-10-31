@@ -213,7 +213,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PYT-05 | Per-packet data as pandas and polars frames | S | 0.3 | planned |
 | PYT-06 | Notebook helpers for plots | C | 0.8 | idea |
 | PYT-07 | Safe with `pytest-xdist` (parallel runs) | M | 0.5 | planned |
-| PYT-08 | Wheels for manylinux on x86_64 and aarch64 | M | 0.1 | done (built and installed into clean environments by every CI run; publishing is REL-01) |
+| PYT-08 | Wheels for manylinux on x86_64 and aarch64 | M | 0.1 | done (built and installed into clean environments by every CI run, and published to PyPI: REL-01) |
 
 ## Rust API (RST)
 
@@ -272,12 +272,12 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Releases and maintenance (REL)
 
-| ID     | Feature                                                                    | Prio | Release | Status         |
-| ------ | -------------------------------------------------------------------------- | ---- | ------- | -------------- |
-| REL-01 | Release by tag to crates.io and PyPI with provenance and a staged approval | M    | 0.1     | built, untried |
-| REL-02 | Automatic changelog from the history                                       | M    | 0.1     | done           |
-| REL-03 | Compatibility policy for the scenario format, the result format, the APIs  | M    | 0.1     | done           |
-| REL-04 | Review list for 1.0                                                        | M    | 0.9     | planned        |
+| ID | Feature | Prio | Release | Status |
+| --- | --- | --- | --- | --- |
+| REL-01 | Release by tag to crates.io and PyPI with provenance and a staged approval | M | 0.1 | done (`release.yml`: the checks, the builds, trusted publishing to crates.io and PyPI with attestations after the approval of a maintainer; `0.1.0-rc.1` and `0.1.0-rc.2` went through it, [RELEASING.md](docs/RELEASING.md), D-034) |
+| REL-02 | Automatic changelog from the history | M | 0.1 | done |
+| REL-03 | Compatibility policy for the scenario format, the result format, the APIs | M | 0.1 | done |
+| REL-04 | Review list for 1.0 | M | 0.9 | planned |
 
 ## Integration with other projects (INT)
 

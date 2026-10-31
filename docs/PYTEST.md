@@ -1,6 +1,6 @@
 # The pytest plugin
 
-`pytest-netscenario` makes a network scenario a normal test. It depends on the `netscenario` package ([PYTHON.md](PYTHON.md)) and is found by pytest through its entry point, so installing it is all that is needed. There is no release on PyPI yet; in a checkout `uv sync` installs both.
+`pytest-netscenario` makes a network scenario a normal test. It depends on the `netscenario` package ([PYTHON.md](PYTHON.md)) and is found by pytest through its entry point, so installing it is all that is needed: `pip install pytest-netscenario` installs both, in exactly the same version. In a checkout, `uv sync` installs both.
 
 ```python
 # test_media.py

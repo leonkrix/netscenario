@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytest-netscenario"
-version = "0.1.0rc2"
+version = "0.1.0"
 description = "pytest plugin for netscenario: fixtures and markers to run network scenarios in tests"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
 license-files = ["LICENSE-*"]
 readme = "README.md"
 # Released together with the package, so the exact version (python/release/version.py keeps it)
-dependencies = ["netscenario==0.1.0rc2", "pytest>=8"]
+dependencies = ["netscenario==0.1.0", "pytest>=8"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Framework :: Pytest",

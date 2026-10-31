@@ -87,14 +87,17 @@ Trusted publishing exists only for a crate that has been published once, by hand
 
 Rehearse (above), and release a candidate (`0.1.0-rc.1`, `-rc.2`, ...) and then `0.1.0`.
 
-## The first release: texts that say "not published yet"
+## After a release: look at it as a stranger would
 
-The README of the repository is the README of the five crates on crates.io (the page of each crate shows it as it is in the release), so what it says on the day of the tag is what the page of `0.1.0` says for good. Therefore, **in the release pull request of `0.1.0`** (the one with `just release-prepare`), not after it:
+The README of the repository is the README of the five crates on crates.io, and the READMEs of the two Python packages are what PyPI shows; they are part of the release and cannot be corrected afterwards without a new one. So before the tag, read them as the page of the release. After both registries have it:
 
-- `README.md`: remove the box "Release 0.1.0 is not published yet" and the words that go with it ("what will work after the release"), and the line "From source" can stay.
-- `docs/PYTHON.md` ("Installing") and `docs/PYTEST.md` (the sentence "There is no release on PyPI yet"): replace by the `pip install` line.
+```bash
+python3 -m venv /tmp/stranger && /tmp/stranger/bin/pip install netscenario pytest-netscenario
+/tmp/stranger/bin/netscenario doctor
+cargo install --root /tmp/stranger-cargo netscenario-cli netscenario-agent
+```
 
-(A release candidate keeps the box: its page says that it is one.) After both registries have the release, in a small pull request: the badges for PyPI (`https://img.shields.io/pypi/v/netscenario`), crates.io (`https://img.shields.io/crates/v/netscenario-cli`) and the latest release in `README.md`, because a badge of a package that does not exist shows an error. Then check the installation as a stranger would: a clean virtual environment, `pip install netscenario pytest-netscenario`, `netscenario doctor`, a run; and `cargo install netscenario-cli netscenario-agent` into an empty `--root`.
+and a run of one of the [examples](../examples/README.md) with what was installed. Check the deployments on the main page of the repository (they link to the published versions) and, for a version without a hyphen, that the release is marked *Latest*: the sidebar of the repository shows only such a release.
 
 ## What is not in a release yet
 
