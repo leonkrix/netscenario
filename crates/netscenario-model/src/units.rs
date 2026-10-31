@@ -13,6 +13,7 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::decimal::{self, NotWhole, SplitError};
+use crate::suggest::closest;
 
 /// Why a text is not a value of the format. The messages say what was found, what is expected, and give an
 /// example.
@@ -52,7 +53,7 @@ pub enum ValueError {
         units: &'static str,
     },
     /// The unit does not exist.
-    #[error("unknown unit '{unit}' in '{text}' (use {units})")]
+    #[error("unknown unit '{unit}' in '{text}' ({}use {units})", unit_hint(.unit, .units))]
     UnknownUnit {
         /// The text that was read.
         text: String,
@@ -103,6 +104,69 @@ pub enum ValueError {
         /// What is wrong with it.
         reason: String,
     },
+}
+
+/// Names that people write for a unit of the format, and the unit they mean. A hint is given only if the
+/// unit is one of those that the kind of value accepts, so `min` is not offered for a rate.
+const ALIASES: &[(&str, &str)] = &[
+    ("nsec", "ns"),
+    ("nanosecond", "ns"),
+    ("nanoseconds", "ns"),
+    ("usec", "us"),
+    ("\u{b5}s", "us"),
+    ("\u{3bc}s", "us"),
+    ("microsecond", "us"),
+    ("microseconds", "us"),
+    ("msec", "ms"),
+    ("millisecond", "ms"),
+    ("milliseconds", "ms"),
+    ("sec", "s"),
+    ("secs", "s"),
+    ("second", "s"),
+    ("seconds", "s"),
+    ("min", "m"),
+    ("mins", "m"),
+    ("minute", "m"),
+    ("minutes", "m"),
+    ("hr", "h"),
+    ("hrs", "h"),
+    ("hour", "h"),
+    ("hours", "h"),
+    ("bps", "bit"),
+    ("kbps", "kbit"),
+    ("mbps", "mbit"),
+    ("gbps", "gbit"),
+    ("tbps", "tbit"),
+    ("byte", "b"),
+    ("bytes", "b"),
+];
+
+/// The units named in a list such as "ns, us, ms, s, m or h".
+fn listed_units(list: &str) -> Vec<&str> {
+    list.split([',', ' '])
+        .filter(|word| !word.is_empty() && *word != "or")
+        .collect()
+}
+
+/// `did you mean 'x'? ` for a unit that was written in a way that can be told from the list, or nothing: a
+/// wrong hint is worse than none. The cases, in this order: the same unit in other case (the unit is lower
+/// case in the format), a name that people use for it (`min`, `mbps`), a unit one edit away.
+fn unit_hint(written: &str, list: &str) -> String {
+    let known = listed_units(list);
+    let lower = written.to_lowercase();
+    let found = known
+        .iter()
+        .copied()
+        .find(|unit| *unit == lower)
+        .or_else(|| {
+            ALIASES
+                .iter()
+                .find(|(alias, _)| *alias == lower)
+                .map(|(_, unit)| *unit)
+                .filter(|unit| known.contains(unit))
+        })
+        .or_else(|| closest(&lower, &known));
+    found.map_or_else(String::new, |unit| format!("did you mean '{unit}'? "))
 }
 
 /// The table of a kind of value: the units with their factor to the smallest unit.
@@ -628,11 +692,11 @@ mod tests {
         );
         assert_eq!(
             duration("40min").unwrap_err().to_string(),
-            "unknown unit 'min' in '40min' (use ns, us, ms, s, m or h)"
+            "unknown unit 'min' in '40min' (did you mean 'm'? use ns, us, ms, s, m or h)"
         );
         assert_eq!(
             duration("40MS").unwrap_err().to_string(),
-            "unknown unit 'MS' in '40MS' (use ns, us, ms, s, m or h)"
+            "unknown unit 'MS' in '40MS' (did you mean 'ms'? use ns, us, ms, s, m or h)"
         );
         assert!(
             duration("40 ms")
@@ -647,6 +711,41 @@ mod tests {
                 .contains("not a duration")
         );
         assert!(duration("1e3ms").is_err());
+    }
+
+    #[test]
+    fn a_unit_that_is_nearly_right_gets_a_hint_and_one_that_is_not_gets_none() {
+        let hint = |text: &str| match text.parse::<Rate>() {
+            Err(ValueError::UnknownUnit { unit, units, .. }) => unit_hint(&unit, units),
+            other => panic!("{text}: {other:?}"),
+        };
+        // other case, a name that people use, one edit away
+        assert_eq!(hint("1Mbit"), "did you mean 'mbit'? ");
+        assert_eq!(hint("1mbps"), "did you mean 'mbit'? ");
+        assert_eq!(hint("1kbt"), "did you mean 'kbit'? ");
+        // too far, or a name for a unit that this kind of value does not have
+        assert_eq!(hint("1parsec"), "");
+        assert_eq!(hint("1min"), "");
+        assert_eq!(hint("1bytes"), "");
+        // and for a size, the name for bytes is a hint
+        assert_eq!(
+            "10bytes".parse::<Size>().unwrap_err().to_string(),
+            "unknown unit 'bytes' in '10bytes' (did you mean 'b'? use b, kb, mb, gb, kib, mib or gib)"
+        );
+    }
+
+    /// Canary: the hint is not given for everything, so the checks above can fail.
+    #[test]
+    fn a_hint_is_never_a_unit_the_kind_does_not_have() {
+        for (alias, unit) in ALIASES {
+            let list = "bit, kbit, mbit, gbit or tbit";
+            let hint = unit_hint(alias, list);
+            assert!(
+                hint.is_empty() || listed_units(list).contains(unit),
+                "{alias} -> {hint}"
+            );
+        }
+        assert_eq!(unit_hint("min", "bit, kbit, mbit, gbit or tbit"), "");
     }
 
     #[test]

@@ -184,6 +184,21 @@ error: '40' has no unit (use ns, us, ms, s, m or h)
 10 |         delay: 40
    |                ^^
 
+error: unknown field `dealy`, expected one of delay, jitter, loss, rate
+  --> access.yaml:10:9
+   |
+ 9 |       forward:
+10 |         dealy: 40ms
+   |         ^^^^^
+   = help: did you mean 'delay'?
+
+error: unknown unit 'min' in '40min' (did you mean 'm'? use ns, us, ms, s, m or h)
+  --> access.yaml:10:16
+   |
+ 9 |       forward:
+10 |         delay: 40min
+   |                ^^^^^
+
 error: the node 'sever' does not exist
  --> access.yaml:8:25
   |
@@ -271,4 +286,4 @@ expect:
 ## Open
 
 1. **Round-trip time (PRB-12).** Decided: `udp-cbr` stays one-way, and the round trip is measured by the request/response workload of release 0.3 (WRK-05), which a receiver answers. The ledger says so; the format of release 0.1 does not change.
-2. **Typo hints beyond node names** (SCN-10, release 0.2). Release 0.1 suggests a node name when the one written is within one edit per three characters of a known name and no other name is as close (`sever` gives `server`, `srv` gives only the list). Still open: the same for unknown keys (today the message lists the allowed keys), for units (`40 ms`, `40Ms`) and for the values of enumerations. This needs either the message of the YAML library taken apart or the key tables of `required.rs` and `reserved.rs` extended with the allowed keys, and a decision on the distance limit per kind of name.
+2. **Typo hints are a guess.** (SCN-10, release 0.2.) A hint is given for a node, a key, a value of an enumeration (`kernal`) and a unit when exactly one known name is close: one edit for names up to five characters, a third of the length for longer ones, and a swap of two neighbours (`dealy`) counts as one edit. Keys: `Delay`, `dealy`; a required key that is missing while a near name is present (`packet_size`) says so. Units: the same unit in another case (`Mbit`), a name people use (`min`, `mbps`, `bytes`) if the kind of value has the unit, or one edit. When two names are equally close there is no hint. An edit distance cannot tell a slip from another word: a key `speed` would be taken for `seed` (the file `unknown-key.yaml` uses a key that is far from all). The hint is written as a question for that reason.

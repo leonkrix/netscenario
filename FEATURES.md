@@ -38,7 +38,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | SCN-07 | Matrices and sweeps (grids, random sampling) | S | 0.5 | planned |
 | SCN-08 | Migration between schema versions (`netscenario migrate`) | S | 0.7 | planned |
 | SCN-09 | Convert to and from `tc netem` command lines | C | 0.7 | idea |
-| SCN-10 | Hints for misspelled names and keys ("did you mean 'server'?"); node names have them since 0.1, keys, units and values follow | S | 0.2 | in progress |
+| SCN-10 | Hints for misspelled names and keys ("did you mean 'server'?"); node names have them since 0.1, keys, units and values follow | S | 0.2 | done |
 
 ## Topology (TOP)
 

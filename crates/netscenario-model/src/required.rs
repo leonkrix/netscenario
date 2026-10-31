@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::error::Problem;
 use crate::source::{self, Kind, SourceIndex};
+use crate::suggest::closest;
 
 /// The generic path of a mapping, the name of its type in the JSON Schema, and the keys that are required.
 /// A test compares this table with the required keys of the schema, so it cannot drift from the types.
@@ -52,9 +53,27 @@ pub(crate) fn check(index: &SourceIndex) -> Vec<Problem> {
         let present = keys.get(path.as_str());
         for key in *required {
             if !present.is_some_and(|present| present.contains(key)) {
+                // A key of the mapping that is not required and is close to the missing one is probably it
+                let written = present.and_then(|present| {
+                    let mut others: Vec<&str> = present
+                        .iter()
+                        .copied()
+                        .filter(|name| !required.contains(name))
+                        .collect();
+                    others.sort_unstable();
+                    others
+                        .into_iter()
+                        .find(|name| closest(name, &[key]).is_some())
+                });
+                let help = match written {
+                    Some(written) => format!(
+                        "did you mean `{key}` instead of `{written}`? add `{key}:` to this mapping"
+                    ),
+                    None => format!("add `{key}:` to this mapping"),
+                };
                 let mut problem = Problem::new(format!("the key `{key}` is missing"))
                     .at_location(entry.value.0, entry.value.1)
-                    .with_help(format!("add `{key}:` to this mapping"));
+                    .with_help(help);
                 if !path.is_empty() {
                     problem = problem.at_path(path.clone());
                 }

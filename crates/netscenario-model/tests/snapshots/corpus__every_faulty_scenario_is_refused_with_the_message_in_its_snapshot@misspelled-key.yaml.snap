@@ -9,3 +9,4 @@ error: unknown field `dealy`, expected one of delay, jitter, loss, rate
  9 |       forward:
 10 |         dealy: 40ms
    |         ^^^^^
+   = help: did you mean 'delay'?
