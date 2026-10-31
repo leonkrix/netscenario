@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../docs/schema/scenario-v0.json
 # A video call over a good Wi-Fi link: a stream of 1200 byte packets at 1.5 mbit/s for five seconds.
 version: 0
 name: video-call

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
 # A radio hop with bursts of loss, and a little reordering, duplication and corruption, the other way round
 # a clean link with a small loss. The parameters are those of `netem` (docs/SCENARIO-FORMAT.md).
 # The Kernel backend applies the keys of this file from release 0.2; before that `netscenario run` refuses

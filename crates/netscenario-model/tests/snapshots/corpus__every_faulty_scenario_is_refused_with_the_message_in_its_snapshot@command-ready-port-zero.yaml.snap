@@ -1,0 +1,12 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/command-ready-port-zero.yaml
+---
+error: port 0 is not a port that a program listens on
+  --> command-ready-port-zero.yaml:20:24
+   |
+19 |     run: ["./server"]
+20 |     ready: { tcp-port: 0, within: 5s }
+   |                        ^
+   = path: workloads[1].ready.tcp-port

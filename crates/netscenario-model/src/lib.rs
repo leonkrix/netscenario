@@ -26,6 +26,7 @@
 //! ```
 
 mod builder;
+mod command;
 mod decimal;
 pub mod error;
 mod read;
@@ -39,11 +40,13 @@ pub mod units;
 mod validate;
 
 pub use builder::ScenarioBuilder;
+pub use command::{MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ENV_ENTRIES, RESERVED_ENV_PREFIX};
 pub use error::{Error, Location, Problem};
 pub use read::MAX_FILE_BYTES;
 pub use scenario::{
-    Backend, Change, Direction, Edit, Event, FormatVersion, Impairments, ImpairmentsChange, Jitter,
-    JitterDistribution, Link, Loss, Reorder, Scenario, Topology, True, Workload, WorkloadKind,
+    Backend, Change, Command, Direction, Edit, Event, FormatVersion, Impairments,
+    ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, Ready, Reorder, Scenario, Shutdown,
+    Signal, Topology, True, UdpCbr, Workload, WorkloadKind,
 };
 pub use schema::json_schema;
 pub use units::{Duration, Name, Probability, Rate, Size, ValueError};

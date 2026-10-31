@@ -19,10 +19,12 @@
 //! # Ok::<(), Vec<netscenario_model::Problem>>(())
 //! ```
 
+use std::collections::BTreeMap;
+
 use crate::error::Problem;
 use crate::scenario::{
-    Backend, Change, Direction, Event, FormatVersion, Impairments, Jitter, JitterDistribution,
-    Link, Loss, Reorder, Scenario, Topology, True, Workload, WorkloadKind,
+    Backend, Change, Command, Direction, Event, FormatVersion, Impairments, Jitter,
+    JitterDistribution, Link, Loss, Reorder, Scenario, Topology, True, UdpCbr, Workload,
 };
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
@@ -316,17 +318,44 @@ impl ScenarioBuilder {
         let from = self.name_at(from, &format!("workloads[{index}].from"));
         let to = self.name_at(to, &format!("workloads[{index}].to"));
         if let (Some(id), Some(from), Some(to)) = (id, from, to) {
-            self.workloads.push(Workload {
+            self.workloads.push(Workload::UdpCbr(UdpCbr {
                 id,
-                kind: WorkloadKind::UdpCbr,
                 from,
                 to,
                 rate,
                 packet_size,
                 start: None,
                 stop: None,
-            });
+            }));
         }
+        self
+    }
+
+    /// A workload that starts a program of your own in `node`: `run` is the program and its arguments (no
+    /// shell), and `{node.addr}` in them is the address of a node. Readiness, environment and shutdown can
+    /// be set on the [`Command`] with [`ScenarioBuilder::workload`].
+    #[must_use]
+    pub fn command(mut self, id: &str, node: &str, run: &[&str]) -> Self {
+        let index = self.workloads.len();
+        let id = self.name_at(id, &format!("workloads[{index}].id"));
+        let node = self.name_at(node, &format!("workloads[{index}].node"));
+        if let (Some(id), Some(node)) = (id, node) {
+            self.workloads.push(Workload::Command(Command {
+                id,
+                node,
+                run: run.iter().map(|argument| (*argument).to_owned()).collect(),
+                env: BTreeMap::new(),
+                ready: None,
+                shutdown: None,
+            }));
+        }
+        self
+    }
+
+    /// Adds a workload that was made by hand.
+    #[must_use]
+    pub fn workload(mut self, workload: Workload) -> Self {
+        self.workloads.push(workload);
         self
     }
 
@@ -340,7 +369,7 @@ impl ScenarioBuilder {
     /// Sets when the last workload starts and stops, from the start of the measured phase.
     #[must_use]
     pub fn window(mut self, start: Duration, stop: Duration) -> Self {
-        if let Some(workload) = self.workloads.last_mut() {
+        if let Some(Workload::UdpCbr(workload)) = self.workloads.last_mut() {
             workload.start = Some(start);
             workload.stop = Some(stop);
         }

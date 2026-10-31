@@ -117,11 +117,11 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | planned |
 | WRK-04 | TCP bulk transfer | M | 0.3 | planned |
 | WRK-05 | Request and response (echo, latency) | M | 0.3 | planned |
-| WRK-06 | Your own program as a node, with the addresses in its environment | M | 0.2 | planned |
+| WRK-06 | Your own program as a node, with the addresses in its environment | M | 0.2 | in progress (format done in 4.1c, D-051; the supervisor in 4.6) |
 | WRK-07 | A container as a node | S | 0.5 | planned |
 | WRK-08 | Replay of a pcap | C | 0.8 | idea |
 | WRK-09 | Models of real traffic (video, voice, game) | S | 0.7 | planned |
-| WRK-10 | Supervision: start order, readiness checks, orderly stop, captured logs, timeouts | M | 0.2 | planned |
+| WRK-10 | Supervision: start order, readiness checks, orderly stop, captured logs, timeouts | M | 0.2 | in progress (readiness and stop are in the format, 4.1c, D-051; the supervisor in 4.6) |
 
 ## Measurement (PRB)
 

@@ -55,6 +55,75 @@
       },
       "type": "object"
     },
+    "Command": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables besides `NETSCENARIO_*`. Values may use `{node.addr}`.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the workload."
+        },
+        "kind": {
+          "$ref": "#/$defs/CommandKind",
+          "description": "`command`: a program of your own in a node."
+        },
+        "node": {
+          "$ref": "#/$defs/Name",
+          "description": "The node it runs in."
+        },
+        "ready": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ready"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the run learns that the program can be used."
+        },
+        "run": {
+          "description": "The program and its arguments, without a shell. `{node.addr}` is replaced by the address of a node;\na brace that is meant as a brace is written twice.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "shutdown": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Shutdown"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program is stopped."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "node",
+        "run"
+      ],
+      "type": "object"
+    },
+    "CommandKind": {
+      "enum": [
+        "command"
+      ],
+      "type": "string"
+    },
     "Direction": {
       "description": "The side of a link that an event acts on.",
       "oneOf": [
@@ -552,6 +621,69 @@
       "pattern": "^[0-9]+(\\.[0-9]+)?(bit|kbit|mbit|gbit|tbit)$",
       "type": "string"
     },
+    "Ready": {
+      "additionalProperties": false,
+      "description": "How the run learns that a program is ready: exactly one of the five ways. The first four need `within`,\nthe time after which a program that is not ready counts as failed.",
+      "properties": {
+        "delay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Ready after this time, whatever the program does. The one way that checks nothing."
+        },
+        "file": {
+          "description": "This file exists, a path relative to the directory of the scenario file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stdout-line": {
+          "description": "A line of the standard output of the program contains this text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcp-port": {
+          "description": "A TCP socket listens in the node (read from `/proc/net/tcp`).",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "udp-port": {
+          "description": "A UDP socket is bound in the node, to any address or to its own (read from `/proc/net/udp`).",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "within": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How long to wait for the program to become ready."
+        }
+      },
+      "type": "object"
+    },
     "Reorder": {
       "additionalProperties": false,
       "description": "Reordering by holding packets back (`netem reorder P gap G`).\n\nWith a `delay`, a share of the packets is sent on at once and the others wait for the delay, so the ones\nthat wait arrive after later packets. Measured in D-048: `share` is the share sent on at once, and with\n`gap` it is `1 / (gap - 1 + 1 / share)`.",
@@ -574,6 +706,70 @@
         "share"
       ],
       "type": "object"
+    },
+    "Shutdown": {
+      "additionalProperties": false,
+      "description": "How a program is stopped at the end of the run: the signal goes to its process group, and `KILL` follows\nwhen it is still there after `within`.",
+      "properties": {
+        "signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Signal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The signal. `TERM` by default."
+        },
+        "within": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How long the program has to end. 5 seconds by default."
+        }
+      },
+      "type": "object"
+    },
+    "Signal": {
+      "description": "A signal that asks a program to end. `KILL` is not among them: it is what follows when they do not work.",
+      "oneOf": [
+        {
+          "const": "TERM",
+          "description": "`SIGTERM`.",
+          "type": "string"
+        },
+        {
+          "const": "INT",
+          "description": "`SIGINT`, what Ctrl-C sends.",
+          "type": "string"
+        },
+        {
+          "const": "HUP",
+          "description": "`SIGHUP`.",
+          "type": "string"
+        },
+        {
+          "const": "QUIT",
+          "description": "`SIGQUIT`.",
+          "type": "string"
+        },
+        {
+          "const": "USR1",
+          "description": "`SIGUSR1`.",
+          "type": "string"
+        },
+        {
+          "const": "USR2",
+          "description": "`SIGUSR2`.",
+          "type": "string"
+        }
+      ]
     },
     "Size": {
       "description": "An amount of data in bytes: a number and a unit (b, kb, mb, gb decimal; kib, mib, gib binary), a whole number of bytes.",
@@ -612,9 +808,8 @@
       "const": true,
       "type": "boolean"
     },
-    "Workload": {
+    "UdpCbr": {
       "additionalProperties": false,
-      "description": "A workload: something that sends traffic.",
       "properties": {
         "from": {
           "$ref": "#/$defs/Name",
@@ -625,8 +820,8 @@
           "description": "The name of the workload. Metrics are named after it."
         },
         "kind": {
-          "$ref": "#/$defs/WorkloadKind",
-          "description": "The kind of workload. Only `udp-cbr` in release 0.1."
+          "$ref": "#/$defs/UdpCbrKind",
+          "description": "`udp-cbr`: UDP at a constant bit rate."
         },
         "packet-size": {
           "$ref": "#/$defs/Size",
@@ -673,15 +868,24 @@
       ],
       "type": "object"
     },
-    "WorkloadKind": {
-      "description": "The kind of a workload.",
-      "oneOf": [
+    "UdpCbrKind": {
+      "enum": [
+        "udp-cbr"
+      ],
+      "type": "string"
+    },
+    "Workload": {
+      "anyOf": [
         {
-          "const": "udp-cbr",
-          "description": "UDP at a constant bit rate.",
-          "type": "string"
+          "$ref": "#/$defs/UdpCbr",
+          "description": "UDP at a constant bit rate."
+        },
+        {
+          "$ref": "#/$defs/Command",
+          "description": "A program of your own, started in a node."
         }
-      ]
+      ],
+      "description": "A workload: something that runs in a node. Either a generator that sends traffic ([`UdpCbr`]), or the\nprogram that is being tested ([`Command`]).\n\nIt is read by hand (see `WorkloadFields`) for the reason that `Loss` is: the derived reader for a tagged\nenum reports an error in a value at the start of the mapping and not at the value."
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

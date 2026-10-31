@@ -1,6 +1,6 @@
 # Scenario format, version 0 (release 0.1)
 
-**Status: the contract for release 0.1, with the impairments and the timeline of release 0.2 added** (the format reads them; the Kernel backend applies them from step 4.2 of release 0.2, until then it refuses them and says so). Part 1 describes exactly what a scenario file may contain. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01, committed as `docs/schema/scenario-v0.json`); that schema and the tests are the final authority, and this page is checked against them.
+**Status: the contract for release 0.1, with the impairments, the timeline and the program of release 0.2 added** (the format reads them; the Kernel backend applies them from step 4.2 of release 0.2, until then it refuses them and says so). Part 1 describes exactly what a scenario file may contain. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01, committed as `docs/schema/scenario-v0.json`); that schema and the tests are the final authority, and this page is checked against them.
 
 The format is versioned with the line `version: 0`. **Version 0 is the series before 1.0: it may change in any minor release, and the changelog says how.** From 1.0 on the version is 1, and a change that breaks files raises it (SCN-08 adds `netscenario migrate`).
 
@@ -200,12 +200,12 @@ workloads:
     stop: 30s
 ```
 
-`udp-cbr` is the only kind in release 0.1 (WRK-01): UDP at a constant bit rate, sent by the agent in `from`, received by the agent in `to`.
+A workload has a `kind`. `udp-cbr` (WRK-01) is UDP at a constant bit rate, sent by the agent in `from`, received by the agent in `to`. `command` (WRK-06, release 0.2) is a program of your own that runs in a node, see [A program of your own](#a-program-of-your-own). The keys of one kind are refused in the other (`rate` in a `command`), each at its own line.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `id` | yes | A Name, unique among workloads. Metrics are named after it (`media.delay.p99`). |
-| `kind` | yes | `udp-cbr`. |
+| `kind` | yes | `udp-cbr` or `command`. |
 | `from`, `to` | yes | Two different nodes from `nodes`. |
 | `rate` | yes | A Rate. **The rate of the payload**: the number of payload bits per second. The packets per second follow from it and `packet-size`. |
 | `packet-size` | yes | A Size: the payload of one packet. From the size of the header of the agent (16 bytes) to 1472 bytes, the largest payload that fits the MTU of 1500 without fragmentation (fragmentation arrives with release 0.3). |
@@ -215,6 +215,48 @@ workloads:
 Packets per second are at most **100,000** per workload. A higher rate is an error that says so: the agent was measured up to that rate (spike S8) and the format does not promise more than has been measured.
 
 Every `udp-cbr` workload produces a record per packet (sequence number, send time, receive time, PRB-01) and the metrics of PRB-02, PRB-03 and PRB-05: packets sent, received and lost, delivered ratio, one-way delay (mean, percentiles, maximum) and throughput and goodput over time. The metric names and the result format are defined in `docs/RESULTS.md`, which arrives with the result format (RPT-01). The assertions of release 0.1 are written in test code (ASR-01), not in the file.
+
+## A program of your own
+
+```yaml
+workloads:
+  - id: app
+    kind: command
+    node: server
+    run: ["./target/release/my-server", "--listen", "{server.addr}:4433"]
+    env:
+      RUST_LOG: info
+    ready: { udp-port: 4433, within: 5s }
+    shutdown: { signal: TERM, within: 3s }
+```
+
+A `command` is the only way for a scenario to run code, and it always says so in the file. It runs in the namespace of its node, as the invoking user (inside a user namespace that is uid 0 mapped to the user), in the directory of the scenario file, and **without a shell**: `run` is the program and its arguments, so there is nothing to quote and nothing that a space or a `;` could change (D-041, D-051).
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | A Name, unique among all workloads. |
+| `kind` | yes | `command`. |
+| `node` | yes | The node it runs in. |
+| `run` | yes | A list of texts: the program, then its arguments. At least one, at most 256 entries, 4096 bytes each, no NUL character. |
+| `env` | no | A mapping of variables. Names are letters, digits and `_`, not starting with a digit, and not starting with `NETSCENARIO_` (those are set by the tool: the addresses of the nodes, the directory of the run). At most 64 variables. |
+| `ready` | no | How the run learns that the program can be used; before that the senders do not start. Without it the program is ready when it has been started. See below. |
+| `shutdown` | no | `signal`: `TERM` (default), `INT`, `HUP`, `QUIT`, `USR1` or `USR2`; `within`: a Duration, default `5s`. The signal goes to the process group of the program, so its children get it too, and `KILL` follows when anything is still there after `within`. |
+
+**Placeholders.** In `run` and in the values of `env`, `{node.addr}` is the address of a node (`{server.addr}`). It is checked when the file is read: the node must exist (with a hint), and any other text in braces is refused. A brace that is meant as a brace is written twice: `{{` and `}}`.
+
+**Readiness.** Exactly one of these, and every one except `delay` needs `within`, the time after which a program that is not ready fails the run:
+
+| Key | Ready when |
+| --- | --- |
+| `udp-port` | A UDP socket is bound to that port in the node (to any address or the address of the node; read from `/proc/net/udp`, S14). |
+| `tcp-port` | A TCP socket listens on that port (from `/proc/net/tcp`). |
+| `stdout-line` | A line on the standard output of the program contains this text. |
+| `file` | This file exists, a path relative to the directory of the scenario file. |
+| `delay` | After this long, whatever the program does. The one way that checks nothing, and the only one without `within`. |
+
+A port is read from outside, so the program needs no help and a UDP port (which cannot be probed by connecting) works. Probing by connecting was left out for that reason.
+
+**What the Kernel backend does with it.** It starts programs from step 4.6 of release 0.2; until then it refuses a scenario with a `command` and names the feature ([COVERAGE.md](COVERAGE.md)). Running a scenario file that you did not write is running its programs: read the `command` entries first ([SECURITY.md](../SECURITY.md)).
 
 ## Keys that are reserved
 
@@ -229,7 +271,7 @@ These keys are not part of version 0 in release 0.1. A scenario that uses one is
 | `model` (in a link) | 0.2 and 0.3 | Link models: steps, trace, Markov, periodic. |
 | `queue` (in a direction) | 0.3 | Queue limit and discipline. |
 | `address` (node, link) | later | Fixed addresses. |
-| `kind` other than `udp-cbr` | 0.2 and 0.3 | `command` (your program), `tcp-bulk`, `request-response` and more. |
+| `kind` other than `udp-cbr` and `command` | 0.3 and later | `tcp-bulk`, `request-response`, `udp-poisson` and more. |
 
 ## Errors
 
@@ -287,20 +329,6 @@ The JSON Schema of the format is [`docs/schema/scenario-v0.json`](schema/scenari
 The following sketches show where the format is heading. They are **not** part of version 0 in release 0.1 and may change. The release in brackets is the plan of `FEATURES.md`.
 
 **Corruption that arrives (0.2).** `udp-checksum: off` on a `udp-cbr` workload lets the corrupted payload arrive, and the result then counts `corrupted` (D-040). The keys `corrupt`, `reorder`, `duplicate` and the loss models are in Part 1.
-
-**Your program as a node (0.2).**
-
-```yaml
-workloads:
-  - id: app
-    kind: command
-    node: server
-    run: ["./target/release/my-server", "--listen", "{server.addr}:4433"]
-    ready: { udp-port: 4433, within: 5s }
-    stop: { signal: TERM, within: 3s }
-```
-
-A `command` runs in the namespace of its node, as the invoking user, with the working directory of the scenario file. It is the only way for a scenario to run code, and it always says so in the file.
 
 **Link models (0.3 to 0.6).** `model: { kind: trace, file: ..., format: mahimahi }`, Markov, periodic and geometry-based models, with mobility (0.6). A model replaces the static values of its link. Traces are files named by a path; hashes of their content come with 0.3.
 

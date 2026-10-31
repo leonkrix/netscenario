@@ -24,27 +24,80 @@ pub(crate) const REQUIRED: &[(&str, &str, &[&str])] = &[
     ("topology.links[].forward.reorder", "Reorder", &["share"]),
     ("topology.links[].reverse.reorder", "Reorder", &["share"]),
     ("topology.links[].both.reorder", "Reorder", &["share"]),
-    (
-        "workloads[]",
-        "Workload",
-        &["id", "kind", "from", "to", "rate", "packet-size"],
-    ),
 ];
 
-/// The mappings of a loss; the keys they need depend on the value of `model`, so they are not in the table above.
-const LOSS_PATHS: &[&str] = &[
-    "topology.links[].forward.loss",
-    "topology.links[].reverse.loss",
-    "topology.links[].both.loss",
+/// Mappings whose keys depend on the value of one key, the tag: the loss (`model`) and the workload (`kind`).
+pub(crate) struct Tagged {
+    /// The generic paths of the mappings.
+    pub(crate) paths: &'static [&'static str],
+    /// The key whose value picks the variant. It is required.
+    pub(crate) tag: &'static str,
+    /// The name of the type in the JSON Schema, whose variants a test compares with this table.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "read by the test that compares the table with the schema"
+        )
+    )]
+    pub(crate) schema: &'static str,
+    /// What the tag chooses, in the words of a message.
+    pub(crate) what: &'static str,
+    /// For each value of the tag: the keys that are required besides it, and the keys that may be written.
+    pub(crate) variants: &'static [(
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+    )],
+}
+
+pub(crate) const TAGGED: &[Tagged] = &[
+    Tagged {
+        paths: &[
+            "topology.links[].forward.loss",
+            "topology.links[].reverse.loss",
+            "topology.links[].both.loss",
+        ],
+        tag: "model",
+        schema: "Loss",
+        what: "loss model",
+        variants: &[
+            ("random", &["p"], &[]),
+            ("gilbert-elliott", &["p", "r", "loss-bad", "loss-good"], &[]),
+            ("markov4", &["p13", "p31", "p32", "p23", "p14"], &[]),
+        ],
+    },
+    Tagged {
+        paths: &["workloads[]"],
+        tag: "kind",
+        schema: "Workload",
+        what: "workload kind",
+        variants: &[
+            (
+                "udp-cbr",
+                &["id", "from", "to", "rate", "packet-size"],
+                &["start", "stop"],
+            ),
+            (
+                "command",
+                &["id", "node", "run"],
+                &["env", "ready", "shutdown"],
+            ),
+        ],
+    },
 ];
 
-/// The keys that each model needs besides `model` itself, in the order of the format. A test compares this
-/// table with the variants of `Loss` in the JSON Schema.
-pub(crate) const LOSS_MODELS: &[(&str, &[&str])] = &[
-    ("random", &["p"]),
-    ("gilbert-elliott", &["p", "r", "loss-bad", "loss-good"]),
-    ("markov4", &["p13", "p31", "p32", "p23", "p14"]),
-];
+impl Tagged {
+    /// The keys of a variant (required first), without the tag.
+    fn keys_of(&self, value: &str) -> Option<Vec<&'static str>> {
+        self.variants
+            .iter()
+            .find(|(name, _, _)| *name == value)
+            .map(|(_, required, optional)| {
+                required.iter().chain(optional.iter()).copied().collect()
+            })
+    }
+}
 
 /// Finds the mappings in the file that lack a required key.
 pub(crate) fn check(index: &SourceIndex) -> Vec<Problem> {
@@ -62,27 +115,36 @@ pub(crate) fn check(index: &SourceIndex) -> Vec<Problem> {
             continue;
         }
         let generic = source::generic(path);
-        let required: Vec<&str> = if let Some((_, _, required)) =
+        let tagged = TAGGED
+            .iter()
+            .find(|tagged| tagged.paths.contains(&generic.as_str()));
+        let (required, allowed): (Vec<&str>, Vec<&str>) = if let Some((_, _, required)) =
             REQUIRED.iter().find(|(pattern, _, _)| *pattern == generic)
         {
-            required.to_vec()
-        } else if LOSS_PATHS.contains(&generic.as_str()) {
-            // `model` first; the rest only if the model is one that is known (an unknown one is reported
+            (required.to_vec(), required.to_vec())
+        } else if let Some(tagged) = tagged {
+            // The tag first; the rest only if its value is one that is known (an unknown one is reported
             // by the reader, with a hint)
-            let model = index
-                .get(&format!("{path}.model"))
+            let value = index
+                .get(&format!("{path}.{}", tagged.tag))
                 .and_then(|entry| entry.text.as_deref());
-            let mut needed = vec!["model"];
-            if let Some((_, keys)) = LOSS_MODELS.iter().find(|(name, _)| Some(*name) == model) {
-                needed.extend(*keys);
+            let mut needed = vec![tagged.tag];
+            let mut allowed = vec![tagged.tag];
+            if let Some((_, required, optional)) = tagged
+                .variants
+                .iter()
+                .find(|(name, _, _)| Some(*name) == value)
+            {
+                needed.extend(*required);
+                allowed.extend(required.iter().chain(optional.iter()));
             }
-            needed
+            (needed, allowed)
         } else {
             continue;
         };
         let present = keys.get(path.as_str());
-        if LOSS_PATHS.contains(&generic.as_str()) {
-            problems.extend(keys_of_another_model(path, &required, present, index));
+        if let Some(tagged) = tagged {
+            problems.extend(keys_of_another_variant(tagged, path, present, index));
         }
         for key in &required {
             let key = *key;
@@ -92,7 +154,7 @@ pub(crate) fn check(index: &SourceIndex) -> Vec<Problem> {
                     let mut others: Vec<&str> = present
                         .iter()
                         .copied()
-                        .filter(|name| !required.contains(name))
+                        .filter(|name| !allowed.contains(name))
                         .collect();
                     others.sort_unstable();
                     others
@@ -118,52 +180,60 @@ pub(crate) fn check(index: &SourceIndex) -> Vec<Problem> {
     problems
 }
 
-/// The keys of a loss that belong to another model (`r` in a `random` loss), each at its own place. A key that
-/// no model has is left to the reader, which names the keys that exist.
-fn keys_of_another_model(
+/// The keys of a mapping that belong to another variant (`r` in a `random` loss, `rate` in a `command`), each
+/// at its own place. A key that no variant has is left to the reader, which names the keys that exist.
+fn keys_of_another_variant(
+    tagged: &Tagged,
     path: &str,
-    required: &[&str],
     present: Option<&HashSet<&str>>,
     index: &SourceIndex,
 ) -> Vec<Problem> {
     let Some(present) = present else {
         return Vec::new();
     };
-    let Some(model) = index
-        .get(&format!("{path}.model"))
+    let Some((value, own)) = index
+        .get(&format!("{path}.{}", tagged.tag))
         .and_then(|entry| entry.text.as_deref())
-        .filter(|model| LOSS_MODELS.iter().any(|(name, _)| name == model))
+        .and_then(|value| tagged.keys_of(value).map(|keys| (value, keys)))
     else {
         return Vec::new();
+    };
+    let belongs_to_some = |key: &str| {
+        tagged
+            .variants
+            .iter()
+            .any(|(_, required, optional)| required.contains(&key) || optional.contains(&key))
     };
     let mut others: Vec<&str> = present
         .iter()
         .copied()
-        .filter(|key| *key != "model" && !required.contains(key))
-        .filter(|key| LOSS_MODELS.iter().any(|(_, keys)| keys.contains(key)))
+        .filter(|key| *key != tagged.tag && !own.contains(key) && belongs_to_some(key))
         .collect();
     others.sort_unstable();
     others
         .into_iter()
         .filter_map(|key| {
-            let (location, length) = index.locate(&format!("{path}.{key}"))?;
             let entry = index.get(&format!("{path}.{key}"))?;
-            let (location, length) = entry.key.unwrap_or((location, length));
-            let owners: Vec<&str> = LOSS_MODELS
+            let (location, length) = entry.key.unwrap_or(entry.value);
+            let owners: Vec<&str> = tagged
+                .variants
                 .iter()
-                .filter(|(_, keys)| keys.contains(&key))
-                .map(|(name, _)| *name)
+                .filter(|(_, required, optional)| {
+                    required.contains(&key) || optional.contains(&key)
+                })
+                .map(|(name, _, _)| *name)
                 .collect();
+            let what = tagged.what;
             Some(
                 Problem::new(format!(
-                    "the key `{key}` is not used by the loss model `{model}`"
+                    "the key `{key}` is not used by the {what} `{value}`"
                 ))
                 .at_location(location, length)
                 .at_path(format!("{path}.{key}"))
                 .with_help(format!(
-                    "the model `{model}` has {}; `{key}` belongs to {}",
-                    required[1..]
-                        .iter()
+                    "the {what} `{value}` has {}; `{key}` belongs to {}",
+                    own.iter()
+                        .filter(|key| **key != "id")
                         .map(|key| format!("`{key}`"))
                         .collect::<Vec<_>>()
                         .join(", "),
@@ -176,59 +246,96 @@ fn keys_of_another_model(
 
 #[cfg(test)]
 mod tests {
-    use super::{LOSS_MODELS, REQUIRED};
+    use std::collections::BTreeSet;
+
+    use super::{REQUIRED, TAGGED};
     use crate::json_schema;
+
+    fn strings(value: &serde_json::Value) -> BTreeSet<&str> {
+        value
+            .as_array()
+            .map(|keys| keys.iter().map(|key| key.as_str().unwrap()).collect())
+            .unwrap_or_default()
+    }
 
     /// The keys that the schema requires, by the name of the type, must be the keys of the table.
     #[test]
     fn the_table_matches_the_required_keys_of_the_schema() {
         let schema: serde_json::Value = serde_json::from_str(&json_schema()).unwrap();
-        let required_of = |definition: &str| -> Vec<String> {
+        let required_of = |definition: &str| -> BTreeSet<String> {
             let node = if definition == "Scenario" {
                 &schema
             } else {
                 &schema["$defs"][definition]
             };
-            let mut keys: Vec<String> = node["required"]
-                .as_array()
-                .unwrap_or(&Vec::new())
-                .iter()
-                .map(|key| key.as_str().unwrap().to_owned())
-                .collect();
-            keys.sort();
-            keys
+            strings(&node["required"])
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
         };
         for (_, definition, keys) in REQUIRED {
-            let mut table: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
-            table.sort();
+            let table: BTreeSet<String> = keys.iter().map(|key| (*key).to_owned()).collect();
             assert_eq!(
                 table,
                 required_of(definition),
                 "the required keys of {definition} differ from the schema"
             );
         }
-        // The keys of each loss model are those of the variants of `Loss`, and every variant is in the table
-        let variants = schema["$defs"]["Loss"]["oneOf"].as_array().unwrap();
-        assert_eq!(variants.len(), LOSS_MODELS.len());
-        for variant in variants {
-            let model = variant["properties"]["model"]["const"].as_str().unwrap();
-            let mut in_schema: Vec<&str> = variant["required"]
+        // The variants of each tagged type are those of the table, with the same required and allowed keys
+        let mut variant_types = BTreeSet::new();
+        for tagged in TAGGED {
+            let node = &schema["$defs"][tagged.schema];
+            let variants = node["oneOf"]
                 .as_array()
-                .unwrap()
-                .iter()
-                .map(|key| key.as_str().unwrap())
-                .filter(|key| *key != "model")
-                .collect();
-            in_schema.sort_unstable();
-            let (_, keys) = LOSS_MODELS
-                .iter()
-                .find(|(name, _)| *name == model)
-                .unwrap_or_else(|| panic!("the model {model} is not in the table"));
-            let mut table: Vec<&str> = keys.to_vec();
-            table.sort_unstable();
-            assert_eq!(table, in_schema, "the required keys of {model} differ");
+                .or_else(|| node["anyOf"].as_array())
+                .unwrap_or_else(|| panic!("{} has no variants", tagged.schema));
+            assert_eq!(variants.len(), tagged.variants.len(), "{}", tagged.schema);
+            for variant in variants {
+                let variant = match variant["$ref"].as_str() {
+                    Some(reference) => {
+                        let name = reference.rsplit('/').next().unwrap();
+                        variant_types.insert(name.to_owned());
+                        &schema["$defs"][name]
+                    }
+                    None => variant,
+                };
+                let mut property = &variant["properties"][tagged.tag];
+                if let Some(reference) = property["$ref"].as_str() {
+                    property = &schema["$defs"][reference.rsplit('/').next().unwrap()];
+                }
+                let value = property["const"]
+                    .as_str()
+                    .or_else(|| property["enum"][0].as_str())
+                    .unwrap_or_else(|| {
+                        panic!("a variant of {} has no {}", tagged.schema, tagged.tag)
+                    });
+                let (_, required, optional) = tagged
+                    .variants
+                    .iter()
+                    .find(|(name, _, _)| *name == value)
+                    .unwrap_or_else(|| panic!("{value} is not in the table"));
+                let in_schema_required: BTreeSet<&str> = strings(&variant["required"])
+                    .into_iter()
+                    .filter(|key| *key != tagged.tag)
+                    .collect();
+                let table_required: BTreeSet<&str> = required.iter().copied().collect();
+                assert_eq!(
+                    table_required, in_schema_required,
+                    "the required keys of {value}"
+                );
+                let in_schema_all: BTreeSet<&str> = variant["properties"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .filter(|key| *key != tagged.tag)
+                    .collect();
+                let table_all: BTreeSet<&str> =
+                    required.iter().chain(optional.iter()).copied().collect();
+                assert_eq!(table_all, in_schema_all, "the keys of {value}");
+            }
         }
-        // Every type of the schema that has required keys is in the table
+        // Every type of the schema that has required keys is in a table
         let defined = schema["$defs"].as_object().unwrap();
         for (name, definition) in defined {
             if definition["required"]
@@ -236,8 +343,10 @@ mod tests {
                 .is_some_and(|keys| !keys.is_empty())
             {
                 assert!(
-                    REQUIRED.iter().any(|(_, table_name, _)| table_name == name),
-                    "{name} has required keys but is not in the table"
+                    REQUIRED.iter().any(|(_, table_name, _)| table_name == name)
+                        || variant_types.contains(name)
+                        || TAGGED.iter().any(|tagged| tagged.schema == name),
+                    "{name} has required keys but is not in a table"
                 );
             }
         }

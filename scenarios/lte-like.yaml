@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
 # A mobile access link: a long delay with a normal jitter, some loss and a rate that differs per direction.
 version: 0
 name: lte-like

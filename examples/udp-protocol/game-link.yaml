@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../docs/schema/scenario-v0.json
 # A real-time game over a bad mobile link: small packets at a steady rate (80 per second, 100 bytes of payload),
 # a long delay with a wide jitter, some loss and a narrow rate.
 version: 0

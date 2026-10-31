@@ -10,7 +10,7 @@ topology:
         delay: 40ms
 workloads:
   - id: media
-    kind: command
+    kind: udp-poisson
     from: client
     to: server
     rate: 1mbit

@@ -4,6 +4,7 @@
 use crate::error::Problem;
 use crate::scenario::{
     Change, Direction, Event, Impairments, Jitter, JitterDistribution, Link, Loss, Scenario,
+    UdpCbr, Workload,
 };
 use crate::suggest::closest;
 use crate::units::{Duration, Name, Probability};
@@ -118,20 +119,43 @@ impl Scenario {
             problems.push(
                 Problem::new("a scenario needs at least one workload, found none")
                     .at_path("workloads")
-                    .with_help("add a workload of kind udp-cbr"),
+                    .with_help("add a workload of kind udp-cbr, or a command"),
             );
         }
         for (index, workload) in self.workloads.iter().enumerate() {
             let base = format!("workloads[{index}]");
             if self.workloads[..index]
                 .iter()
-                .any(|other| other.id == workload.id)
+                .any(|other| other.id() == workload.id())
             {
                 problems.push(
-                    Problem::new(format!("the workload name '{}' is used twice", workload.id))
-                        .at_path(format!("{base}.id")),
+                    Problem::new(format!(
+                        "the workload name '{}' is used twice",
+                        workload.id()
+                    ))
+                    .at_path(format!("{base}.id")),
                 );
             }
+            match workload {
+                Workload::UdpCbr(workload) => {
+                    self.check_udp_cbr(workload, &base, nodes, nodes_ok, problems);
+                }
+                Workload::Command(command) => {
+                    crate::command::check(command, &base, nodes, nodes_ok, problems);
+                }
+            }
+        }
+    }
+
+    fn check_udp_cbr(
+        &self,
+        workload: &UdpCbr,
+        base: &str,
+        nodes: &[Name],
+        nodes_ok: bool,
+        problems: &mut Vec<Problem>,
+    ) {
+        {
             for (key, node) in [("from", &workload.from), ("to", &workload.to)] {
                 if nodes_ok && !nodes.contains(node) {
                     problems.push(unknown_node(node, nodes, format!("{base}.{key}")));
@@ -172,13 +196,7 @@ impl Scenario {
                 );
             }
             if !self.duration.is_zero() {
-                check_window(
-                    self.duration,
-                    workload.start,
-                    workload.stop,
-                    &base,
-                    problems,
-                );
+                check_window(self.duration, workload.start, workload.stop, base, problems);
             }
         }
     }
@@ -452,7 +470,7 @@ fn unknown_link(link: &Name, ids: &[&str], path: String) -> Problem {
         .with_help(help)
 }
 
-fn unknown_node(node: &Name, nodes: &[Name], path: String) -> Problem {
+pub(crate) fn unknown_node(node: &Name, nodes: &[Name], path: String) -> Problem {
     let known: Vec<&str> = nodes.iter().map(Name::as_str).collect();
     let list = format!("the nodes are: {}", known.join(", "));
     let help = match closest(node.as_str(), &known) {

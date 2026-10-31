@@ -4,6 +4,8 @@
 //! described by the JSON Schema. The rules that a type system cannot state (a node must exist, a stop must come
 //! after the start) are checked by [`Scenario::validate`], which both the file and the code go through.
 
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -567,29 +569,56 @@ impl ImpairmentsChange {
     }
 }
 
-/// A workload: something that sends traffic.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Workload {
-    /// The name of the workload. Metrics are named after it.
-    pub id: Name,
-    /// The kind of workload. Only `udp-cbr` in release 0.1.
-    pub kind: WorkloadKind,
-    /// The node that sends.
-    pub from: Name,
-    /// The node that receives.
-    pub to: Name,
-    /// The rate of the payload.
-    pub rate: Rate,
-    /// The payload of one packet.
-    #[serde(rename = "packet-size")]
-    pub packet_size: Size,
-    /// When the workload starts, from the start of the measured phase. Default `0s`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start: Option<Duration>,
-    /// When the workload stops. Default: the end of the measured phase.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop: Option<Duration>,
+/// A workload: something that runs in a node. Either a generator that sends traffic ([`UdpCbr`]), or the
+/// program that is being tested ([`Command`]).
+///
+/// It is read by hand (see `WorkloadFields`) for the reason that `Loss` is: the derived reader for a tagged
+/// enum reports an error in a value at the start of the mapping and not at the value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Workload {
+    /// UDP at a constant bit rate.
+    UdpCbr(UdpCbr),
+    /// A program of your own, started in a node.
+    Command(Command),
+}
+
+impl Workload {
+    /// The name of the workload.
+    #[must_use]
+    pub fn id(&self) -> &Name {
+        match self {
+            Self::UdpCbr(workload) => &workload.id,
+            Self::Command(workload) => &workload.id,
+        }
+    }
+
+    /// The kind of the workload.
+    #[must_use]
+    pub fn kind(&self) -> WorkloadKind {
+        match self {
+            Self::UdpCbr(_) => WorkloadKind::UdpCbr,
+            Self::Command(_) => WorkloadKind::Command,
+        }
+    }
+
+    /// The workload if it is a `udp-cbr`.
+    #[must_use]
+    pub fn as_udp_cbr(&self) -> Option<&UdpCbr> {
+        match self {
+            Self::UdpCbr(workload) => Some(workload),
+            Self::Command(_) => None,
+        }
+    }
+
+    /// The workload if it is a `command`.
+    #[must_use]
+    pub fn as_command(&self) -> Option<&Command> {
+        match self {
+            Self::Command(workload) => Some(workload),
+            Self::UdpCbr(_) => None,
+        }
+    }
 }
 
 /// The kind of a workload.
@@ -598,4 +627,319 @@ pub struct Workload {
 pub enum WorkloadKind {
     /// UDP at a constant bit rate.
     UdpCbr,
+    /// A program of your own in a node.
+    Command,
+}
+
+/// A workload that sends UDP at a constant bit rate from one node to another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UdpCbr {
+    /// The name of the workload. Metrics are named after it.
+    pub id: Name,
+    /// The node that sends.
+    pub from: Name,
+    /// The node that receives.
+    pub to: Name,
+    /// The rate of the payload.
+    pub rate: Rate,
+    /// The payload of one packet.
+    pub packet_size: Size,
+    /// When the workload starts, from the start of the measured phase. Default `0s`.
+    pub start: Option<Duration>,
+    /// When the workload stops. Default: the end of the measured phase.
+    pub stop: Option<Duration>,
+}
+
+/// A workload that is a program of your own. It runs in the namespace of its node, as the invoking user, in
+/// the directory of the scenario file (D-041), and it is the only way for a scenario to run code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Command {
+    /// The name of the workload.
+    pub id: Name,
+    /// The node it runs in.
+    pub node: Name,
+    /// The program and its arguments, without a shell. `{node.addr}` is replaced by the address of a node; a
+    /// brace that is meant as a brace is written twice (`{{`, `}}`).
+    pub run: Vec<String>,
+    /// Environment variables besides `NETSCENARIO_*`, which the tool sets. Values may use `{node.addr}`.
+    pub env: BTreeMap<String, String>,
+    /// How the run learns that the program can be used. Without it the program is ready when it is started.
+    pub ready: Option<Ready>,
+    /// How the program is stopped. Without it: `TERM`, then `KILL` after 5 seconds.
+    pub shutdown: Option<Shutdown>,
+}
+
+/// How the run learns that a program is ready: exactly one of the five ways. The first four need `within`,
+/// the time after which a program that is not ready counts as failed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Ready {
+    /// A UDP socket is bound in the node, to any address or to its own (read from `/proc/net/udp`).
+    #[serde(default, rename = "udp-port", skip_serializing_if = "Option::is_none")]
+    pub udp_port: Option<u16>,
+    /// A TCP socket listens in the node (read from `/proc/net/tcp`).
+    #[serde(default, rename = "tcp-port", skip_serializing_if = "Option::is_none")]
+    pub tcp_port: Option<u16>,
+    /// A line of the standard output of the program contains this text.
+    #[serde(
+        default,
+        rename = "stdout-line",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stdout_line: Option<String>,
+    /// This file exists, a path relative to the directory of the scenario file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Ready after this time, whatever the program does. The one way that checks nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delay: Option<Duration>,
+    /// How long to wait for the program to become ready.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within: Option<Duration>,
+}
+
+/// How a program is stopped at the end of the run: the signal goes to its process group, and `KILL` follows
+/// when it is still there after `within`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Shutdown {
+    /// The signal. `TERM` by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<Signal>,
+    /// How long the program has to end. 5 seconds by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within: Option<Duration>,
+}
+
+/// A signal that asks a program to end. `KILL` is not among them: it is what follows when they do not work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum Signal {
+    /// `SIGTERM`.
+    #[serde(rename = "TERM")]
+    Term,
+    /// `SIGINT`, what Ctrl-C sends.
+    #[serde(rename = "INT")]
+    Int,
+    /// `SIGHUP`.
+    #[serde(rename = "HUP")]
+    Hup,
+    /// `SIGQUIT`.
+    #[serde(rename = "QUIT")]
+    Quit,
+    /// `SIGUSR1`.
+    #[serde(rename = "USR1")]
+    Usr1,
+    /// `SIGUSR2`.
+    #[serde(rename = "USR2")]
+    Usr2,
+}
+
+// The files of the two kinds: the keys as they are written, with `kind`. The public types do not carry
+// `kind` (it is the variant of `Workload`); these add it when writing and describing.
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+enum UdpCbrKind {
+    UdpCbr,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+enum CommandKind {
+    Command,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename = "UdpCbr")]
+struct UdpCbrFile<'a> {
+    /// The name of the workload. Metrics are named after it.
+    id: &'a Name,
+    /// `udp-cbr`: UDP at a constant bit rate.
+    kind: UdpCbrKind,
+    /// The node that sends.
+    from: &'a Name,
+    /// The node that receives.
+    to: &'a Name,
+    /// The rate of the payload.
+    rate: &'a Rate,
+    /// The payload of one packet.
+    #[serde(rename = "packet-size")]
+    packet_size: &'a Size,
+    /// When the workload starts, from the start of the measured phase. Default `0s`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start: &'a Option<Duration>,
+    /// When the workload stops. Default: the end of the measured phase.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: &'a Option<Duration>,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename = "Command")]
+struct CommandFile<'a> {
+    /// The name of the workload.
+    id: &'a Name,
+    /// `command`: a program of your own in a node.
+    kind: CommandKind,
+    /// The node it runs in.
+    node: &'a Name,
+    /// The program and its arguments, without a shell. `{node.addr}` is replaced by the address of a node;
+    /// a brace that is meant as a brace is written twice.
+    run: &'a Vec<String>,
+    /// Environment variables besides `NETSCENARIO_*`. Values may use `{node.addr}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env: Option<&'a BTreeMap<String, String>>,
+    /// How the run learns that the program can be used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ready: &'a Option<Ready>,
+    /// How the program is stopped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shutdown: &'a Option<Shutdown>,
+}
+
+impl Serialize for UdpCbr {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        UdpCbrFile {
+            id: &self.id,
+            kind: UdpCbrKind::UdpCbr,
+            from: &self.from,
+            to: &self.to,
+            rate: &self.rate,
+            packet_size: &self.packet_size,
+            start: &self.start,
+            stop: &self.stop,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl Serialize for Command {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        CommandFile {
+            id: &self.id,
+            kind: CommandKind::Command,
+            node: &self.node,
+            run: &self.run,
+            env: (!self.env.is_empty()).then_some(&self.env),
+            ready: &self.ready,
+            shutdown: &self.shutdown,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl JsonSchema for UdpCbr {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "UdpCbr".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        UdpCbrFile::json_schema(generator)
+    }
+}
+
+impl JsonSchema for Command {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Command".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        CommandFile::json_schema(generator)
+    }
+}
+
+/// The name of a workload kind in the file.
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum KindName {
+    UdpCbr,
+    Command,
+}
+
+/// Every key that a workload can have, for the reader: which of them belong to the kind is checked after.
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct WorkloadFields {
+    id: Name,
+    kind: KindName,
+    from: Option<Name>,
+    to: Option<Name>,
+    rate: Option<Rate>,
+    packet_size: Option<Size>,
+    start: Option<Duration>,
+    stop: Option<Duration>,
+    node: Option<Name>,
+    run: Option<Vec<String>>,
+    env: Option<BTreeMap<String, String>>,
+    ready: Option<Ready>,
+    shutdown: Option<Shutdown>,
+}
+
+impl<'de> Deserialize<'de> for Workload {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use de::Error;
+        let fields = WorkloadFields::deserialize(deserializer)?;
+        // The keys of each kind, as (key, written): the first group is required, the second may be left out
+        let udp_cbr = [
+            ("from", fields.from.is_some()),
+            ("to", fields.to.is_some()),
+            ("rate", fields.rate.is_some()),
+            ("packet-size", fields.packet_size.is_some()),
+        ];
+        let udp_cbr_optional = [
+            ("start", fields.start.is_some()),
+            ("stop", fields.stop.is_some()),
+        ];
+        let command = [
+            ("node", fields.node.is_some()),
+            ("run", fields.run.is_some()),
+        ];
+        let command_optional = [
+            ("env", fields.env.is_some()),
+            ("ready", fields.ready.is_some()),
+            ("shutdown", fields.shutdown.is_some()),
+        ];
+        let (name, others) = match fields.kind {
+            KindName::UdpCbr => (
+                "udp-cbr",
+                [command.as_slice(), command_optional.as_slice()].concat(),
+            ),
+            KindName::Command => (
+                "command",
+                [udp_cbr.as_slice(), udp_cbr_optional.as_slice()].concat(),
+            ),
+        };
+        // A file is checked for both before it gets here, with the place of each key
+        if let Some((key, _)) = others.iter().find(|(_, written)| *written) {
+            return Err(Error::custom(format!(
+                "the key `{key}` is not used by the workload kind `{name}`"
+            )));
+        }
+        let required = match fields.kind {
+            KindName::UdpCbr => udp_cbr.as_slice(),
+            KindName::Command => command.as_slice(),
+        };
+        if let Some((key, _)) = required.iter().find(|(_, written)| !*written) {
+            return Err(Error::missing_field(key));
+        }
+        let missing = || Error::missing_field("workload");
+        Ok(match fields.kind {
+            KindName::UdpCbr => Self::UdpCbr(UdpCbr {
+                id: fields.id,
+                from: fields.from.ok_or_else(missing)?,
+                to: fields.to.ok_or_else(missing)?,
+                rate: fields.rate.ok_or_else(missing)?,
+                packet_size: fields.packet_size.ok_or_else(missing)?,
+                start: fields.start,
+                stop: fields.stop,
+            }),
+            KindName::Command => Self::Command(Command {
+                id: fields.id,
+                node: fields.node.ok_or_else(missing)?,
+                run: fields.run.ok_or_else(missing)?,
+                env: fields.env.unwrap_or_default(),
+                ready: fields.ready,
+                shutdown: fields.shutdown,
+            }),
+        })
+    }
 }
