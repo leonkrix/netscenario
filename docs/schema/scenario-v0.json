@@ -15,6 +15,66 @@
         }
       ]
     },
+    "Change": {
+      "additionalProperties": false,
+      "description": "What `set` changes, for each direction. `both` changes the two directions.",
+      "properties": {
+        "both": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImpairmentsChange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A change of the impairments in both directions."
+        },
+        "forward": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImpairmentsChange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A change of the impairments from the first node to the second."
+        },
+        "reverse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImpairmentsChange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A change of the impairments from the second node to the first."
+        }
+      },
+      "type": "object"
+    },
+    "Direction": {
+      "description": "The side of a link that an event acts on.",
+      "oneOf": [
+        {
+          "const": "forward",
+          "description": "From the first node of `between` to the second.",
+          "type": "string"
+        },
+        {
+          "const": "reverse",
+          "description": "From the second node to the first.",
+          "type": "string"
+        },
+        {
+          "const": "both",
+          "description": "Both directions.",
+          "type": "string"
+        }
+      ]
+    },
     "Duration": {
       "description": "A length of time: a number and a unit (ns, us, ms, s, m, h), a whole number of nanoseconds.",
       "examples": [
@@ -22,6 +82,140 @@
       ],
       "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$",
       "type": "string"
+    },
+    "Edit_Duration": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Duration"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Edit_Jitter": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Jitter"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Edit_Loss": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Loss"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Edit_Probability": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Probability"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Edit_Rate": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Rate"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Edit_Reorder": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Reorder"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Event": {
+      "additionalProperties": false,
+      "description": "One event of the timeline: at a moment, one thing happens to a link. It does exactly one of `set`,\n`outage`, `down` and `up`.\n\nAn event is applied before the first packet that its workload sends at or after the moment (D-038), so the\nsame seed gives the same lost packets. Events at the same moment are applied in the order of the file.",
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/Duration",
+          "description": "The moment, from the start of the measured phase. Before the end of it."
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Direction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For an `outage`: the direction it acts on. Both by default."
+        },
+        "down": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/True"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The interface of the link goes down: the sender gets errors (D-039)."
+        },
+        "link": {
+          "$ref": "#/$defs/Name",
+          "description": "The link."
+        },
+        "outage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Nothing is delivered for this long (a loss of 100 %), and the sender notices nothing (D-039). Then\nthe link has the values it had before."
+        },
+        "set": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Change"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Changes values of the link from this moment on. A key that is not written stays as it is, and `null`\ntakes the impairment away (the rule of a JSON merge patch)."
+        },
+        "up": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/True"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The interface of the link comes up again."
+        }
+      },
+      "required": [
+        "at",
+        "link"
+      ],
+      "type": "object"
     },
     "FormatVersion": {
       "const": 0,
@@ -108,6 +302,41 @@
             }
           ],
           "description": "Packets that are sent on at once while the others are held back for the delay (`netem reorder`).\nNeeds `delay`."
+        }
+      },
+      "type": "object"
+    },
+    "ImpairmentsChange": {
+      "additionalProperties": false,
+      "description": "A change of the impairments of one direction. For each key: not written, the value stays; a value, it is\nreplaced as a whole (a `loss` replaces the loss, it does not merge into it); `null`, the impairment is\ntaken away. The result must be a valid set of impairments (a `jitter` needs a `delay`), and the reader\nchecks it for every step.",
+      "properties": {
+        "corrupt": {
+          "$ref": "#/$defs/Edit_Probability",
+          "description": "The corruption."
+        },
+        "delay": {
+          "$ref": "#/$defs/Edit_Duration",
+          "description": "The delay."
+        },
+        "duplicate": {
+          "$ref": "#/$defs/Edit_Probability",
+          "description": "The duplication."
+        },
+        "jitter": {
+          "$ref": "#/$defs/Edit_Jitter",
+          "description": "The jitter."
+        },
+        "loss": {
+          "$ref": "#/$defs/Edit_Loss",
+          "description": "The loss."
+        },
+        "rate": {
+          "$ref": "#/$defs/Edit_Rate",
+          "description": "The rate limit."
+        },
+        "reorder": {
+          "$ref": "#/$defs/Edit_Reorder",
+          "description": "The reordering."
         }
       },
       "type": "object"
@@ -379,6 +608,10 @@
       ],
       "type": "object"
     },
+    "True": {
+      "const": true,
+      "type": "boolean"
+    },
     "Workload": {
       "additionalProperties": false,
       "description": "A workload: something that sends traffic.",
@@ -475,6 +708,13 @@
         "integer",
         "null"
       ]
+    },
+    "timeline": {
+      "description": "Changes over time: events at moments of the measured phase. Empty if the network stays as it is.",
+      "items": {
+        "$ref": "#/$defs/Event"
+      },
+      "type": "array"
     },
     "topology": {
       "$ref": "#/$defs/Topology",

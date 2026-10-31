@@ -2,7 +2,9 @@
 //! exactly. Every problem names the path of the value in the scenario.
 
 use crate::error::Problem;
-use crate::scenario::{Impairments, Jitter, JitterDistribution, Loss, Scenario};
+use crate::scenario::{
+    Change, Direction, Event, Impairments, Jitter, JitterDistribution, Link, Loss, Scenario,
+};
 use crate::suggest::closest;
 use crate::units::{Duration, Name, Probability};
 
@@ -30,6 +32,7 @@ impl Scenario {
         let nodes_ok = problems.len() == before;
         self.check_links(&nodes, nodes_ok, &mut problems);
         self.check_workloads(&nodes, nodes_ok, &mut problems);
+        self.check_timeline(&mut problems);
         problems
     }
 
@@ -179,6 +182,274 @@ impl Scenario {
             }
         }
     }
+}
+
+impl Scenario {
+    /// The events: each one inside the measured phase, on a link that exists, doing exactly one thing, and
+    /// every state that the steps lead to a valid set of impairments (D-050).
+    fn check_timeline(&self, problems: &mut Vec<Problem>) {
+        let ids: Vec<&str> = self
+            .topology
+            .links
+            .iter()
+            .map(|link| link.id.as_str())
+            .collect();
+        for (index, event) in self.timeline.iter().enumerate() {
+            let base = format!("timeline[{index}]");
+            if !self.duration.is_zero() && event.at >= self.duration {
+                problems.push(
+                    Problem::new(format!(
+                        "the moment {} is not before the end of the measured phase ({})",
+                        event.at, self.duration
+                    ))
+                    .at_path(format!("{base}.at"))
+                    .with_help(
+                        "an event at or after the end would change nothing that is measured",
+                    ),
+                );
+            }
+            if !ids.contains(&event.link.as_str()) {
+                problems.push(unknown_link(&event.link, &ids, format!("{base}.link")));
+            }
+            check_actions(event, &base, problems);
+        }
+        // The steps in time order (events at one moment in the order of the file) lead through states
+        let mut order: Vec<usize> = (0..self.timeline.len()).collect();
+        order.sort_by_key(|index| (self.timeline[*index].at, *index));
+        for link in &self.topology.links {
+            self.walk_link(link, &order, problems);
+        }
+    }
+
+    /// The states of one link after each step: the impairments must stay valid, an outage must not overlap
+    /// another or a `loss` that is set inside it, and a link goes down only if it is up.
+    fn walk_link(&self, link: &Link, order: &[usize], problems: &mut Vec<Problem>) {
+        let start = |own: &Option<Impairments>| {
+            own.clone()
+                .or_else(|| link.both.clone())
+                .unwrap_or_default()
+        };
+        let mut state = LinkState {
+            forward: start(&link.forward),
+            reverse: start(&link.reverse),
+            is_down: false,
+            windows: Vec::new(),
+        };
+        for &index in order {
+            let event = &self.timeline[index];
+            if event.link != link.id {
+                continue;
+            }
+            let base = format!("timeline[{index}]");
+            if let Some(change) = &event.set {
+                state.step_set(event, change, &base, problems);
+            }
+            if let Some(length) = event.outage {
+                state.step_outage(event, length, self.duration, index, problems);
+            }
+            if event.down.is_some() {
+                if state.is_down {
+                    problems.push(
+                        Problem::new("the link is down already")
+                            .at_path(format!("{base}.down"))
+                            .with_help("bring it up with `up: true` first"),
+                    );
+                }
+                state.is_down = true;
+            }
+            if event.up.is_some() {
+                if !state.is_down {
+                    problems.push(
+                        Problem::new("the link is up already")
+                            .at_path(format!("{base}.up"))
+                            .with_help("`up: true` follows a `down: true` of the same link"),
+                    );
+                }
+                state.is_down = false;
+            }
+        }
+    }
+}
+
+/// An outage so far: the direction, from, to, and the index of the event.
+type Window = (Direction, Duration, Duration, usize);
+
+/// What the timeline has made of one link at a moment.
+struct LinkState {
+    forward: Impairments,
+    reverse: Impairments,
+    is_down: bool,
+    windows: Vec<Window>,
+}
+
+impl LinkState {
+    /// A `set`: no loss inside an outage, the impairments valid afterwards, and the step writes something.
+    fn step_set(
+        &mut self,
+        event: &Event,
+        change: &Change,
+        base: &str,
+        problems: &mut Vec<Problem>,
+    ) {
+        let mut earlier = Vec::new();
+        check_impairments(&self.forward, &format!("{base}.set"), &mut earlier);
+        check_impairments(&self.reverse, &format!("{base}.set"), &mut earlier);
+        for (direction, change) in [
+            (Direction::Forward, &change.forward),
+            (Direction::Reverse, &change.reverse),
+            (Direction::Both, &change.both),
+        ] {
+            let Some(change) = change else { continue };
+            let key = direction_key(direction);
+            if change.is_empty() {
+                problems.push(
+                    Problem::new("this step writes no key, so it changes nothing")
+                        .at_path(format!("{base}.set.{key}"))
+                        .with_help("write the keys that change, or take the step away"),
+                );
+            }
+            if !change.loss.is_keep() {
+                for (_, _, to, at) in self.windows_going_on(direction, event.at) {
+                    problems.push(
+                        Problem::new(format!(
+                            "the loss is set while the outage of timeline[{at}] is going on (until {to})"
+                        ))
+                        .at_path(format!("{base}.set.{key}.loss"))
+                        .with_help("an outage is a loss of 100%; set the loss before it starts or after it ends"),
+                    );
+                }
+            }
+            if matches!(direction, Direction::Forward | Direction::Both) {
+                self.forward = change.applied_to(&self.forward);
+            }
+            if matches!(direction, Direction::Reverse | Direction::Both) {
+                self.reverse = change.applied_to(&self.reverse);
+            }
+        }
+        // Only what this step breaks: a problem of the link itself is reported with the link
+        let mut found = Vec::new();
+        check_impairments(&self.forward, &format!("{base}.set"), &mut found);
+        if self.reverse != self.forward {
+            check_impairments(&self.reverse, &format!("{base}.set"), &mut found);
+        }
+        for problem in found {
+            if !earlier.iter().any(|e| e.message == problem.message) {
+                let message = format!("{} after this step", problem.message);
+                problems.push(Problem { message, ..problem });
+            }
+        }
+    }
+
+    /// The outages that are going on at `moment` in a direction that shares a side with `direction`.
+    fn windows_going_on(&self, direction: Direction, moment: Duration) -> Vec<Window> {
+        self.windows
+            .iter()
+            .copied()
+            .filter(|(other, from, to, _)| {
+                overlaps_direction(*other, direction) && *from <= moment && moment < *to
+            })
+            .collect()
+    }
+
+    /// An `outage`: longer than zero, over before the end, and not overlapping another.
+    fn step_outage(
+        &mut self,
+        event: &Event,
+        length: Duration,
+        duration: Duration,
+        index: usize,
+        problems: &mut Vec<Problem>,
+    ) {
+        let base = format!("timeline[{index}]");
+        let direction = event.direction.unwrap_or(Direction::Both);
+        let end = Duration::from_nanos(event.at.as_nanos().saturating_add(length.as_nanos()));
+        if length.is_zero() {
+            problems.push(
+                Problem::new("an outage must last longer than zero")
+                    .at_path(format!("{base}.outage")),
+            );
+        }
+        if end > duration {
+            problems.push(
+                Problem::new(format!(
+                    "the outage ends at {end}, after the end of the measured phase ({duration})"
+                ))
+                .at_path(format!("{base}.outage"))
+                .with_help("make it shorter, or start it earlier"),
+            );
+        }
+        for (other, from, to, at) in &self.windows {
+            if overlaps_direction(*other, direction) && event.at < *to && *from < end {
+                problems.push(
+                    Problem::new(format!(
+                        "the outage overlaps the outage of timeline[{at}] ({from} to {to})"
+                    ))
+                    .at_path(format!("{base}.at"))
+                    .with_help("two outages at once have no clear end of the first; make one outage of them"),
+                );
+            }
+        }
+        self.windows.push((direction, event.at, end, index));
+    }
+}
+
+/// An event does exactly one thing, and `direction` belongs to the outage.
+fn check_actions(event: &Event, base: &str, problems: &mut Vec<Problem>) {
+    let named: Vec<&str> = [
+        ("set", event.set.is_some()),
+        ("outage", event.outage.is_some()),
+        ("down", event.down.is_some()),
+        ("up", event.up.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, present)| *present)
+    .map(|(name, _)| name)
+    .collect();
+    if named.len() != 1 {
+        let found = if named.is_empty() {
+            "none".to_owned()
+        } else {
+            named.join(", ")
+        };
+        problems.push(
+            Problem::new(format!(
+                "an event does exactly one of `set`, `outage`, `down` and `up`, found {found}"
+            ))
+            .at_path(base.to_owned())
+            .with_help("write one event for each thing that happens"),
+        );
+    }
+    if event.direction.is_some() && event.outage.is_none() {
+        problems.push(
+            Problem::new("`direction` belongs to `outage`")
+                .at_path(format!("{base}.direction"))
+                .with_help("in `set` write `forward`, `reverse` or `both`; `down` and `up` act on the interface, which has both"),
+        );
+    }
+}
+
+fn direction_key(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Forward => "forward",
+        Direction::Reverse => "reverse",
+        Direction::Both => "both",
+    }
+}
+
+/// Whether two directions have a side in common.
+fn overlaps_direction(first: Direction, second: Direction) -> bool {
+    first == second || first == Direction::Both || second == Direction::Both
+}
+
+fn unknown_link(link: &Name, ids: &[&str], path: String) -> Problem {
+    let list = format!("the links are: {}", ids.join(", "));
+    let help = match closest(link.as_str(), ids) {
+        Some(near) => format!("did you mean '{near}'? {list}"),
+        None => list,
+    };
+    Problem::new(format!("the link '{link}' does not exist"))
+        .at_path(path)
+        .with_help(help)
 }
 
 fn unknown_node(node: &Name, nodes: &[Name], path: String) -> Problem {

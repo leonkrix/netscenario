@@ -32,6 +32,12 @@ pub enum Feature {
     Corruption,
     /// A limit on the rate.
     RateLimit,
+    /// Values of a link that change at moments of the run (`timeline` with `set`).
+    ScheduledSteps,
+    /// Windows in which nothing is delivered (`timeline` with `outage`).
+    Outages,
+    /// The interface of a link goes down and comes up (`timeline` with `down` and `up`).
+    LinkDownUp,
     /// The `udp-cbr` workload.
     UdpGenerators,
     /// A `seed` is written in the file and the scenario has loss: the same seed must give the same lost packets.
@@ -52,6 +58,9 @@ impl Feature {
         Feature::Duplication,
         Feature::Corruption,
         Feature::RateLimit,
+        Feature::ScheduledSteps,
+        Feature::Outages,
+        Feature::LinkDownUp,
         Feature::UdpGenerators,
         Feature::SeededLoss,
     ];
@@ -71,6 +80,9 @@ impl Feature {
             Feature::Duplication => "duplication",
             Feature::Corruption => "corruption",
             Feature::RateLimit => "rate-limit",
+            Feature::ScheduledSteps => "scheduled-steps",
+            Feature::Outages => "outages",
+            Feature::LinkDownUp => "link-down-up",
             Feature::UdpGenerators => "udp-generators",
             Feature::SeededLoss => "seeded-loss",
         }
@@ -91,6 +103,9 @@ impl Feature {
             Feature::Duplication => "Duplication",
             Feature::Corruption => "Corruption",
             Feature::RateLimit => "Rate limit",
+            Feature::ScheduledSteps => "Scheduled steps",
+            Feature::Outages => "Outages",
+            Feature::LinkDownUp => "Link down and up",
             Feature::UdpGenerators => "UDP traffic generators",
             Feature::SeededLoss => "Same seed, same loss pattern",
         }
@@ -163,6 +178,18 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             if impairments.rate.is_some() {
                 need(Feature::RateLimit, format!("{path}.rate"));
             }
+        }
+    }
+    for (index, event) in scenario.timeline.iter().enumerate() {
+        let path = format!("timeline[{index}]");
+        if event.set.is_some() {
+            need(Feature::ScheduledSteps, path.clone());
+        }
+        if event.outage.is_some() {
+            need(Feature::Outages, path.clone());
+        }
+        if event.down.is_some() || event.up.is_some() {
+            need(Feature::LinkDownUp, path);
         }
     }
     for (index, workload) in scenario.workloads.iter().enumerate() {
@@ -272,6 +299,24 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn the_events_of_the_timeline_name_their_features_and_their_places() {
+        let s = scenario(&format!(
+            "{HEAD}topology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\ntimeline:\n  - {{ at: 1s, link: l, outage: 1s }}\n  - {{ at: 3s, link: l, set: {{ both: {{ rate: 2mbit }} }} }}\n  - {{ at: 5s, link: l, down: true }}\n  - {{ at: 6s, link: l, up: true }}\n{TAIL}"
+        ));
+        let found = requirements(&s);
+        let at = |f: Feature| {
+            found
+                .iter()
+                .find(|r| r.feature == f)
+                .map(|r| r.path.as_str())
+        };
+        assert_eq!(at(Feature::Outages), Some("timeline[0]"));
+        assert_eq!(at(Feature::ScheduledSteps), Some("timeline[1]"));
+        // the first event that asks for it, down or up
+        assert_eq!(at(Feature::LinkDownUp), Some("timeline[2]"));
     }
 
     #[test]

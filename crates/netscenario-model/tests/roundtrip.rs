@@ -5,9 +5,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use netscenario_model::{
-    Backend, Duration, FormatVersion, Impairments, Jitter, JitterDistribution, Link, Loss,
-    MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, Name, Probability, Rate, Reorder,
-    Scenario, Size, Topology, Workload, WorkloadKind,
+    Backend, Change, Direction, Duration, Edit, Event, FormatVersion, Impairments,
+    ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, MAX_PACKET_SIZE,
+    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, Name, Probability, Rate, Reorder, Scenario, Size,
+    Topology, Workload, WorkloadKind,
 };
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -193,11 +194,12 @@ fn valid_scenario() -> impl Strategy<Value = Scenario> {
         proptest::option::of(any::<u64>()),
         0..3usize,
         any::<bool>(),
+        proptest::collection::vec((0..3u8, 0..=100_000_000u32), 0..4),
     )
-        .prop_flat_map(|(duration, seed, extra, kernel)| {
+        .prop_flat_map(|(duration, seed, extra, kernel, steps)| {
             let workloads: Vec<_> = (0..=extra).map(|index| workload(index, duration)).collect();
             (
-                Just((duration, seed, kernel)),
+                Just((duration, seed, kernel, steps)),
                 impairments(),
                 impairments(),
                 prop_oneof![Just(0u8), Just(1), Just(2)],
@@ -205,7 +207,7 @@ fn valid_scenario() -> impl Strategy<Value = Scenario> {
             )
         })
         .prop_map(
-            |((duration, seed, kernel), forward, reverse, shape, workloads)| {
+            |((duration, seed, kernel, steps), forward, reverse, shape, workloads)| {
                 let (forward, reverse, both) = match shape {
                     0 => (Some(forward), Some(reverse), None),
                     1 => (None, None, Some(forward)),
@@ -232,9 +234,56 @@ fn valid_scenario() -> impl Strategy<Value = Scenario> {
                         }],
                     },
                     workloads,
+                    timeline: timeline(duration, &steps),
                 }
             },
         )
+}
+
+/// Events that are valid by construction: each in a slot of its own (an eighth of the duration), so that no
+/// outage overlaps another, none ends after the end, and a link that goes down comes up in the next slot.
+/// The steps change values that need nothing else (`duplicate`, `rate`) and take one away with `null`.
+fn timeline(duration: u64, steps: &[(u8, u32)]) -> Vec<Event> {
+    let slot = duration / 8;
+    let link = Name::new("link").unwrap();
+    let mut events = Vec::new();
+    let mut at = 0u64;
+    for (kind, value) in steps {
+        if slot == 0 || at + 2 * slot >= duration {
+            break;
+        }
+        let moment = Duration::from_nanos(at);
+        match kind {
+            0 => {
+                let change = ImpairmentsChange {
+                    duplicate: Edit::Set(probability(*value)),
+                    rate: Edit::Clear,
+                    ..ImpairmentsChange::default()
+                };
+                events.push(Event::set(
+                    moment,
+                    link.clone(),
+                    Change {
+                        both: Some(change),
+                        ..Change::default()
+                    },
+                ));
+            }
+            1 => events.push(Event::outage(
+                moment,
+                link.clone(),
+                Duration::from_nanos(slot),
+                Some(Direction::Forward),
+            )),
+            _ => {
+                events.push(Event::down(moment, link.clone()));
+                events.push(Event::up(Duration::from_nanos(at + slot), link.clone()));
+                at += slot;
+            }
+        }
+        at += slot;
+    }
+    events
 }
 
 /// Canary: the property above must be able to fail. A valid scenario that is broken on purpose is refused.

@@ -8,6 +8,7 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [lte-like.yaml](lte-like.yaml) | A mobile access link: delay with a normal jitter, loss, and a rate that differs per direction |
 | [satellite.yaml](satellite.yaml) | A geostationary hop with `both`, a window for the stream, and `backend: kernel` |
 | [lossy-both-ways.yaml](lossy-both-ways.yaml) | Loss in both directions and one stream each way |
+| [bandwidth-drop-and-outage.yaml](bandwidth-drop-and-outage.yaml) | A timeline: a rate limit from a moment on, an outage of two seconds, the limit taken away with `null`; applied by the Kernel backend from release 0.2 |
 | [noisy-radio.yaml](noisy-radio.yaml) | Bursts of loss (both models), reordering, duplication and corruption; applied by the Kernel backend from release 0.2 |
 
 `invalid/` holds files that are faulty on purpose, one fault per file, with the message that each must produce in `crates/netscenario-model/tests/snapshots/`. A new kind of fault is a new file there and a new snapshot (`just snapshots`).

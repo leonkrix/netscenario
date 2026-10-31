@@ -16,4 +16,4 @@ workloads:
     rate: 1mbit
     packet-size: 1200b
 timeline:
-  - { at: 5s, link: access, outage: 1s }
+  - { at: 2s, link: access, down: false }

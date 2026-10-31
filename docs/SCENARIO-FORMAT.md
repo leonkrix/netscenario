@@ -1,6 +1,6 @@
 # Scenario format, version 0 (release 0.1)
 
-**Status: the contract for release 0.1, with the impairments of release 0.2 added** (the format reads them; the Kernel backend applies them from step 4.2 of release 0.2, until then it refuses them and says so). Part 1 describes exactly what a scenario file may contain. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01, committed as `docs/schema/scenario-v0.json`); that schema and the tests are the final authority, and this page is checked against them.
+**Status: the contract for release 0.1, with the impairments and the timeline of release 0.2 added** (the format reads them; the Kernel backend applies them from step 4.2 of release 0.2, until then it refuses them and says so). Part 1 describes exactly what a scenario file may contain. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01, committed as `docs/schema/scenario-v0.json`); that schema and the tests are the final authority, and this page is checked against them.
 
 The format is versioned with the line `version: 0`. **Version 0 is the series before 1.0: it may change in any minor release, and the changelog says how.** From 1.0 on the version is 1, and a change that breaks files raises it (SCN-08 adds `netscenario migrate`).
 
@@ -31,6 +31,7 @@ duration: 30s           # required: the length of the measured phase
 backend: auto           # optional: auto (default) or kernel
 topology: { ... }       # required: the nodes and the link
 workloads: [ ... ]      # required: what sends traffic, at least one
+timeline: [ ... ]       # optional: changes over time (release 0.2)
 ```
 
 A complete scenario of release 0.1:
@@ -73,6 +74,7 @@ workloads:
 | `backend` | no | `auto` (the default) or `kernel`. `engine` and `proxy` are refused until releases 0.4 and 0.5. |
 | `topology` | yes | See below. |
 | `workloads` | yes | A list with at least one workload. |
+| `timeline` | no | A list of events, see [Timeline](#timeline). |
 
 ## Values
 
@@ -155,6 +157,35 @@ loss: { model: markov4, p13: 2%, p31: 30%, p32: 10%, p23: 20%, p14: 0.5% }
 
 The queue of the link is the default of the kernel (`limit 1000` packets) and is recorded in the result. A `queue` key (limit and discipline, LNK-09) arrives with release 0.3.
 
+## Timeline
+
+`timeline` is a list of events. An event happens at a moment of the measured phase, to one link, and does exactly one of four things. The moment is before the end of the measured phase; events at one moment are applied in the order of the file, and the list does not have to be in time order.
+
+```yaml
+timeline:
+  - { at: 10s, link: access, set: { forward: { rate: 2mbit } } }
+  - { at: 20s, link: access, outage: 2s }
+  - { at: 25s, link: access, set: { forward: { rate: null } } }
+  - { at: 28s, link: access, down: true }
+  - { at: 29s, link: access, up: true }
+```
+
+| Key | Value | Meaning |
+| --- | --- | --- |
+| `at` | Duration | The moment, from the start of the measured phase. Required. |
+| `link` | the `id` of a link | Required. |
+| `set` | `forward`, `reverse` and `both`, each with the keys of an impairment | Changes values of the link from this moment on. See below. |
+| `outage` | Duration | Nothing is delivered for this long (a loss of 100 %), and the sender notices nothing (D-039). Afterwards the link has the values it had. |
+| `direction` | `forward`, `reverse` or `both` (the default) | For an `outage` only. |
+| `down` | `true` | The interface of the link goes down: the sender gets errors, and the agent counts them as `send_errors` (D-039). |
+| `up` | `true` | The interface comes up again. |
+
+**`set` is a merge patch** (the rule of RFC 7386): a key that is not written stays as it is, a value replaces the old one as a whole (a `loss` replaces the loss, it does not merge into it), and `null` takes the impairment away. `both` changes the two directions. After every step the direction must be a valid set of impairments, and the reader checks it: `delay: null` while a `jitter` is set is refused, and the message says that it is this step.
+
+**What the reader refuses besides the types:** an event that does none or several of the four things; a link that does not exist (with a hint); a moment at or after the end; an outage that is not longer than zero, that ends after the end of the measured phase, or that overlaps another outage of the same direction (the end of the first would be unclear); a `loss` that is set inside an outage of its direction (an outage is a loss of 100 %); a link that goes down twice or comes up while it is up; a `direction` on anything but an outage; a step that writes no key.
+
+**When it happens.** An event is applied before the first packet that its workload sends at or after its moment (D-038), so the same seed gives the same lost packets; the result records when each event was really applied and how many packets had entered the queue. The Kernel backend applies the timeline from step 4.3 of release 0.2; until then it refuses a scenario with one and names the feature ([COVERAGE.md](COVERAGE.md)).
+
 ## Workloads
 
 ```yaml
@@ -191,7 +222,7 @@ These keys are not part of version 0 in release 0.1. A scenario that uses one is
 
 | Key | Planned in | Meaning |
 | --- | --- | --- |
-| `timeline`, `repetitions`, `probes` | 0.2 | Events over time, repeated runs, extra measurements. |
+| `repetitions`, `probes` | 0.2 | Repeated runs, extra measurements. |
 | `allow-limited`, `expect`, `params`, `include` | 0.3 | Accepted restrictions, assertions in the file, parameters and includes. |
 | `matrix` | 0.5 | Sweeps. |
 | `mobility` | 0.6 | Positions over time. |
@@ -254,14 +285,6 @@ The JSON Schema of the format is [`docs/schema/scenario-v0.json`](schema/scenari
 ## Part 2: planned, not binding
 
 The following sketches show where the format is heading. They are **not** part of version 0 in release 0.1 and may change. The release in brackets is the plan of `FEATURES.md`.
-
-**Timeline (0.2).** Events over time: `at`, a target (`link`, optionally a direction), and an action (`set`, `outage`, `down`, `up`). Times are relative to the start of the measured phase. An event is applied before the first packet that its workload sends at or after its moment (D-038); the result records when each event was really applied and how many packets had entered the queue.
-
-```yaml
-timeline:
-  - { at: 10s, link: access, set: { forward.rate: 2mbit } }
-  - { at: 20s, link: access, outage: 2s }
-```
 
 **Corruption that arrives (0.2).** `udp-checksum: off` on a `udp-cbr` workload lets the corrupted payload arrive, and the result then counts `corrupted` (D-040). The keys `corrupt`, `reorder`, `duplicate` and the loss models are in Part 1.
 

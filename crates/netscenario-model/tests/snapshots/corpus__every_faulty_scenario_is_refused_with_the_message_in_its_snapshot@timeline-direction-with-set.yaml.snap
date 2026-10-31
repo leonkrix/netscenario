@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/timeline-direction-with-set.yaml
+---
+error: `direction` belongs to `outage`
+  --> timeline-direction-with-set.yaml:19:40
+   |
+18 | timeline:
+19 |   - { at: 2s, link: access, direction: forward, set: { both: { rate: 1mbit } } }
+   |                                        ^^^^^^^
+   = path: timeline[0].direction
+   = help: in `set` write `forward`, `reverse` or `both`; `down` and `up` act on the interface, which has both

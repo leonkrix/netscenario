@@ -21,8 +21,8 @@
 
 use crate::error::Problem;
 use crate::scenario::{
-    Backend, FormatVersion, Impairments, Jitter, JitterDistribution, Link, Loss, Reorder, Scenario,
-    Topology, Workload, WorkloadKind,
+    Backend, Change, Direction, Event, FormatVersion, Impairments, Jitter, JitterDistribution,
+    Link, Loss, Reorder, Scenario, Topology, True, Workload, WorkloadKind,
 };
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
@@ -125,6 +125,63 @@ impl Impairments {
     }
 }
 
+impl Event {
+    /// An event with no action yet; the constructors below give it one.
+    fn at(at: Duration, link: Name) -> Self {
+        Self {
+            at,
+            link,
+            direction: None,
+            set: None,
+            outage: None,
+            down: None,
+            up: None,
+        }
+    }
+
+    /// At `at`, change values of `link`.
+    #[must_use]
+    pub fn set(at: Duration, link: Name, change: Change) -> Self {
+        Self {
+            set: Some(change),
+            ..Self::at(at, link)
+        }
+    }
+
+    /// At `at`, nothing is delivered on `link` (in `direction`, or both) for `length`.
+    #[must_use]
+    pub fn outage(
+        at: Duration,
+        link: Name,
+        length: Duration,
+        direction: Option<Direction>,
+    ) -> Self {
+        Self {
+            outage: Some(length),
+            direction,
+            ..Self::at(at, link)
+        }
+    }
+
+    /// At `at`, the interface of `link` goes down.
+    #[must_use]
+    pub fn down(at: Duration, link: Name) -> Self {
+        Self {
+            down: Some(True),
+            ..Self::at(at, link)
+        }
+    }
+
+    /// At `at`, the interface of `link` comes up.
+    #[must_use]
+    pub fn up(at: Duration, link: Name) -> Self {
+        Self {
+            up: Some(True),
+            ..Self::at(at, link)
+        }
+    }
+}
+
 /// Builds a [`Scenario`] step by step. Names are given as text and checked when the scenario is built, so a
 /// chain of calls does not need a `?` after each one.
 #[derive(Debug, Clone)]
@@ -136,6 +193,7 @@ pub struct ScenarioBuilder {
     nodes: Vec<Name>,
     links: Vec<Link>,
     workloads: Vec<Workload>,
+    timeline: Vec<Event>,
     problems: Vec<Problem>,
 }
 
@@ -151,6 +209,7 @@ impl Scenario {
             nodes: Vec::new(),
             links: Vec::new(),
             workloads: Vec::new(),
+            timeline: Vec::new(),
             problems: Vec::new(),
         };
         builder.name = builder.name_at(name, "name");
@@ -271,6 +330,13 @@ impl ScenarioBuilder {
         self
     }
 
+    /// Adds an event to the timeline (checked when the scenario is built).
+    #[must_use]
+    pub fn event(mut self, event: Event) -> Self {
+        self.timeline.push(event);
+        self
+    }
+
     /// Sets when the last workload starts and stops, from the start of the measured phase.
     #[must_use]
     pub fn window(mut self, start: Duration, stop: Duration) -> Self {
@@ -309,6 +375,7 @@ impl ScenarioBuilder {
                 links: self.links,
             },
             workloads: self.workloads,
+            timeline: self.timeline,
         };
         let problems = scenario.validate();
         if problems.is_empty() {

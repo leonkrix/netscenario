@@ -125,6 +125,9 @@ pub struct Scenario {
     pub topology: Topology,
     /// What sends traffic. At least one.
     pub workloads: Vec<Workload>,
+    /// Changes over time: events at moments of the measured phase. Empty if the network stays as it is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timeline: Vec<Event>,
 }
 
 /// The nodes and the links. In release 0.1: two nodes and one link (point to point).
@@ -362,6 +365,206 @@ pub struct Reorder {
     /// can be sent on at once; 1 (the default) means no such rule. At least 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gap: Option<u32>,
+}
+
+/// The side of a link that an event acts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Direction {
+    /// From the first node of `between` to the second.
+    Forward,
+    /// From the second node to the first.
+    Reverse,
+    /// Both directions.
+    Both,
+}
+
+/// The value `true`, and nothing else: the key `down: true` says what happens, and `down: false` would say
+/// nothing, so the reader refuses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct True;
+
+impl Serialize for True {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bool(true)
+    }
+}
+
+impl<'de> Deserialize<'de> for True {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if bool::deserialize(deserializer)? {
+            Ok(Self)
+        } else {
+            Err(de::Error::custom(
+                "write `true`: the key says what happens, `false` would say nothing",
+            ))
+        }
+    }
+}
+
+impl JsonSchema for True {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "True".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "type": "boolean", "const": true })
+    }
+}
+
+/// One event of the timeline: at a moment, one thing happens to a link. It does exactly one of `set`,
+/// `outage`, `down` and `up`.
+///
+/// An event is applied before the first packet that its workload sends at or after the moment (D-038), so the
+/// same seed gives the same lost packets. Events at the same moment are applied in the order of the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Event {
+    /// The moment, from the start of the measured phase. Before the end of it.
+    pub at: Duration,
+    /// The link.
+    pub link: Name,
+    /// For an `outage`: the direction it acts on. Both by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<Direction>,
+    /// Changes values of the link from this moment on. A key that is not written stays as it is, and `null`
+    /// takes the impairment away (the rule of a JSON merge patch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set: Option<Change>,
+    /// Nothing is delivered for this long (a loss of 100 %), and the sender notices nothing (D-039). Then
+    /// the link has the values it had before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outage: Option<Duration>,
+    /// The interface of the link goes down: the sender gets errors (D-039).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub down: Option<True>,
+    /// The interface of the link comes up again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub up: Option<True>,
+}
+
+/// What `set` changes, for each direction. `both` changes the two directions.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Change {
+    /// A change of the impairments from the first node to the second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forward: Option<ImpairmentsChange>,
+    /// A change of the impairments from the second node to the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverse: Option<ImpairmentsChange>,
+    /// A change of the impairments in both directions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub both: Option<ImpairmentsChange>,
+}
+
+/// A change of the impairments of one direction. For each key: not written, the value stays; a value, it is
+/// replaced as a whole (a `loss` replaces the loss, it does not merge into it); `null`, the impairment is
+/// taken away. The result must be a valid set of impairments (a `jitter` needs a `delay`), and the reader
+/// checks it for every step.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImpairmentsChange {
+    /// The delay.
+    #[serde(default, skip_serializing_if = "Edit::is_keep")]
+    pub delay: Edit<Duration>,
+    /// The jitter.
+    #[serde(default, skip_serializing_if = "Edit::is_keep")]
+    pub jitter: Edit<Jitter>,
+    /// The loss.
+    #[serde(default, skip_serializing_if = "Edit::is_keep")]
+    pub loss: Edit<Loss>,
+    /// The reordering.
+    #[serde(default, skip_serializing_if = "Edit::is_keep")]
+    pub reorder: Edit<Reorder>,
+    /// The duplication.
+    #[serde(default, skip_serializing_if = "Edit::is_keep")]
+    pub duplicate: Edit<Probability>,
+    /// The corruption.
+    #[serde(default, skip_serializing_if = "Edit::is_keep")]
+    pub corrupt: Edit<Probability>,
+    /// The rate limit.
+    #[serde(default, skip_serializing_if = "Edit::is_keep")]
+    pub rate: Edit<Rate>,
+}
+
+/// What a change does to one impairment: leave it, take it away (`null` in the file), or replace it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Edit<T> {
+    /// The key is not written: the impairment stays as it is.
+    #[default]
+    Keep,
+    /// The key is written with `null`: the impairment is taken away.
+    Clear,
+    /// The key is written with a value: it replaces the impairment as a whole.
+    Set(T),
+}
+
+impl<T> Edit<T> {
+    /// Whether the key is not written.
+    #[must_use]
+    pub fn is_keep(&self) -> bool {
+        matches!(self, Self::Keep)
+    }
+}
+
+impl<T: Serialize> Serialize for Edit<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            // A key that is kept is not written (`skip_serializing_if`); on its own it is a null
+            Self::Keep | Self::Clear => serializer.serialize_none(),
+            Self::Set(value) => value.serialize(serializer),
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Edit<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Option::<T>::deserialize(deserializer)?.map_or(Self::Clear, Self::Set))
+    }
+}
+
+impl<T: JsonSchema> JsonSchema for Edit<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        format!("Edit_{}", T::schema_name()).into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "anyOf": [generator.subschema_for::<T>(), { "type": "null" }]
+        })
+    }
+}
+
+/// Replaces `target` as the edit says.
+fn edit<T: Clone>(target: &mut Option<T>, edit: &Edit<T>) {
+    match edit {
+        Edit::Keep => {}
+        Edit::Clear => *target = None,
+        Edit::Set(value) => *target = Some(value.clone()),
+    }
+}
+
+impl ImpairmentsChange {
+    /// Whether the change writes no key at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The impairments that result from applying the change to `impairments`.
+    #[must_use]
+    pub fn applied_to(&self, impairments: &Impairments) -> Impairments {
+        let mut result = impairments.clone();
+        edit(&mut result.delay, &self.delay);
+        edit(&mut result.jitter, &self.jitter);
+        edit(&mut result.loss, &self.loss);
+        edit(&mut result.reorder, &self.reorder);
+        edit(&mut result.duplicate, &self.duplicate);
+        edit(&mut result.corrupt, &self.corrupt);
+        edit(&mut result.rate, &self.rate);
+        result
+    }
 }
 
 /// A workload: something that sends traffic.
