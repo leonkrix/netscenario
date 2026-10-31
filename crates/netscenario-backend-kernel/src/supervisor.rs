@@ -116,6 +116,13 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
             } => provisioner
                 .apply(link, direction, &impairments, seed)
                 .map(|()| None),
+            Request::QueuePackets { link, direction } => {
+                send(&match provisioner.queue_packets(link, direction) {
+                    Ok(packets) => Response::Count { packets },
+                    Err(message) => Response::Error { message },
+                });
+                continue;
+            }
             Request::StartProgram {
                 node,
                 argv,

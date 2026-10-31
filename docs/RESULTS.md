@@ -37,7 +37,10 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
   "seed": {
     "value": 42,
     "drawn": false,
-    "loss_reproducible": true
+    "loss_reproducible": true,
+    "queue_checks": [
+      { "link": "access", "direction": "forward", "expected": 6250, "counted": 6250 }
+    ]
   },
   "accepted_restrictions": [],
   "addresses": [
@@ -142,7 +145,8 @@ The host name, the user name and file paths are **not** recorded: a result may b
 | --- | --- |
 | `value` | The seed from which the seeds of all random parts of the run were derived (the loss of each direction), or `null` if the backend cannot apply a seed. |
 | `drawn` | `true` if the scenario had no `seed` and the run drew one. Put `value` into the scenario as `seed` to repeat the run. |
-| `loss_reproducible` | Whether the same seed gives the same lost packets. `false` for a scenario with loss on a backend that cannot apply a seed (the Kernel backend with iproute2 older than 6.6.0): such a run is a sample, not a repeatable experiment, and this field says so. |
+| `loss_reproducible` | Whether the same seed gives the same lost packets. `false` for a scenario with loss on a backend that cannot apply a seed (the Kernel backend with iproute2 older than 6.6.0), and `false` if a queue counted packets that the workloads did not send (`queue_checks`): such a run is a sample, not a repeatable experiment, and this field says so. |
+| `queue_checks` | For each direction with random loss, one entry: the `link`, the `direction` (`forward` is from the first node of `between` to the second), the packets that the workloads `expected` to send into it (those the kernel took) and the packets the queue `counted`. The pattern of lost packets is a function of the seed **and of the number of packets that enter the queue**, so a run is repeatable only if the two agree (ENV-07, D-036). Empty if the backend cannot count, or the run has no seed. |
 
 The seed of one direction is derived from the seed of the run, the index of the link and the direction (`netscenario_core::derive_seed`, SplitMix64). **The derivation is fixed**: a test pins its values, because a change would give old seeds new loss patterns. The timing of the machine is not seeded and not reproducible; `max_lateness_ns` says how much it mattered.
 

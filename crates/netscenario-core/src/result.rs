@@ -53,8 +53,37 @@ pub struct SeedInfo {
     /// Whether the run drew the seed because the scenario has none.
     pub drawn: bool,
     /// Whether the same seed gives the same lost packets in this run. `false` for a scenario with loss on a
-    /// backend that cannot apply a seed.
+    /// backend that cannot apply a seed, and for a run in which a queue counted packets that the workloads
+    /// did not send (see `queue_checks`).
     pub loss_reproducible: bool,
+    /// For each direction with random loss: the packets that entered its queue, counted by the queue, against
+    /// the packets that the workloads sent into it (ENV-07). The pattern of lost packets is a function of the
+    /// seed and of this number, so the same seed repeats it only if the two agree. Empty if the backend cannot
+    /// count, or the run has no seed.
+    #[serde(default)]
+    pub queue_checks: Vec<QueueCheck>,
+}
+
+/// The packets of one direction of a link that drew a number for the random loss: counted by the queue, and
+/// sent by the workloads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueCheck {
+    /// The link.
+    pub link: String,
+    /// `forward` (from the first node of `between` to the second) or `reverse`.
+    pub direction: String,
+    /// The packets that the workloads sent into the direction (those the kernel took).
+    pub expected: u64,
+    /// The packets that entered the queue of the direction.
+    pub counted: u64,
+}
+
+impl QueueCheck {
+    /// Whether the queue saw exactly the packets of the workloads.
+    #[must_use]
+    pub fn agrees(&self) -> bool {
+        self.expected == self.counted
+    }
 }
 
 /// A restriction of the backend that the scenario accepted (`allow-limited`).
@@ -197,6 +226,7 @@ mod tests {
                 value: Some(7),
                 drawn: false,
                 loss_reproducible: true,
+                queue_checks: Vec::new(),
             },
             accepted_restrictions: Vec::new(),
             addresses: Vec::new(),

@@ -501,6 +501,25 @@ impl Backend for KernelBackend {
             .map(|_| ())
     }
 
+    fn queue_packets(
+        &mut self,
+        link: LinkHandle,
+        direction: Direction,
+    ) -> Result<Option<u64>, Error> {
+        let action = "count the packets of a queue";
+        let request = Request::QueuePackets {
+            link: link.0,
+            direction: Way::from(direction),
+        };
+        match self.exchange(action, &request)? {
+            Response::Count { packets } => Ok(Some(packets)),
+            other => Err(Self::error(
+                action,
+                format!("the supervisor gave an answer that was not asked for: {other:?}"),
+            )),
+        }
+    }
+
     fn address(&self, link: LinkHandle, end: usize) -> Result<std::net::Ipv4Addr, Error> {
         if end > 1 {
             return Err(Self::error(

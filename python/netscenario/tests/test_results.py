@@ -99,6 +99,7 @@ def test_the_run_as_a_whole() -> None:
     assert (run.duration, run.settle) == (3.0, pytest.approx(1.12))
     assert run.seed.value == 42
     assert run.seed.drawn
+    assert run.seed.queue_checks == ()
     assert run.provenance.backend_details["tc"] == "iproute2 6.15.0"
     assert run.addresses[0].address == "10.100.0.1"
     assert len(run) == 1
@@ -123,3 +124,26 @@ def test_canary_a_file_that_is_not_a_result_or_of_another_version_is_refused() -
         ns.Result.from_json('{"format": "something-else"}', Path())
     with pytest.raises(ValueError, match="version 1"):
         result(version=1)
+
+
+def test_the_queue_checks_are_read_and_a_disagreement_is_visible() -> None:
+    seed = {
+        "value": 42,
+        "drawn": True,
+        "loss_reproducible": False,
+        "queue_checks": [
+            {"link": "access", "direction": "forward", "expected": 417, "counted": 418},
+            {"link": "access", "direction": "reverse", "expected": 0, "counted": 0},
+        ],
+    }
+    checked = result(seed=seed).seed
+    assert not checked.loss_reproducible
+    forward, reverse = checked.queue_checks
+    assert (forward.link, forward.direction, forward.expected, forward.counted) == (
+        "access",
+        "forward",
+        417,
+        418,
+    )
+    assert not forward.agrees
+    assert reverse.agrees
