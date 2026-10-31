@@ -39,6 +39,16 @@ Four more experiments are small Rust or Python projects, each with its own `run.
 | S8 `rust-engine/` | Can a userspace packet engine inside an unprivileged user namespace forward about 100,000 packets per second on one core, with an exact delay and a seeded loss? Which timer? | Whether the Engine backend (BKD-06) is feasible and how its data path is built | `bash spikes/rust-engine/run.sh` (about 3 minutes; `QUICK=1` for a short run) |
 | S9 `rust-pyo3/` | Does a PyO3 extension built with maturin work as one wheel for several Python versions, with the pytest plugin in a second distribution? | The layout of the Python packages (D-010) | `bash spikes/rust-pyo3/run.sh` (needs network access to PyPI and crates.io) |
 
+Four more are for release 0.2 and are about time, the models of `netem`, capture and programs. They need a `tc` that knows `netem ... seed` (iproute2 6.6.0 or newer); the workflow `Spikes` builds one for the runners.
+
+| Spike | Question | Decides | Run |
+| --- | --- | --- | --- |
+| S11 `rust-timeline/` | How fast can a running `netem` be changed through a persistent `tc -batch -` or one `tc` process each time? Does a change that the sender asks for at a packet land exactly on that packet, compared with a timer? Does the same seed give the same lost packets when the parameters change during the run? | How the timeline is applied (D-038) | `bash spikes/rust-timeline/run.sh` (about 12 minutes; `QUICK=1` for 4) |
+| S12 `s12-netem-models.sh` | Do the loss models, reordering, duplication and corruption of `netem` do what their parameters say? What does the correlation argument do? | The names and meanings of the parameters in the format, the fidelity cases, what is refused (D-040, D-048) | `bash spikes/s12-netem-models.sh` (about 8 minutes) |
+| S13 `rust-capture/` | Can the agent capture from a veth interface with `AF_PACKET`, without `unsafe` code of ours, with kernel timestamps and a pcap that `tcpdump` reads? What does a capture show, and how complete is it under load? | Where capture lives and what it promises (D-047) | `bash spikes/rust-capture/run.sh` (about 2 minutes; needs `tcpdump` for the comparison) |
+| S13b `s13b-corruption-accounting.sh` | With corruption, can lost and corrupted packets be told apart, exactly and by sequence number? Which `netem` settings survive a change that does not mention them? | The accounting of corruption in the result (D-040), the whole-state rule for changes (D-048) | `bash spikes/s13b-corruption-accounting.sh` (about 1 minute; needs `rust-capture` built) |
+| S14 `s14-program-node.sh` | Can the supervisor tell from outside that a program in a node is ready? Does a stop reach a program and its children? What does the output of a chatty program do to the reader? | The probes, the stop and the output of `kind: command` (D-041) | `bash spikes/s14-program-node.sh` (under a minute) |
+
 S10 (the toolchain of the CI images and the oldest Rust version that the dependencies allow) is a reading of the published image lists and of the dependency manifests, recorded in the decisions and not a script.
 
 ## How to report

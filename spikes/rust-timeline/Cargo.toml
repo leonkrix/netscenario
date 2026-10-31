@@ -1,0 +1,11 @@
+# Spike S11: how exactly can a timeline be applied to a running netem? A scratch crate, not part of any workspace.
+[package]
+name = "spike-timeline"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rustix = { version = "1", features = ["time", "thread"] }
+
+[workspace]

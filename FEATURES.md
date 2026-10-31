@@ -63,10 +63,10 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | LNK-01 | Fixed delay | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `fidelity.rs`: `a_fixed_delay_is_exact`) |
 | LNK-02 | Jitter: uniform and normal (0.1), pareto and tables (0.3) | M | 0.1 | done for 0.1 (uniform and normal: `fidelity.rs`); pareto and tables come with 0.3 |
 | LNK-03 | Independent loss | M | 0.1 | done (`fidelity.rs`: `a_random_loss_is_the_configured_ratio`; the seed: `tests/run.rs`) |
-| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov | M | 0.2 | planned |
-| LNK-05 | Reordering | M | 0.2 | planned |
-| LNK-06 | Duplication | S | 0.2 | planned |
-| LNK-07 | Corruption | S | 0.2 | planned |
+| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov | M | 0.2 | planned (parameters measured against their theory, D-048) |
+| LNK-05 | Reordering | M | 0.2 | planned (semantics measured, no correlation argument, D-048) |
+| LNK-06 | Duplication | S | 0.2 | planned (measured, D-048) |
+| LNK-07 | Corruption | S | 0.2 | planned (a corrupted packet is dropped by the checksum, D-040) |
 | LNK-08 | Rate limit (token bucket) | M | 0.1 | done (`fidelity.rs`: `a_rate_limit_counts_ethernet_frames`) |
 | LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M | 0.3 | planned |
 | LNK-10 | MTU and fragmentation | S | 0.3 | planned |
@@ -135,7 +135,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PRB-06 | Burst statistics (length of loss runs) | S | 0.2 | planned |
 | PRB-07 | Time to recover after an event | M | 0.2 | planned |
 | PRB-08 | Metrics from your program (JSON on stdout, exit code) | M | 0.2 | planned |
-| PRB-09 | Packet capture per link | M | 0.2 | planned |
+| PRB-09 | Packet capture per link | M | 0.2 | planned (method measured, D-047) |
 | PRB-10 | Queue occupancy and drops from the kernel | S | 0.3 | planned |
 | PRB-11 | CPU and memory of the program under test | C | 0.8 | idea |
 | PRB-12 | Round trip time with percentiles (needs the echo of WRK-05) | M | 0.3 | planned |
