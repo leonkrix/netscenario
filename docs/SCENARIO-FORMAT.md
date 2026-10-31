@@ -212,7 +212,7 @@ The JSON Schema of the format is [`docs/schema/scenario-v0.json`](schema/scenari
 
 The following sketches show where the format is heading. They are **not** part of version 0 in release 0.1 and may change. The release in brackets is the plan of `FEATURES.md`.
 
-**Timeline (0.2).** Events over time: `at`, a target (`link`, optionally a direction), and an action (`set`, `outage`, `down`, `up`). Times are relative to the start of the measured phase. The result records when each event was really applied.
+**Timeline (0.2).** Events over time: `at`, a target (`link`, optionally a direction), and an action (`set`, `outage`, `down`, `up`). Times are relative to the start of the measured phase. An event is applied before the first packet that its workload sends at or after its moment (D-038); the result records when each event was really applied and how many packets had entered the queue.
 
 ```yaml
 timeline:
@@ -220,12 +220,14 @@ timeline:
   - { at: 20s, link: access, outage: 2s }
 ```
 
-**More loss models (0.2).** The parameters follow the `netem` documentation so that the mapping can be checked; there are no aliases.
+**More loss models (0.2).** The parameters follow the `netem` documentation so that the mapping can be checked; there are no aliases. In `gilbert-elliott` `loss-bad` and `loss-good` are the loss probabilities in the two states (the third and fourth argument of `netem loss gemodel`, measured in S12); in `markov4` the five numbers are the transitions in the order of the names. There is no `correlation` key for any loss, duplication or reordering (D-048).
 
 ```yaml
 loss: { model: gilbert-elliott, p: 2%, r: 30%, loss-bad: 50%, loss-good: 0.1% }
 loss: { model: markov4, p13: 2%, p31: 30%, p32: 10%, p23: 20%, p14: 0.5% }
 ```
+
+**Corruption and reordering (0.2).** `corrupt: 1%` flips a bit in the frame; a receiver with the UDP checksum on drops it (D-040), so the program sees loss, and the result tells it from a loss in the queue. `udp-checksum: off` on a `udp-cbr` workload lets the corrupted payload arrive, and the result then counts `corrupted`. `reorder: { share: 25%, gap: 5 }` needs a `delay`: the share is the share of packets sent on at once (D-048).
 
 **Your program as a node (0.2).**
 

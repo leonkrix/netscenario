@@ -1,0 +1,12 @@
+# Spike S13: packet capture in the agent without unsafe code of our own. A scratch crate, not part of any workspace.
+[package]
+name = "spike-capture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+nix = { version = "0.30", features = ["socket", "net", "time", "poll", "uio"] }
+rustix = { version = "1", features = ["net", "time"] }
+
+[workspace]
