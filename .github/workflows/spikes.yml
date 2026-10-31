@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       only_new:
-        description: "Run only S11 to S14 (release 0.2), not the spikes of release 0.1"
+        description: "Run only S11 to S15 (release 0.2), not the spikes of release 0.1"
         type: boolean
         default: false
 
@@ -160,6 +160,12 @@ jobs:
           mkdir -p spikes/out-rust
           PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s13b" bash spikes/s13b-corruption-accounting.sh > spikes/out-rust/s13b.txt 2>&1
           cat spikes/out-rust/s13b.txt
+        continue-on-error: true
+      - name: S15 A duplicating netem in a tree with another netem
+        timeout-minutes: 3
+        run: |
+          mkdir -p spikes/out-rust
+          PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s15" bash spikes/s15-duplicate-in-tree.sh 2>&1 | tee spikes/out-rust/s15.txt
         continue-on-error: true
       - name: S14 A program as a node
         timeout-minutes: 5
