@@ -115,7 +115,7 @@ The commands are `run`, `validate`, `schema`, `doctor` and `clean` ([docs/CLI.md
 | Two nodes and one link, IPv4 | More than two nodes (a star, a chain, a dumbbell: 0.3), IPv6 (0.3) |
 | Delay, jitter (uniform, normal), independent loss, a rate, different values per direction | Bursty loss, reordering, duplication, outages (0.2), queue disciplines (0.3) |
 | Constant-rate UDP streams, measured per packet: loss, one-way delay percentiles, throughput | Your own program or container as a node (0.2) |
-| Seeds, and the same lost packets for the same seed on the same kernel and `tc` | Changes over time: a rate that drops, an outage (0.2) |
+| Seeds, and the same lost packets for the same seed on the same kernel and `tc` (one stream in each direction) | Changes over time: a rate that drops, an outage (0.2) |
 | Results as JSON with the versions and the seed that made them | Reports as JUnit and HTML, repetitions and confidence intervals (0.2) |
 | A command line, a Python package, a pytest plugin | Backends other than the Linux kernel (0.4 and 0.5) |
 

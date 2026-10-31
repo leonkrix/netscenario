@@ -249,7 +249,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | QA-01 | Unit tests and property tests | M | 0.1 | done for 0.1 (unit tests in every crate, property tests of the units in `netscenario-model`; it grows with every release) |
 | QA-02 | Integration tests inside namespaces, on the CI | M | 0.1 | done (the CI creates real namespaces on `ubuntu-22.04` and `ubuntu-24.04`, as a user and as root) |
-| QA-03 | Fuzzing of the scenario parser | S | 0.3 | planned |
+| QA-03 | Fuzzing of the parsers that read input that is not trusted: the scenario, the packets and records of the agent, the metrics of a program | S | 0.2 | planned (brought forward from 0.3, because release 0.2 adds parsers of such input; ClusterFuzzLite and a 24-hour run stay in 0.8) |
 | QA-04 | Snapshot tests for reports and the schema | S | 0.2 | planned |
 | QA-05 | Benchmarks of the engine (throughput, added delay) | S | 0.4 | planned |
 | QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `tests/fidelity.rs`: delay, loss, rate, both jitters, jitter with a rate; three canaries; CI numbers per runner as artifacts) |
