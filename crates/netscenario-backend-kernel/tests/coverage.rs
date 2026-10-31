@@ -4,6 +4,8 @@
 // A test file: a failing unwrap is a failing test
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::path::Path;
+
 use netscenario_backend_kernel::{Environment, capabilities};
 use netscenario_core::{Feature, Support};
 
@@ -60,4 +62,48 @@ fn the_reader_of_the_page_finds_missing_and_duplicate_rows() {
     assert_eq!(kernel_cell(page, "A").as_deref(), Some("✔ 0.1"));
     assert_eq!(kernel_cell(page, "C"), None);
     assert_eq!(kernel_cell(page, "B"), None);
+}
+
+/// The target of the first link `[text](target)` in a cell, if there is one.
+fn link_in(cell: &str) -> Option<&str> {
+    let start = cell.find("](")? + 2;
+    let end = start + cell[start..].find(')')?;
+    Some(&cell[start..end])
+}
+
+/// "No test, no check mark" (the rules at the end of the page): every faithful cell of the Kernel column, and
+/// every place where a run works, links to a file that exists.
+#[test]
+fn every_faithful_mark_of_the_kernel_links_to_a_test_that_exists() {
+    let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+    let places = [
+        "Linux, as root",
+        "Linux, unprivileged user namespace",
+        "GitHub-hosted runner",
+    ];
+    let labels = Feature::ALL
+        .iter()
+        .map(|feature| feature.label())
+        .chain(places);
+    for label in labels {
+        let cell = kernel_cell(COVERAGE, label).unwrap_or_else(|| panic!("no row '{label}'"));
+        assert!(cell.starts_with("✔ 0.1"), "'{label}': {cell}");
+        let target = link_in(&cell).unwrap_or_else(|| panic!("'{label}' has no link: {cell}"));
+        assert!(
+            docs.join(target).is_file(),
+            "'{label}' links to {target}, which is not a file"
+        );
+    }
+}
+
+/// Canary: a cell without a link, and a link to a file that is not there, are found.
+#[test]
+fn the_reader_of_links_finds_a_missing_link_and_a_missing_file() {
+    assert_eq!(link_in("✔ 0.1"), None);
+    assert_eq!(
+        link_in("✔ 0.1 ([test](../crates/x/tests/a.rs); note)"),
+        Some("../crates/x/tests/a.rs")
+    );
+    let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+    assert!(!docs.join("../crates/no-such-crate/tests/a.rs").is_file());
 }

@@ -16,7 +16,7 @@ Each cell is a mark and a release.
 
 A faithful mark is a plan until its cell links to the test that proves it. A limited mark works with a restriction that is written next to the table; the scenario must accept the restriction explicitly (`allow-limited`), otherwise it is refused. A refusal names the reason and a backend that can do it.
 
-The links to the proof point to the fidelity tests of the Kernel backend ([FIDELITY.md](FIDELITY.md)), which measure each of these against its configuration. The backends:
+The links point to the tests that prove the mark: the fidelity tests of the Kernel backend ([FIDELITY.md](FIDELITY.md)) measure the impairments against their configuration, the others run a scenario in real namespaces. A test of the Kernel backend (`tests/coverage.rs`) fails when a faithful mark of the Kernel column has no link, or the link leads nowhere. The backends:
 
 - **Kernel**: Linux network namespaces, virtual Ethernet pairs and `netem`/`tc`. The reference. Needs root or an unprivileged user namespace.
 - **Engine**: a packet-level emulator written for this project, running in userspace on virtual devices inside a user namespace. Linux, no root.
@@ -26,20 +26,20 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 
 ## Topology
 
-| Feature                      | Kernel | Engine | Proxy |
-| ---------------------------- | ------ | ------ | ----- |
-| Point to point               | ✔ 0.1  | ✔ 0.4  | ✔ 0.5 |
-| Star                         | ✔ 0.3  | ✔ 0.4  | ~ 0.5 |
-| Chain with routing           | ✔ 0.3  | ✔ 0.4  | ✘     |
-| Dumbbell (shared bottleneck) | ✔ 0.3  | ✔ 0.4  | ✘     |
-| Multipath, multi-homing      | ✔ 0.3  | ✔ 0.4  | ✘     |
-| Arbitrary graph              | ✔ 0.3  | ✔ 0.4  | ✘     |
-| Links up and down            | ✔ 0.2  | ✔ 0.4  | ✔ 0.5 |
-| Nodes joining and leaving    | ✔ 0.6  | ✔ 0.6  | ✘     |
-| IPv4                         | ✔ 0.1  | ✔ 0.4  | ✔ 0.5 |
-| IPv6                         | ✔ 0.3  | ✔ 0.4  | ~ 0.5 |
-| NAT, firewall                | ?      | ?      | ✘     |
-| Broadcast, multicast         | ?      | ?      | ✘     |
+| Feature                      | Kernel                                                            | Engine | Proxy |
+| ---------------------------- | ----------------------------------------------------------------- | ------ | ----- |
+| Point to point               | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/run.rs)) | ✔ 0.4  | ✔ 0.5 |
+| Star                         | ✔ 0.3                                                             | ✔ 0.4  | ~ 0.5 |
+| Chain with routing           | ✔ 0.3                                                             | ✔ 0.4  | ✘     |
+| Dumbbell (shared bottleneck) | ✔ 0.3                                                             | ✔ 0.4  | ✘     |
+| Multipath, multi-homing      | ✔ 0.3                                                             | ✔ 0.4  | ✘     |
+| Arbitrary graph              | ✔ 0.3                                                             | ✔ 0.4  | ✘     |
+| Links up and down            | ✔ 0.2                                                             | ✔ 0.4  | ✔ 0.5 |
+| Nodes joining and leaving    | ✔ 0.6                                                             | ✔ 0.6  | ✘     |
+| IPv4                         | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/run.rs)) | ✔ 0.4  | ✔ 0.5 |
+| IPv6                         | ✔ 0.3                                                             | ✔ 0.4  | ~ 0.5 |
+| NAT, firewall                | ?                                                                 | ?      | ✘     |
+| Broadcast, multicast         | ?                                                                 | ?      | ✘     |
 
 ## Impairments
 
@@ -57,7 +57,7 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Queue limit | ✔ 0.3 (until then derived, see below) | ✔ 0.4 | ~ 0.5 |
 | Queue disciplines (CoDel, FQ-CoDel, PIE) | ✔ 0.3 | ✔ 0.4 | ✘ |
 | MTU, fragmentation | ✔ 0.3 | ✔ 0.4 | ✘ |
-| Different values per direction | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
+| Different values per direction | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/provision.rs)) | ✔ 0.4 | ✔ 0.5 |
 | Outages | ✔ 0.2 | ✔ 0.4 | ✔ 0.5 |
 | ECN marking | ? | ✔ 0.4 | ✘ |
 
@@ -98,45 +98,45 @@ Mobility only changes the parameters of links over time (through the geometry-ba
 
 ## Workloads and measurement
 
-| Feature                 | Kernel | Engine | Proxy                             |
-| ----------------------- | ------ | ------ | --------------------------------- |
-| UDP traffic generators  | ✔ 0.1  | ✔ 0.4  | ✔ 0.5                             |
-| TCP traffic generators  | ✔ 0.3  | ✔ 0.4  | ~ 0.5                             |
-| Request and response    | ✔ 0.3  | ✔ 0.4  | ✔ 0.5                             |
-| Your program as a node  | ✔ 0.2  | ✔ 0.4  | ~ 0.5 (addresses are the proxy's) |
-| A container as a node   | ✔ 0.5  | ?      | ✘                                 |
-| Per-packet records      | ✔ 0.1  | ✔ 0.4  | ~ 0.5 (what passes the proxy)     |
-| One-way delay           | ✔ 0.1  | ✔ 0.4  | ~ 0.5                             |
-| Packet capture          | ✔ 0.2  | ✔ 0.4  | ✘                                 |
-| Kernel queue statistics | ✔ 0.3  | ·      | ·                                 |
+| Feature | Kernel | Engine | Proxy |
+| --- | --- | --- | --- |
+| UDP traffic generators | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/agent.rs)) | ✔ 0.4 | ✔ 0.5 |
+| TCP traffic generators | ✔ 0.3 | ✔ 0.4 | ~ 0.5 |
+| Request and response | ✔ 0.3 | ✔ 0.4 | ✔ 0.5 |
+| Your program as a node | ✔ 0.2 | ✔ 0.4 | ~ 0.5 (addresses are the proxy's) |
+| A container as a node | ✔ 0.5 | ? | ✘ |
+| Per-packet records | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/run.rs)) | ✔ 0.4 | ~ 0.5 (what passes the proxy) |
+| One-way delay | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs)) | ✔ 0.4 | ~ 0.5 |
+| Packet capture | ✔ 0.2 | ✔ 0.4 | ✘ |
+| Kernel queue statistics | ✔ 0.3 | · | · |
 
 One-way delay is exact because all nodes share one machine and one clock. For the Proxy the delay includes the time spent in the proxy itself, which the result states.
 
 ## Protocol behaviour
 
-| Feature                                                 | Kernel | Engine | Proxy |
-| ------------------------------------------------------- | ------ | ------ | ----- |
-| UDP and everything on it (QUIC, RTP, custom protocols)  | ✔ 0.1  | ✔ 0.4  | ✔ 0.5 |
-| TCP behaviour under loss and delay (congestion control) | ✔ 0.3  | ✔ 0.4  | ✘     |
-| ICMP                                                    | ✔ 0.1  | ✔ 0.4  | ✘     |
+| Feature | Kernel | Engine | Proxy |
+| --- | --- | --- | --- |
+| UDP and everything on it (QUIC, RTP, custom protocols) | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs): UDP streams of any packet size) | ✔ 0.4 | ✔ 0.5 |
+| TCP behaviour under loss and delay (congestion control) | ✔ 0.3 | ✔ 0.4 | ✘ |
+| ICMP | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/provision.rs): `a_ping_takes_the_round_trip_of_both_directions`) | ✔ 0.4 | ✘ |
 
 ## Reproducibility
 
-| Feature                      | Kernel                                | Engine                        | Proxy |
-| ---------------------------- | ------------------------------------- | ----------------------------- | ----- |
-| Same seed, same loss pattern | ✔ 0.1 (needs iproute2 6.6.0 or newer) | ✔ 0.4                         | ✔ 0.5 |
-| Same seed, same timing       | ~ (scheduling noise)                  | ✔ 0.4 (optional virtual time) | ~     |
-| Provenance in every result   | ✔ 0.1                                 | ✔ 0.4                         | ✔ 0.5 |
+| Feature | Kernel | Engine | Proxy |
+| --- | --- | --- | --- |
+| Same seed, same loss pattern | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/run.rs); needs iproute2 6.6.0 or newer) | ✔ 0.4 | ✔ 0.5 |
+| Same seed, same timing | ~ (scheduling noise) | ✔ 0.4 (optional virtual time) | ~ |
+| Provenance in every result | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/run.rs): `a_run_measures_the_link_and_writes_a_result`) | ✔ 0.4 | ✔ 0.5 |
 
 ## Where it can run
 
 | Place | Kernel | Engine | Proxy |
 | --- | --- | --- | --- |
-| Linux, as root | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
-| Linux, unprivileged user namespace | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
+| Linux, as root | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/provision.rs); the CI runs all of them as root) | ✔ 0.4 | ✔ 0.5 |
+| Linux, unprivileged user namespace | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/provision.rs)) | ✔ 0.4 | ✔ 0.5 |
 | Container with `NET_ADMIN` | ✘ alone, ✔ 0.5 with `SYS_ADMIN` and a seccomp profile that allows `unshare` | ✘ alone, ✔ 0.5 with `SYS_ADMIN` and a seccomp profile that allows `unshare` | ✔ 0.5 |
 | Container without extra rights | ✘ | ✘ | ✔ 0.5 |
-| GitHub-hosted runner | ✔ 0.1 | ✔ 0.4 | ✔ 0.5 |
+| GitHub-hosted runner | ✔ 0.1 ([the CI](../.github/workflows/ci.yml): `ubuntu-22.04` and `ubuntu-24.04`) | ✔ 0.4 | ✔ 0.5 |
 | Windows, macOS | ✘ | ✘ | ✔ 0.5 |
 
 **Restriction "same seed" for the Kernel**: A scenario that writes a `seed` and has loss is refused when the `tc` is older than that. Without a `seed` in the file it gets a drawn one, which the result records, if the `tc` can apply it; if not, the scenario runs and the result says that its loss is not reproducible (`Provisioned::loss_reproducible`). `netem` accepts a `seed` (the `tc` of iproute2 6.6.0 or newer; older versions, such as those of Ubuntu 22.04 and 24.04, do not know the word), which according to its manual guides the random loss and corruption events. Jitter, reordering and duplication are not promised to be reproducible. The pattern is a function of the seed **and of the number of packets that enter the queue**, so any other packet in the namespace (IPv6 neighbour discovery, ARP) shifts it. The tool therefore creates quiet namespaces (no IPv6, fixed neighbour entries) and, after the workloads have ended, compares the packet counter of the queue with the packets the workloads sent; if they differ, the result says that the run is not reproducible and names the queue (`queue_checks`, [RESULTS.md](RESULTS.md)). Measured so far (spike S2): the complete 200-packet patterns of two seeds are identical on kernels 6.8, 6.12 and 7.0, with `tc` 6.15 and 7.3.0, as root and as user, on three different machines. The kernel does not promise this across versions, so the guarantee is "same seed, same kernel and `tc` version", and the provenance of every result records both. The engine backend has no such condition.

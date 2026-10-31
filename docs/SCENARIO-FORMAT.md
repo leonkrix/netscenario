@@ -1,6 +1,6 @@
 # Scenario format, version 0 (release 0.1)
 
-**Status: the contract for release 0.1.** Part 1 describes exactly what a scenario file may contain in release 0.1. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01); once it exists, that schema and the tests are the final authority, and this page is checked against them.
+**Status: the contract for release 0.1.** Part 1 describes exactly what a scenario file may contain in release 0.1. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01, committed as `docs/schema/scenario-v0.json`); that schema and the tests are the final authority, and this page is checked against them.
 
 The format is versioned with the line `version: 0`. **Version 0 is the series before 1.0: it may change in any minor release, and the changelog says how.** From 1.0 on the version is 1, and a change that breaks files raises it (SCN-08 adds `netscenario migrate`).
 
@@ -255,7 +255,7 @@ expect:
 
 **Limited features (0.3).** A backend that can do a feature only in part refuses it unless the scenario lists it in `allow-limited`; the result records every accepted restriction.
 
-## Decisions on the questions of the draft
+## Decisions on the questions of the design
 
 | Question | Decision |
 | --- | --- |
@@ -268,5 +268,5 @@ expect:
 
 ## Open
 
-1. **Round-trip time (PRB-03).** The ledger lists it for 0.1, but `udp-cbr` is one-way. An option on the workload that makes the receiver echo each packet would give it, or the metric moves to the request/response workload of 0.3. To be decided with the agent (section 3.5 of the plan); the answer changes the ledger, not this format, if the option stays out.
+1. **Round-trip time (PRB-12).** Decided: `udp-cbr` stays one-way, and the round trip is measured by the request/response workload of release 0.3 (WRK-05), which a receiver answers. The ledger says so; the format of release 0.1 does not change.
 2. **Typo hints beyond node names** (SCN-10, release 0.2). Release 0.1 suggests a node name when the one written is within one edit per three characters of a known name and no other name is as close (`sever` gives `server`, `srv` gives only the list). Still open: the same for unknown keys (today the message lists the allowed keys), for units (`40 ms`, `40Ms`) and for the values of enumerations. This needs either the message of the YAML library taken apart or the key tables of `required.rs` and `reserved.rs` extended with the allowed keys, and a decision on the distance limit per kind of name.

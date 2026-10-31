@@ -42,49 +42,49 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 ## Topology (TOP)
 
-| ID     | Feature                                                                    | Prio | Release | Status  |
-| ------ | -------------------------------------------------------------------------- | ---- | ------- | ------- |
-| TOP-01 | Point to point (two nodes, one link)                                       | M    | 0.1     | planned |
-| TOP-02 | Star (nodes around a hub)                                                  | M    | 0.3     | planned |
-| TOP-03 | Chain with routing (several hops, router nodes)                            | M    | 0.3     | planned |
-| TOP-04 | Dumbbell (shared bottleneck)                                               | M    | 0.3     | planned |
-| TOP-05 | Multipath and multi-homing (several links between nodes)                   | M    | 0.3     | planned |
-| TOP-06 | Arbitrary graph with static routes                                         | M    | 0.3     | planned |
-| TOP-07 | Dynamic topology: links up and down (0.2), nodes joining and leaving (0.6) | M    | 0.2     | planned |
-| TOP-08 | IPv4 (0.1) and IPv6 (0.3)                                                  | M    | 0.1     | planned |
-| TOP-09 | NAT and firewall nodes                                                     | C    | 0.8     | idea    |
-| TOP-10 | Shared segments, broadcast, multicast                                      | C    | 0.8     | idea    |
-| TOP-11 | Shared wireless medium (contention, hidden terminals)                      | C    | 1.x     | idea    |
+| ID | Feature | Prio | Release | Status |
+| --- | --- | --- | --- | --- |
+| TOP-01 | Point to point (two nodes, one link) | M | 0.1 | done (`tests/provision.rs`, `tests/run.rs`; [examples/](examples/)) |
+| TOP-02 | Star (nodes around a hub) | M | 0.3 | planned |
+| TOP-03 | Chain with routing (several hops, router nodes) | M | 0.3 | planned |
+| TOP-04 | Dumbbell (shared bottleneck) | M | 0.3 | planned |
+| TOP-05 | Multipath and multi-homing (several links between nodes) | M | 0.3 | planned |
+| TOP-06 | Arbitrary graph with static routes | M | 0.3 | planned |
+| TOP-07 | Dynamic topology: links up and down (0.2), nodes joining and leaving (0.6) | M | 0.2 | planned |
+| TOP-08 | IPv4 (0.1) and IPv6 (0.3) | M | 0.1 | done for 0.1 (IPv4, `10.100.n.0/30`: `every_end_of_a_link_gets_its_address`, `tests/run.rs`); IPv6 comes with 0.3 |
+| TOP-09 | NAT and firewall nodes | C | 0.8 | idea |
+| TOP-10 | Shared segments, broadcast, multicast | C | 0.8 | idea |
+| TOP-11 | Shared wireless medium (contention, hidden terminals) | C | 1.x | idea |
 
 ## Link impairments (LNK)
 
-| ID     | Feature                                                        | Prio | Release | Status  |
-| ------ | -------------------------------------------------------------- | ---- | ------- | ------- |
-| LNK-01 | Fixed delay                                                    | M    | 0.1     | planned |
-| LNK-02 | Jitter: uniform and normal (0.1), pareto and tables (0.3)      | M    | 0.1     | planned |
-| LNK-03 | Independent loss                                               | M    | 0.1     | planned |
-| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov              | M    | 0.2     | planned |
-| LNK-05 | Reordering                                                     | M    | 0.2     | planned |
-| LNK-06 | Duplication                                                    | S    | 0.2     | planned |
-| LNK-07 | Corruption                                                     | S    | 0.2     | planned |
-| LNK-08 | Rate limit (token bucket)                                      | M    | 0.1     | planned |
-| LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M    | 0.3     | planned |
-| LNK-10 | MTU and fragmentation                                          | S    | 0.3     | planned |
-| LNK-11 | Different values per direction                                 | M    | 0.1     | planned |
-| LNK-12 | Outages (windows without any delivery)                         | M    | 0.2     | planned |
-| LNK-13 | ECN marking                                                    | C    | 0.4     | idea    |
+| ID | Feature | Prio | Release | Status |
+| --- | --- | --- | --- | --- |
+| LNK-01 | Fixed delay | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `fidelity.rs`: `a_fixed_delay_is_exact`) |
+| LNK-02 | Jitter: uniform and normal (0.1), pareto and tables (0.3) | M | 0.1 | done for 0.1 (uniform and normal: `fidelity.rs`); pareto and tables come with 0.3 |
+| LNK-03 | Independent loss | M | 0.1 | done (`fidelity.rs`: `a_random_loss_is_the_configured_ratio`; the seed: `tests/run.rs`) |
+| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov | M | 0.2 | planned |
+| LNK-05 | Reordering | M | 0.2 | planned |
+| LNK-06 | Duplication | S | 0.2 | planned |
+| LNK-07 | Corruption | S | 0.2 | planned |
+| LNK-08 | Rate limit (token bucket) | M | 0.1 | done (`fidelity.rs`: `a_rate_limit_counts_ethernet_frames`) |
+| LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M | 0.3 | planned |
+| LNK-10 | MTU and fragmentation | S | 0.3 | planned |
+| LNK-11 | Different values per direction | M | 0.1 | done (`tests/provision.rs`: `the_impairments_are_in_the_queues_of_the_right_interfaces`; `tests/agent.rs`) |
+| LNK-12 | Outages (windows without any delivery) | M | 0.2 | planned |
+| LNK-13 | ECN marking | C | 0.4 | idea |
 
 ## Link models over time (LMD)
 
-| ID     | Feature                                                                     | Prio | Release | Status  |
-| ------ | --------------------------------------------------------------------------- | ---- | ------- | ------- |
-| LMD-01 | Static model                                                                | M    | 0.1     | planned |
-| LMD-02 | Scheduled steps                                                             | M    | 0.2     | planned |
-| LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces)     | M    | 0.3     | planned |
-| LMD-04 | Markov models with states and transitions                                   | S    | 0.3     | planned |
-| LMD-05 | Periodic patterns (a satellite pass, a duty cycle)                          | S    | 0.3     | planned |
-| LMD-06 | Geometry-based: distance to loss, delay and rate (free space, log-distance) | M    | 0.6     | planned |
-| LMD-07 | Plug-in interface for your own model                                        | S    | 0.7     | planned |
+| ID | Feature | Prio | Release | Status |
+| --- | --- | --- | --- | --- |
+| LMD-01 | Static model | M | 0.1 | done (a link keeps its values for the whole run; changes over time are TML-01, 0.2) |
+| LMD-02 | Scheduled steps | M | 0.2 | planned |
+| LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces) | M | 0.3 | planned |
+| LMD-04 | Markov models with states and transitions | S | 0.3 | planned |
+| LMD-05 | Periodic patterns (a satellite pass, a duty cycle) | S | 0.3 | planned |
+| LMD-06 | Geometry-based: distance to loss, delay and rate (free space, log-distance) | M | 0.6 | planned |
+| LMD-07 | Plug-in interface for your own model | S | 0.7 | planned |
 
 ## Timeline (TML)
 
@@ -129,7 +129,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | PRB-01 | Per-packet records (sequence, send time, receive time) | M | 0.1 | done (record file, JSON Lines export; [RESULTS.md](docs/RESULTS.md)) |
 | PRB-02 | Loss and delivery ratio | M | 0.1 | done (`tests/run.rs`, canaries in `stats.rs`) |
-| PRB-03 | One-way delay and round trip time with percentiles | M | 0.1 | in progress (one-way delay with nearest-rank percentiles is done; the round trip time is open) |
+| PRB-03 | One-way delay with percentiles | M | 0.1 | done (one-way delay with nearest-rank percentiles, `stats.rs` and `tests/run.rs`); the round trip time is PRB-12 |
 | PRB-04 | Jitter (as in RFC 3550) and reordering metrics | S | 0.2 | in progress (the count of reordered packets is in the result; the extent and the RFC 3550 jitter are open) |
 | PRB-05 | Throughput and goodput over time | M | 0.1 | done (payload per second; for UDP throughput and goodput are the same number) |
 | PRB-06 | Burst statistics (length of loss runs) | S | 0.2 | planned |
@@ -138,27 +138,28 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PRB-09 | Packet capture per link | M | 0.2 | planned |
 | PRB-10 | Queue occupancy and drops from the kernel | S | 0.3 | planned |
 | PRB-11 | CPU and memory of the program under test | C | 0.8 | idea |
+| PRB-12 | Round trip time with percentiles (needs the echo of WRK-05) | M | 0.3 | planned |
 
 ## Assertions and statistics (ASR)
 
-| ID     | Feature                                                                       | Prio | Release | Status  |
-| ------ | ----------------------------------------------------------------------------- | ---- | ------- | ------- |
-| ASR-01 | Threshold assertions on metrics                                               | M    | 0.1     | planned |
-| ASR-02 | Repetitions with derived seeds                                                | M    | 0.2     | planned |
-| ASR-03 | Confidence intervals (bootstrap)                                              | M    | 0.2     | planned |
-| ASR-04 | Baselines and regression detection (effect size, interval, "erratic" marking) | M    | 0.7     | planned |
-| ASR-05 | Statistical comparison of two sets of runs (rank test)                        | S    | 0.7     | planned |
-| ASR-06 | Policy for flaky runs: rerun and report it                                    | S    | 0.5     | planned |
-| ASR-07 | Declarative `expect` section in the scenario file                             | S    | 0.3     | planned |
-| ASR-08 | Sweeps with shape checks (goodput does not rise with loss)                    | C    | 0.8     | idea    |
+| ID | Feature | Prio | Release | Status |
+| --- | --- | --- | --- | --- |
+| ASR-01 | Threshold assertions on metrics | M | 0.1 | done (plain `assert` on the numbers of the result in test code: [PYTEST.md](docs/PYTEST.md), [examples/python-test/](examples/python-test/); the `expect` section is ASR-07) |
+| ASR-02 | Repetitions with derived seeds | M | 0.2 | planned |
+| ASR-03 | Confidence intervals (bootstrap) | M | 0.2 | planned |
+| ASR-04 | Baselines and regression detection (effect size, interval, "erratic" marking) | M | 0.7 | planned |
+| ASR-05 | Statistical comparison of two sets of runs (rank test) | S | 0.7 | planned |
+| ASR-06 | Policy for flaky runs: rerun and report it | S | 0.5 | planned |
+| ASR-07 | Declarative `expect` section in the scenario file | S | 0.3 | planned |
+| ASR-08 | Sweeps with shape checks (goodput does not rise with loss) | C | 0.8 | idea |
 
 ## Backends (BKD)
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | in progress (tested in the root code path locally; the CI runs the tests as root with `sudo`, to be confirmed by its first run; also for an ordinary user with the two ambient capabilities, D-035) |
-| BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | in progress (tested; to be confirmed on both CI images) |
-| BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | in progress |
+| BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | done (the CI runs the Kernel backend a second time as root, and as an ordinary user with the two ambient capabilities: `tests/rights.rs`, D-035) |
+| BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | done (the CI runs the tests as an ordinary user on `ubuntu-22.04` and `ubuntu-24.04`) |
+| BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | done (`tests/refusal.rs`, `tests/coverage.rs`, `capability.rs`; D-023) |
 | BKD-04 | Cleanup guarantee: no leftovers after a crash (PID namespace, D-022), and `netscenario clean` as a safety net | M | 0.1 | done (the guarantee is tested at 18 steps in `tests/crash.rs`; `clean` in `tests/clean.rs`, D-024) |
 | BKD-05 | Netlink instead of calls to `ip` and `tc` | S | 0.4 | planned |
 | BKD-06 | Packet engine in userspace (deterministic, no root) | M | 0.4? | planned |
@@ -186,9 +187,9 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| SAF-01 | Refuse any change to an interface outside the namespaces created by the tool | M | 0.1 | in progress |
+| SAF-01 | Refuse any change to an interface outside the namespaces created by the tool | M | 0.1 | done (the supervisor refuses to run outside a network namespace of its own: `tests/safety.rs`, `tests/binary.rs`) |
 | SAF-02 | Limits: number of namespaces, run time, memory of agents | M | 0.1 | done in the backend (namespaces, run time, `Program::memory_limit` with `prlimit`, tested: `tests/safety.rs`, `tests/programs.rs`); a run limits its agents to 1 GiB (`RunOptions::agent_memory_limit`) |
-| SAF-03 | Watchdog that ends and cleans up a run that hangs | M | 0.1 | in progress |
+| SAF-03 | Watchdog that ends and cleans up a run that hangs | M | 0.1 | done (`tests/safety.rs`: `the_watchdog_ends_a_run_that_lasts_too_long`) |
 
 ## Command line (CLI)
 
@@ -205,14 +206,14 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| PYT-01 | Python package with bindings and API (builder, run, results) | M | 0.1 | in progress (bindings, builder, run with observer and cancel, results and errors are done and tested; [PYTHON.md](docs/PYTHON.md); the wheels follow with PYT-08) |
+| PYT-01 | Python package with bindings and API (builder, run, results) | M | 0.1 | done ([PYTHON.md](docs/PYTHON.md); `python/netscenario/tests`, wheels: PYT-08) |
 | PYT-02 | `pytest` plugin: fixtures, markers, options | M | 0.1 | done (fixture `netscenario`, marker and `netscenario_result`, the guard, report section and JUnit properties; [PYTEST.md](docs/PYTEST.md), tested with `pytester` in real runs) |
 | PYT-03 | Typed API (`py.typed`, checked with a strict type checker) | M | 0.1 | done (`pyright` strict over the package and its tests, part of `just check`) |
 | PYT-04 | `asyncio` friendly API | S | 0.3 | planned |
 | PYT-05 | Per-packet data as pandas and polars frames | S | 0.3 | planned |
 | PYT-06 | Notebook helpers for plots | C | 0.8 | idea |
 | PYT-07 | Safe with `pytest-xdist` (parallel runs) | M | 0.5 | planned |
-| PYT-08 | Wheels for manylinux on x86_64 and aarch64 | M | 0.1 | done as a build (every CI run builds both in the manylinux_2_28 containers and installs them into clean environments on 22.04 and 24.04, x86_64 and aarch64; [PYTHON.md](docs/PYTHON.md)); the upload to PyPI is REL-01 |
+| PYT-08 | Wheels for manylinux on x86_64 and aarch64 | M | 0.1 | done (built and installed into clean environments by every CI run; publishing is REL-01) |
 
 ## Rust API (RST)
 
@@ -246,14 +247,14 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| QA-01 | Unit tests and property tests | M | 0.1 | in progress |
-| QA-02 | Integration tests inside namespaces, on the CI | M | 0.1 | planned |
+| QA-01 | Unit tests and property tests | M | 0.1 | done for 0.1 (unit tests in every crate, property tests of the units in `netscenario-model`; it grows with every release) |
+| QA-02 | Integration tests inside namespaces, on the CI | M | 0.1 | done (the CI creates real namespaces on `ubuntu-22.04` and `ubuntu-24.04`, as a user and as root) |
 | QA-03 | Fuzzing of the scenario parser | S | 0.3 | planned |
 | QA-04 | Snapshot tests for reports and the schema | S | 0.2 | planned |
 | QA-05 | Benchmarks of the engine (throughput, added delay) | S | 0.4 | planned |
 | QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `tests/fidelity.rs`: delay, loss, rate, both jitters, jitter with a rate; three canaries; CI numbers per runner as artifacts) |
-| QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | in progress |
-| QA-08 | Supply chain: dependency audit and policy, OpenSSF Scorecard, actions pinned to commits | M | 0.1 | in progress |
+| QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | in progress (the Rust version is checked on the CI with 1.89; `cargo-semver-checks` needs a published release to compare with, so it is added after 0.1.0) |
+| QA-08 | Supply chain: dependency audit and policy, OpenSSF Scorecard, actions pinned to commits | M | 0.1 | done (`cargo deny` in every pull request and weekly, OpenSSF Scorecard, CodeQL, pinned actions, Dependabot) |
 | QA-09 | Coverage figures (for information) | C | 0.3 | idea |
 | QA-10 | Tests on several kernels and distributions | S | 0.5 | planned |
 

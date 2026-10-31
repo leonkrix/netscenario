@@ -60,7 +60,8 @@ How netscenario is put together, and why. This is the design the code will follo
           +------------------------------+       +-------------------------+
 ```
 
-Planned layout of the repository (a Cargo workspace plus Python packages; created in Phase 1):
+The layout of the repository: a Cargo workspace plus Python packages. The two backends marked "from 0.4" and "from 0.5" do not exist yet.
+
 
 | Path                                | Purpose                                                           |
 | ----------------------------------- | ----------------------------------------------------------------- |
@@ -74,8 +75,10 @@ Planned layout of the repository (a Cargo workspace plus Python packages; create
 | `crates/netscenario-py`             | Python bindings (PyO3, built with maturin)                        |
 | `python/netscenario`                | Python API (builder, results, assertions)                         |
 | `python/pytest-netscenario`         | The pytest plugin                                                 |
+| `python/release`, `python/smoke`    | The version script of a release, and the smoke test of the wheels |
 | `scenarios/`                        | Example and test scenarios, which are also used by the tests      |
-| `docs/`                             | These documents, and later the user guide                         |
+| `examples/`                         | One example for each way to use it, which the CI runs             |
+| `docs/`                             | These documents; the user guide comes with release 0.3            |
 | `spikes/`                           | Experiments that check what the system allows                     |
 
 ## The life of a run

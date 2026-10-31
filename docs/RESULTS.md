@@ -194,6 +194,6 @@ One JSON object on each line, one line for each packet of the workload, in the o
 
 ## What a result does not say
 
-- **Round trip time** (PRB-03) is not measured in release 0.1; the one-way delay is.
+- **Round trip time** (PRB-12) is not measured in release 0.1; the one-way delay is. The round trip needs a workload that is answered (WRK-05, release 0.3).
 - **The extent of reordering** (PRB-04: how far a packet is out of place, and the RFC 3550 jitter) is not measured; `reordered` counts the packets, and the export shows which ones (a sequence number that arrives after a higher one).
 - A packet that needed longer than `settle_ns` counts as lost. With a rate limit that builds a long queue, set the `settle` (the option exists in the library; the command line follows).
