@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pytest-netscenario"
 version = "0.1.0rc1"
-description = "pytest plugin for netscenario: fixtures and markers to test a program on a described network"
+description = "pytest plugin for netscenario: fixtures and markers to run network scenarios in tests"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
 license-files = ["LICENSE-*"]
