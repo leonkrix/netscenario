@@ -3,6 +3,10 @@
 Every release of netscenario, newest first. The lines are the titles of the pull requests; the rules for what
 a version may change are in [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## 0.1.0-rc.2 (2026-10-31)
+
+The second release candidate. Nothing changes in how a run works. It tests the changed release process (one environment for each registry, one upload to PyPI) and brings the descriptions of the packages and the READMEs that PyPI shows in line with what release 0.1 does: the example is self-contained now, and a program of your own in the network, which comes with release 0.2, is no longer promised.
+
 ## 0.1.0-rc.1 (2026-10-31)
 
 The first release candidate of 0.1: the Kernel backend, the command line, the Python package and the pytest plugin, as described in the [README](https://github.com/leonkrix/netscenario#readme) (what 0.1 does, and what it does not do yet). It exists to try the packages and the release itself before `0.1.0`.
