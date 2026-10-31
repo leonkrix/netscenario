@@ -5,7 +5,7 @@ a version may change are in [docs/VERSIONING.md](docs/VERSIONING.md).
 
 ## 0.1.0-rc.1 (2026-10-31)
 
-The first release candidate of 0.1: the Kernel backend, the command line, the Python package and the pytest plugin, as described in the [README](README.md) (what 0.1 does, and what it does not do yet). It exists to try the packages and the release itself before `0.1.0`.
+The first release candidate of 0.1: the Kernel backend, the command line, the Python package and the pytest plugin, as described in the [README](https://github.com/leonkrix/netscenario#readme) (what 0.1 does, and what it does not do yet). It exists to try the packages and the release itself before `0.1.0`.
 
 ### Features
 

@@ -1,6 +1,6 @@
 [package]
 name = "netscenario-core"
-description = "Run lifecycle, timeline, link models, statistics and results of netscenario"
+description = "Run lifecycle, capability check, statistics and results of netscenario"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "netscenario"
-description = "Declarative network scenarios for tests: describe a network, run a program in it, measure per packet, assert with statistics"
+description = "Declarative network scenarios for tests: describe a network, send traffic through it, measure per packet, assert on the numbers"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
 license-files = ["LICENSE-*"]

@@ -9,7 +9,7 @@
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux&logoColor=white)](docs/COVERAGE.md)
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-red)](FEATURES.md)
 
-Describe a network, run your program in it, measure what happens, and assert on it. In a test, in your CI, or on your laptop.
+Describe a network, send traffic through it, measure what happens, and assert on it. In a test, in your CI, or on your laptop. (Running your own program inside the network comes with release 0.2.)
 
 > **Status: pre-alpha, release 0.1 is being prepared.** The Kernel backend, the command line, the Python package and the pytest plugin work on Linux: you describe a point-to-point link in a file, run it in network namespaces, and get loss, delay percentiles and throughput back, with the seed and the versions that produced them. What is not there yet is listed under "What 0.1 does not do". The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
 
