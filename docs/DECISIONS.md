@@ -350,3 +350,15 @@ Accepted. The pattern of lost packets of `netem` is a function of the seed **and
 
 Alternatives: reading the statistics of the receiving interface as well (it would also count what arrives, which the receivers already record), comparing in the agent (it cannot see the queue), and leaving `loss_reproducible` to the seed and the version of `tc` alone (the state before: a claim without a check).
 
+## D-037: The CI checks the public Rust API against `main`, and a release against the last release
+
+Accepted. QA-07 asked for a check for breaking changes of the API, which needs a published release to compare with; `0.1.0` is that release. The job `semver` of the CI runs `cargo-semver-checks` (pinned) for `netscenario-model` and `netscenario-core`, the two libraries that others may use (docs/VERSIONING.md); the other crates are published for the programs and have no API promise.
+
+- **Against `main`, not against crates.io, in an ordinary pull request.** Against the registry, every pull request after a deliberate break would fail, although it breaks nothing. Against the base branch only the pull request that changes the API is asked.
+- **A break is allowed when the title says so** (`feat!:`, `refactor(core)!:`), which is the rule of the project and the line the changelog prints as Breaking. Without the mark the job fails and says what to do. The exit code of the tool tells a break (100) from an error of the tool (anything else), and only a break can be admitted by the title.
+- **A release is compared with the last release on crates.io**, and the title cannot admit anything there: the version number has to be large enough for everything since then. Before 1.0 that means a new minor version for a break (`0.1.0` to `0.2.0`), checked by hand with a break under `0.1.0` (rejected), `0.1.1` (rejected as too small) and `0.2.0` (accepted).
+- **Only pull requests.** A push to `main` has passed through one, so `CI passed` lets the job be skipped there, as it does for the dependency review.
+- **How it was tested.** The logic of the step ran locally with all titles (no break, a break without and with the mark, a malformed mark, the release title) against a function that was removed on purpose, and `CI passed` was evaluated on the four combinations of results.
+
+Alternatives: comparing every pull request with the registry (blames the wrong pull request, see above), a check only at the release (finds a break after it was merged and after the next changes are on top), and checking all five crates (it would hold the programs' internals to a promise that the project does not make).
+

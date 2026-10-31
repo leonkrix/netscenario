@@ -128,6 +128,54 @@ jobs:
           tools: just@1.40.0
       - run: just publish-dry-run
 
+  # Does a pull request break the public API of the two libraries (QA-07, docs/VERSIONING.md)? A change is
+  # compared with `main`, so that only the pull request that breaks something is blamed for it, and a break is
+  # allowed when its title says so (`feat!:`), as the policy of the project asks. The pull request of a release
+  # is compared with the last release on crates.io instead: the new version number has to fit everything
+  # that is in it. Only the two libraries are checked; the other crates are published for the programs.
+  semver:
+    name: API (cargo-semver-checks)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The history of the base branch, to build the API of `main` from it
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          tools: cargo-semver-checks@0.51.0
+      - name: No break of the API that the title does not admit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          release='^chore: release '
+          breaking='^[a-z]+(\([^)]*\))?!:'
+          if [[ "$TITLE" =~ $release ]]; then
+            baseline=()
+            echo "A release: compared with the last release on crates.io"
+          else
+            baseline=(--baseline-rev "origin/$BASE")
+            echo "Compared with $BASE"
+          fi
+          status=0
+          cargo semver-checks check-release --package netscenario-model --package netscenario-core "${baseline[@]}" || status=$?
+          # 0: nothing breaks. 100: something breaks. Anything else is an error of the tool
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$status" -eq 100 ] && [[ ! "$TITLE" =~ $release ]] && [[ "$TITLE" =~ $breaking ]]; then
+            echo "::notice::The API breaks, and the title of the pull request says so (!)"
+            exit 0
+          fi
+          if [ "$status" -eq 100 ]; then
+            echo "::error::The public API of netscenario-model or netscenario-core breaks (see above). If that is meant, put an exclamation mark in the title (feat!: ...) so that the changelog says Breaking; in a release, the version number has to be raised"
+          fi
+          exit "$status"
+
   # The Python packages build the native module with maturin, so this job needs Rust as well
   python:
     name: Python ${{ matrix.python }}
@@ -191,12 +239,12 @@ jobs:
           fail-on-severity: high
 
   # Branch protection requires only this job, so new jobs are added to "needs" without touching the
-  # repository settings. Every job has to succeed; only the dependency review may be skipped, because it
-  # runs on pull requests alone.
+  # repository settings. Every job has to succeed; only the two jobs that run on pull requests alone (the
+  # dependency review and the check of the API) may be skipped.
   ci-ok:
     name: CI passed
     if: always()
-    needs: [fmt, clippy, test, docs, deny, package, python, wheels, actionlint, dependency-review]
+    needs: [fmt, clippy, test, docs, deny, package, semver, python, wheels, actionlint, dependency-review]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -205,8 +253,8 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          # Every job has to succeed; only the dependency review may be skipped (push to main)
-          if echo "$NEEDS" | jq -e 'to_entries | map(select(.value.result != "success" and (.key != "dependency-review" or .value.result != "skipped"))) | length == 0' > /dev/null; then
+          # Every job has to succeed; only the jobs of pull requests may be skipped (push to main)
+          if echo "$NEEDS" | jq -e 'to_entries | map(select(.value.result != "success" and ((.key != "dependency-review" and .key != "semver") or .value.result != "skipped"))) | length == 0' > /dev/null; then
             echo "All required jobs succeeded"
           else
             echo "A required job did not succeed"
