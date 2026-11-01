@@ -15,12 +15,12 @@ use std::time::{Duration, Instant, SystemTime};
 use netscenario_agent::clock::monotonic_ns;
 use netscenario_agent::events::{Event, ReceiveSummary, SendSummary};
 use netscenario_agent::records;
+use netscenario_agent::schedule::Stream;
 use netscenario_model::{Impairments, Scenario, UdpCbr, Workload};
 
 use crate::backend::{
     Backend, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramHandle,
 };
-use crate::drive;
 use crate::error::Error;
 use crate::export::write_packets_marked;
 use crate::hash::sha256_hex;
@@ -33,6 +33,7 @@ use crate::result::{
 };
 use crate::stats::analyse;
 use crate::timeline;
+use crate::{barriers, drive};
 
 /// The port of the first workload; the next uses the next port.
 const BASE_PORT: u16 = 5000;
@@ -71,6 +72,11 @@ pub struct RunOptions {
     /// Cancel it to stop the run: the network is torn down and the run returns [`Error::Cancelled`]. The run
     /// looks at it at least every 200 milliseconds.
     pub cancel: CancelToken,
+    /// Whether a step of the timeline is done at a barrier of the workload that sends into its direction, so that the
+    /// same seed gives the same lost packets (D-038). `false` does every step by the clock, as 0.2 first did; the
+    /// result then says that the lost packets are not promised to repeat, if a step changes what is drawn. It
+    /// exists for the tests that show what the barrier is for. Default `true`.
+    pub barriers: bool,
 }
 
 impl std::fmt::Debug for RunOptions {
@@ -84,6 +90,7 @@ impl std::fmt::Debug for RunOptions {
             .field("ready_timeout", &self.ready_timeout)
             .field("observer", &self.observer.as_ref().map(|_| "<observer>"))
             .field("cancel", &self.cancel)
+            .field("barriers", &self.barriers)
             .finish()
     }
 }
@@ -101,6 +108,7 @@ impl RunOptions {
             ready_timeout: Duration::from_secs(10),
             observer: None,
             cancel: CancelToken::new(),
+            barriers: true,
         }
     }
 
@@ -253,6 +261,8 @@ struct Measurement {
     queue_checks: Vec<QueueCheck>,
     directions: Vec<DirectionTally>,
     events: Vec<EventRecord>,
+    /// Why the steps of the timeline may not give the same lost packets for the same seed (see [`barriers::plan`]).
+    clock_reasons: Vec<String>,
 }
 
 /// Runs `scenario` with `backend` and returns the result, which is also written to `result.json` in
@@ -294,6 +304,7 @@ pub fn run(
         queue_checks,
         directions,
         events,
+        clock_reasons,
     } = measured?;
     torn_down?;
 
@@ -314,7 +325,7 @@ pub fn run(
             options,
         )?);
     }
-    let reasons = not_reproducible_because(scenario, &provisioned, &queue_checks);
+    let reasons = not_reproducible_because(scenario, &provisioned, &queue_checks, clock_reasons);
     let result = RunResult {
         format: RESULT_FORMAT.to_owned(),
         version: RESULT_VERSION,
@@ -372,6 +383,7 @@ fn not_reproducible_because(
     scenario: &Scenario,
     provisioned: &Provisioned,
     queue_checks: &[QueueCheck],
+    clock_reasons: Vec<String>,
 ) -> Vec<String> {
     let mut reasons = Vec::new();
     if !provisioned.loss_reproducible {
@@ -389,12 +401,7 @@ fn not_reproducible_because(
             .flatten()
             .any(|impairments| impairments.corrupt.is_some())
     });
-    if timeline::changes_what_is_drawn(scenario) {
-        reasons.push(
-            "the timeline changes what a queue draws random numbers for (the loss, an outage, the duplication, the corruption or the reordering), and the run applies a step by the clock: it lands before a different packet in every run, so the lost packets of one seed differ from there on (the barrier of the sender, which fixes this, is not built yet)"
-                .to_owned(),
-        );
-    }
+    reasons.extend(clock_reasons);
     if corrupts {
         reasons.push(
             "the scenario corrupts packets: the seed fixes which packets are corrupted, but not where `netem` flips the bit, and a bit in the source address of the Ethernet header harms nothing, so a few corrupted packets arrive in one run and are dropped in another (the packets lost in the queue are the same)"
@@ -723,9 +730,10 @@ fn start_senders(
     flows: &[Flow<'_>],
     options: &RunOptions,
     begin: u64,
+    bindings: &[Option<drive::Binding>],
 ) -> Result<Vec<(ProgramHandle, String)>, Error> {
     let mut senders = Vec::new();
-    for flow in flows {
+    for (index, flow) in flows.iter().enumerate() {
         let what = format!("start the sender of '{}'", flow.workload.id);
         let mut arguments = strings(&["send", "--to", &flow.to_address, "--rate"]);
         arguments.push(flow.workload.rate.bits_per_second().to_string());
@@ -738,6 +746,19 @@ fn start_senders(
         arguments.push("--start-at-ns".to_owned());
         arguments.push((begin + nanos(flow.start)).to_string());
         arguments.extend(checksum_argument(flow.workload));
+        // The steps this sender waits for: before which packet, and under which number the run answers
+        let barriers: Vec<String> = bindings
+            .iter()
+            .enumerate()
+            .filter_map(|(id, binding)| {
+                binding
+                    .filter(|binding| binding.sender == index)
+                    .map(|binding| format!("{}:{id}", binding.packet))
+            })
+            .collect();
+        if !barriers.is_empty() {
+            arguments.extend(["--barriers".to_owned(), barriers.join(",")]);
+        }
         senders.push((
             backend.start_program(flow.from_node, &agent_program(options, &arguments))?,
             what,
@@ -775,7 +796,23 @@ fn measure(
     let before = node_counts(backend, scenario, provisioned)?;
     let begin_at = Instant::now() + START_MARGIN;
     let begin = monotonic_ns() + nanos(START_MARGIN);
-    let senders = start_senders(backend, &flows, options, begin)?;
+    // The steps of the timeline, and which of them a sender waits for (D-038)
+    let steps = timeline::steps(scenario);
+    let sending: Vec<barriers::Sending<'_>> = flows
+        .iter()
+        .map(|flow| barriers::Sending {
+            from: &flow.workload.from,
+            to: &flow.workload.to,
+            stream: Stream {
+                bits_per_second: flow.workload.rate.bits_per_second(),
+                packet_size: flow.workload.packet_size.bytes(),
+            },
+            start_ns: nanos(flow.start),
+            duration_ns: nanos(flow.duration),
+        })
+        .collect();
+    let plan = barriers::plan(scenario, &sending, &steps, options.barriers);
+    let senders = start_senders(backend, &flows, options, begin, &plan.bindings)?;
 
     let latest_end = flows
         .iter()
@@ -786,13 +823,13 @@ fn measure(
     // The events are part of the scenario up to its end, also where every workload has stopped before
     let run_for = latest_end.max(Duration::from(scenario.duration));
     let deadline = Instant::now() + START_MARGIN + run_for + END_MARGIN;
-    let steps = timeline::steps(scenario);
     let driven = drive::drive(
         backend,
         scenario,
         provisioned,
         &senders,
         &steps,
+        &plan.bindings,
         drive::Begin {
             at: begin_at,
             ns: begin,
@@ -831,6 +868,7 @@ fn measure(
         queue_checks,
         directions,
         events,
+        clock_reasons: plan.reasons,
     })
 }
 
@@ -1153,6 +1191,8 @@ mod tests {
         damaged: u64,
         /// How many packets the tap of the receiver reports, when it was asked for one and could be opened.
         wire_packets: Option<u64>,
+        /// The barriers the senders were started with, as (packet, id).
+        barriers: Vec<(u64, u32)>,
     }
 
     struct Played {
@@ -1174,6 +1214,55 @@ mod tests {
                 checksum: Vec::new(),
                 damaged: 0,
                 wire_packets: None,
+                barriers: Vec::new(),
+            }
+        }
+
+        /// What the fake sender does: it asks for each of its barriers, and its summary says how long it waited.
+        fn play_sender(&mut self, argv: &[String]) -> Played {
+            assert_eq!(argument(argv, "--rate"), "800000");
+            assert_eq!(argument(argv, "--size"), "1000");
+            assert_eq!(argument(argv, "--duration-ns"), "1000000000");
+            assert!(argument(argv, "--start-at-ns").parse::<u64>().unwrap() > 0);
+            // A sender with barriers asks for each of them, and its summary says how long it waited
+            let barriers: Vec<(u64, u32)> = argv
+                .iter()
+                .position(|a| a == "--barriers")
+                .map(|at| {
+                    argv[at + 1]
+                        .split(',')
+                        .map(|part| {
+                            let (packet, id) = part.split_once(':').unwrap();
+                            (packet.parse().unwrap(), id.parse().unwrap())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.barriers.extend(barriers.iter().copied());
+            let mut lines: VecDeque<String> = barriers
+                .iter()
+                .map(|(packet, id)| {
+                    format!(r#"{{"event":"barrier","flow":0,"id":{id},"packet":{packet}}}"#)
+                })
+                .collect();
+            let done: Vec<String> = barriers
+                .iter()
+                .map(|(packet, id)| {
+                    format!(
+                        r#"{{"id":{id},"packet":{packet},"asked_ns":1,"held_ns":{}}}"#,
+                        1000 * (u64::from(*id) + 1)
+                    )
+                })
+                .collect();
+            lines.push_back(format!(
+                r#"{{"event":"sent","flow":0,"packets":10,"first_send_ns":1000,"last_send_ns":900001000,"max_lateness_ns":1234,"errors":0,"first_error":null,"barriers":[{}]}}"#,
+                done.join(",")
+            ));
+            Played {
+                lines,
+                exit: Some(ProgramExit::Code(0)),
+                stderr: String::new(),
+                stops_on_line: false,
             }
         }
 
@@ -1387,18 +1476,7 @@ mod tests {
                         stops_on_line: false,
                     }
                 }
-                "send" => {
-                    assert_eq!(argument(argv, "--rate"), "800000");
-                    assert_eq!(argument(argv, "--size"), "1000");
-                    assert_eq!(argument(argv, "--duration-ns"), "1000000000");
-                    assert!(argument(argv, "--start-at-ns").parse::<u64>().unwrap() > 0);
-                    Played {
-                        lines: VecDeque::from([r#"{"event":"sent","flow":0,"packets":10,"first_send_ns":1000,"last_send_ns":900001000,"max_lateness_ns":1234,"errors":0,"first_error":null}"#.to_owned()]),
-                        exit: Some(ProgramExit::Code(0)),
-                        stderr: String::new(),
-                        stops_on_line: false,
-                    }
-                }
+                "send" => self.play_sender(argv),
                 other => panic!("unexpected {other}"),
             };
             self.programs.push(played);
@@ -1668,11 +1746,11 @@ mod tests {
     /// arrived and was not delivered is not called lost.
     const WITH_TIMELINE: &str = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { rate: 4mbit }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\ntimeline:\n  - { at: 150ms, link: l, set: { forward: { rate: 1mbit } } }\n  - { at: 300ms, link: l, set: { both: { rate: null } } }\n";
 
-    /// The steps of the timeline are done in order at their moments, also after every sender has ended (the events
-    /// are part of the scenario up to its end), each is recorded with when it was due and when it was done, and the
-    /// observer is told. Nothing is done before its moment.
+    /// With the barriers off every step is done by the clock, in order at its moment, also after every sender has
+    /// ended (the events are part of the scenario up to its end); each is recorded with when it was due and when it was
+    /// done, and the observer is told. Nothing is done before its moment.
     #[test]
-    fn the_steps_of_the_timeline_are_done_in_order_at_their_moments_and_recorded() {
+    fn with_the_barriers_off_the_steps_of_the_timeline_are_done_in_order_at_their_moments() {
         let scenario = Scenario::from_yaml(WITH_TIMELINE, "t.yaml").unwrap();
         let told = Arc::new(std::sync::Mutex::new(Vec::new()));
         let observer = {
@@ -1684,8 +1762,11 @@ mod tests {
             })
         };
         let mut backend = Fake::new(None);
-        let options = options("steps").with_observer(observer);
+        let mut options = options("steps").with_observer(observer);
+        options.barriers = false;
         let result = run(&mut backend, &scenario, &options).unwrap();
+        assert!(backend.barriers.is_empty(), "no sender was given a barrier");
+        assert!(result.events.iter().all(|e| e.packet.is_none()));
         let changes: Vec<&String> = backend
             .calls
             .iter()
@@ -1733,6 +1814,104 @@ mod tests {
             [0, 1, 1]
         );
         let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// The steps of a direction that a workload sends into are done at barriers (D-038): the sender is told before
+    /// which packet (100 packets a second, so the moment 150 ms is packet 15 and 300 ms is packet 30), the loop does
+    /// the step when the sender asks, and the record says which packet and how long the sender waited. A step of a
+    /// direction that no workload sends into is done by the clock, and the loop waits for it.
+    #[test]
+    fn the_steps_of_a_direction_with_a_workload_are_done_at_barriers_and_the_others_by_the_clock() {
+        let scenario = Scenario::from_yaml(WITH_TIMELINE, "t.yaml").unwrap();
+        let mut backend = Fake::new(None);
+        let options = options("barriers");
+        let result = run(&mut backend, &scenario, &options).unwrap();
+        assert_eq!(backend.barriers, [(15, 0), (30, 1)]);
+        let answered: Vec<&String> = backend
+            .calls
+            .iter()
+            .filter(|call| call.starts_with("line go"))
+            .collect();
+        assert_eq!(answered, ["line go 0", "line go 1"]);
+        let events = &result.events;
+        assert_eq!(
+            events
+                .iter()
+                .map(|e| (e.event, e.direction.as_deref(), e.packet, e.held_ns))
+                .collect::<Vec<_>>(),
+            [
+                (0, Some("forward"), Some(15), Some(1000)),
+                (1, Some("forward"), Some(30), Some(2000)),
+                // No workload sends the other way: the clock does it at 300 ms
+                (1, Some("reverse"), None, None)
+            ]
+        );
+        assert!(events[2].started_ns >= events[2].scheduled_ns);
+        // A change of the rate draws nothing differently, so nothing is said against the lost packets
+        assert!(result.seed.loss_reproducible, "{:?}", result.seed);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    fn with_loss_step(workloads: &str, step: &str) -> Scenario {
+        Scenario::from_yaml(
+            &format!(
+                "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: {{ loss: {{ model: random, p: 5% }} }}\nworkloads:\n{workloads}timeline:\n  - {{ at: 150ms, link: l, set: {{ {step}: {{ loss: {{ model: random, p: 20% }} }} }} }}\n"
+            ),
+            "t.yaml",
+        )
+        .unwrap()
+    }
+
+    const ONE: &str =
+        "  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n";
+
+    /// What the run says about the lost packets of a seed when a step changes the loss: nothing against it where a barrier
+    /// holds the sender (the guarantee of D-038), and a reason where the step is left to the clock: no workload sends
+    /// into the direction, two do, or the barriers are off.
+    #[test]
+    fn a_step_that_changes_the_loss_is_reproducible_only_where_a_sender_waits_for_it() {
+        let reasons = |scenario: &Scenario, barriers: bool, name: &str| {
+            let mut backend = Fake::new(None);
+            let mut options = options(name);
+            options.barriers = barriers;
+            let result = run(&mut backend, scenario, &options).unwrap();
+            let _ = std::fs::remove_dir_all(&options.out_dir);
+            (
+                result.seed.loss_reproducible,
+                result.seed.not_reproducible_because,
+            )
+        };
+        // One workload sends into the direction that the step changes: the barrier holds, nothing is said
+        let (reproducible, because) = reasons(&with_loss_step(ONE, "forward"), true, "r1");
+        assert!(reproducible && because.is_empty(), "{because:?}");
+        // The other direction has no workload
+        let (reproducible, because) = reasons(&with_loss_step(ONE, "reverse"), true, "r2");
+        assert!(!reproducible);
+        assert!(
+            because[0].contains("no workload of the scenario sends into that direction"),
+            "{because:?}"
+        );
+        // Two workloads in one direction
+        let two = format!(
+            "{ONE}  - {{ id: v, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }}\n"
+        );
+        let (reproducible, because) = reasons(&with_loss_step(&two, "forward"), true, "r3");
+        assert!(!reproducible);
+        assert!(
+            because
+                .iter()
+                .any(|why| why.contains("two workloads send into link 'l' (forward)")),
+            "{because:?}"
+        );
+        // The barriers off: the clock does it, and the run says so
+        let (reproducible, because) = reasons(&with_loss_step(ONE, "forward"), false, "r4");
+        assert!(!reproducible);
+        assert!(
+            because
+                .iter()
+                .any(|why| why.contains("barriers are switched off")),
+            "{because:?}"
+        );
     }
 
     /// A step that the backend cannot do ends the run with the error of the backend: a run in which the link did

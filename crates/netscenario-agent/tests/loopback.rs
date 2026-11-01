@@ -51,6 +51,7 @@ fn what_the_sender_sent_is_what_the_receiver_recorded() {
         duration_ns: 800_000_000,
         start_at_ns: None,
         udp_checksum: UdpChecksum::On,
+        barriers: Vec::new(),
     })
     .unwrap();
     stop.store(true, Ordering::SeqCst);
@@ -213,6 +214,7 @@ fn a_sender_starts_at_the_moment_it_is_given() {
         duration_ns: 10_000_000,
         start_at_ns: Some(start),
         udp_checksum: UdpChecksum::On,
+        barriers: Vec::new(),
     })
     .unwrap();
     assert!(sent.first_send_ns.unwrap() >= start);
@@ -362,4 +364,104 @@ fn a_receiver_whose_tap_cannot_be_opened_says_why_and_still_records() {
     assert!(recv.wait().unwrap().success());
     assert_eq!((received.packets, received.wire_packets), (1, None));
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Reads what has arrived at `socket` without waiting, and returns the sequence numbers.
+fn drain(socket: &UdpSocket) -> Vec<u32> {
+    let mut sequences = Vec::new();
+    let mut buffer = [0_u8; 2048];
+    while let Ok(length) = socket.recv(&mut buffer) {
+        sequences.push(Header::read(&buffer[..length]).unwrap().sequence);
+    }
+    sequences
+}
+
+/// The barrier of D-038: the sender asks right after the packet before, holds the packet at its slot until the run
+/// answers, and sends nothing in between. The test is the run: it answers late on purpose, and looks at what has
+/// arrived while it holds the answer back.
+#[test]
+fn a_sender_asks_after_the_packet_before_and_holds_the_next_one_until_it_is_answered() {
+    let agent = env!("CARGO_BIN_EXE_netscenario-agent");
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let target = socket.local_addr().unwrap().to_string();
+    // 800 kbit with 100 byte packets is 1,000 packets a second: a gap of one millisecond
+    let mut process = Command::new(agent)
+        .args(["send", "--to", &target, "--rate", "800000", "--size", "100"])
+        .args(["--duration-ns", "60000000", "--barriers", "20:0,40:1"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = process.stdin.take().unwrap();
+    let mut lines = BufReader::new(process.stdout.take().unwrap()).lines();
+    let mut seen: Vec<u32> = Vec::new();
+    for (id, packet) in [(0_u32, 20_u32), (1, 40)] {
+        let line = lines.next().unwrap().unwrap();
+        let Event::Barrier {
+            id: asked,
+            packet: at,
+            ..
+        } = serde_json::from_str(&line).unwrap()
+        else {
+            panic!("a barrier was expected, the sender said {line}");
+        };
+        assert_eq!((asked, at), (id, u64::from(packet)));
+        // Hold the answer back for far longer than a gap. Everything before the packet has been sent (the sender
+        // asks after it) and nothing of the packet itself or after it may arrive in the meantime.
+        std::thread::sleep(Duration::from_millis(150));
+        seen.extend(drain(&socket));
+        assert_eq!(
+            seen,
+            (0..packet).collect::<Vec<u32>>(),
+            "the packets before {packet} are there, and none of the others"
+        );
+        writeln!(stdin, "go {id}").unwrap();
+        std::thread::sleep(Duration::from_millis(30));
+        let now = drain(&socket);
+        assert_eq!(
+            now.first(),
+            Some(&packet),
+            "the packet goes out once it is answered"
+        );
+        // The packets after it follow until the next barrier, which is asked after the packet before it
+        seen.extend(now);
+    }
+    let Event::Sent(sent) = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() else {
+        panic!("the last line must be sent");
+    };
+    assert!(process.wait().unwrap().success());
+    assert_eq!((sent.packets, sent.barrier_timeouts), (60, 0));
+    let held: Vec<(u32, u64, bool)> = sent
+        .barriers
+        .iter()
+        .map(|b| (b.id, b.packet, b.held_ns > 100_000_000))
+        .collect();
+    assert_eq!(held, [(0, 20, true), (1, 40, true)], "{:?}", sent.barriers);
+}
+
+/// Canary for the test above, and a rule of its own: a sender whose run has gone away (its standard input ends)
+/// does not wait for an answer that will never come, and says nothing was missed.
+#[test]
+fn a_sender_whose_input_has_ended_does_not_wait_for_an_answer() {
+    let agent = env!("CARGO_BIN_EXE_netscenario-agent");
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let target = socket.local_addr().unwrap().to_string();
+    let mut process = Command::new(agent)
+        .args(["send", "--to", &target, "--rate", "800000", "--size", "100"])
+        .args(["--duration-ns", "30000000", "--barriers", "10:0"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(process.stdin.take());
+    let began = Instant::now();
+    let mut lines = BufReader::new(process.stdout.take().unwrap()).lines();
+    let last = lines.by_ref().last().unwrap().unwrap();
+    assert!(process.wait().unwrap().success());
+    assert!(began.elapsed() < Duration::from_secs(5));
+    let Event::Sent(sent) = serde_json::from_str(&last).unwrap() else {
+        panic!("the last line must be sent: {last}");
+    };
+    assert_eq!((sent.packets, sent.barrier_timeouts), (30, 0));
 }

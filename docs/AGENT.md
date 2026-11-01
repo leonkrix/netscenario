@@ -75,6 +75,12 @@ A frame counts only if everything that says whose it is is intact: the type of E
 
 The tap needs `CAP_NET_RAW` in the node. It is a help and not a condition: where it cannot be opened (or its file cannot be made) the receiver says why in the `wire_error` of its `ready` line and goes on recording, and the run reports the damaged packets as counted and not named. `received` has `wire_packets`, the number of packets the tap wrote, when it ran. The start of a stream waits for `ready`, so the tap is open before the first packet leaves.
 
+## Barriers: waiting for the run at a packet (`--barriers`, D-038, D-062)
+
+`send --barriers 12:0,40:1` makes the sender stop at two points of its stream: before packet 12 for the thing the run calls 0, and before packet 40 for 1. Right after it has sent the packet before (for packet 0 at the start) it prints a line `{"event":"barrier","flow":1,"id":0,"packet":12}`, and at the slot of packet 12, when it would send it, it goes on only if it has read the line `go 0` on its standard input; if the line is not there yet it waits for it. The run does its thing (a change of the link) between the two lines. The packets after the late one keep their absolute schedule: those that are due are sent at once, in the right order.
+
+The sender never waits for ever. The end of its standard input answers every barrier (a run that died does not leave a sender behind), and an answer that does not come in 10 seconds is given up: the sender goes on, counts it in `barrier_timeouts` of its summary, and the run fails on it, because the guarantee does not hold for that barrier. The summary lists the barriers (`barriers`: `id`, `packet`, `asked_ns`, `held_ns`), so the run can say how long each packet waited. A barrier at a packet beyond the end of the stream is never asked.
+
 ## How the stream is timed
 
 Packet `n` leaves at `start + n × size × 8 / rate`, computed in integers from `n` and not by adding an interval, so an interval that is not a whole number of nanoseconds (3 mbit with 1000 byte packets: 2.666… ms) does not drift. The sender sleeps until shortly before the moment and spins for the last 150 microseconds, because a sleep wakes up tens of microseconds late. **A sending agent therefore uses one core fully while it runs.** `max_lateness_ns` in the summary is the largest amount by which a packet left after its moment: it tells how much of a gap in a result comes from the machine and not from the network.

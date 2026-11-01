@@ -90,7 +90,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID     | Feature                                                    | Prio | Release | Status  |
 | ------ | ---------------------------------------------------------- | ---- | ------- | ------- |
-| TML-01 | Events at times: change parameters                         | M    | 0.2     | in progress (format done in 4.1c, D-050; the queues and the whole-state change, 4.3a, D-059; `set` is done by the clock and recorded in `events`, 4.3b, D-060; the barrier that makes the lost packets repeat is 4.3c) |
+| TML-01 | Events at times: change parameters                         | M    | 0.2     | in progress (format done in 4.1c, D-050; the queues and the whole-state change, 4.3a, D-059; `set` is recorded in `events`, 4.3b, D-060, and done at a barrier of the workload so that the same seed gives the same lost packets, 4.3c, D-062; `outage`, `down` and `up` follow) |
 | TML-02 | Link down and up                                           | M    | 0.2     | in progress (format done in 4.1c, D-050; backend in 4.3) |
 | TML-03 | Repeating events                                           | S    | 0.3     | planned |
 | TML-04 | Events tied to a milestone of a workload (after N packets) | C    | 0.7     | idea    |

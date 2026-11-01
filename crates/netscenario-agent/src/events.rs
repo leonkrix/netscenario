@@ -24,6 +24,17 @@ pub enum Event {
     Sent(SendSummary),
     /// The receiver is done.
     Received(ReceiveSummary),
+    /// The sender asks the run to do something to the link before it sends packet `packet` (D-038): it has sent
+    /// the packet before, and it waits at the slot of `packet` for the line `go <id>` on its standard input. It is the
+    /// last variant: the order of the others is the order of the lines of a run.
+    Barrier {
+        /// The workload.
+        flow: u32,
+        /// The number that the run gave the barrier; it answers with `go <id>`.
+        id: u32,
+        /// The first packet that meets what the run does.
+        packet: u64,
+    },
 }
 
 /// What the sender did.
@@ -44,6 +55,26 @@ pub struct SendSummary {
     pub errors: u64,
     /// The first such error, as text.
     pub first_error: Option<String>,
+    /// The barriers that were asked and answered (D-038), in the order they were asked.
+    #[serde(default)]
+    pub barriers: Vec<BarrierDone>,
+    /// How many barriers were not answered in time: the sender went on without the answer, so the guarantee of
+    /// D-038 does not hold for them. The run fails on it.
+    #[serde(default)]
+    pub barrier_timeouts: u64,
+}
+
+/// A barrier as the sender lived it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BarrierDone {
+    /// The number that the run gave it.
+    pub id: u32,
+    /// The first packet that met what the run did: the number of packets that met the old state.
+    pub packet: u64,
+    /// When it was asked (`CLOCK_MONOTONIC`, nanoseconds), right after the packet before was sent.
+    pub asked_ns: u64,
+    /// How long the sender waited for the answer at the slot of the packet. 0 if the answer was there already.
+    pub held_ns: u64,
 }
 
 /// What the receiver saw.
@@ -95,6 +126,8 @@ mod tests {
             max_lateness_ns: 5,
             errors: 0,
             first_error: None,
+            barriers: Vec::new(),
+            barrier_timeouts: 0,
         });
         let text = serde_json::to_string(&sent).unwrap();
         assert!(

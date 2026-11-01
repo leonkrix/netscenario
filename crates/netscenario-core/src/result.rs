@@ -56,6 +56,8 @@ impl EventRecord {
             scheduled_ns,
             started_ns,
             applied_ns,
+            packet: None,
+            held_ns: None,
         }
     }
 }
@@ -78,11 +80,20 @@ pub struct EventRecord {
     pub scheduled_ns: u64,
     /// When the run asked the backend to do it.
     pub started_ns: u64,
-    /// When the backend had done it. The difference to `scheduled_ns` is how late the step was: the wait for the
-    /// clock, the time of the change itself, and what the machine added. A packet that left in between met the
-    /// old state (the lost packets of the run are the same for the same seed only where D-038 holds, which
-    /// `seed.not_reproducible_because` says).
+    /// When the backend had done it. For a step done by the clock the difference to `scheduled_ns` is how late the
+    /// step was: the wait for the clock, the time of the change itself, and what the machine added; a packet
+    /// that left in between met the old state. A step done at a barrier (`packet` is set) is done when the sender
+    /// has sent the packet before its moment, so it can be done up to one gap before `scheduled_ns`.
     pub applied_ns: u64,
+    /// For a step done at a barrier of the workload that sends into the direction (D-038): the number of packets
+    /// that met the old state, which is the number of the first packet that met the new one. `null` for a step done by
+    /// the clock.
+    #[serde(default)]
+    pub packet: Option<u64>,
+    /// For a step done at a barrier: how long the sender waited at the slot of that packet for the change to be done,
+    /// in nanoseconds; 0 if the change was done by then. The packet left that much late.
+    #[serde(default)]
+    pub held_ns: Option<u64>,
 }
 
 /// Which scenario a result belongs to.

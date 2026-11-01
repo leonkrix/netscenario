@@ -208,13 +208,31 @@ def test_the_steps_of_the_timeline_are_read_in_seconds_and_none_means_no_timelin
             "applied_ns": 4_999_999_500,
         },
     ]
-    first, second = ns.Result.from_json(json.dumps(data), Path("/out")).steps
+    data["events"].append(
+        {
+            "event": 2,
+            "kind": "set",
+            "link": "access",
+            "direction": "reverse",
+            "scheduled_ns": 6_000_000_000,
+            "started_ns": 5_997_000_000,
+            "applied_ns": 5_999_000_000,
+            "packet": 2250,
+            "held_ns": 1_500_000,
+        }
+    )
+    first, second, third = ns.Result.from_json(json.dumps(data), Path("/out")).steps
     assert (first.kind, first.link, first.direction) == ("set", "access", "forward")
     assert first.scheduled == pytest.approx(3.0)
     assert first.lateness == pytest.approx(0.0019)
     # A step is never early: a reading a little before its moment gives 0 and not a negative number
     assert second.direction is None
     assert second.lateness == 0.0
+    assert (first.packet, first.held, first.at_barrier) == (None, None, False)
+    # A step at a barrier is done before the packet, and may be done before its moment
+    assert (third.packet, third.at_barrier) == (2250, True)
+    assert third.held == pytest.approx(0.0015)
+    assert third.lateness == 0.0
 
 
 def test_canary_a_file_that_is_not_a_result_or_of_another_version_is_refused() -> None:
