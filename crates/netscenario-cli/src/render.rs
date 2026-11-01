@@ -86,15 +86,25 @@ fn events_text(text: &mut String, result: &RunResult) {
     }
     let _ = writeln!(text, "\ntimeline");
     for event in &result.events {
-        let late = event.applied_ns.saturating_sub(event.scheduled_ns);
+        // A step at a barrier is done before a packet and says which, and how long that packet waited; a step by the
+        // clock says how late it was
+        let when = match (event.packet, event.held_ns) {
+            (Some(packet), held) => format!(
+                "before packet {packet}, which waited {}",
+                ms_fine(held.unwrap_or(0))
+            ),
+            (None, _) => format!(
+                "done {} late",
+                ms(event.applied_ns.saturating_sub(event.scheduled_ns))
+            ),
+        };
         let _ = writeln!(
             text,
-            "  at {}  link {} {}  {}  done {} late",
+            "  at {}  link {} {}  {}  {when}",
             seconds(event.scheduled_ns),
             event.link,
             event.direction.as_deref().unwrap_or("both ways"),
             event.kind,
-            ms(late)
         );
     }
 }
@@ -454,7 +464,10 @@ result: out/result.json
             {"event": 0, "kind": "set", "link": "access", "direction": "forward",
              "scheduled_ns": 3_000_000_000_u64, "started_ns": 3_000_100_000_u64, "applied_ns": 3_001_900_000_u64},
             {"event": 1, "kind": "down", "link": "access", "direction": null,
-             "scheduled_ns": 5_000_000_000_u64, "started_ns": 5_000_000_000_u64, "applied_ns": 5_000_400_000_u64}
+             "scheduled_ns": 5_000_000_000_u64, "started_ns": 5_000_000_000_u64, "applied_ns": 5_000_400_000_u64},
+            {"event": 2, "kind": "set", "link": "access", "direction": "reverse",
+             "scheduled_ns": 6_000_000_000_u64, "started_ns": 5_997_000_000_u64, "applied_ns": 5_999_000_000_u64,
+             "packet": 2250, "held_ns": 1500}
         ]);
         let result = RunResult::from_json(&json.to_string()).unwrap();
         let text = summary(&result, Path::new("out"));
@@ -464,6 +477,12 @@ result: out/result.json
         );
         assert!(
             text.contains("at 5.000 s  link access both ways  down  done 0.4 ms late"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "at 6.000 s  link access reverse  set  before packet 2250, which waited 0.002 ms"
+            ),
             "{text}"
         );
     }

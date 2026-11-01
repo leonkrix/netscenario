@@ -1,14 +1,22 @@
-//! The loop of a run while the workloads go: it waits for the senders and does the steps of the timeline when
-//! they are due (step 4.3b).
+//! The loop of a run while the workloads go: it waits for the senders, and does the steps of the timeline
+//! (steps 4.3b and 4.3c).
 //!
-//! A step is done by the **clock**: the run asks the backend at the moment the file gives, counted from the
-//! moment the workloads start. A packet that is sent between the moment and the end of the change meets the old
-//! state, and which packet that is differs from run to run, so for a link that draws random numbers the lost
-//! packets of one seed differ too. The result says so (`seed.not_reproducible_because`); the barrier of D-038, which
-//! makes the sender wait for the change at the packet it belongs to, is the next step. For a link whose
-//! changes draw no numbers (a rate, a delay) the clock is exact enough: the result records how late each step was.
+//! A step is done in one of two ways.
+//!
+//! - **At a barrier** (D-038). The sender of the workload that sends into the direction of the step knows its
+//!   packet clock, so it knows which packet is the first one at or after the moment of the step. Right after it has
+//!   sent the packet before, it asks (`barrier <id>`); the loop does the step and answers (`go <id>`); and at the slot
+//!   of the packet the sender goes on, waiting only if the answer is not there yet. For the packets of that workload
+//!   this is the same as a step at the exact moment, and it does not depend on what the machine does: the same seed
+//!   gives the same lost packets.
+//! - **By the clock.** The loop asks the backend at the moment the file gives, counted from the moment the
+//!   workloads start. This is for a step that no workload can wait for: no workload sends into its direction, or
+//!   the moment lies after the last packet. A packet that is sent between the moment and the end of the change
+//!   meets the old state, and which one differs from run to run.
+//!
+//! The result records both ways (`packet` is set for a barrier).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use netscenario_agent::clock::monotonic_ns;
@@ -30,6 +38,13 @@ pub(crate) struct Begin {
     pub(crate) ns: u64,
 }
 
+/// The step that a sender waits for: which sender, and before which of its packets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Binding {
+    pub(crate) sender: usize,
+    pub(crate) packet: u64,
+}
+
 /// What the loop found out.
 pub(crate) struct Driven {
     /// What each sender said at its end, in the order of the senders.
@@ -42,61 +57,84 @@ pub(crate) struct Driven {
 /// news counts whole milliseconds, and a step must not be due a millisecond late because of that.
 const SLEEP_BELOW: Duration = Duration::from_millis(3);
 
-/// The longest the loop waits for news of a sender when no step is due.
+/// The longest the loop waits for news of a sender when nothing is due.
 const LONGEST_WAIT: Duration = Duration::from_millis(200);
 
-/// Waits for the senders to end and does the steps of the timeline at their moments.
+/// How long the loop waits for news of a sender while a barrier is still to come: a sender asks right after the packet
+/// before the barrier, and the packet waits for the answer, so the loop looks often.
+const BARRIER_WAIT: Duration = Duration::from_millis(1);
+
+/// Waits for the senders to end and does the steps of the timeline: at the barriers where `bindings` has one, else by the
+/// clock.
 ///
 /// # Errors
 ///
 /// - [`Error::Cancelled`] if the run is cancelled (looked at before every wait),
 /// - [`Error::Backend`] if a step cannot be done,
-/// - [`Error::Run`] if a sender fails, says something else than `sent` at its end, or does not end in time.
-#[allow(clippy::too_many_arguments)]
+/// - [`Error::Run`] if a sender fails, says something else than `sent` at its end, does not end in time, ends
+///   without having asked a barrier, or went on without an answer.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) fn drive(
     backend: &mut dyn Backend,
     scenario: &Scenario,
     provisioned: &Provisioned,
     senders: &[(ProgramHandle, String)],
     steps: &[Step],
+    bindings: &[Option<Binding>],
     begin: Begin,
     deadline: Instant,
     control: &Control<'_>,
 ) -> Result<Driven, Error> {
-    let mut pending: VecDeque<&Step> = steps.iter().collect();
+    // The steps that are done by the clock, in order; the others are done when their sender asks
+    let mut pending: VecDeque<(usize, &Step)> = steps
+        .iter()
+        .enumerate()
+        .filter(|(place, _)| bindings[*place].is_none())
+        .collect();
+    let mut at_barriers = bindings.iter().filter(|binding| binding.is_some()).count();
     let mut lines: Vec<Vec<String>> = vec![Vec::new(); senders.len()];
     let mut ended = vec![false; senders.len()];
-    let mut events = Vec::new();
+    let mut events: Vec<EventRecord> = Vec::new();
+    // Where in `events` the record of a step is, by the id of its barrier
+    let mut recorded: HashMap<u32, usize> = HashMap::new();
     loop {
         control.checkpoint()?;
-        // The steps that are due, in order. A step that is a moment away is waited for to the microsecond.
-        while let Some(step) = pending.front() {
+        // The steps by the clock that are due, in order. A step that is a moment away is waited for to the
+        // microsecond.
+        while let Some((_, step)) = pending.front() {
             let due = begin.at + Duration::from_nanos(step.at.as_nanos());
             let left = due.saturating_duration_since(Instant::now());
-            if left > SLEEP_BELOW {
-                break;
-            }
             if !left.is_zero() {
+                // While a sender may ask for a barrier the loop does not sleep: a sleep of up to 3 ms would hold the
+                // sender's packet back and let this step overtake the barrier that came before it. It waits for news
+                // for a millisecond at a time below instead, and does the step when the moment has come.
+                if left > SLEEP_BELOW || at_barriers > 0 {
+                    break;
+                }
                 std::thread::sleep(left);
             }
-            let record = do_step(backend, scenario, provisioned, step, begin)?;
-            control.emit(&RunEvent::StepDone {
-                event: record.event,
-                lateness: Duration::from_nanos(
-                    record.applied_ns.saturating_sub(record.scheduled_ns),
-                ),
-            });
+            let record = do_step(backend, scenario, provisioned, step, None, begin)?;
+            tell(control, &record);
             events.push(record);
             pending.pop_front();
         }
         // Until the next step is due, or for news: the first sender that is still going is asked to wait for
         // news, the others are only looked at
-        let wait = pending.front().map_or(LONGEST_WAIT, |step| {
-            let due = begin.at + Duration::from_nanos(step.at.as_nanos());
-            due.saturating_duration_since(Instant::now())
-                .saturating_sub(SLEEP_BELOW)
-                .min(LONGEST_WAIT)
-        });
+        let wait = if at_barriers > 0 {
+            // A millisecond at a time, and not beyond the next step by the clock
+            pending.front().map_or(BARRIER_WAIT, |(_, step)| {
+                let due = begin.at + Duration::from_nanos(step.at.as_nanos());
+                due.saturating_duration_since(Instant::now())
+                    .min(BARRIER_WAIT)
+            })
+        } else {
+            pending.front().map_or(LONGEST_WAIT, |(_, step)| {
+                let due = begin.at + Duration::from_nanos(step.at.as_nanos());
+                due.saturating_duration_since(Instant::now())
+                    .saturating_sub(SLEEP_BELOW)
+                    .min(LONGEST_WAIT)
+            })
+        };
         let mut waited = false;
         for (index, (program, what)) in senders.iter().enumerate() {
             if ended[index] {
@@ -105,7 +143,40 @@ pub(crate) fn drive(
             let patience = if waited { Duration::ZERO } else { wait };
             waited = true;
             let state = backend.poll_program(*program, patience)?;
+            let before = lines[index].len();
             lines[index].extend(state.lines);
+            // A sender that asks is answered at once, in the order it asked
+            for line in &lines[index][before..] {
+                let Event::Barrier { id, .. } = event(line, what)? else {
+                    continue;
+                };
+                let place = usize::try_from(id).unwrap_or(usize::MAX);
+                let Some(binding) = bindings.get(place).copied().flatten() else {
+                    return Err(failure(
+                        what.clone(),
+                        format!("the sender asked for a barrier ({id}) that the run did not plan"),
+                    ));
+                };
+                if binding.sender != index || recorded.contains_key(&id) {
+                    return Err(failure(
+                        what.clone(),
+                        format!("the barrier {id} was asked by the wrong sender, or twice"),
+                    ));
+                }
+                let record = do_step(
+                    backend,
+                    scenario,
+                    provisioned,
+                    &steps[place],
+                    Some(binding.packet),
+                    begin,
+                )?;
+                backend.send_line(*program, &format!("go {id}"))?;
+                tell(control, &record);
+                recorded.insert(id, events.len());
+                events.push(record);
+                at_barriers -= 1;
+            }
             if let Some(exit) = state.exit {
                 if !exit.success() {
                     return Err(failure(
@@ -116,8 +187,18 @@ pub(crate) fn drive(
                 ended[index] = true;
             }
         }
-        if ended.iter().all(|done| *done) && pending.is_empty() {
-            break;
+        if ended.iter().all(|done| *done) {
+            if at_barriers > 0 {
+                return Err(failure(
+                    "run the workloads",
+                    format!(
+                        "{at_barriers} barrier(s) of the timeline were never asked by a sender that has ended"
+                    ),
+                ));
+            }
+            if pending.is_empty() {
+                break;
+            }
         }
         if !waited {
             // Every sender has ended and a step is still to come: wait for it
@@ -142,15 +223,42 @@ pub(crate) fn drive(
             }
         }
     }
+    // What each sender lived through at its barriers: how long the packet waited, and whether it went on without
+    // an answer, which the guarantee of D-038 does not allow
+    for (summary, (_, what)) in sent.iter().zip(senders) {
+        if summary.barrier_timeouts > 0 {
+            return Err(failure(
+                what.clone(),
+                format!(
+                    "the sender went on without an answer to {} barrier(s); the run was too slow to answer",
+                    summary.barrier_timeouts
+                ),
+            ));
+        }
+        for barrier in &summary.barriers {
+            if let Some(&at) = recorded.get(&barrier.id) {
+                events[at].held_ns = Some(barrier.held_ns);
+            }
+        }
+    }
     Ok(Driven { sent, events })
 }
 
-/// Does one step and records it.
+/// Tells the observer that a step was done.
+fn tell(control: &Control<'_>, record: &EventRecord) {
+    control.emit(&RunEvent::StepDone {
+        event: record.event,
+        lateness: Duration::from_nanos(record.applied_ns.saturating_sub(record.scheduled_ns)),
+    });
+}
+
+/// Does one step and records it. `packet` is set for a step done at a barrier.
 fn do_step(
     backend: &mut dyn Backend,
     scenario: &Scenario,
     provisioned: &Provisioned,
     step: &Step,
+    packet: Option<u64>,
     begin: Begin,
 ) -> Result<EventRecord, Error> {
     let since = |ns: u64| ns.saturating_sub(begin.ns);
@@ -185,5 +293,7 @@ fn do_step(
         scheduled_ns: step.at.as_nanos(),
         started_ns: started,
         applied_ns: since(monotonic_ns()),
+        packet,
+        held_ns: None,
     })
 }

@@ -9,7 +9,7 @@ use std::time::Duration;
 use rustix::net::{AddressFamily, SendFlags, SocketType, ipproto};
 
 use crate::clock::monotonic_ns;
-use crate::events::SendSummary;
+use crate::events::{BarrierDone, SendSummary};
 use crate::schedule::Stream;
 use crate::wire::{HEADER_LEN, Header, UdpChecksum};
 
@@ -31,6 +31,55 @@ pub struct SendConfig {
     pub start_at_ns: Option<u64>,
     /// Whether the packets carry the checksum of UDP. Off needs a raw socket (`CAP_NET_RAW`) and IPv4.
     pub udp_checksum: UdpChecksum,
+    /// The barriers of the timeline (D-038): before which packet the run does something to the link. In the order
+    /// of the packets, and for one packet in the order of the ids.
+    pub barriers: Vec<Barrier>,
+}
+
+/// A point of the stream where the sender waits for the run: before `packet` the run does the thing `id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Barrier {
+    /// The first packet that meets what the run does.
+    pub packet: u64,
+    /// The number that the run gave it.
+    pub id: u32,
+}
+
+/// How the sender talks to the run about its barriers (D-038). The sender asks right after it has sent the
+/// packet before the barrier, so that the run has the time between two packets to do its thing, and waits for the
+/// answer at the slot of the packet, where it costs nothing if the answer is there already.
+pub trait Barriers {
+    /// Tells the run that the barrier `id` is reached: the packets before `packet` are sent.
+    fn ask(&mut self, id: u32, packet: u64);
+
+    /// Waits for the answer to `id`. `true` if it came, `false` if the sender gave up waiting (it goes on, and the
+    /// summary says so, because the guarantee of D-038 does not hold for that barrier).
+    fn wait(&mut self, id: u32) -> bool;
+}
+
+/// Asks the barriers of `planned` from index `from` on that belong to `packet`, and notes when.
+fn ask(
+    planned: &[Barrier],
+    from: usize,
+    packet: u64,
+    asked: &mut Vec<(Barrier, u64)>,
+    port: &mut dyn Barriers,
+) {
+    for barrier in planned[from..].iter().take_while(|b| b.packet == packet) {
+        port.ask(barrier.id, barrier.packet);
+        asked.push((*barrier, monotonic_ns()));
+    }
+}
+
+/// A stream without barriers, as in release 0.1.
+struct NoBarriers;
+
+impl Barriers for NoBarriers {
+    fn ask(&mut self, _id: u32, _packet: u64) {}
+
+    fn wait(&mut self, _id: u32) -> bool {
+        true
+    }
 }
 
 /// The length of the header of UDP.
@@ -148,6 +197,19 @@ fn wait_until(target_ns: u64) {
 /// A [`SendError`] if the settings are not valid or the socket cannot be made. Packets that the kernel
 /// refuses later are counted in the summary and do not stop the stream.
 pub fn run(config: &SendConfig) -> Result<SendSummary, SendError> {
+    run_with(config, &mut NoBarriers)
+}
+
+/// Sends the stream, asking the run at the barriers of `config` through `barriers`.
+///
+/// # Errors
+///
+/// As [`run`].
+#[allow(clippy::too_many_lines)] // one loop, with the checks before it
+pub fn run_with(
+    config: &SendConfig,
+    barriers: &mut dyn Barriers,
+) -> Result<SendSummary, SendError> {
     let SendConfig {
         target,
         flow,
@@ -155,6 +217,7 @@ pub fn run(config: &SendConfig) -> Result<SendSummary, SendError> {
         duration_ns,
         start_at_ns,
         udp_checksum,
+        barriers: planned,
     } = config;
     if stream.bits_per_second == 0 {
         return Err(SendError("the rate must be more than zero".to_owned()));
@@ -195,10 +258,33 @@ pub fn run(config: &SendConfig) -> Result<SendSummary, SendError> {
         max_lateness_ns: 0,
         errors: 0,
         first_error: None,
+        barriers: Vec::new(),
+        barrier_timeouts: 0,
     };
+    // The barriers are asked one packet ahead and answered at the slot of the packet they belong to
+    let mut asked: Vec<(Barrier, u64)> = Vec::new();
+    let mut next_barrier = 0_usize;
+    ask(planned, 0, 0, &mut asked, barriers);
     for n in 0..count {
         let due = start.saturating_add(stream.offset_ns(n));
         wait_until(due);
+        // What the run is to do before this packet is done by now, or the packet waits for it
+        while let Some((barrier, asked_at)) = asked.get(next_barrier).copied() {
+            if barrier.packet != n {
+                break;
+            }
+            let began = monotonic_ns();
+            if !barriers.wait(barrier.id) {
+                summary.barrier_timeouts += 1;
+            }
+            summary.barriers.push(BarrierDone {
+                id: barrier.id,
+                packet: barrier.packet,
+                asked_ns: asked_at,
+                held_ns: monotonic_ns().saturating_sub(began),
+            });
+            next_barrier += 1;
+        }
         let now = monotonic_ns();
         let Ok(sequence) = u32::try_from(n) else {
             break;
@@ -223,6 +309,14 @@ pub fn run(config: &SendConfig) -> Result<SendSummary, SendError> {
             }
         }
         summary.max_lateness_ns = summary.max_lateness_ns.max(now.saturating_sub(due));
+        // The barriers of the next packet are asked right now: the run has the time until its slot
+        ask(
+            planned,
+            planned.partition_point(|b| b.packet <= n),
+            n + 1,
+            &mut asked,
+            barriers,
+        );
     }
     Ok(summary)
 }
@@ -242,6 +336,7 @@ mod tests {
             duration_ns,
             start_at_ns: None,
             udp_checksum: UdpChecksum::On,
+            barriers: Vec::new(),
         }
     }
 

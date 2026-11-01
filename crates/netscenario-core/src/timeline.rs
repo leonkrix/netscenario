@@ -315,6 +315,13 @@ pub fn draws_random_numbers(scenario: &Scenario) -> bool {
 /// (D-038). A step that changes the rate or the delay draws nothing different, and the packets stay the same.
 #[must_use]
 pub fn changes_what_is_drawn(scenario: &Scenario) -> bool {
+    !steps_that_change_what_is_drawn(scenario).is_empty()
+}
+
+/// The places in [`steps`] of the steps that change what a queue draws random numbers for (see
+/// [`changes_what_is_drawn`]).
+#[must_use]
+pub fn steps_that_change_what_is_drawn(scenario: &Scenario) -> Vec<usize> {
     let drawn = |impairments: &Impairments| {
         (
             impairments.loss,
@@ -329,20 +336,25 @@ pub fn changes_what_is_drawn(scenario: &Scenario) -> bool {
         .iter()
         .map(|link| DIRECTIONS.map(|direction| drawn(&initial(link, direction))))
         .collect();
-    steps(scenario).iter().any(|step| {
-        let Action::Impair {
-            direction,
-            impairments,
-            ..
-        } = &step.action
-        else {
-            return false;
-        };
-        let now = drawn(impairments);
-        let changed = last[step.link][way(*direction)] != now;
-        last[step.link][way(*direction)] = now;
-        changed
-    })
+    steps(scenario)
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| {
+            let Action::Impair {
+                direction,
+                impairments,
+                ..
+            } = &step.action
+            else {
+                return false;
+            };
+            let now = drawn(impairments);
+            let changed = last[step.link][way(*direction)] != now;
+            last[step.link][way(*direction)] = now;
+            changed
+        })
+        .map(|(place, _)| place)
+        .collect()
 }
 
 #[cfg(test)]

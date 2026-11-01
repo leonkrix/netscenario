@@ -51,6 +51,7 @@
 //! ```
 
 mod backend;
+mod barriers;
 mod capability;
 mod drive;
 mod error;

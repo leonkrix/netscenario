@@ -169,6 +169,12 @@ class TimelineStep:
     """When the run asked the backend to do it."""
     applied: float
     """When the backend had done it."""
+    packet: int | None = None
+    """For a step done at a barrier: the number of packets that met the old state, which is the
+    number of the first packet that met the new one. ``None`` for a step done by the clock."""
+    held: float | None = None
+    """For a step done at a barrier: how long the sender waited for it at the slot of that packet,
+    in seconds (0 if it was done by then). ``None`` for a step done by the clock."""
 
     @property
     def lateness(self) -> float:
@@ -177,6 +183,11 @@ class TimelineStep:
         Never negative: a step is not done before its moment.
         """
         return max(0.0, self.applied - self.scheduled)
+
+    @property
+    def at_barrier(self) -> bool:
+        """Whether a sender waited for the step, so that the same seed keeps the lost packets."""
+        return self.packet is not None
 
 
 @dataclass(frozen=True)
@@ -521,6 +532,8 @@ class Result:
                     scheduled=_seconds(e["scheduled_ns"]),
                     started=_seconds(e["started_ns"]),
                     applied=_seconds(e["applied_ns"]),
+                    packet=e.get("packet"),
+                    held=None if e.get("held_ns") is None else _seconds(e["held_ns"]),
                 )
                 for e in raw.get("events", ())
             ),
