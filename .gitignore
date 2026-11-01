@@ -14,6 +14,12 @@ __pycache__/
 # The two programs that `just wheel` and the CI copy into the package before they build the wheel
 /python/netscenario/src/netscenario/_bin/
 
+# The fuzz targets: build output, the corpus that a run grows and the inputs that crashed (the seeds are in fuzz/seeds)
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+
 # Results of runs and spikes
 /results/
 /netscenario-results/
