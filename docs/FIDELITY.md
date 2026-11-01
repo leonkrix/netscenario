@@ -35,8 +35,8 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| smallest delay | 20.000 ms | 20.008 ms ✔ | +0.008 ms | 20.000 ms to 20.500 ms | no packet can be faster than the link; the path adds 0.016 ms (spike S4) |
-| median delay | 20.000 ms | 20.015 ms ✔ | +0.015 ms | 20.000 ms to 20.500 ms | `netem` is exact to the microsecond; 0.5 ms leave room for a busy shared runner |
+| smallest delay | 20.000 ms | 20.009 ms ✔ | +0.009 ms | 20.000 ms to 20.500 ms | no packet can be faster than the link; the path adds 0.016 ms (spike S4) |
+| median delay | 20.000 ms | 20.016 ms ✔ | +0.016 ms | 20.000 ms to 20.500 ms | `netem` is exact to the microsecond; 0.5 ms leave room for a busy shared runner |
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a link without loss loses nothing |
 | reordered packets | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a fixed delay keeps the order |
 
@@ -66,10 +66,10 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| smallest delay | 15.000 ms | 15.010 ms ✔ | +0.010 ms | 15.000 ms to 15.500 ms | uniform jitter reaches down to the delay minus the amount and no further |
-| 99th percentile of the delay | 24.900 ms | 24.901 ms ✔ | +0.001 ms | 24.500 ms to 25.500 ms | the upper end of a uniform spread, 15 + 0.99 * 10 ms. The largest delay is not used: one packet disturbed by the machine would fail it, 60 are needed to fail the 99th percentile |
-| mean delay | 20.000 ms | 19.978 ms ✔ | -0.022 ms | 19.850 ms to 20.500 ms | the mean of 6,000 uniform delays has a standard deviation of 0.04 ms; four of them below, noise above |
-| standard deviation of the delay | 2.887 ms | 2.865 ms ✔ | -0.022 ms | 2.740 ms to 3.040 ms | 5 / sqrt(3) for a uniform distribution of width 10 ms; the estimate has a standard deviation of 0.02 ms, the bound is wider because the measurement adds noise |
+| smallest delay | 15.000 ms | 15.009 ms ✔ | +0.009 ms | 15.000 ms to 15.500 ms | uniform jitter reaches down to the delay minus the amount and no further |
+| 99th percentile of the delay | 24.900 ms | 24.927 ms ✔ | +0.027 ms | 24.500 ms to 25.500 ms | the upper end of a uniform spread, 15 + 0.99 * 10 ms. The largest delay is not used: one packet disturbed by the machine would fail it, 60 are needed to fail the 99th percentile |
+| mean delay | 20.000 ms | 19.914 ms ✔ | -0.086 ms | 19.850 ms to 20.500 ms | the mean of 6,000 uniform delays has a standard deviation of 0.04 ms; four of them below, noise above |
+| standard deviation of the delay | 2.887 ms | 2.890 ms ✔ | +0.003 ms | 2.740 ms to 3.040 ms | 5 / sqrt(3) for a uniform distribution of width 10 ms; the estimate has a standard deviation of 0.02 ms, the bound is wider because the measurement adds noise |
 | reordered packets | 58.00 % | 58.28 % ✔ | +0.28 pp | 30.00 % to 80.00 % | KNOWN: jitter larger than the gap between packets (1 ms here) reorders them, because `netem` sends each packet at its own time; 58 % were seen |
 
 #### A delay of 20 ms with a normal jitter of 5 ms
@@ -78,10 +78,10 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| mean delay | 20.000 ms | 19.977 ms ✔ | -0.023 ms | 19.700 ms to 20.500 ms | the mean of 6,000 normal delays has a standard deviation of 0.07 ms; four of them below, noise above |
-| standard deviation of the delay | 5.000 ms | 5.061 ms ✔ | +0.061 ms | 4.700 ms to 5.300 ms | the amount is the standard deviation (spike S4 measured 5.03); the table of `netem` is cut off at four standard deviations |
-| 99th percentile of the delay | 31.600 ms | 31.838 ms ✔ | +0.238 ms | 30.400 ms to 32.600 ms | the mean plus 2.326 standard deviations; the estimate has a standard deviation of 0.24 ms, four of them on each side, with noise on the upper side |
-| reordered packets | 72.00 % | 72.05 % ✔ | +0.05 pp | 40.00 % to 90.00 % | KNOWN: as with the uniform jitter; 72 % were seen |
+| mean delay | 20.000 ms | 20.016 ms ✔ | +0.016 ms | 19.700 ms to 20.500 ms | the mean of 6,000 normal delays has a standard deviation of 0.07 ms; four of them below, noise above |
+| standard deviation of the delay | 5.000 ms | 5.029 ms ✔ | +0.029 ms | 4.700 ms to 5.300 ms | the amount is the standard deviation (spike S4 measured 5.03); the table of `netem` is cut off at four standard deviations |
+| 99th percentile of the delay | 31.600 ms | 31.599 ms ✔ | -0.001 ms | 30.400 ms to 32.600 ms | the mean plus 2.326 standard deviations; the estimate has a standard deviation of 0.24 ms, four of them on each side, with noise on the upper side |
+| reordered packets | 72.00 % | 72.45 % ✔ | +0.45 pp | 40.00 % to 90.00 % | KNOWN: as with the uniform jitter; 72 % were seen |
 
 #### A delay of 40 ms with a normal jitter of 5 ms and a rate limit of 10 mbit
 
@@ -89,10 +89,84 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| mean delay | 41.000 ms | 41.059 ms ✔ | +0.059 ms | 40.500 ms to 41.800 ms | 40 ms plus the 0.994 ms that a frame needs at 10 mbit. The mean of 1,667 delays has a standard deviation of 0.12 ms. One qdisc for both gave 42.6 ms, because its rate stage cuts the jitter off (D-030) |
-| standard deviation of the delay | 5.000 ms | 5.008 ms ✔ | +0.008 ms | 4.650 ms to 5.350 ms | the amount is the standard deviation; the estimate over 1,667 delays has a standard deviation of 0.09 ms. One qdisc for both gave 4.1 ms |
-| reordered packets | 29.00 % | 28.55 % ✔ | -0.45 pp | 15.00 % to 40.00 % | as for any jitter, packets overtake each other when the jitter is larger than the gap (4.8 ms here): the model of the series of the two stages gives 29 % |
+| mean delay | 41.000 ms | 41.020 ms ✔ | +0.020 ms | 40.500 ms to 41.800 ms | 40 ms plus the 0.994 ms that a frame needs at 10 mbit. The mean of 1,667 delays has a standard deviation of 0.12 ms. One qdisc for both gave 42.6 ms, because its rate stage cuts the jitter off (D-030) |
+| standard deviation of the delay | 5.000 ms | 4.945 ms ✔ | -0.055 ms | 4.650 ms to 5.350 ms | the amount is the standard deviation; the estimate over 1,667 delays has a standard deviation of 0.09 ms. One qdisc for both gave 4.1 ms |
+| reordered packets | 29.00 % | 28.79 % ✔ | -0.21 pp | 15.00 % to 40.00 % | as for any jitter, packets overtake each other when the jitter is larger than the gap (4.8 ms here): the model of the series of the two stages gives 29 % |
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | the offered 2 mbit is far below the 10 mbit of the link |
+
+#### Loss in bursts: Gilbert-Elliott, 1 % to the bad state, 20 % back, all lost there
+
+`forward: { loss: { model: gilbert-elliott, p: 1%, r: 20%, loss-bad: 100%, loss-good: 0% } }`, offered 4mbit with payloads of 200 bytes for 12 s (30000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| loss | 4.76 % | 4.54 % ✔ | -0.22 pp | 3.52 % to 6.00 % | the share of time in the bad state, p / (p + r) = 1 / 21 (S12: 4.61 % at 100,000 packets); the losses come in runs, so the spread is wider than a binomial: 30,000 packets, a standard deviation of 0.31 percentage points (S12 saw 0.17 at 100,000), four of them on each side |
+| mean run of lost packets | 5.00 packets | 4.66 packets ✔ | -0.34 packets | 3.94 packets to 6.06 packets | all packets in the bad state are lost, so a run is a stay in it: 1 / r = 5 packets, about 290 runs, a standard deviation of the mean of 0.26, four of them on each side (S12: 4.99) |
+| reordered packets | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | loss does not reorder |
+
+#### Loss in bursts: the four-state model, 2 % 30 % 20 % 10 % 1 %
+
+`forward: { loss: { model: markov4, p13: 2%, p31: 30%, p32: 20%, p23: 10%, p14: 1% } }`, offered 4mbit with payloads of 200 bytes for 12 s (30000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| loss | 6.34 % | 5.78 % ✔ | -0.56 pp | 4.63 % to 8.04 % | the stationary loss of the chain of four states (S12: 6.37 % at 100,000 packets); 30,000 packets, a standard deviation of 0.42 percentage points, four of them on each side |
+| mean run of lost packets | 1.77 packets | 1.69 packets ✔ | -0.07 packets | 1.52 packets to 2.02 packets | the mean length of a run of lost packets of the chain (S12: 1.76); a standard deviation of the mean of 0.06, four of them on each side |
+
+#### Reordering: a delay of 10 ms, 25 % of the packets sent on at once
+
+`forward: { delay: 10ms, reorder: { share: 25% } }`, offered 8mbit with payloads of 1000 bytes for 6 s (6000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| packets sent on at once | 25.00 % | 24.38 % ✔ | -0.62 pp | 22.80 % to 27.20 % | `reorder P` sends the share P on at once and holds the rest for the delay (D-048, S12: 25.10 %); binomial, 6,000 packets, a standard deviation of 0.56 percentage points, four of them on each side |
+| loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | reordering loses nothing |
+| reordered packets | 70.00 % | 69.97 % ✔ | -0.03 pp | 55.00 % to 85.00 % | KNOWN: the packets that are held arrive after later ones that went on at once; about 0.75 x (1 - 0.75^10) of the packets when 10 packets are sent within the delay (S12 saw 74.9 % at another rate) |
+
+#### Reordering with a gap: 25 % sent on at once, but never two within 5 packets
+
+`forward: { delay: 10ms, reorder: { share: 25%, gap: 5 } }`, offered 8mbit with payloads of 1000 bytes for 6 s (6000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| packets sent on at once | 12.50 % | 12.28 % ✔ | -0.22 pp | 10.80 % to 14.20 % | after one packet is sent on at once the next four are held, then each is chosen with 25 %: 1 / (gap - 1 + 1 / share) = 12.5 % (D-048, S12: 12.49 %); a standard deviation of 0.43 percentage points, four of them on each side |
+
+#### Duplication of 20 %
+
+`forward: { duplicate: 20% }`, offered 8mbit with payloads of 1000 bytes for 6 s (6000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| packets that arrived twice | 20.00 % | 19.60 % ✔ | -0.40 pp | 17.90 % to 22.10 % | `duplicate P` copies a packet with the probability P (S12: 20.14 %); binomial, 6,000 packets, a standard deviation of 0.52 percentage points, four of them on each side |
+| loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | duplication loses nothing |
+
+#### Duplication of 20 % with a loss of 10 %: each copy is lost on its own
+
+`forward: { duplicate: 20%, loss: { model: random, p: 10% } }`, offered 8mbit with payloads of 1000 bytes for 6 s (6000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| packets that arrived twice | 16.20 % | 15.82 % ✔ | -0.38 pp | 14.30 % to 18.10 % | KNOWN (D-048): a packet arrives twice if it is copied and both survive, 0.2 x 0.9 x 0.9 = 16.2 %, not 20 %; a standard deviation of 0.48 percentage points, four of them on each side |
+| loss | 8.20 % | 8.33 % ✔ | +0.13 pp | 6.80 % to 9.60 % | KNOWN: a packet is lost if every copy is: 0.8 x 0.1 + 0.2 x 0.1 x 0.1 = 8.2 %, below the 10 % of a copy; a standard deviation of 0.35 percentage points, four of them on each side |
+
+#### Duplication of 20 % in a direction with a jitter and a rate: two queues in one tree
+
+`forward: { delay: 20ms, jitter: { amount: 5ms }, rate: 10mbit, duplicate: 20% }`, offered 4mbit with payloads of 500 bytes for 6 s (6000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| packets that arrived twice | 20.00 % | 19.60 % ✔ | -0.40 pp | 17.90 % to 22.10 % | the copy is made in the first queue, where the loss and the rate are, and the tree of two `netem` is accepted by the kernel (S15, D-052); binomial, 6,000 packets, four standard deviations |
+| smallest delay | 15.000 ms | 15.446 ms ✔ | +0.446 ms | 15.000 ms to 15.600 ms | the second queue still holds the delay and its jitter: uniform jitter reaches down to the delay minus the amount; the rate adds the time of one frame (0.4 ms) |
+| loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | the offered 4 mbit and its copies are far below the 10 mbit of the link |
+
+#### Reordering with a rate limit of 2 mbit, offered 3 mbit: the rate holds
+
+`forward: { delay: 10ms, reorder: { share: 25% }, rate: 2mbit }`, offered 3mbit with payloads of 1000 bytes for 6 s (2250 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| steady payload rate | 1.9194 mbit/s | 1.9200 mbit/s ✔ | +0.03 % | 1.8810 mbit/s to 1.9580 mbit/s | as for the rate alone: 2 mbit of frames; a packet chosen for reordering would go past the rate if it were in the same queue (S12.9: 25 % of the packets did), so the rate is in a queue of its own in front of it (D-054) |
+| loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | the backlog stays below the queue of 1,000 packets, as for the rate alone |
 
 <!-- fidelity:end -->
 

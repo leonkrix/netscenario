@@ -31,6 +31,9 @@ const NEEDS_TC: &[Feature] = &[
     Feature::FixedDelay,
     Feature::Jitter,
     Feature::IndependentLoss,
+    Feature::BurstLoss,
+    Feature::Reordering,
+    Feature::Duplication,
     Feature::RateLimit,
 ];
 
@@ -38,9 +41,6 @@ const NEEDS_TC: &[Feature] = &[
 /// not apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says
 /// `✔ 0.2` for them.
 const PLANNED: &[Feature] = &[
-    Feature::BurstLoss,
-    Feature::Reordering,
-    Feature::Duplication,
     Feature::Corruption,
     Feature::ScheduledSteps,
     Feature::Outages,

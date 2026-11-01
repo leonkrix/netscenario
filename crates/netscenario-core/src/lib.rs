@@ -81,4 +81,4 @@ pub use result::{
     ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
-pub use seed::{derive_seed, draw_seed};
+pub use seed::{derive_seed, derive_stage_seed, draw_seed};

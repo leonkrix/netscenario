@@ -45,6 +45,13 @@ enum Metric {
     LossRatio,
     ReorderedRatio,
     SteadyGoodputBps,
+    /// Packets that arrived twice, as a share of the packets sent.
+    DuplicateRatio,
+    /// The share of the packets that arrived within half of the configured delay: those that `netem`
+    /// chose to send on at once.
+    EarlyShare,
+    /// The mean length of a run of lost packets with consecutive numbers.
+    MeanLossRun,
 }
 
 impl Metric {
@@ -58,12 +65,19 @@ impl Metric {
             Metric::LossRatio => "loss",
             Metric::ReorderedRatio => "reordered packets",
             Metric::SteadyGoodputBps => "steady payload rate",
+            Metric::DuplicateRatio => "packets that arrived twice",
+            Metric::EarlyShare => "packets sent on at once",
+            Metric::MeanLossRun => "mean run of lost packets",
         }
     }
 
     fn show(self, value: f64) -> String {
         match self {
-            Metric::LossRatio | Metric::ReorderedRatio => format!("{:.2} %", value * 100.0),
+            Metric::LossRatio
+            | Metric::ReorderedRatio
+            | Metric::DuplicateRatio
+            | Metric::EarlyShare => format!("{:.2} %", value * 100.0),
+            Metric::MeanLossRun => format!("{value:.2} packets"),
             Metric::SteadyGoodputBps => format!("{:.4} mbit/s", value / 1e6),
             _ => format!("{value:.3} ms"),
         }
@@ -87,6 +101,9 @@ struct Measurement {
     loss_ratio: f64,
     reordered_ratio: f64,
     steady_goodput_bps: f64,
+    duplicate_ratio: f64,
+    early_share: f64,
+    mean_loss_run: f64,
     sent: u64,
     kernel: String,
     tc: String,
@@ -112,6 +129,9 @@ impl Measurement {
             Metric::LossRatio => self.loss_ratio,
             Metric::ReorderedRatio => self.reordered_ratio,
             Metric::SteadyGoodputBps => self.steady_goodput_bps,
+            Metric::DuplicateRatio => self.duplicate_ratio,
+            Metric::EarlyShare => self.early_share,
+            Metric::MeanLossRun => self.mean_loss_run,
         }
     }
 }
@@ -408,6 +428,218 @@ fn cases() -> Vec<Case> {
                 },
             ],
         },
+        Case {
+            id: "7-burst-gilbert-elliott",
+            title: "Loss in bursts: Gilbert-Elliott, 1 % to the bad state, 20 % back, all lost there",
+            link: "loss: { model: gilbert-elliott, p: 1%, r: 20%, loss-bad: 100%, loss-good: 0% }",
+            offered: "4mbit",
+            size: 200,
+            seconds: 12,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.04762,
+                    lo: 0.0352,
+                    hi: 0.0600,
+                    reason: "the share of time in the bad state, p / (p + r) = 1 / 21 (S12: 4.61 % at 100,000 packets); the losses come in runs, so the spread is wider than a binomial: 30,000 packets, a standard deviation of 0.31 percentage points (S12 saw 0.17 at 100,000), four of them on each side",
+                },
+                Bound {
+                    metric: Metric::MeanLossRun,
+                    expected: 5.0,
+                    lo: 3.94,
+                    hi: 6.06,
+                    reason: "all packets in the bad state are lost, so a run is a stay in it: 1 / r = 5 packets, about 290 runs, a standard deviation of the mean of 0.26, four of them on each side (S12: 4.99)",
+                },
+                Bound {
+                    metric: Metric::ReorderedRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "loss does not reorder",
+                },
+            ],
+        },
+        Case {
+            id: "8-burst-four-state",
+            title: "Loss in bursts: the four-state model, 2 % 30 % 20 % 10 % 1 %",
+            link: "loss: { model: markov4, p13: 2%, p31: 30%, p32: 20%, p23: 10%, p14: 1% }",
+            offered: "4mbit",
+            size: 200,
+            seconds: 12,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.06336,
+                    lo: 0.0463,
+                    hi: 0.0804,
+                    reason: "the stationary loss of the chain of four states (S12: 6.37 % at 100,000 packets); 30,000 packets, a standard deviation of 0.42 percentage points, four of them on each side",
+                },
+                Bound {
+                    metric: Metric::MeanLossRun,
+                    expected: 1.769,
+                    lo: 1.52,
+                    hi: 2.02,
+                    reason: "the mean length of a run of lost packets of the chain (S12: 1.76); a standard deviation of the mean of 0.06, four of them on each side",
+                },
+            ],
+        },
+        Case {
+            id: "9-reorder",
+            title: "Reordering: a delay of 10 ms, 25 % of the packets sent on at once",
+            link: "delay: 10ms, reorder: { share: 25% }",
+            offered: "8mbit",
+            size: 1000,
+            seconds: 6,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::EarlyShare,
+                    expected: 0.25,
+                    lo: 0.228,
+                    hi: 0.272,
+                    reason: "`reorder P` sends the share P on at once and holds the rest for the delay (D-048, S12: 25.10 %); binomial, 6,000 packets, a standard deviation of 0.56 percentage points, four of them on each side",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "reordering loses nothing",
+                },
+                Bound {
+                    metric: Metric::ReorderedRatio,
+                    expected: 0.7,
+                    lo: 0.55,
+                    hi: 0.85,
+                    reason: "KNOWN: the packets that are held arrive after later ones that went on at once; about 0.75 x (1 - 0.75^10) of the packets when 10 packets are sent within the delay (S12 saw 74.9 % at another rate)",
+                },
+            ],
+        },
+        Case {
+            id: "10-reorder-gap",
+            title: "Reordering with a gap: 25 % sent on at once, but never two within 5 packets",
+            link: "delay: 10ms, reorder: { share: 25%, gap: 5 }",
+            offered: "8mbit",
+            size: 1000,
+            seconds: 6,
+            settle_seconds: 1,
+            bounds: vec![Bound {
+                metric: Metric::EarlyShare,
+                expected: 0.125,
+                lo: 0.108,
+                hi: 0.142,
+                reason: "after one packet is sent on at once the next four are held, then each is chosen with 25 %: 1 / (gap - 1 + 1 / share) = 12.5 % (D-048, S12: 12.49 %); a standard deviation of 0.43 percentage points, four of them on each side",
+            }],
+        },
+        Case {
+            id: "11-duplicate",
+            title: "Duplication of 20 %",
+            link: "duplicate: 20%",
+            offered: "8mbit",
+            size: 1000,
+            seconds: 6,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::DuplicateRatio,
+                    expected: 0.20,
+                    lo: 0.179,
+                    hi: 0.221,
+                    reason: "`duplicate P` copies a packet with the probability P (S12: 20.14 %); binomial, 6,000 packets, a standard deviation of 0.52 percentage points, four of them on each side",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "duplication loses nothing",
+                },
+            ],
+        },
+        Case {
+            id: "12-duplicate-and-loss",
+            title: "Duplication of 20 % with a loss of 10 %: each copy is lost on its own",
+            link: "duplicate: 20%, loss: { model: random, p: 10% }",
+            offered: "8mbit",
+            size: 1000,
+            seconds: 6,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::DuplicateRatio,
+                    expected: 0.162,
+                    lo: 0.143,
+                    hi: 0.181,
+                    reason: "KNOWN (D-048): a packet arrives twice if it is copied and both survive, 0.2 x 0.9 x 0.9 = 16.2 %, not 20 %; a standard deviation of 0.48 percentage points, four of them on each side",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.082,
+                    lo: 0.068,
+                    hi: 0.096,
+                    reason: "KNOWN: a packet is lost if every copy is: 0.8 x 0.1 + 0.2 x 0.1 x 0.1 = 8.2 %, below the 10 % of a copy; a standard deviation of 0.35 percentage points, four of them on each side",
+                },
+            ],
+        },
+        Case {
+            id: "13-dup-jitter-rate",
+            title: "Duplication of 20 % in a direction with a jitter and a rate: two queues in one tree",
+            link: "delay: 20ms, jitter: { amount: 5ms }, rate: 10mbit, duplicate: 20%",
+            offered: "4mbit",
+            size: 500,
+            seconds: 6,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::DuplicateRatio,
+                    expected: 0.20,
+                    lo: 0.179,
+                    hi: 0.221,
+                    reason: "the copy is made in the first queue, where the loss and the rate are, and the tree of two `netem` is accepted by the kernel (S15, D-052); binomial, 6,000 packets, four standard deviations",
+                },
+                Bound {
+                    metric: Metric::MinDelayMs,
+                    expected: 15.0,
+                    lo: 15.0,
+                    hi: 15.6,
+                    reason: "the second queue still holds the delay and its jitter: uniform jitter reaches down to the delay minus the amount; the rate adds the time of one frame (0.4 ms)",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "the offered 4 mbit and its copies are far below the 10 mbit of the link",
+                },
+            ],
+        },
+        Case {
+            id: "14-reorder-with-rate",
+            title: "Reordering with a rate limit of 2 mbit, offered 3 mbit: the rate holds",
+            link: "delay: 10ms, reorder: { share: 25% }, rate: 2mbit",
+            offered: "3mbit",
+            size: 1000,
+            seconds: 6,
+            settle_seconds: 5,
+            bounds: vec![
+                Bound {
+                    metric: Metric::SteadyGoodputBps,
+                    expected: 2_000_000.0 * 1000.0 / 1042.0,
+                    lo: 1_881_000.0,
+                    hi: 1_958_000.0,
+                    reason: "as for the rate alone: 2 mbit of frames; a packet chosen for reordering would go past the rate if it were in the same queue (S12.9: 25 % of the packets did), so the rate is in a queue of its own in front of it (D-054)",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "the backlog stays below the queue of 1,000 packets, as for the rate alone",
+                },
+            ],
+        },
     ]
 }
 
@@ -441,11 +673,18 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         .to_vec();
     inner.sort_by(f64::total_cmp);
     let steady = inner.get(inner.len() / 2).copied().unwrap_or(0.0);
+    // The packets that arrived within 5 ms: with a delay of 10 ms, those that `netem` sent on at once
+    let early_share = delays_ms.iter().filter(|d| **d < 5.0).count() as f64 / n_or_one(&delays_ms);
+    let received: std::collections::BTreeSet<u64> =
+        file.records.iter().map(|r| r.sequence).collect();
     Measurement {
         delays_ms,
         loss_ratio: workload.stats.loss_ratio,
         reordered_ratio: workload.stats.reordered as f64 / workload.stats.received.max(1) as f64,
         steady_goodput_bps: steady,
+        duplicate_ratio: workload.stats.duplicates as f64 / workload.stats.sent.max(1) as f64,
+        early_share,
+        mean_loss_run: mean_loss_run(&received, workload.stats.sent),
         sent: workload.stats.sent,
         kernel: result.provenance.kernel.clone().unwrap_or_default(),
         tc: result
@@ -454,6 +693,31 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
             .get("tc")
             .cloned()
             .unwrap_or_default(),
+    }
+}
+
+fn n_or_one(values: &[f64]) -> f64 {
+    values.len().max(1) as f64
+}
+
+/// The mean length of the runs of consecutive sequence numbers in `0..sent` that never arrived; 0 if none was lost.
+fn mean_loss_run(received: &std::collections::BTreeSet<u64>, sent: u64) -> f64 {
+    let (mut runs, mut lost, mut in_run) = (0_u64, 0_u64, false);
+    for sequence in 0..sent {
+        if received.contains(&sequence) {
+            in_run = false;
+        } else {
+            lost += 1;
+            if !in_run {
+                runs += 1;
+                in_run = true;
+            }
+        }
+    }
+    if runs == 0 {
+        0.0
+    } else {
+        lost as f64 / runs as f64
     }
 }
 
@@ -476,8 +740,14 @@ fn fragment(case: &Case, measurement: &Measurement, verdicts: &[Verdict<'_>]) ->
         let bound = verdict.bound;
         let metric = bound.metric;
         let deviation = match metric {
-            Metric::LossRatio | Metric::ReorderedRatio => {
+            Metric::LossRatio
+            | Metric::ReorderedRatio
+            | Metric::DuplicateRatio
+            | Metric::EarlyShare => {
                 format!("{:+.2} pp", (verdict.value - bound.expected) * 100.0)
+            }
+            Metric::MeanLossRun => {
+                format!("{:+.2} packets", verdict.value - bound.expected)
             }
             Metric::SteadyGoodputBps => {
                 format!("{:+.2} %", (verdict.value / bound.expected - 1.0) * 100.0)
@@ -535,7 +805,16 @@ fn update_document(dir: &Path) {
         .map(|e| e.unwrap().path())
         .filter(|p| p.extension().is_some_and(|e| e == "md"))
         .collect();
-    parts.sort();
+    // By the number at the start of the name (`0-machine`, `1-delay`, ..., `10-reorder-gap`), not by the letters
+    parts.sort_by_key(|part| {
+        let name = part.file_name().unwrap().to_string_lossy().into_owned();
+        let number = name
+            .split('-')
+            .next()
+            .and_then(|number| number.parse::<u32>().ok())
+            .unwrap_or(u32::MAX);
+        (number, name)
+    });
     let generated: String = parts
         .iter()
         .map(|p| std::fs::read_to_string(p).unwrap())
@@ -617,6 +896,46 @@ fn a_normal_jitter_has_the_configured_deviation_and_reorders() {
 #[test]
 fn jitter_with_a_rate_limit_raises_the_mean_and_keeps_the_order() {
     run_and_judge("6-jitter-and-rate");
+}
+
+#[test]
+fn a_loss_in_bursts_has_the_stationary_loss_and_the_burst_length_of_gilbert_elliott() {
+    run_and_judge("7-burst-gilbert-elliott");
+}
+
+#[test]
+fn a_loss_in_bursts_has_the_stationary_loss_and_the_burst_length_of_the_four_state_model() {
+    run_and_judge("8-burst-four-state");
+}
+
+#[test]
+fn a_reordering_sends_the_configured_share_on_at_once() {
+    run_and_judge("9-reorder");
+}
+
+#[test]
+fn a_reordering_with_a_gap_sends_a_smaller_share_on_at_once() {
+    run_and_judge("10-reorder-gap");
+}
+
+#[test]
+fn a_duplication_copies_the_configured_share() {
+    run_and_judge("11-duplicate");
+}
+
+#[test]
+fn each_copy_of_a_duplicated_packet_is_lost_on_its_own() {
+    run_and_judge("12-duplicate-and-loss");
+}
+
+#[test]
+fn a_duplication_works_in_a_direction_with_a_jitter_and_a_rate() {
+    run_and_judge("13-dup-jitter-rate");
+}
+
+#[test]
+fn a_reordering_does_not_get_past_the_rate_limit() {
+    run_and_judge("14-reorder-with-rate");
 }
 
 // ---- the model behind the case of a jitter with a rate limit ----
@@ -756,6 +1075,9 @@ fn synthetic(delays_ms: &[f64], loss: f64, reordered: f64, goodput: f64) -> Meas
         loss_ratio: loss,
         reordered_ratio: reordered,
         steady_goodput_bps: goodput,
+        duplicate_ratio: 0.0,
+        early_share: 0.0,
+        mean_loss_run: 0.0,
         sent: 0,
         kernel: String::new(),
         tc: String::new(),
@@ -894,4 +1216,61 @@ fn canary_a_loss_that_is_not_applied_or_is_wrong_fails_the_loss_case() {
     assert!(wrong_on_purpose("2-loss", "", 2, 1).contains(&Metric::LossRatio));
     let wrong = wrong_on_purpose("2-loss", "loss: { model: random, p: 10% }", 3, 1);
     assert!(wrong.contains(&Metric::LossRatio), "{wrong:?}");
+}
+
+/// Loss that is not in bursts: the same mean loss as the Gilbert-Elliott case, but every packet on its own. The
+/// loss ratio fits, the length of the runs does not, which is what the burst metric is for.
+#[test]
+fn canary_loss_without_bursts_fails_the_burst_length_of_the_burst_case() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let failed = wrong_on_purpose(
+        "7-burst-gilbert-elliott",
+        "loss: { model: random, p: 4.762% }",
+        12,
+        1,
+    );
+    assert!(failed.contains(&Metric::MeanLossRun), "{failed:?}");
+    assert!(
+        !failed.contains(&Metric::LossRatio),
+        "the same mean loss must pass: {failed:?}"
+    );
+}
+
+/// A reordering and a duplication that are not applied, and a reordering with another share.
+#[test]
+fn canary_a_reordering_and_a_duplication_that_are_wrong_fail_their_cases() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    assert!(wrong_on_purpose("9-reorder", "delay: 10ms", 4, 1).contains(&Metric::EarlyShare));
+    let share = wrong_on_purpose("9-reorder", "delay: 10ms, reorder: { share: 50% }", 4, 1);
+    assert!(share.contains(&Metric::EarlyShare), "{share:?}");
+    let no_gap = wrong_on_purpose(
+        "10-reorder-gap",
+        "delay: 10ms, reorder: { share: 25% }",
+        4,
+        1,
+    );
+    assert!(no_gap.contains(&Metric::EarlyShare), "{no_gap:?}");
+    assert!(wrong_on_purpose("11-duplicate", "", 3, 1).contains(&Metric::DuplicateRatio));
+    // A duplication of 20 % that the loss does not touch is the mistake that the case of D-048 is about
+    let untouched = wrong_on_purpose("12-duplicate-and-loss", "duplicate: 20%", 4, 1);
+    assert!(untouched.contains(&Metric::DuplicateRatio), "{untouched:?}");
+}
+
+/// A rate that is not applied in front of a reordering: the offered 3 mbit pass.
+#[test]
+fn canary_a_rate_that_is_missing_fails_the_case_of_the_rate_with_reordering() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let failed = wrong_on_purpose(
+        "14-reorder-with-rate",
+        "delay: 10ms, reorder: { share: 25% }",
+        4,
+        1,
+    );
+    assert!(failed.contains(&Metric::SteadyGoodputBps), "{failed:?}");
 }

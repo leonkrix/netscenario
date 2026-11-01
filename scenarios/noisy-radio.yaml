@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=../docs/schema/scenario-v0.json
-# A radio hop with bursts of loss, and a little reordering, duplication and corruption, the other way round
-# a clean link with a small loss. The parameters are those of `netem` (docs/SCENARIO-FORMAT.md).
-# The Kernel backend applies the keys of this file from release 0.2; before that `netscenario run` refuses
-# the file and names the feature, `validate` accepts it.
+# A radio hop with bursts of loss, a little reordering and duplication, and, the other way round, the four-state
+# model of loss. The keys are those of `netem` (docs/SCENARIO-FORMAT.md). Corruption (`corrupt`) is read by the
+# format and applied by the Kernel backend from step 4.2b; until then `netscenario run` refuses it, so this file
+# leaves it out.
 version: 0
 name: noisy-radio
 seed: 11
@@ -15,9 +15,8 @@ topology:
       forward:
         delay: 40ms
         loss: { model: gilbert-elliott, p: 2%, r: 30%, loss-bad: 50%, loss-good: 0.1% }
-        reorder: { share: 95%, gap: 5 }
+        reorder: { share: 5% }
         duplicate: 0.5%
-        corrupt: 0.2%
       reverse:
         delay: 40ms
         loss: { model: markov4, p13: 2%, p31: 30%, p32: 10%, p23: 20%, p14: 0.5% }

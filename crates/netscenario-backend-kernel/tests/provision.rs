@@ -76,6 +76,83 @@ fn the_impairments_are_in_the_queues_of_the_right_interfaces() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// The models of release 0.2 are in the queues as the scenario says, and the seeds are where the numbers are
+/// drawn: the loss and the duplication in the first queue, the reordering in the second under its own seed.
+#[test]
+fn the_models_and_their_seeds_are_in_the_queues_they_belong_to() {
+    if !namespaces_available() {
+        return;
+    }
+    let dir = work_dir("models");
+    let mut backend = backend(|_| {});
+    let scenario = scenario(
+        "seed: 42\n",
+        "      forward: { delay: 10ms, loss: { model: gilbert-elliott, p: 1%, r: 20%, loss-bad: 100%, loss-good: 0% }, duplicate: 5%, reorder: { share: 25%, gap: 3 }, rate: 2mbit }\n      reverse: { loss: { model: markov4, p13: 2%, p31: 30%, p32: 20%, p23: 10%, p14: 1% } }\n",
+    );
+    let built = provision(&mut backend, &scenario).unwrap();
+    assert!(built.loss_reproducible && built.seed == Some(42));
+    let tc = tools().tc;
+    for (node, file) in [
+        (built.nodes[0].1, "client.txt"),
+        (built.nodes[1].1, "server.txt"),
+    ] {
+        let script = format!(
+            "{} qdisc show dev l0 > {}/{file}",
+            tc.display(),
+            dir.display()
+        );
+        backend.start_program(node, &sh(&script)).unwrap();
+    }
+    let client = wait_for(&dir.join("client.txt"), "netem");
+    let find = |text: &str, pattern: &str| {
+        text.lines()
+            .find(|line| line.contains(pattern))
+            .unwrap_or_else(|| panic!("no '{pattern}' in: {text}"))
+            .to_owned()
+    };
+    let (root, child) = (find(&client, " root "), find(&client, "parent 1:1"));
+    // `tc` prints the model of the loss by its parameters, with 1-h and 1-k as the loss in the bad and the good state
+    assert!(
+        root.contains("loss gemodel p 1% r 20% 1-h 100% 1-k 0%"),
+        "{root}"
+    );
+    assert!(
+        root.contains("duplicate 5%") && root.contains("rate 2Mbit"),
+        "{root}"
+    );
+    assert!(
+        !root.contains("reorder") && !root.contains("delay"),
+        "{root}"
+    );
+    assert!(
+        child.contains("delay 10ms") && child.contains("reorder 25%") && child.contains("gap 3"),
+        "{child}"
+    );
+    assert!(
+        !child.contains("duplicate") && !child.contains("loss") && !child.contains("rate"),
+        "{child}"
+    );
+    let seed_of = |line: &str| -> String {
+        let mut words = line.split_whitespace();
+        words.find(|word| *word == "seed");
+        words
+            .next()
+            .unwrap_or_else(|| panic!("no seed in: {line}"))
+            .to_owned()
+    };
+    // The two queues have a seed each, and they differ: the same one would draw the same numbers twice
+    assert_ne!(seed_of(&root), seed_of(&child), "{root} / {child}");
+    let server = wait_for(&dir.join("server.txt"), "netem");
+    assert!(
+        server.contains("loss state p13 2% p31 30% p32 20% p23 10% p14 1%"),
+        "{server}"
+    );
+    assert!(server.contains("seed "), "{server}");
+    backend.teardown().unwrap();
+    assert_nothing_left(backend.run_id(), "after the teardown");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn a_ping_takes_the_round_trip_of_both_directions() {
     if !namespaces_available() {

@@ -63,10 +63,10 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | LNK-01 | Fixed delay | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `fidelity.rs`: `a_fixed_delay_is_exact`) |
 | LNK-02 | Jitter: uniform and normal (0.1), pareto and tables (0.3) | M | 0.1 | done for 0.1 (uniform and normal: `fidelity.rs`); pareto and tables come with 0.3 |
 | LNK-03 | Independent loss | M | 0.1 | done (`fidelity.rs`: `a_random_loss_is_the_configured_ratio`; the seed: `tests/run.rs`) |
-| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov | M | 0.2 | in progress (format done in 4.1b, D-049; parameters measured against their theory, D-048; the Kernel backend applies it in 4.2) |
-| LNK-05 | Reordering | M | 0.2 | in progress (format done in 4.1b; semantics measured, no correlation argument, D-048; backend in 4.2) |
-| LNK-06 | Duplication | S | 0.2 | in progress (format done in 4.1b; measured, D-048; backend in 4.2) |
-| LNK-07 | Corruption | S | 0.2 | in progress (format done in 4.1b; a corrupted packet is dropped by the checksum, D-040; backend in 4.2) |
+| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov | M | 0.2 | done (the Kernel backend since 4.2a, D-054; `tests/fidelity.rs`: the stationary loss and the burst length of both models against the theory; the same seed repeats the bursts, `tests/run.rs`) |
+| LNK-05 | Reordering | M | 0.2 | done (the Kernel backend since 4.2a, D-054; `tests/fidelity.rs`: the share sent on at once, with a gap, and past a rate limit) |
+| LNK-06 | Duplication | S | 0.2 | done (the Kernel backend since 4.2a, D-054; `tests/fidelity.rs`: 20 %, with loss, and in a tree of two queues) |
+| LNK-07 | Corruption | S | 0.2 | in progress (format done in 4.1b; a corrupted packet is dropped by the checksum, D-040; backend in 4.2b, with the accounting of D-040) |
 | LNK-08 | Rate limit (token bucket) | M | 0.1 | done (`fidelity.rs`: `a_rate_limit_counts_ethernet_frames`) |
 | LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M | 0.3 | planned |
 | LNK-10 | MTU and fragmentation | S | 0.3 | planned |
