@@ -261,6 +261,7 @@ struct Measurement {
     queue_checks: Vec<QueueCheck>,
     directions: Vec<DirectionTally>,
     events: Vec<EventRecord>,
+    notes: Vec<String>,
     /// Why the steps of the timeline may not give the same lost packets for the same seed (see [`barriers::plan`]).
     clock_reasons: Vec<String>,
 }
@@ -304,6 +305,7 @@ pub fn run(
         queue_checks,
         directions,
         events,
+        notes,
         clock_reasons,
     } = measured?;
     torn_down?;
@@ -368,6 +370,7 @@ pub fn run(
         workloads,
         directions,
         events,
+        notes,
     };
     let path = options.out_dir.join("result.json");
     std::fs::write(&path, result.to_json())
@@ -868,6 +871,7 @@ fn measure(
         queue_checks,
         directions,
         events,
+        notes: backend.notes(),
         clock_reasons: plan.reasons,
     })
 }

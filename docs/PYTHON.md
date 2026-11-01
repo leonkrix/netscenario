@@ -82,6 +82,7 @@ Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`,
 | `result.seed.queue_checks` | for each direction with loss, the packets its queue counted against the packets the workloads sent (`.link`, `.direction`, `.expected`, `.counted`, `.agrees`) |
 | `result.directions` | for each direction that carried a workload, where its packets went (`.link`, `.direction`, `.sent`, `.reached_node`, `.delivered`, `.lost_in_queue`, `.dropped_corrupted`, `.receive_buffer_drops`): lost in the queue, or dropped by the receiving node as damaged ([RESULTS.md](RESULTS.md)) |
 | `result.steps` | what the run did to the links, in order: `.event`, `.kind`, `.link`, `.direction`, `.scheduled`, `.started`, `.applied` in seconds, `.lateness` (never negative), and for a step done at a barrier `.packet` (the first packet that met it) and `.held` (how long that packet waited), `.at_barrier`; empty without a timeline |
+| `result.notes` | what the backend says about how it did the run, one sentence each (for example that a change was made the slow way); empty if the run went as usual |
 | `result.provenance` | netscenario version, time, backend and its details, kernel, processor |
 | `result.raw` | the decoded `result.json`, unchanged |
 

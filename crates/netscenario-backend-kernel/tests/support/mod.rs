@@ -114,6 +114,42 @@ pub(crate) fn processes_with(needle: &str) -> Vec<String> {
         .collect()
 }
 
+/// The `tc -batch` of the run `run_id`: the child of its supervisor whose command line has `-force -batch`. The
+/// supervisor is found by its command line, which names the run, and the children by the parent in `/proc`.
+pub(crate) fn batch_of(run_id: &str) -> Option<u32> {
+    let processes: Vec<(u32, String, u32)> = std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let pid: u32 = entry.file_name().to_string_lossy().parse().ok()?;
+            let cmdline = std::fs::read(entry.path().join("cmdline")).ok()?;
+            let status = std::fs::read_to_string(entry.path().join("status")).ok()?;
+            let parent = status
+                .lines()
+                .find_map(|line| line.strip_prefix("PPid:"))?
+                .trim()
+                .parse()
+                .ok()?;
+            Some((
+                pid,
+                String::from_utf8_lossy(&cmdline).replace('\0', " "),
+                parent,
+            ))
+        })
+        .collect();
+    // `unshare` and the supervisor that it starts both have the run in their command line; the batch is a child of
+    // the second, and which of them it is does not matter
+    let supervisors: Vec<u32> = processes
+        .iter()
+        .filter(|(_, line, _)| line.contains("supervise") && line.contains(run_id))
+        .map(|(pid, _, _)| *pid)
+        .collect();
+    processes
+        .iter()
+        .find(|(_, line, parent)| supervisors.contains(parent) && line.contains("-force -batch"))
+        .map(|(pid, _, _)| *pid)
+}
+
 /// Waits until a process whose command line contains `needle` exists. A process that was just started has the
 /// command line of its parent until it has called `exec`, and on a busy machine that takes a while.
 pub(crate) fn assert_started(needle: &str, context: &str) {

@@ -844,6 +844,16 @@ impl Backend for KernelBackend {
         self.call("write to a program", &request).map(|_| ())
     }
 
+    fn notes(&mut self) -> Vec<String> {
+        if self.session.is_none() {
+            return Vec::new();
+        }
+        match self.exchange("ask for the notes of the run", &Request::Notes) {
+            Ok(Response::Notes { lines }) => lines,
+            _ => Vec::new(),
+        }
+    }
+
     fn teardown(&mut self) -> Result<(), Error> {
         if self.session.is_none() {
             return Ok(());

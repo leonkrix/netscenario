@@ -145,6 +145,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `workloads` | One entry for each workload, in the order of the scenario. |
 | `directions` | Where the packets of each direction went, below. |
 | `events` | What the run did to the links while it ran (the timeline), below. Empty for a scenario without one. |
+| `notes` | What the backend says about how it did the run, one sentence for each fact (D-063): for example that the changes of a link were made by a `tc` process each because the `tc` that lives for the run stopped working. Not errors. Empty if the run went as usual. |
 
 ### `provenance`
 
@@ -229,7 +230,7 @@ One entry for each **step** of the timeline, in the order the run did them. An e
 | `link`, `direction` | The link, and `forward` or `reverse`; `null` for a step of the whole link. |
 | `scheduled_ns` | When the file says it happens, in nanoseconds from the start of the measured phase, the moment at which the workloads start. |
 | `started_ns` | When the run asked the backend to do it. |
-| `applied_ns` | When the backend had done it. For a step by the clock `applied_ns - scheduled_ns` is how late the step was: the wait for the clock, the change itself (a `tc` process, 2 ms on the development machine) and what the machine added; it is never done before its moment. A step at a barrier is done when the sender has sent the packet before its moment. |
+| `applied_ns` | When the backend had done it. For a step by the clock `applied_ns - scheduled_ns` is how late the step was: the wait for the clock, the change itself (0.2 to 0.4 ms through the `tc` that lives for the run, about 2 ms with a `tc` process each, D-063) and what the machine added; it is never done before its moment. A step at a barrier is done when the sender has sent the packet before its moment. |
 | `packet` | For a step at a barrier: the number of the first packet that met the new state (the number of packets that met the old one). `null` for a step by the clock. |
 | `held_ns` | For a step at a barrier: how long that packet waited at its slot for the step to be done; 0 or a few microseconds if it was done by then. `null` for a step by the clock. |
 

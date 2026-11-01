@@ -445,6 +445,10 @@ class Result:
     steps: tuple[TimelineStep, ...] = ()
     """What the run did to the links while it ran, in the order it was done (the ``events`` of
     ``result.json``). Empty for a scenario without a timeline."""
+    notes: tuple[str, ...] = ()
+    """What the backend says about how it did the run besides the result, one sentence for each
+    fact: for example that the changes of a link were made the slow way after the fast way stopped
+    working. Empty if the run went as usual."""
 
     def __getitem__(self, workload_id: str) -> Workload:
         """The workload with this id."""
@@ -537,6 +541,7 @@ class Result:
                 )
                 for e in raw.get("events", ())
             ),
+            notes=tuple(raw.get("notes", ())),
             out_dir=directory,
             raw=MappingProxyType(raw),
         )

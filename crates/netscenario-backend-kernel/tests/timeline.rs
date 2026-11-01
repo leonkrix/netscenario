@@ -37,10 +37,11 @@ fn options(dir: &std::path::Path) -> RunOptions {
     options
 }
 
-/// How late a step may be, at most. A step by the clock is due at a moment and done by a `tc` process through
-/// `nsenter`: 2 ms on the development machine, a few on a busy one (S11, D-038, D-060). Noise only goes one way,
-/// so the lower bound is exact (a step by the clock is never done before its moment) and the upper bound is room
-/// for a shared runner: 50 ms is more than ten times what was measured with every processor busy.
+/// How late a step may be, at most. A step by the clock is due at a moment and done by the `tc` that lives for the run:
+/// 0.03 ms on the development machine, a few ms on a busy one, and 2 to 4 ms when a `tc` process is started each
+/// time (S11, D-038, D-060, D-063). Noise only goes one way, so the lower bound is exact (a step by the clock is
+/// never done before its moment) and the upper bound is room for a shared runner: 50 ms is more than ten times what
+/// was measured with every processor busy.
 const LATEST: Duration = Duration::from_millis(50);
 
 /// The judgement of the lateness of the steps, in one place so that the canary below uses the same one. A step at a
@@ -135,6 +136,8 @@ fn a_rate_that_drops_in_the_course_of_the_run_is_in_the_throughput_and_the_resul
     );
     // A rate is not drawn: the run says nothing against reproducing the lost packets
     assert!(result.seed.loss_reproducible, "{:?}", result.seed);
+    // The step went through the `tc` that lives for the run: the backend has nothing to note (D-063)
+    assert_eq!(result.notes, Vec::<String>::new());
     assert_nothing_left(backend.run_id(), "after the run");
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -181,7 +184,8 @@ fn canary_a_step_that_is_late_or_early_fails_the_judgement() {
     );
 }
 
-/// A `both` is two steps of one event, one for each direction, done one after the other and in order.
+/// A `both` is two steps of one event, one for each direction, done one at a time; each direction sees its events in
+/// the order of the file.
 #[test]
 fn an_event_on_both_directions_is_two_steps_in_order() {
     if !namespaces_available() || agent_exe().is_none() {
@@ -200,17 +204,30 @@ fn an_event_on_both_directions_is_two_steps_in_order() {
         &options(&dir),
     )
     .unwrap();
-    let steps: Vec<(usize, &str)> = result
+    let mut steps: Vec<(usize, &str)> = result
         .events
         .iter()
         .map(|e| (e.event, e.direction.as_deref().unwrap()))
         .collect();
+    // The order of the two directions of one event is not promised: the workload sends forward, so that step is done
+    // at a barrier, and nothing sends back, so the clock does the other. A sender that the machine holds back for
+    // 20 ms asks after the clock has done the reverse step (found with 24 busy loops on 4 cores: the packet then waited
+    // 34 and 59 ms). What is promised: every step is there once, each direction sees the events of the file in their
+    // order, and the steps are done one at a time.
+    steps.sort_unstable();
     assert_eq!(
         steps,
         [(0, "forward"), (0, "reverse"), (1, "reverse")],
         "{:?}",
         result.events
     );
+    let reverse: Vec<usize> = result
+        .events
+        .iter()
+        .filter(|e| e.direction.as_deref() == Some("reverse"))
+        .map(|e| e.event)
+        .collect();
+    assert_eq!(reverse, [0, 1], "{:?}", result.events);
     assert!(
         result
             .events

@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use netscenario_model::Impairments;
 
+use crate::batch::{ANSWER_WITHIN, Batch, Failure};
 use crate::command::{Toolbox, run};
 use crate::netem;
 use crate::protocol::Way;
@@ -184,6 +185,11 @@ pub(crate) struct Provisioner {
     programs: Vec<RunningProgram>,
     /// The queues planned for the directions that change in the run (D-059), by link and direction.
     layouts: std::collections::HashMap<(u32, Way), netem::Layout>,
+    /// The `tc -batch` that makes the changes of the node whose holder has this process id (D-063). `None`: there is
+    /// none, because it could not be started or stopped working, and a process makes the changes of that node.
+    batches: HashMap<u32, Option<Batch>>,
+    /// What the backend says about the run besides its result: where it did something other than the usual way.
+    notes: Vec<String>,
 }
 
 fn id(index: usize) -> Result<u32, String> {
@@ -209,6 +215,8 @@ impl Provisioner {
             links: Vec::new(),
             programs: Vec::new(),
             layouts: std::collections::HashMap::new(),
+            batches: HashMap::new(),
+            notes: Vec::new(),
         })
     }
 
@@ -416,33 +424,90 @@ impl Provisioner {
             );
         }
         let stages = netem::change(layout, impairments)?;
+        // The arguments are put into one line for the batch, so none may hold a space
+        if stages
+            .first
+            .iter()
+            .chain(stages.second.iter().flatten())
+            .any(|argument| argument.contains(char::is_whitespace))
+        {
+            return Err("an argument of the change holds a space".to_owned());
+        }
         let (pid, interface) = self.interface_of(link, way)?;
-        let mut first = vec![
-            "qdisc",
-            "change",
-            "dev",
-            interface.as_str(),
-            "root",
-            "netem",
-        ];
-        first.extend(stages.first.iter().map(String::as_str));
-        self.in_node(pid, &self.tools.tc, &first)?;
+        let mut commands = vec![format!(
+            "qdisc change dev {interface} root netem {}",
+            stages.first.join(" ")
+        )];
         if let Some(second) = &stages.second {
-            let mut child = vec![
-                "qdisc",
-                "change",
-                "dev",
-                interface.as_str(),
-                "parent",
-                "1:1",
-                "handle",
-                "2:",
-                "netem",
-            ];
-            child.extend(second.iter().map(String::as_str));
-            self.in_node(pid, &self.tools.tc, &child)?;
+            commands.push(format!(
+                "qdisc change dev {interface} parent 1:1 handle 2: netem {}",
+                second.join(" ")
+            ));
+        }
+        if self.change_through_batch(pid, &commands)? {
+            return Ok(());
+        }
+        for command in &commands {
+            let words: Vec<&str> = command.split(' ').collect();
+            self.in_node(pid, &self.tools.tc, &words)?;
         }
         Ok(())
+    }
+
+    /// Makes a change through the batch of the node, if it has one that works. `Ok(false)`: there is none, or it
+    /// stopped working just now and has been ended, and the caller makes the change with a process (the change is
+    /// the whole state, so doing it again is the same as doing it once).
+    fn change_through_batch(&mut self, pid: u32, commands: &[String]) -> Result<bool, String> {
+        let Some(Some(batch)) = self.batches.get_mut(&pid) else {
+            return Ok(false);
+        };
+        match batch.run(commands, ANSWER_WITHIN) {
+            Ok(()) => Ok(true),
+            Err(Failure::Refused(message)) => Err(format!(
+                "`tc` refused the change `{}`: {message}",
+                commands.join("; ")
+            )),
+            Err(Failure::Broken(why)) => {
+                batch.end();
+                self.batches.insert(pid, None);
+                self.notes.push(format!(
+                    "the `tc` that makes the changes of a node stopped working ({why}); a `tc` process for each change did the rest, which takes about 2 ms instead of 0.03 ms"
+                ));
+                Ok(false)
+            }
+        }
+    }
+
+    /// Starts the batch of a node, once. A batch that cannot be started is a note and not an error: the changes
+    /// are made by a process then, which is slower and just as exact.
+    fn start_batch(&mut self, pid: u32) {
+        if self.batches.contains_key(&pid) {
+            return;
+        }
+        let tc = self.tools.tc.to_string_lossy().into_owned();
+        let arguments = vec![
+            format!("--net=/proc/{pid}/ns/net"),
+            "--".to_owned(),
+            tc,
+            "-force".to_owned(),
+            "-batch".to_owned(),
+            "-".to_owned(),
+        ];
+        let batch = match Batch::start(&self.tools.nsenter, &arguments, ANSWER_WITHIN) {
+            Ok(batch) => Some(batch),
+            Err(why) => {
+                self.notes.push(format!(
+                    "the `tc` that makes the changes of a node could not be started ({why}); a `tc` process for each change did them, which takes about 2 ms instead of 0.03 ms"
+                ));
+                None
+            }
+        };
+        self.batches.insert(pid, batch);
+    }
+
+    /// What the backend says about the run besides its result (D-063).
+    pub(crate) fn notes(&self) -> Vec<String> {
+        self.notes.clone()
     }
 
     /// The process that holds the namespace of the node that sends in a direction, and its interface.
@@ -477,6 +542,7 @@ impl Provisioner {
             Way::Reverse => &link.ends[1],
         };
         // A direction that is planned for changes is built for all its states, also if this one impairs nothing
+        let planned = self.layouts.contains_key(&(link_index, way));
         let stages = if let Some(layout) = self.layouts.get(&(link_index, way)) {
             netem::create(layout, impairments, seed)?
         } else if let Some(stages) = netem::arguments(impairments, seed)? {
@@ -501,6 +567,11 @@ impl Provisioner {
             ];
             child.extend(second.iter().map(String::as_str));
             self.in_node(pid, &self.tools.tc, &child)?;
+        }
+        // A direction that changes in the run gets the `tc` that makes its changes before the workloads start, so
+        // that its first change does not pay for the start of a process
+        if planned {
+            self.start_batch(pid);
         }
         self.failpoints.hit("apply:end");
         Ok(())
@@ -680,6 +751,11 @@ impl Provisioner {
     pub(crate) fn teardown(&mut self) -> Result<(), String> {
         self.failpoints.hit("teardown:start");
         let mut left = Vec::new();
+        for (_, batch) in self.batches.drain() {
+            if let Some(mut batch) = batch {
+                batch.end();
+            }
+        }
         for mut program in self.programs.drain(..) {
             // A program that ended already is not an error
             let _ = program.child.kill();

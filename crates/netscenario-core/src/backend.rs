@@ -232,6 +232,13 @@ pub trait Backend {
         })
     }
 
+    /// What the backend wants the result to say about how it did the run: facts, not errors, for example that a
+    /// change was made the slow way after the fast way stopped working (D-063). Asked once, at the end of the
+    /// measuring and before the teardown. The default has nothing to say.
+    fn notes(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Starts `program` in `node`. Its standard output is read by [`poll_program`](Backend::poll_program),
     /// its standard input is written by [`send_line`](Backend::send_line), and its standard error is kept.
     ///
