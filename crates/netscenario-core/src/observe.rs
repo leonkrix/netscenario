@@ -82,6 +82,11 @@ pub enum RunEvent {
         /// How late it was, from the moment the file gives to the moment the backend had done it.
         lateness: Duration,
     },
+    /// The run was cancelled while the workloads were running and was asked to keep what it has
+    /// ([`RunOptions::partial_on_cancel`](crate::RunOptions::partial_on_cancel), D-066): the senders are told to
+    /// stop, and the run goes on with the packets still in the network and with collecting the records. It is the last
+    /// variant for the same reason as [`RunEvent::StepDone`].
+    Interrupted,
 }
 
 /// Someone who wants to know how a run is going.

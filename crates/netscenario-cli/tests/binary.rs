@@ -386,3 +386,221 @@ fn on_a_terminal_the_run_shows_a_progress_line_and_clears_it() {
     assert!(!shown.contains("running cli-test for 2s"), "{shown:?}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---- Ctrl-C (D-066) ----
+
+use std::io::{BufRead, BufReader};
+use std::os::unix::process::CommandExt;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+/// A scenario that lasts long enough to be interrupted: 30 s at 208 packets a second.
+const LONG: &str = "version: 0
+name: cli-interrupt
+duration: 30s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward: { delay: 20ms }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }
+timeline:
+  - { at: 25s, link: access, set: { forward: { delay: 40ms } } }
+";
+
+/// The command lines of the processes that contain `needle`, other than this one.
+fn processes_with(needle: &str) -> Vec<String> {
+    let me = std::process::id().to_string();
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name != me && name.chars().all(|c| c.is_ascii_digit())
+        })
+        .filter_map(|entry| std::fs::read(entry.path().join("cmdline")).ok())
+        .map(|bytes| String::from_utf8_lossy(&bytes).replace('\0', " "))
+        .filter(|line| line.contains(needle))
+        .collect()
+}
+
+/// Starts `netscenario run` in a process group of its own, as a shell does, and waits until the workloads run.
+fn start_long_run(
+    dir: &Path,
+    out: &Path,
+) -> (std::process::Child, BufReader<std::process::ChildStderr>) {
+    let file = write_scenario(dir, LONG);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_netscenario"))
+        .args([
+            "run",
+            &file,
+            "--out",
+            out.to_str().unwrap(),
+            "--settle",
+            "300ms",
+        ])
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    let mut line = String::new();
+    stderr.read_line(&mut line).unwrap();
+    assert!(line.contains("running cli-interrupt for 30s"), "{line}");
+    // The network is built when the receiver of the run exists (its command line has the directory of this test); the
+    // senders start right after it, and then the workloads go for a while
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !processes_with(&dir.display().to_string())
+        .iter()
+        .any(|line| line.contains(" recv "))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the receiver of the run did not start"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(2000));
+    (child, stderr)
+}
+
+/// What a terminal does for Ctrl-C: the signal goes to every process of the foreground group.
+fn signal_group(child: &std::process::Child, signal: &str) {
+    let status = Command::new("kill")
+        .args([&format!("-{signal}"), "--", &format!("-{}", child.id())])
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+/// Waits for the program to end and returns its exit code, what it wrote to standard output, and what it wrote to
+/// standard error after the first line (`stderr` has read that).
+fn finish(
+    mut child: std::process::Child,
+    mut stderr: BufReader<std::process::ChildStderr>,
+    within: Duration,
+) -> (Option<i32>, String, String) {
+    let began = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            began.elapsed() < within,
+            "the program did not end in {within:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut out).unwrap();
+    let mut err = String::new();
+    std::io::Read::read_to_string(&mut stderr, &mut err).unwrap();
+    (status.code(), out, err)
+}
+
+/// Ctrl-C while the workloads run stops them, waits for the packets in the network, writes the result of the part that
+/// ran and exits with 130; the supervisor, the nodes and the agents are not hit by the signal that goes to the group of
+/// the terminal, and nothing is left.
+#[test]
+fn ctrl_c_stops_the_workloads_and_keeps_the_result() {
+    if !can_run("ctrl_c_stops_the_workloads_and_keeps_the_result") {
+        return;
+    }
+    let dir = work_dir("interrupt");
+    let out = dir.join("result");
+    let (child, stderr) = start_long_run(&dir, &out);
+    signal_group(&child, "INT");
+    let began = Instant::now();
+    let (code, stdout, stderr) = finish(child, stderr, Duration::from_secs(15));
+    assert_eq!(code, Some(130), "{stdout}\n{stderr}");
+    assert!(
+        began.elapsed() < Duration::from_secs(8),
+        "{:?}",
+        began.elapsed()
+    );
+    assert!(
+        stderr.contains("interrupted; stopping the workloads"),
+        "{stderr}"
+    );
+    assert!(stdout.contains("interrupted after "), "{stdout}");
+    let result =
+        RunResult::from_json(&std::fs::read_to_string(out.join("result.json")).unwrap()).unwrap();
+    let interrupted = result
+        .timing
+        .interrupted_ns
+        .expect("the result says it was interrupted");
+    // About 2.5 s after the start of the workloads, far from the 30 s of the scenario
+    assert!(
+        (1_000_000_000..10_000_000_000).contains(&interrupted),
+        "{interrupted} ns"
+    );
+    let media = &result.workloads[0];
+    // 208 packets a second for that long: a part of the stream, all of it that was sent arrived, and the step at 25 s
+    // was not done
+    assert!(
+        (200..2_500).contains(&media.stats.sent),
+        "{} packets",
+        media.stats.sent
+    );
+    assert_eq!(media.stats.lost, 0);
+    assert_eq!(result.events.len(), 0, "{:?}", result.events);
+    // Nothing of the run is left: no agent with the directory of this test in its command line
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !processes_with(&dir.display().to_string()).is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "{:?}",
+            processes_with(&dir.display().to_string())
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A second Ctrl-C quits at once, with the code of the signal, and the network is removed all the same.
+#[test]
+fn a_second_ctrl_c_quits_at_once_and_nothing_is_left() {
+    if !can_run("a_second_ctrl_c_quits_at_once_and_nothing_is_left") {
+        return;
+    }
+    let dir = work_dir("interrupt-twice");
+    let out = dir.join("result");
+    let (child, stderr) = start_long_run(&dir, &out);
+    signal_group(&child, "INT");
+    std::thread::sleep(Duration::from_millis(100));
+    signal_group(&child, "INT");
+    let (code, _stdout, stderr) = finish(child, stderr, Duration::from_secs(5));
+    assert_eq!(code, Some(130), "{stderr}");
+    assert!(stderr.contains("quitting at once"), "{stderr}");
+    // The supervisor sees the pipe close and removes the network
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let needle = dir.display().to_string();
+    while !processes_with(&needle).is_empty() {
+        assert!(Instant::now() < deadline, "{:?}", processes_with(&needle));
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// `kill` (SIGTERM) does the same as Ctrl-C, and the exit code says which signal it was.
+#[test]
+fn sigterm_stops_the_run_like_ctrl_c_with_the_code_143() {
+    if !can_run("sigterm_stops_the_run_like_ctrl_c_with_the_code_143") {
+        return;
+    }
+    let dir = work_dir("interrupt-term");
+    let out = dir.join("result");
+    let (child, stderr) = start_long_run(&dir, &out);
+    signal_group(&child, "TERM");
+    let (code, stdout, stderr) = finish(child, stderr, Duration::from_secs(15));
+    assert_eq!(code, Some(143), "{stdout}\n{stderr}");
+    let result =
+        RunResult::from_json(&std::fs::read_to_string(out.join("result.json")).unwrap()).unwrap();
+    assert!(result.timing.interrupted_ns.is_some());
+    let _ = std::fs::remove_dir_all(dir);
+}

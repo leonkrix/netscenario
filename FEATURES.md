@@ -201,7 +201,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | CLI-03 | `profiles` and `capabilities`: what exists, what a backend can do | S | 0.3 | planned |
 | CLI-04 | `schema`: print the JSON Schema | S | 0.1 | done (`netscenario schema`) |
 | CLI-05 | Shell completions and man pages | S | 0.8 | planned |
-| CLI-06 | Machine-readable output and documented exit codes | M | 0.1 | done (exit codes in [CLI.md](docs/CLI.md); `--json` on `run`, `validate`, `doctor`, `clean`; the code 1 comes with assertions) |
+| CLI-06 | Machine-readable output and documented exit codes | M | 0.1 | done (exit codes in [CLI.md](docs/CLI.md), 130 and 143 for Ctrl-C and `kill` with the result of the part that ran, D-066; `--json` on `run`, `validate`, `doctor`, `clean`; the code 1 comes with assertions) |
 
 ## Python (PYT)
 

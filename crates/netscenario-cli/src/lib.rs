@@ -6,6 +6,7 @@
 //! in its namespaces (the program is its own supervisor, D-022).
 
 mod args;
+mod interrupt;
 mod render;
 mod run_cmd;
 mod validate;

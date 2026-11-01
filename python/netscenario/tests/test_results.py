@@ -243,6 +243,14 @@ def test_the_packets_the_kernel_refused_are_read_as_runs() -> None:
     assert read.workloads["media"].sender.refused == ((750, 1124), (1300, 1300))
 
 
+def test_an_interrupted_run_says_when_the_senders_were_stopped() -> None:
+    assert result().interrupted is None
+    data = json.loads(json.dumps(RESULT))
+    data["timing"]["interrupted_ns"] = 2_500_000_000
+    read = ns.Result.from_json(json.dumps(data), Path("/out"))
+    assert read.interrupted == pytest.approx(2.5)
+
+
 def test_the_notes_of_the_backend_are_read_and_none_means_the_run_went_as_usual() -> None:
     assert result().notes == ()
     data = json.loads(json.dumps(RESULT))

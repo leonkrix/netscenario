@@ -48,6 +48,14 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
         result.provenance.backend,
         details.join(", ")
     );
+    if let Some(ns) = result.timing.interrupted_ns {
+        let _ = writeln!(
+            text,
+            "  interrupted after {} of {}: this is the result of the part that ran",
+            seconds(ns),
+            seconds(result.timing.duration_ns)
+        );
+    }
     match (result.seed.value, result.seed.drawn) {
         (Some(value), true) => {
             let _ = writeln!(
@@ -510,6 +518,20 @@ result: out/result.json
         assert!(
             text.contains(
                 "at 6.000 s  link access reverse  set  before packet 2250, which waited 0.002 ms"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn an_interrupted_run_says_how_far_it_got_and_a_whole_one_says_nothing() {
+        let mut result = result();
+        assert!(!summary(&result, Path::new("out")).contains("interrupted"));
+        result.timing.interrupted_ns = Some(12_340_000_000);
+        let text = summary(&result, Path::new("out"));
+        assert!(
+            text.contains(
+                "  interrupted after 12.340 s of 3.000 s: this is the result of the part that ran\n"
             ),
             "{text}"
         );

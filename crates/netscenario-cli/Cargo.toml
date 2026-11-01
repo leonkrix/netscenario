@@ -20,6 +20,7 @@ netscenario-backend-kernel.workspace = true
 netscenario-core.workspace = true
 netscenario-model.workspace = true
 serde_json.workspace = true
+signal-hook.workspace = true
 
 [lints]
 workspace = true
