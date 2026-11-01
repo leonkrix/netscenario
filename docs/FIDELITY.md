@@ -16,7 +16,7 @@ The bounds follow four rules, in the order of their strength:
 3. **Statistics get four standard deviations.** A count (lost packets) or a mean over thousands of packets is allowed four standard deviations on each side. A fair run lies outside with a probability of about 6 in 100,000.
 4. **Known mechanisms are named.** Where the backend does something that a reader may not expect, the case states the number that the mechanism predicts and the bound is around it.
 
-The tests run one at a time (`.config/nextest.toml`), because the sender of the agent spins for the last stretch before each packet and two of them side by side on four cores would disturb each other.
+The tests run one at a time (`.config/nextest.toml`), because the sender of the agent spins for the last stretch before each packet and two of them side by side on four cores would disturb each other. The agent is optimised in the development profile as well (`Cargo.toml`, D-061): the debug build of the receiver took half a core at 4,000 packets of 1,200 bytes a second, which on a shared runner lost packets and once ran past the watchdog.
 
 ## Three canaries
 
