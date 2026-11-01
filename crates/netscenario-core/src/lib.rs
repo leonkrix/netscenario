@@ -58,6 +58,7 @@ mod feature;
 mod hash;
 mod machine;
 mod observe;
+pub mod patterns;
 mod provision;
 mod result;
 mod run;
@@ -75,6 +76,7 @@ pub use feature::{Feature, Requirement, requirements};
 pub use hash::sha256_hex;
 pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
 pub use observe::{CancelToken, RunEvent, RunObserver};
+pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering};
 pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
 pub use result::{
     AcceptedRestriction, AddressInfo, DirectionTally, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
