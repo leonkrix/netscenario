@@ -443,6 +443,29 @@ impl Provisioner {
         packets_entered(&shown)
     }
 
+    /// What the node at the receiving end of a direction has counted (D-040): the frames that arrived at the
+    /// interface of the link, and the UDP datagrams that the node dropped for a full receive buffer. Both are
+    /// read from `/proc` of the process that holds the namespace of the node, which shows that namespace.
+    pub(crate) fn node_counts(&self, link: u32, way: Way) -> Result<(u64, u64), String> {
+        let link = self
+            .links
+            .get(link as usize)
+            .ok_or_else(|| format!("the link {link} does not exist in this run"))?;
+        let end = match way {
+            Way::Forward => &link.ends[1],
+            Way::Reverse => &link.ends[0],
+        };
+        let pid = self.nodes[end.node].pid;
+        let read = |file: &str| {
+            fs::read_to_string(format!("/proc/{pid}/net/{file}"))
+                .map_err(|error| format!("cannot read /proc/{pid}/net/{file}: {error}"))
+        };
+        Ok((
+            frames_received(&read("dev")?, &end.interface)?,
+            udp_receive_buffer_errors(&read("snmp")?)?,
+        ))
+    }
+
     pub(crate) fn start_program(
         &mut self,
         node: u32,
@@ -636,6 +659,35 @@ fn packets_entered(json: &str) -> Result<u64, String> {
     Ok(count("packets")? + count("drops")? + count("qlen")?)
 }
 
+/// The frames that arrived at `interface`, from the text of `/proc/net/dev`: the second number after the name.
+fn frames_received(text: &str, interface: &str) -> Result<u64, String> {
+    text.lines()
+        .find_map(|line| {
+            let (name, counters) = line.split_once(':')?;
+            (name.trim() == interface).then_some(counters)
+        })
+        .ok_or_else(|| format!("/proc/net/dev has no interface '{interface}'"))?
+        .split_whitespace()
+        .nth(1)
+        .and_then(|packets| packets.parse().ok())
+        .ok_or_else(|| format!("cannot read the frames of '{interface}' in /proc/net/dev"))
+}
+
+/// The UDP datagrams dropped for a full receive buffer, from the text of `/proc/net/snmp`: the column
+/// `RcvbufErrors` of the line `Udp:`, whose names come on the line before the numbers.
+fn udp_receive_buffer_errors(text: &str) -> Result<u64, String> {
+    let mut lines = text.lines().filter(|line| line.starts_with("Udp:"));
+    let (Some(names), Some(values)) = (lines.next(), lines.next()) else {
+        return Err("/proc/net/snmp has no counters for UDP".to_owned());
+    };
+    names
+        .split_whitespace()
+        .position(|name| name == "RcvbufErrors")
+        .and_then(|at| values.split_whitespace().nth(at))
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| "/proc/net/snmp has no RcvbufErrors for UDP".to_owned())
+}
+
 /// Switches IPv6 off for the interfaces that are created from now on in the network namespace of the caller.
 pub(crate) fn disable_ipv6() -> Result<(), String> {
     for file in [
@@ -690,6 +742,64 @@ mod tests {
                 .contains("cannot read")
         );
         assert!(packets_entered("[]").unwrap_err().contains("no root queue"));
+    }
+
+    /// What `/proc/net/dev` printed in a node with a loopback and one end of a link: 12 frames arrived at `np1`.
+    const NET_DEV: &str = "Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:       0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0
+  np1:    1176      12    0    0    0     0          0         0      588       6    0    0    0     0       0          0
+";
+
+    #[test]
+    fn the_frames_of_an_interface_are_the_second_number_after_its_name() {
+        assert_eq!(frames_received(NET_DEV, "np1"), Ok(12));
+        assert_eq!(frames_received(NET_DEV, "lo"), Ok(0));
+    }
+
+    /// Canary: another interface is not mistaken for the asked one (a name that is a prefix of another), and an
+    /// interface that is not there is an error and not a zero.
+    #[test]
+    fn canary_a_missing_interface_is_an_error_and_a_prefix_is_not_a_match() {
+        assert!(
+            frames_received(NET_DEV, "np")
+                .unwrap_err()
+                .contains("no interface 'np'")
+        );
+        assert!(frames_received(NET_DEV, "np0").is_err());
+        assert!(frames_received("", "np1").is_err());
+        assert!(
+            frames_received("  np1: 1 x", "np1")
+                .unwrap_err()
+                .contains("cannot read")
+        );
+    }
+
+    /// What `/proc/net/snmp` printed: 3 datagrams dropped for a full buffer (the column is the fifth).
+    const SNMP: &str = "Ip: Forwarding DefaultTTL InReceives
+Ip: 1 64 40
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 100 1 4 90 3 0 1 0 0
+UdpLite: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+UdpLite: 0 0 0 0 9 0 0 0 0
+";
+
+    #[test]
+    fn the_datagrams_dropped_for_a_full_buffer_are_read_by_the_name_of_their_column() {
+        assert_eq!(udp_receive_buffer_errors(SNMP), Ok(3));
+        // Not the line of UdpLite, and not the column next to it
+        assert_ne!(udp_receive_buffer_errors(SNMP), Ok(9));
+        assert_ne!(udp_receive_buffer_errors(SNMP), Ok(0));
+        assert!(
+            udp_receive_buffer_errors("Ip: A\nIp: 1\n")
+                .unwrap_err()
+                .contains("no counters for UDP")
+        );
+        assert!(
+            udp_receive_buffer_errors("Udp: InDatagrams\nUdp: 5\n")
+                .unwrap_err()
+                .contains("no RcvbufErrors")
+        );
     }
 
     #[test]

@@ -151,6 +151,14 @@ fn duplicate_arguments(impairments: &Impairments) -> Vec<String> {
         .map_or_else(Vec::new, |p| vec!["duplicate".to_owned(), probability(p)])
 }
 
+/// The arguments of the corruption: `corrupt P%`. `netem` flips one bit of one byte of the frame, the Ethernet
+/// header included (S13b, D-040), so the share of the packets that a receiver drops is less than `P`.
+fn corrupt_arguments(impairments: &Impairments) -> Vec<String> {
+    impairments
+        .corrupt
+        .map_or_else(Vec::new, |p| vec!["corrupt".to_owned(), probability(p)])
+}
+
 /// The arguments of the reordering: `reorder P% [gap G]`. `P` is the share of the packets that are sent on at
 /// once (measured, D-048).
 fn reorder_arguments(impairments: &Impairments) -> Vec<String> {
@@ -170,9 +178,6 @@ fn reorder_arguments(impairments: &Impairments) -> Vec<String> {
 fn seed_arguments(seed: Option<u64>) -> Vec<String> {
     seed.map_or_else(Vec::new, |seed| vec!["seed".to_owned(), seed.to_string()])
 }
-
-/// What a direction is told that asks for an impairment that this build of the backend does not apply yet.
-const NOT_BUILT: &str = "corruption is built into the Kernel backend in step 4.2 of release 0.2 together with the accounting that tells a corrupted packet from a lost one (D-040), and is not applied yet";
 
 /// The arguments of the rate: `rate Nbit`.
 fn rate_arguments(impairments: &Impairments) -> Vec<String> {
@@ -194,13 +199,11 @@ pub(crate) fn arguments(
     impairments: &Impairments,
     seed: Option<u64>,
 ) -> Result<Option<Stages>, String> {
-    if impairments.corrupt.is_some() {
-        return Err(NOT_BUILT.to_owned());
-    }
     if impairments.delay.is_none()
         && impairments.loss.is_none()
         && impairments.rate.is_none()
         && impairments.duplicate.is_none()
+        && impairments.corrupt.is_none()
     {
         return Ok(None);
     }
@@ -212,7 +215,11 @@ pub(crate) fn arguments(
         let mut first = limit(LINK_QUEUE);
         first.extend(loss_arguments(impairments));
         first.extend(duplicate_arguments(impairments));
-        if impairments.loss.is_some() || impairments.duplicate.is_some() {
+        first.extend(corrupt_arguments(impairments));
+        if impairments.loss.is_some()
+            || impairments.duplicate.is_some()
+            || impairments.corrupt.is_some()
+        {
             first.extend(seed_arguments(seed));
         }
         first.extend(rate_arguments(impairments));
@@ -231,6 +238,7 @@ pub(crate) fn arguments(
     first.extend(delay_arguments(impairments)?);
     first.extend(loss_arguments(impairments));
     first.extend(duplicate_arguments(impairments));
+    first.extend(corrupt_arguments(impairments));
     first.extend(reorder_arguments(impairments));
     if impairments.is_random() {
         first.extend(seed_arguments(seed));
@@ -486,8 +494,39 @@ mod tests {
     }
 
     #[test]
-    fn corruption_is_refused_until_its_accounting_exists() {
-        let error = arguments(&impairments("{ corrupt: 1% }"), None).unwrap_err();
-        assert!(error.contains("corruption"), "{error}");
+    fn corruption_is_passed_and_seeded() {
+        assert_eq!(
+            text("{ corrupt: 10% }", Some(4)),
+            "limit 1000 corrupt 10.000000% seed 4"
+        );
+        assert_eq!(
+            text("{ corrupt: 10% }", None),
+            "limit 1000 corrupt 10.000000%"
+        );
+        // The order of netem: loss, then corruption, then the rate
+        assert_eq!(
+            text(
+                "{ loss: { model: random, p: 1% }, corrupt: 2%, rate: 2mbit }",
+                Some(4)
+            ),
+            "limit 1000 loss random 1.000000% corrupt 2.000000% seed 4 rate 2000000bit"
+        );
+    }
+
+    /// Canary: a corruption alone is an impairment (it must not come out as nothing), and in the tree of two
+    /// queues it stays in the first, where the loss and the rate are, and draws from the seed of that queue.
+    #[test]
+    fn a_corruption_is_never_left_out_and_stays_in_the_first_queue() {
+        assert!(
+            arguments(&impairments("{ corrupt: 1% }"), None)
+                .unwrap()
+                .is_some()
+        );
+        let (first, second) = two(
+            "{ delay: 20ms, jitter: { amount: 5ms }, corrupt: 3%, rate: 2mbit }",
+            Some(6),
+        );
+        assert_eq!(first, "limit 1000 corrupt 3.000000% seed 6 rate 2000000bit");
+        assert_eq!(second, "limit 3500 delay 20000us 5000us");
     }
 }

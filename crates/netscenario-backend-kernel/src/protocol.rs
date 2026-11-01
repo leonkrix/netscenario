@@ -44,6 +44,12 @@ pub(crate) enum Request {
         link: u32,
         direction: Way,
     },
+    /// What the node at the receiving end of one direction has counted: the frames of the interface and the
+    /// datagrams dropped for a full buffer.
+    NodeCounts {
+        link: u32,
+        direction: Way,
+    },
     StartProgram {
         node: u32,
         argv: Vec<String>,
@@ -74,6 +80,11 @@ pub(crate) enum Response {
     Error { message: String },
     /// The answer to `QueuePackets`.
     Count { packets: u64 },
+    /// The answer to `NodeCounts`.
+    NodeCounts {
+        frames_received: u64,
+        receive_buffer_drops: u64,
+    },
     /// What a program has done since the last poll.
     Program {
         lines: Vec<String>,

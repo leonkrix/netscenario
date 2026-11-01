@@ -52,6 +52,14 @@ enum Metric {
     EarlyShare,
     /// The mean length of a run of lost packets with consecutive numbers.
     MeanLossRun,
+    /// The frames that arrived and that the receiving node dropped as damaged, as a share of the frames that
+    /// arrived (the account of the direction, D-040).
+    NodeDropRatio,
+    /// The packets that the queue of the link dropped, as a share of the packets sent (the same account).
+    LostInQueueRatio,
+    /// The packets that are neither lost in the queue, nor dropped by the node, nor delivered: the account of
+    /// the direction must add up to what was sent.
+    Unaccounted,
 }
 
 impl Metric {
@@ -68,6 +76,9 @@ impl Metric {
             Metric::DuplicateRatio => "packets that arrived twice",
             Metric::EarlyShare => "packets sent on at once",
             Metric::MeanLossRun => "mean run of lost packets",
+            Metric::NodeDropRatio => "frames dropped by the node as damaged",
+            Metric::LostInQueueRatio => "packets lost in the queue",
+            Metric::Unaccounted => "packets not accounted for",
         }
     }
 
@@ -76,7 +87,10 @@ impl Metric {
             Metric::LossRatio
             | Metric::ReorderedRatio
             | Metric::DuplicateRatio
+            | Metric::NodeDropRatio
+            | Metric::LostInQueueRatio
             | Metric::EarlyShare => format!("{:.2} %", value * 100.0),
+            Metric::Unaccounted => format!("{value:.0} packets"),
             Metric::MeanLossRun => format!("{value:.2} packets"),
             Metric::SteadyGoodputBps => format!("{:.4} mbit/s", value / 1e6),
             _ => format!("{value:.3} ms"),
@@ -104,6 +118,9 @@ struct Measurement {
     duplicate_ratio: f64,
     early_share: f64,
     mean_loss_run: f64,
+    node_drop_ratio: f64,
+    lost_in_queue_ratio: f64,
+    unaccounted: f64,
     sent: u64,
     kernel: String,
     tc: String,
@@ -132,6 +149,9 @@ impl Measurement {
             Metric::DuplicateRatio => self.duplicate_ratio,
             Metric::EarlyShare => self.early_share,
             Metric::MeanLossRun => self.mean_loss_run,
+            Metric::NodeDropRatio => self.node_drop_ratio,
+            Metric::LostInQueueRatio => self.lost_in_queue_ratio,
+            Metric::Unaccounted => self.unaccounted,
         }
     }
 }
@@ -640,6 +660,162 @@ fn cases() -> Vec<Case> {
                 },
             ],
         },
+        Case {
+            id: "15-corrupt-64",
+            title: "A corruption of 10 % with a payload of 64 bytes: the node drops the damaged packets",
+            link: "corrupt: 10%",
+            offered: "2048kbit",
+            size: 64,
+            seconds: 5,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::NodeDropRatio,
+                    expected: 0.0943,
+                    lo: 0.0861,
+                    hi: 0.1026,
+                    reason: "KNOWN (D-040, S13b): `netem` flips a bit in a random byte of the whole frame (106 bytes with the Ethernet header), and the node drops the frame unless the bit is in the source address of the Ethernet header (6 bytes), so 10 % x 100 / 106 = 9.43 %, not 10 %; binomial, about 20,000 frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::LostInQueueRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "a corrupted packet arrives at the node, so the queue loses nothing: this is the difference between a corrupted and a lost packet",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "every packet is lost in the queue, dropped by the node or delivered, to the packet",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0943,
+                    lo: 0.0861,
+                    hi: 0.1026,
+                    reason: "with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped",
+                },
+            ],
+        },
+        Case {
+            id: "16-corrupt-200",
+            title: "A corruption of 10 % with a payload of 200 bytes",
+            link: "corrupt: 10%",
+            offered: "6400kbit",
+            size: 200,
+            seconds: 5,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::NodeDropRatio,
+                    expected: 0.0975,
+                    lo: 0.0891,
+                    hi: 0.1059,
+                    reason: "KNOWN (D-040, S13b): `netem` flips a bit in a random byte of the whole frame (242 bytes with the Ethernet header), and the node drops the frame unless the bit is in the source address of the Ethernet header (6 bytes), so 10 % x 236 / 242 = 9.75 %, not 10 %; binomial, about 20,000 frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::LostInQueueRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "a corrupted packet arrives at the node, so the queue loses nothing: this is the difference between a corrupted and a lost packet",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "every packet is lost in the queue, dropped by the node or delivered, to the packet",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0975,
+                    lo: 0.0891,
+                    hi: 0.1059,
+                    reason: "with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped",
+                },
+            ],
+        },
+        Case {
+            id: "17-corrupt-1200",
+            title: "A corruption of 10 % with a payload of 1,200 bytes",
+            link: "corrupt: 10%",
+            offered: "38400kbit",
+            size: 1200,
+            seconds: 5,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::NodeDropRatio,
+                    expected: 0.0995,
+                    lo: 0.091,
+                    hi: 0.108,
+                    reason: "KNOWN (D-040, S13b): `netem` flips a bit in a random byte of the whole frame (1242 bytes with the Ethernet header), and the node drops the frame unless the bit is in the source address of the Ethernet header (6 bytes), so 10 % x 1236 / 1242 = 9.95 %, not 10 %; binomial, about 20,000 frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::LostInQueueRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "a corrupted packet arrives at the node, so the queue loses nothing: this is the difference between a corrupted and a lost packet",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "every packet is lost in the queue, dropped by the node or delivered, to the packet",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0995,
+                    lo: 0.091,
+                    hi: 0.108,
+                    reason: "with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped",
+                },
+            ],
+        },
+        Case {
+            id: "18-corrupt-and-loss",
+            title: "A corruption of 10 % with a loss of 10 %: the result tells the two apart",
+            link: "loss: { model: random, p: 10% }, corrupt: 10%",
+            offered: "6400kbit",
+            size: 200,
+            seconds: 5,
+            settle_seconds: 1,
+            bounds: vec![
+                Bound {
+                    metric: Metric::LostInQueueRatio,
+                    expected: 0.1,
+                    lo: 0.0915,
+                    hi: 0.1085,
+                    reason: "the loss comes first and drops 10 % of the packets in the queue; binomial, 20,000 packets, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::NodeDropRatio,
+                    expected: 0.0975,
+                    lo: 0.0887,
+                    hi: 0.1064,
+                    reason: "the corruption works on the 90 % that the loss let through: 10 % x 236 / 242 = 9.75 % of them are dropped by the node; binomial, about 18,000 frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "every packet is lost in the queue, dropped by the node or delivered, to the packet",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.1878,
+                    lo: 0.1767,
+                    hi: 0.1988,
+                    reason: "the program sees both as loss: 0.1 + 0.9 x 0.0975 = 18.78 %; the account is what tells the two causes apart",
+                },
+            ],
+        },
     ]
 }
 
@@ -677,6 +853,10 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
     let early_share = delays_ms.iter().filter(|d| **d < 5.0).count() as f64 / n_or_one(&delays_ms);
     let received: std::collections::BTreeSet<u64> =
         file.records.iter().map(|r| r.sequence).collect();
+    let account = &result.directions[0];
+    // A duplicating direction has no count of the packets the queue dropped: the measures that need it are not
+    // numbers there, and a bound on one of them fails, as it should
+    let lost_in_queue = account.lost_in_queue.map(|lost| lost as f64);
     Measurement {
         delays_ms,
         loss_ratio: workload.stats.loss_ratio,
@@ -685,6 +865,14 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         duplicate_ratio: workload.stats.duplicates as f64 / workload.stats.sent.max(1) as f64,
         early_share,
         mean_loss_run: mean_loss_run(&received, workload.stats.sent),
+        node_drop_ratio: account.dropped_corrupted as f64 / account.reached_node.max(1) as f64,
+        lost_in_queue_ratio: lost_in_queue
+            .map_or(f64::NAN, |lost| lost / account.sent.max(1) as f64),
+        unaccounted: lost_in_queue.map_or(f64::NAN, |lost| {
+            account.sent as f64
+                - (lost + (account.dropped_corrupted + account.delivered) as f64)
+                - account.receive_buffer_drops as f64
+        }),
         sent: workload.stats.sent,
         kernel: result.provenance.kernel.clone().unwrap_or_default(),
         tc: result
@@ -743,10 +931,12 @@ fn fragment(case: &Case, measurement: &Measurement, verdicts: &[Verdict<'_>]) ->
             Metric::LossRatio
             | Metric::ReorderedRatio
             | Metric::DuplicateRatio
+            | Metric::NodeDropRatio
+            | Metric::LostInQueueRatio
             | Metric::EarlyShare => {
                 format!("{:+.2} pp", (verdict.value - bound.expected) * 100.0)
             }
-            Metric::MeanLossRun => {
+            Metric::MeanLossRun | Metric::Unaccounted => {
                 format!("{:+.2} packets", verdict.value - bound.expected)
             }
             Metric::SteadyGoodputBps => {
@@ -866,6 +1056,26 @@ fn run_and_judge(id: &str) {
         failed.join("\n"),
         fragment(&case, &measurement, &verdicts)
     );
+}
+
+#[test]
+fn a_corruption_is_dropped_by_the_node_and_not_lost_in_the_queue_at_64_bytes() {
+    run_and_judge("15-corrupt-64");
+}
+
+#[test]
+fn a_corruption_is_dropped_by_the_node_and_not_lost_in_the_queue_at_200_bytes() {
+    run_and_judge("16-corrupt-200");
+}
+
+#[test]
+fn a_corruption_is_dropped_by_the_node_and_not_lost_in_the_queue_at_1200_bytes() {
+    run_and_judge("17-corrupt-1200");
+}
+
+#[test]
+fn a_corruption_and_a_loss_are_told_apart() {
+    run_and_judge("18-corrupt-and-loss");
 }
 
 #[test]
@@ -1078,6 +1288,9 @@ fn synthetic(delays_ms: &[f64], loss: f64, reordered: f64, goodput: f64) -> Meas
         duplicate_ratio: 0.0,
         early_share: 0.0,
         mean_loss_run: 0.0,
+        node_drop_ratio: 0.0,
+        lost_in_queue_ratio: 0.0,
+        unaccounted: 0.0,
         sent: 0,
         kernel: String::new(),
         tc: String::new(),
@@ -1273,4 +1486,42 @@ fn canary_a_rate_that_is_missing_fails_the_case_of_the_rate_with_reordering() {
         1,
     );
     assert!(failed.contains(&Metric::SteadyGoodputBps), "{failed:?}");
+}
+
+/// A corruption that is not applied, and a loss of the same size in its place: the loss the program sees
+/// is about the same as for a corruption, and only the account of the node tells them apart.
+#[test]
+fn canary_a_corruption_that_is_missing_or_is_a_loss_fails_the_corruption_case() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let none = wrong_on_purpose("16-corrupt-200", "", 3, 1);
+    assert!(
+        none.contains(&Metric::NodeDropRatio) && none.contains(&Metric::LossRatio),
+        "{none:?}"
+    );
+    let as_loss = wrong_on_purpose("16-corrupt-200", "loss: { model: random, p: 9.75% }", 5, 1);
+    assert!(
+        as_loss.contains(&Metric::NodeDropRatio) && as_loss.contains(&Metric::LostInQueueRatio),
+        "{as_loss:?}"
+    );
+    assert!(
+        !as_loss.contains(&Metric::LossRatio),
+        "the loss that the program sees is the same, so the account must be what fails: {as_loss:?}"
+    );
+}
+
+/// The account must add up. A measurement in which a packet is missing from it fails the judging.
+#[test]
+fn canary_an_account_that_does_not_add_up_fails() {
+    let mut missing = synthetic(&[1.0], 0.0, 0.0, 0.0);
+    missing.unaccounted = 3.0;
+    assert_eq!(
+        failing_metrics("16-corrupt-200", &missing),
+        [
+            Metric::NodeDropRatio,
+            Metric::Unaccounted,
+            Metric::LossRatio
+        ]
+    );
 }

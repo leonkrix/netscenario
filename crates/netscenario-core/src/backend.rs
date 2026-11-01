@@ -113,6 +113,31 @@ pub struct BackendInfo {
     pub details: BTreeMap<String, String>,
 }
 
+/// What the node at the receiving end of one direction of a link has counted since the network was built.
+/// Two readings, one before the workloads start and one after, give what a run caused (D-040).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct NodeCounts {
+    /// The frames that arrived at the interface of the link, whether or not the node went on to use them. A frame
+    /// that the queue of the sending side dropped never arrives; a frame that was corrupted does, and the node
+    /// then drops it (a bad checksum, an address that is not its own).
+    pub frames_received: u64,
+    /// The datagrams that the node dropped because the receive buffer of a socket was full. They are a
+    /// fault of the receiver, not of the network, so they are not counted as corruption.
+    pub receive_buffer_drops: u64,
+}
+
+impl NodeCounts {
+    /// Counts with these values.
+    #[must_use]
+    pub fn new(frames_received: u64, receive_buffer_drops: u64) -> Self {
+        Self {
+            frames_received,
+            receive_buffer_drops,
+        }
+    }
+}
+
 /// A way to make a network real: it reports what it can reproduce and builds what a scenario describes.
 ///
 /// The methods are in the order of a run: create the nodes, connect them, apply the impairments, start
@@ -194,6 +219,22 @@ pub trait Backend {
         _link: LinkHandle,
         _direction: Direction,
     ) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
+
+    /// What the node that receives in one direction of a link has counted (see [`NodeCounts`]). The run reads it
+    /// before and after the workloads and accounts for every packet that was sent: lost in the queue,
+    /// dropped by the node, or delivered (D-040). `None` if the backend cannot count, which is the default;
+    /// then the result has no account for the direction.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist or the counters cannot be read.
+    fn node_counts(
+        &mut self,
+        _link: LinkHandle,
+        _direction: Direction,
+    ) -> Result<Option<NodeCounts>, Error> {
         Ok(None)
     }
 

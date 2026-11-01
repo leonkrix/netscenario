@@ -86,8 +86,43 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
     for workload in &result.workloads {
         workload_text(&mut text, workload);
     }
+    directions_text(&mut text, result);
     let _ = writeln!(text, "\nresult: {}", out_dir.join("result.json").display());
     text
+}
+
+/// Where the packets of a direction went, for each direction in which the receiving node dropped some. A
+/// direction without such drops is not listed: the loss of the workload is the whole story there (D-040).
+fn directions_text(text: &mut String, result: &RunResult) {
+    for account in result
+        .directions
+        .iter()
+        .filter(|account| account.dropped_corrupted > 0 || account.receive_buffer_drops > 0)
+    {
+        let mut parts = Vec::new();
+        if let Some(lost) = account.lost_in_queue {
+            parts.push(format!("{lost} were lost in the queue"));
+        }
+        parts.push(format!(
+            "{} arrived damaged and were dropped by the node",
+            account.dropped_corrupted
+        ));
+        if account.receive_buffer_drops > 0 {
+            parts.push(format!(
+                "{} were dropped because a receive buffer was full (the receiver's fault, not the network's)",
+                account.receive_buffer_drops
+            ));
+        }
+        parts.push(format!("{} were delivered", account.delivered));
+        let _ = writeln!(
+            text,
+            "\nlink {} {}: of {} packets sent, {}",
+            account.link,
+            account.direction,
+            account.sent,
+            parts.join(", ")
+        );
+    }
 }
 
 /// The part of the summary about one workload.
@@ -262,6 +297,38 @@ result: out/result.json
             text.contains("warning: the kernel refused 3 packets: no buffer space"),
             "{text}"
         );
+    }
+
+    /// The account of a direction is shown where the node dropped something, so that a corrupted packet is not
+    /// taken for a lost one; a direction with only loss in the queue says nothing more than the workload does.
+    #[test]
+    fn a_direction_in_which_the_node_dropped_packets_is_accounted_for() {
+        let mut json: serde_json::Value = serde_json::from_str(RESULT).unwrap();
+        json["directions"] = serde_json::json!([
+            {"link": "access", "direction": "forward", "sent": 625, "reached_node": 600, "delivered": 560,
+             "lost_in_queue": 25, "dropped_corrupted": 40, "receive_buffer_drops": 0},
+            {"link": "access", "direction": "reverse", "sent": 10, "reached_node": 9, "delivered": 9,
+             "lost_in_queue": 1, "dropped_corrupted": 0, "receive_buffer_drops": 0}
+        ]);
+        let result = RunResult::from_json(&json.to_string()).unwrap();
+        let text = summary(&result, Path::new("out"));
+        assert!(
+            text.contains("link access forward: of 625 packets sent, 25 were lost in the queue, 40 arrived damaged and were dropped by the node, 560 were delivered"),
+            "{text}"
+        );
+        assert!(!text.contains("link access reverse"), "{text}");
+        // A full receive buffer is named as the receiver's fault
+        json["directions"][0]["receive_buffer_drops"] = serde_json::json!(3);
+        let text = summary(
+            &RunResult::from_json(&json.to_string()).unwrap(),
+            Path::new("out"),
+        );
+        assert!(
+            text.contains("3 were dropped because a receive buffer was full"),
+            "{text}"
+        );
+        // Without an account nothing is added
+        assert!(!summary(&self::result(), Path::new("out")).contains("link access"));
     }
 
     #[test]

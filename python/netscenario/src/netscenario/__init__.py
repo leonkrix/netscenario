@@ -26,6 +26,7 @@ from netscenario.errors import (
 from netscenario.results import (
     Address,
     Delay,
+    DirectionAccount,
     Provenance,
     QueueCheck,
     Restriction,
@@ -52,6 +53,7 @@ __all__ = [
     "CapabilityError",
     "Check",
     "Delay",
+    "DirectionAccount",
     "DoctorReport",
     "Impairments",
     "Jitter",

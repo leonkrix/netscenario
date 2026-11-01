@@ -251,6 +251,55 @@ fn the_same_seed_repeats_burst_loss_duplication_and_reordering() {
     );
 }
 
+/// The same seed corrupts the same packets, also in a direction of two queues, and the account of the direction
+/// adds up to the last packet: lost in the queue, dropped by the node as damaged, or delivered (D-040).
+#[test]
+fn the_same_seed_corrupts_the_same_packets_and_every_packet_is_accounted_for() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let link = "      forward: { delay: 10ms, jitter: { amount: 2ms }, loss: { model: random, p: 10% }, corrupt: 10%, rate: 10mbit }\n";
+    let drawn = |seed: u32, label: &str| {
+        let dir = work_dir(label);
+        let mut backend = backend(|_| {});
+        let result = run(
+            &mut backend,
+            &scenario(&format!("seed: {seed}\n"), link, MEDIA),
+            &options(&dir, true),
+        )
+        .unwrap();
+        let lost = lost_in(&dir, "media");
+        let _ = std::fs::remove_dir_all(dir);
+        (lost, result)
+    };
+    let (lost, result) = drawn(7, "run-corrupt-a");
+    let (lost_again, again) = drawn(7, "run-corrupt-b");
+    let (lost_other, _) = drawn(8, "run-corrupt-c");
+    assert_eq!(lost, lost_again, "the same seed must lose the same packets");
+    assert_ne!(lost, lost_other);
+    assert_eq!(result.directions, again.directions);
+    let [account] = result.directions.as_slice() else {
+        panic!("{:?}", result.directions);
+    };
+    assert_eq!(account.direction, "forward");
+    let in_queue = account.lost_in_queue.expect("no duplication here");
+    assert!(
+        in_queue > 0 && account.dropped_corrupted > 0,
+        "something of each: {account:?}"
+    );
+    assert_eq!(
+        in_queue + account.dropped_corrupted + account.delivered + account.receive_buffer_drops,
+        account.sent,
+        "{account:?}"
+    );
+    // The program sees the sum of both as loss
+    assert_eq!(
+        result.workloads[0].stats.lost,
+        in_queue + account.dropped_corrupted
+    );
+    assert_queues_saw_the_workloads(&result, account.sent);
+}
+
 /// The loss stays in front of the rate in a direction that is built from two qdiscs (a jitter and a rate), so
 /// the same seed still loses the same packets there (D-030).
 #[test]

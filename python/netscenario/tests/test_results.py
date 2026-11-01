@@ -147,3 +147,25 @@ def test_the_queue_checks_are_read_and_a_disagreement_is_visible() -> None:
     )
     assert not forward.agrees
     assert reverse.agrees
+
+
+def test_the_account_of_a_direction_adds_up_and_a_missing_one_is_empty() -> None:
+    assert result().directions == ()
+    account = {
+        "link": "access",
+        "direction": "forward",
+        "sent": 625,
+        "reached_node": 600,
+        "delivered": 560,
+        "lost_in_queue": 25,
+        "dropped_corrupted": 40,
+        "receive_buffer_drops": 0,
+    }
+    (forward,) = result(directions=[account]).directions
+    assert (forward.link, forward.direction, forward.sent) == ("access", "forward", 625)
+    assert forward.lost_in_queue == 25
+    assert forward.dropped_corrupted == 40
+    assert forward.lost_in_queue + forward.dropped_corrupted + forward.delivered == forward.sent
+    # A direction that duplicates cannot tell what the queue dropped
+    duplicating = dict(account, lost_in_queue=None)
+    assert result(directions=[duplicating]).directions[0].lost_in_queue is None

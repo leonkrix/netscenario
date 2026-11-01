@@ -157,6 +157,36 @@ class QueueCheck:
 
 
 @dataclass(frozen=True)
+class DirectionAccount:
+    """Where the packets of one direction of a link went.
+
+    Lost in the queue of the link, dropped by the receiving node because they arrived damaged, or
+    delivered. The three add up to what was sent, so a corrupted packet is not mistaken for a lost
+    one. The counts are those of the interface and of the node, so they hold for all the workloads
+    in the direction together.
+    """
+
+    link: str
+    """The link."""
+    direction: str
+    """``"forward"`` (from the first node of ``between`` to the second) or ``"reverse"``."""
+    sent: int
+    """The packets the workloads put into the direction (those the kernel took)."""
+    reached_node: int
+    """The frames that arrived at the interface of the receiving node."""
+    delivered: int
+    """The datagrams that reached the sockets of the receivers."""
+    lost_in_queue: int | None
+    """The packets the queue of the link dropped (``sent`` minus ``reached_node``). ``None`` in a
+    direction that duplicates, where the frames include the copies."""
+    dropped_corrupted: int
+    """The frames that arrived and that the node dropped because a bit in them was flipped."""
+    receive_buffer_drops: int
+    """The datagrams the node dropped because the receive buffer of a socket was full. A fault of
+    the receiver, not of the network."""
+
+
+@dataclass(frozen=True)
 class SeedInfo:
     """The seed of the run."""
 
@@ -243,6 +273,9 @@ class Result:
     """The directory with ``result.json`` and the files that belong to it."""
     raw: Mapping[str, Any]
     """The decoded ``result.json``, unchanged."""
+    directions: tuple[DirectionAccount, ...] = ()
+    """For each direction of a link that carried a workload: where its packets went. Empty if the
+    backend cannot count, or the scenario runs a program of your own."""
 
     def __getitem__(self, workload_id: str) -> Workload:
         """The workload with this id."""
@@ -307,6 +340,19 @@ class Result:
             duration=_seconds(raw["timing"]["duration_ns"]),
             settle=_seconds(raw["timing"]["settle_ns"]),
             workloads=MappingProxyType(workloads),
+            directions=tuple(
+                DirectionAccount(
+                    link=d["link"],
+                    direction=d["direction"],
+                    sent=int(d["sent"]),
+                    reached_node=int(d["reached_node"]),
+                    delivered=int(d["delivered"]),
+                    lost_in_queue=None if d["lost_in_queue"] is None else int(d["lost_in_queue"]),
+                    dropped_corrupted=int(d["dropped_corrupted"]),
+                    receive_buffer_drops=int(d["receive_buffer_drops"]),
+                )
+                for d in raw.get("directions", ())
+            ),
             out_dir=directory,
             raw=MappingProxyType(raw),
         )
