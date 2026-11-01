@@ -54,7 +54,8 @@ pub fn capabilities(environment: &Environment) -> Capabilities {
     let mut capabilities = Capabilities::new("kernel")
         .with(Feature::PointToPoint, Support::Exact)
         .with(Feature::Ipv4, Support::Exact)
-        .with(Feature::UdpGenerators, Support::Exact);
+        .with(Feature::UdpGenerators, Support::Exact)
+        .with(Feature::UdpWithoutChecksum, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
     }

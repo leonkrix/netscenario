@@ -69,6 +69,7 @@ Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`,
 | --- | --- |
 | `result["media"]` | the `Workload` called `media` (also `result.workloads`, and `for w in result`) |
 | `w.sent`, `w.received`, `w.lost`, `w.reordered` | packet counts |
+| `w.corrupted` | datagrams that arrived damaged, in a workload built with `udp_checksum=False`; they are in `w.lost`, not in `w.received` |
 | `w.loss_ratio`, `w.delivery_ratio` | 0 to 1 |
 | `w.delay.p50`, `.p95`, `.p99`, `.min`, `.mean`, `.max` | seconds; `None` if no packet arrived. Percentiles are the nearest rank, always a measured delay |
 | `w.throughput.bits_per_second` | payload bit/s in each second, counted from the first packet sent |

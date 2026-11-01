@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::clock::monotonic_ns;
 use crate::events::ReceiveSummary;
 use crate::records::{Record, Writer};
-use crate::wire::Header;
+use crate::wire::{Header, UdpChecksum};
 
 /// How long the receiver keeps reading queued packets after the stop, at most, in nanoseconds.
 const DRAIN_NS: u64 = 100_000_000;
@@ -29,6 +29,9 @@ pub struct ReceiveConfig {
     pub flow: u32,
     /// Stop after this many nanoseconds even if nobody said stop. A safety net.
     pub max_time_ns: Option<u64>,
+    /// Whether the stream carries the checksum of UDP. Off: the packets are version 2, and a datagram that
+    /// is not a good one is counted as `corrupted`.
+    pub udp_checksum: UdpChecksum,
 }
 
 /// A receiver that is bound and not yet running.
@@ -37,6 +40,7 @@ pub struct Receiver {
     socket: UdpSocket,
     flow: u32,
     max_time_ns: Option<u64>,
+    udp_checksum: UdpChecksum,
 }
 
 impl Receiver {
@@ -54,6 +58,7 @@ impl Receiver {
             socket,
             flow: config.flow,
             max_time_ns: config.max_time_ns,
+            udp_checksum: config.udp_checksum,
         })
     }
 
@@ -78,6 +83,7 @@ impl Receiver {
             flow: self.flow,
             packets: 0,
             foreign: 0,
+            corrupted: 0,
             first_receive_ns: None,
             last_receive_ns: None,
         };
@@ -99,7 +105,12 @@ impl Receiver {
             match self.socket.recv(&mut buffer) {
                 Ok(length) => {
                     let received = monotonic_ns();
-                    if let Ok(header) = Header::read(&buffer[..length]) {
+                    let datagram = &buffer[..length];
+                    let header = match self.udp_checksum {
+                        UdpChecksum::On => Header::read(datagram),
+                        UdpChecksum::Off => Header::read_v2(datagram),
+                    };
+                    if let Ok(header) = header {
                         writer.write(&Record {
                             sequence: u64::from(header.sequence),
                             send_ns: header.send_ns,
@@ -108,6 +119,8 @@ impl Receiver {
                         summary.packets += 1;
                         summary.first_receive_ns.get_or_insert(received);
                         summary.last_receive_ns = Some(received);
+                    } else if self.udp_checksum == UdpChecksum::Off {
+                        summary.corrupted += 1;
                     } else {
                         summary.foreign += 1;
                     }

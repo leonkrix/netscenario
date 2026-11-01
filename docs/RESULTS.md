@@ -103,6 +103,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
         "first_error": null
       },
       "foreign_datagrams": 0,
+      "corrupted": 0,
       "records_file": "flow-0.records",
       "packets_file": "packets-media.jsonl"
     }
@@ -186,6 +187,7 @@ The seed of one direction is derived from the seed of the run, the index of the 
 | `sender.max_lateness_ns` | The most that a packet left after its moment. A value that is large against the interval between packets (4.8 ms in the example) means that the machine, not the network, shaped the stream. |
 | `sender.send_errors`, `sender.first_error` | Packets the kernel refused to take, and the first reason. |
 | `foreign_datagrams` | Datagrams that reached the receiver and were not packets of the agent. |
+| `corrupted` | Datagrams that reached the receiver damaged, in a workload with `udp-checksum: false`: the CRC-32 of the packet did not match, or its header was not one. They are not in `received` and not in the delays, and they **are in `lost`**, because a damaged packet is not an intact one; `lost - corrupted` is what never arrived. With the checksum on the kernel drops a damaged packet before the receiver sees it, so `corrupted` is 0 there, and such packets are told apart only per node, in `directions` (`dropped_corrupted`). Which packets are damaged is not named (the sequence number may be the damaged part). |
 | `records_file`, `packets_file` | The files of this workload, relative to `result.json`. `packets_file` is `null` unless the export was asked for. |
 
 ### `directions` (D-040)
@@ -197,7 +199,7 @@ A packet that never reaches the program can have been lost in the queue of the l
 | `link`, `direction` | The link, and `forward` (from the first node of `between` to the second) or `reverse`. |
 | `sent` | The packets the workloads put into the direction (those the kernel took). |
 | `reached_node` | The frames that arrived at the interface of the receiving node, counted by the interface (`/proc/net/dev`, read before and after the workloads). |
-| `delivered` | The datagrams that reached the sockets of the receivers: the packets of the agent and the others (`foreign_datagrams`). |
+| `delivered` | The datagrams that reached the sockets of the receivers: the packets of the agent, the others (`foreign_datagrams`) and the damaged ones of a stream without the checksum (`corrupted`). |
 | `lost_in_queue` | `sent - reached_node`: the packets that the queue of the link dropped (the loss, a queue that was full). `null` in a direction with `duplicate`, where the frames include the copies, and when more frames arrived than were sent. |
 | `dropped_corrupted` | `reached_node - delivered - receive_buffer_drops`: the frames that arrived and that the node dropped, because the bit that `netem` flipped made the checksum of IP or UDP wrong, or the address not the node's. |
 | `receive_buffer_drops` | The datagrams the node dropped because the receive buffer of a socket was full (`RcvbufErrors` of UDP). This is a fault of the receiver and not of the network, so it is kept apart from `dropped_corrupted`. |

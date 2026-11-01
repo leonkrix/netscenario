@@ -13,6 +13,7 @@
 
 pub mod cli;
 pub mod clock;
+pub mod crc;
 pub mod events;
 pub mod receiver;
 pub mod records;

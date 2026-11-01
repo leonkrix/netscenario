@@ -57,6 +57,9 @@ enum Metric {
     NodeDropRatio,
     /// The packets that the queue of the link dropped, as a share of the packets sent (the same tally).
     LostInQueueRatio,
+    /// The packets that arrived damaged and were found by the CRC-32, as a share of the packets sent: only a
+    /// stream without the checksum of UDP has them.
+    DamagedRatio,
     /// The packets that are neither lost in the queue, nor dropped by the node, nor delivered: the tally of
     /// the direction must add up to what was sent.
     Unaccounted,
@@ -78,6 +81,7 @@ impl Metric {
             Metric::MeanLossRun => "mean run of lost packets",
             Metric::NodeDropRatio => "frames dropped by the node as damaged",
             Metric::LostInQueueRatio => "packets lost in the queue",
+            Metric::DamagedRatio => "packets that arrived damaged",
             Metric::Unaccounted => "packets not accounted for",
         }
     }
@@ -89,6 +93,7 @@ impl Metric {
             | Metric::DuplicateRatio
             | Metric::NodeDropRatio
             | Metric::LostInQueueRatio
+            | Metric::DamagedRatio
             | Metric::EarlyShare => format!("{:.2} %", value * 100.0),
             Metric::Unaccounted => format!("{value:.0} packets"),
             Metric::MeanLossRun => format!("{value:.2} packets"),
@@ -120,6 +125,7 @@ struct Measurement {
     mean_loss_run: f64,
     node_drop_ratio: f64,
     lost_in_queue_ratio: f64,
+    damaged_ratio: f64,
     unaccounted: f64,
     sent: u64,
     kernel: String,
@@ -151,6 +157,7 @@ impl Measurement {
             Metric::MeanLossRun => self.mean_loss_run,
             Metric::NodeDropRatio => self.node_drop_ratio,
             Metric::LostInQueueRatio => self.lost_in_queue_ratio,
+            Metric::DamagedRatio => self.damaged_ratio,
             Metric::Unaccounted => self.unaccounted,
         }
     }
@@ -191,6 +198,8 @@ struct Case {
     size: u64,
     seconds: u64,
     settle_seconds: u64,
+    /// Whether the stream carries the checksum of UDP (`udp-checksum` in the file).
+    udp_checksum: bool,
     bounds: Vec<Bound>,
 }
 
@@ -203,8 +212,16 @@ impl Case {
         };
         Scenario::from_yaml(
             &format!(
-                "version: 0\nname: fidelity-{}\nseed: 7\nduration: {}s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n{link}workloads:\n  - {{ id: media, kind: udp-cbr, from: client, to: server, rate: {}, packet-size: {}b }}\n",
-                self.id, self.seconds, self.offered, self.size
+                "version: 0\nname: fidelity-{}\nseed: 7\nduration: {}s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n{link}workloads:\n  - {{ id: media, kind: udp-cbr, from: client, to: server, rate: {}, packet-size: {}b{} }}\n",
+                self.id,
+                self.seconds,
+                self.offered,
+                self.size,
+                if self.udp_checksum {
+                    ""
+                } else {
+                    ", udp-checksum: false"
+                }
             ),
             "fidelity.yaml",
         )
@@ -226,6 +243,7 @@ fn cases() -> Vec<Case> {
             size: 1200,
             seconds: 6,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::MinDelayMs,
@@ -265,6 +283,7 @@ fn cases() -> Vec<Case> {
             size: 1000,
             seconds: 6,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::LossRatio,
@@ -297,6 +316,7 @@ fn cases() -> Vec<Case> {
             size: 1000,
             seconds: 6,
             settle_seconds: 5,
+            udp_checksum: true,
             bounds: vec![
                 // 2 mbit of frames; a frame is the payload and 42 bytes (8 UDP + 20 IP + 14 Ethernet)
                 Bound {
@@ -330,6 +350,7 @@ fn cases() -> Vec<Case> {
             size: 1000,
             seconds: 6,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::MinDelayMs,
@@ -376,6 +397,7 @@ fn cases() -> Vec<Case> {
             size: 1000,
             seconds: 6,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::MeanDelayMs,
@@ -415,6 +437,7 @@ fn cases() -> Vec<Case> {
             size: 1200,
             seconds: 8,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 // The rate first, then the delay with its jitter: the serialisation of a frame of 1,242 bytes at
                 // 10 mbit is 0.994 ms, and the jitter is the configured one
@@ -456,6 +479,7 @@ fn cases() -> Vec<Case> {
             size: 200,
             seconds: 12,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::LossRatio,
@@ -488,6 +512,7 @@ fn cases() -> Vec<Case> {
             size: 200,
             seconds: 12,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::LossRatio,
@@ -513,6 +538,7 @@ fn cases() -> Vec<Case> {
             size: 1000,
             seconds: 6,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::EarlyShare,
@@ -545,6 +571,7 @@ fn cases() -> Vec<Case> {
             size: 1000,
             seconds: 6,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![Bound {
                 metric: Metric::EarlyShare,
                 expected: 0.125,
@@ -561,6 +588,7 @@ fn cases() -> Vec<Case> {
             size: 1000,
             seconds: 6,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::DuplicateRatio,
@@ -586,6 +614,7 @@ fn cases() -> Vec<Case> {
             size: 1000,
             seconds: 6,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::DuplicateRatio,
@@ -611,6 +640,7 @@ fn cases() -> Vec<Case> {
             size: 500,
             seconds: 6,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::DuplicateRatio,
@@ -643,6 +673,7 @@ fn cases() -> Vec<Case> {
             size: 1000,
             seconds: 6,
             settle_seconds: 5,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::SteadyGoodputBps,
@@ -668,6 +699,7 @@ fn cases() -> Vec<Case> {
             size: 64,
             seconds: 5,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::NodeDropRatio,
@@ -707,6 +739,7 @@ fn cases() -> Vec<Case> {
             size: 200,
             seconds: 5,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::NodeDropRatio,
@@ -746,6 +779,7 @@ fn cases() -> Vec<Case> {
             size: 1200,
             seconds: 5,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::NodeDropRatio,
@@ -785,6 +819,7 @@ fn cases() -> Vec<Case> {
             size: 200,
             seconds: 5,
             settle_seconds: 1,
+            udp_checksum: true,
             bounds: vec![
                 Bound {
                     metric: Metric::LostInQueueRatio,
@@ -813,6 +848,147 @@ fn cases() -> Vec<Case> {
                     lo: 0.1767,
                     hi: 0.1988,
                     reason: "the program sees both as loss: 0.1 + 0.9 x 0.0975 = 18.78 %; the account of the direction is what tells the two causes apart",
+                },
+            ],
+        },
+        Case {
+            id: "19-no-checksum-64",
+            title: "A corruption of 10 % in a stream without the checksum of UDP, payload of 64 bytes: the damaged packet arrives",
+            link: "corrupt: 10%",
+            offered: "2048kbit",
+            size: 64,
+            seconds: 5,
+            settle_seconds: 1,
+            udp_checksum: false,
+            bounds: vec![
+                Bound {
+                    metric: Metric::DamagedRatio,
+                    expected: 0.0606,
+                    lo: 0.0538,
+                    hi: 0.0674,
+                    reason: "KNOWN (D-040, S12): with the checksum off the kernel does not drop a flipped bit of the payload, so it arrives and the CRC-32 finds it; `netem` flips a bit in a random byte of the whole frame (106 bytes with the Ethernet header), 64 of which are payload, and the two bytes of the length field of UDP count 2/8 of a byte, because only a bit that is set there makes the datagram shorter, and a shorter datagram fails the CRC; 10 % x (64 + 2/8) / 106 = 6.06 %; binomial, 20,000 packets, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::NodeDropRatio,
+                    expected: 0.0318,
+                    lo: 0.0268,
+                    hi: 0.0369,
+                    reason: "the node still drops what is damaged in the headers of Ethernet, IP and UDP (destination address, type, the checksum of IP, the destination port, the checksum field that is no longer 0, a longer length): 10 % x (34 - 2/8) / 106 = 3.18 %; binomial, 20,000 frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::LostInQueueRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "a corrupted packet arrives at the node, so the queue loses nothing",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "every packet is lost in the queue, dropped by the node or delivered, a damaged one included, to the packet",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0925,
+                    lo: 0.0842,
+                    hi: 0.1007,
+                    reason: "a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (106 - 8) / 106 = 9.25 %; binomial, 20,000 packets, four standard deviations on each side",
+                },
+            ],
+        },
+        Case {
+            id: "20-no-checksum-200",
+            title: "The same with a payload of 200 bytes",
+            link: "corrupt: 10%",
+            offered: "6400kbit",
+            size: 200,
+            seconds: 5,
+            settle_seconds: 1,
+            udp_checksum: false,
+            bounds: vec![
+                Bound {
+                    metric: Metric::DamagedRatio,
+                    expected: 0.0828,
+                    lo: 0.075,
+                    hi: 0.0906,
+                    reason: "KNOWN (D-040, S12): with the checksum off the kernel does not drop a flipped bit of the payload, so it arrives and the CRC-32 finds it; `netem` flips a bit in a random byte of the whole frame (242 bytes with the Ethernet header), 200 of which are payload, and the two bytes of the length field of UDP count 3/8 of a byte, because only a bit that is set there makes the datagram shorter, and a shorter datagram fails the CRC; 10 % x (200 + 3/8) / 242 = 8.28 %; binomial, 20,000 packets, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::NodeDropRatio,
+                    expected: 0.0139,
+                    lo: 0.0105,
+                    hi: 0.0173,
+                    reason: "the node still drops what is damaged in the headers of Ethernet, IP and UDP (destination address, type, the checksum of IP, the destination port, the checksum field that is no longer 0, a longer length): 10 % x (34 - 3/8) / 242 = 1.39 %; binomial, 20,000 frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::LostInQueueRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "a corrupted packet arrives at the node, so the queue loses nothing",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "every packet is lost in the queue, dropped by the node or delivered, a damaged one included, to the packet",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0967,
+                    lo: 0.0883,
+                    hi: 0.1051,
+                    reason: "a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (242 - 8) / 242 = 9.67 %; binomial, 20,000 packets, four standard deviations on each side",
+                },
+            ],
+        },
+        Case {
+            id: "21-no-checksum-1200",
+            title: "The same with a payload of 1,200 bytes",
+            link: "corrupt: 10%",
+            offered: "38400kbit",
+            size: 1200,
+            seconds: 5,
+            settle_seconds: 1,
+            udp_checksum: false,
+            bounds: vec![
+                Bound {
+                    metric: Metric::DamagedRatio,
+                    expected: 0.0967,
+                    lo: 0.0883,
+                    hi: 0.1051,
+                    reason: "KNOWN (D-040, S12): with the checksum off the kernel does not drop a flipped bit of the payload, so it arrives and the CRC-32 finds it; `netem` flips a bit in a random byte of the whole frame (1242 bytes with the Ethernet header), 1200 of which are payload, and the two bytes of the length field of UDP count 5/8 of a byte, because only a bit that is set there makes the datagram shorter, and a shorter datagram fails the CRC; 10 % x (1200 + 5/8) / 1242 = 9.67 %; binomial, 20,000 packets, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::NodeDropRatio,
+                    expected: 0.0027,
+                    lo: 0.0012,
+                    hi: 0.0042,
+                    reason: "the node still drops what is damaged in the headers of Ethernet, IP and UDP (destination address, type, the checksum of IP, the destination port, the checksum field that is no longer 0, a longer length): 10 % x (34 - 5/8) / 1242 = 0.27 %; binomial, 20,000 frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::LostInQueueRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "a corrupted packet arrives at the node, so the queue loses nothing",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "every packet is lost in the queue, dropped by the node or delivered, a damaged one included, to the packet",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0994,
+                    lo: 0.0908,
+                    hi: 0.1079,
+                    reason: "a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (1242 - 8) / 1242 = 9.94 %; binomial, 20,000 packets, four standard deviations on each side",
                 },
             ],
         },
@@ -867,6 +1043,7 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         mean_loss_run: mean_loss_run(&received, workload.stats.sent),
         node_drop_ratio: tally.dropped_corrupted as f64 / tally.reached_node.max(1) as f64,
         lost_in_queue_ratio: lost_in_queue.map_or(f64::NAN, |lost| lost / tally.sent.max(1) as f64),
+        damaged_ratio: workload.corrupted as f64 / workload.stats.sent.max(1) as f64,
         unaccounted: lost_in_queue.map_or(f64::NAN, |lost| {
             tally.sent as f64
                 - (lost + (tally.dropped_corrupted + tally.delivered) as f64)
@@ -932,6 +1109,7 @@ fn fragment(case: &Case, measurement: &Measurement, verdicts: &[Verdict<'_>]) ->
             | Metric::DuplicateRatio
             | Metric::NodeDropRatio
             | Metric::LostInQueueRatio
+            | Metric::DamagedRatio
             | Metric::EarlyShare => {
                 format!("{:+.2} pp", (verdict.value - bound.expected) * 100.0)
             }
@@ -1075,6 +1253,21 @@ fn a_corruption_is_dropped_by_the_node_and_not_lost_in_the_queue_at_1200_bytes()
 #[test]
 fn a_corruption_and_a_loss_are_told_apart() {
     run_and_judge("18-corrupt-and-loss");
+}
+
+#[test]
+fn a_damaged_packet_arrives_and_is_found_without_the_checksum_at_64_bytes() {
+    run_and_judge("19-no-checksum-64");
+}
+
+#[test]
+fn a_damaged_packet_arrives_and_is_found_without_the_checksum_at_200_bytes() {
+    run_and_judge("20-no-checksum-200");
+}
+
+#[test]
+fn a_damaged_packet_arrives_and_is_found_without_the_checksum_at_1200_bytes() {
+    run_and_judge("21-no-checksum-1200");
 }
 
 #[test]
@@ -1289,6 +1482,7 @@ fn synthetic(delays_ms: &[f64], loss: f64, reordered: f64, goodput: f64) -> Meas
         mean_loss_run: 0.0,
         node_drop_ratio: 0.0,
         lost_in_queue_ratio: 0.0,
+        damaged_ratio: 0.0,
         unaccounted: 0.0,
         sent: 0,
         kernel: String::new(),
@@ -1507,6 +1701,42 @@ fn canary_a_corruption_that_is_missing_or_is_a_loss_fails_the_corruption_case() 
     assert!(
         !as_loss.contains(&Metric::LossRatio),
         "the loss that the program sees is the same, so the tally must be what fails: {as_loss:?}"
+    );
+}
+
+/// A stream with the checksum on over the same link is not the stream without it: the kernel drops the damaged
+/// packets, so none arrives for the CRC-32 to find, and the node drops more. And a link that does not corrupt
+/// finds none either. Both would pass if the cases only looked at the loss the program sees.
+#[test]
+fn canary_a_checksum_that_is_on_or_a_corruption_that_is_missing_fails_the_case_without_it() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let real = cases()
+        .into_iter()
+        .find(|case| case.id == "20-no-checksum-200")
+        .unwrap();
+    let with_checksum = Case {
+        udp_checksum: true,
+        bounds: Vec::new(),
+        ..cases()
+            .into_iter()
+            .find(|case| case.id == "20-no-checksum-200")
+            .unwrap()
+    };
+    let failing: Vec<Metric> = judge(&real.bounds, &measure(&with_checksum))
+        .iter()
+        .filter(|verdict| !verdict.passed())
+        .map(|verdict| verdict.bound.metric)
+        .collect();
+    assert!(
+        failing.contains(&Metric::DamagedRatio) && failing.contains(&Metric::NodeDropRatio),
+        "{failing:?}"
+    );
+    let none = wrong_on_purpose("20-no-checksum-200", "", 3, 1);
+    assert!(
+        none.contains(&Metric::DamagedRatio) && none.contains(&Metric::LossRatio),
+        "{none:?}"
     );
 }
 

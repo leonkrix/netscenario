@@ -631,8 +631,51 @@ pub enum WorkloadKind {
     Command,
 }
 
+/// Whether the packets of a [`UdpCbr`] carry a UDP checksum.
+///
+/// With the checksum on (the default) a receiver drops a packet whose bits were flipped on the way, as on a
+/// real network. With it off the damaged packet arrives, and the result counts it as `corrupted` (D-040).
+///
+/// In a file it is a boolean, `udp-checksum: false`, and not the words `on` and `off`: YAML 1.1 reads those as
+/// booleans (`PyYAML`, `yamllint` and some editors do), YAML 1.2 as text, and a file must mean one thing in both.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(from = "bool", into = "bool")]
+#[schemars(with = "bool")]
+pub enum UdpChecksum {
+    /// The packets carry the checksum of UDP. A damaged packet is dropped by the receiver.
+    #[default]
+    On,
+    /// The sender writes `0` into the checksum field, which IPv4 allows, and puts a CRC-32 into the packet
+    /// instead, so that the receiver can tell a damaged packet from a good one.
+    Off,
+}
+
+impl From<bool> for UdpChecksum {
+    fn from(on: bool) -> Self {
+        if on { Self::On } else { Self::Off }
+    }
+}
+
+impl From<UdpChecksum> for bool {
+    fn from(checksum: UdpChecksum) -> Self {
+        checksum.is_on()
+    }
+}
+
+impl UdpChecksum {
+    /// Whether the checksum is on.
+    #[must_use]
+    pub fn is_on(self) -> bool {
+        self == Self::On
+    }
+}
+
 /// A workload that sends UDP at a constant bit rate from one node to another.
+///
+/// New keys are added to this type in later releases, so it cannot be built with a struct expression outside
+/// this crate: use [`ScenarioBuilder::udp_cbr`](crate::ScenarioBuilder::udp_cbr) or read a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct UdpCbr {
     /// The name of the workload. Metrics are named after it.
     pub id: Name,
@@ -648,6 +691,25 @@ pub struct UdpCbr {
     pub start: Option<Duration>,
     /// When the workload stops. Default: the end of the measured phase.
     pub stop: Option<Duration>,
+    /// Whether the packets carry the UDP checksum. Default: on.
+    pub udp_checksum: UdpChecksum,
+}
+
+impl UdpCbr {
+    /// A workload with the default window (the whole measured phase) and the UDP checksum on.
+    #[must_use]
+    pub fn new(id: Name, from: Name, to: Name, rate: Rate, packet_size: Size) -> Self {
+        Self {
+            id,
+            from,
+            to,
+            rate,
+            packet_size,
+            start: None,
+            stop: None,
+            udp_checksum: UdpChecksum::On,
+        }
+    }
 }
 
 /// A workload that is a program of your own. It runs in the namespace of its node, as the invoking user, in
@@ -771,6 +833,14 @@ struct UdpCbrFile<'a> {
     /// When the workload stops. Default: the end of the measured phase.
     #[serde(skip_serializing_if = "Option::is_none")]
     stop: &'a Option<Duration>,
+    /// `false`: the packets are sent without the UDP checksum and carry a CRC-32, so a corrupted packet
+    /// arrives and is counted as `corrupted` (D-040). Default `true`.
+    #[serde(
+        default,
+        rename = "udp-checksum",
+        skip_serializing_if = "checksum_is_on"
+    )]
+    udp_checksum: UdpChecksum,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -796,6 +866,15 @@ struct CommandFile<'a> {
     shutdown: &'a Option<Shutdown>,
 }
 
+/// For `skip_serializing_if`, which passes a reference.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "the signature that `skip_serializing_if` calls"
+)]
+fn checksum_is_on(checksum: &UdpChecksum) -> bool {
+    checksum.is_on()
+}
+
 impl Serialize for UdpCbr {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         UdpCbrFile {
@@ -807,6 +886,7 @@ impl Serialize for UdpCbr {
             packet_size: &self.packet_size,
             start: &self.start,
             stop: &self.stop,
+            udp_checksum: self.udp_checksum,
         }
         .serialize(serializer)
     }
@@ -867,6 +947,7 @@ struct WorkloadFields {
     packet_size: Option<Size>,
     start: Option<Duration>,
     stop: Option<Duration>,
+    udp_checksum: Option<UdpChecksum>,
     node: Option<Name>,
     run: Option<Vec<String>>,
     env: Option<BTreeMap<String, String>>,
@@ -888,6 +969,7 @@ impl<'de> Deserialize<'de> for Workload {
         let udp_cbr_optional = [
             ("start", fields.start.is_some()),
             ("stop", fields.stop.is_some()),
+            ("udp-checksum", fields.udp_checksum.is_some()),
         ];
         let command = [
             ("node", fields.node.is_some()),
@@ -931,6 +1013,7 @@ impl<'de> Deserialize<'de> for Workload {
                 packet_size: fields.packet_size.ok_or_else(missing)?,
                 start: fields.start,
                 stop: fields.stop,
+                udp_checksum: fields.udp_checksum.unwrap_or_default(),
             }),
             KindName::Command => Self::Command(Command {
                 id: fields.id,

@@ -4,17 +4,24 @@ The agent is a small program, `netscenario-agent`, that runs inside a node and d
 
 Two agents cooperate: a **sender** puts a sequence number and the send time into every packet of a constant bit rate stream, a **receiver** writes one record per arriving packet. Both read `CLOCK_MONOTONIC`, which every node of a machine shares, so the **one-way delay is the difference of two readings of the same clock**, not an estimate. The send time is taken right before the packet is handed to the kernel, the receive time right after the kernel hands it to the receiver.
 
-## The packet (wire format, version 1)
+## The packet (wire format, versions 1 and 2)
 
-The payload of each UDP packet starts with 16 bytes in network byte order; the rest is zeros up to the `packet-size` of the workload (the **payload**, 16 to 1472 bytes; the rate of a workload counts payload bits).
+The payload of each UDP packet starts with 16 bytes (20 in version 2) in network byte order; the rest is zeros up to the `packet-size` of the workload (the **payload**, 16 to 1472 bytes, 20 to 1472 in version 2; the rate of a workload counts payload bits).
 
 | Bytes | Field | Meaning |
 | --- | --- | --- |
 | 0 to 1 | magic | `0x4E53` (`NS`). A datagram without it is not a packet of the agent: the receiver counts it as `foreign` and does not record it. |
-| 2 | version | `1`. Another version is not read. |
+| 2 | version | `1`, or `2` for a stream without the checksum of UDP. Another version is not read. |
 | 3 | flags | `0`. Reserved; a packet with a flag set is not read. |
 | 4 to 7 | sequence | From 0, one more for each packet. |
 | 8 to 15 | send time | `CLOCK_MONOTONIC` in nanoseconds. |
+| 16 to 19 | CRC-32 | Version 2 only: the CRC-32 of every other byte of the payload. |
+
+**Version 2 is for `udp-checksum: false` (D-040, D-056).** The sender writes `0` into the checksum field of UDP, which IPv4 allows (the receiving kernel then does not verify it), so a bit that the network flips in the payload is not caught on the way, and the CRC-32 lets the receiver tell a damaged packet from a good one. The CRC-32 is the one of Ethernet, zlib and PNG (polynomial `0x04C11DB7`, reflected, start and end value `0xFFFFFFFF`; the check value of `123456789` is `0xCBF43926`), written by hand in `netscenario_agent::crc` and tested against that value and against a bit-by-bit version for every length. It covers the whole payload except its own four bytes, the zeros at the end included, so a flipped bit anywhere in the payload is found (a CRC-32 finds every single flipped bit, and every burst of up to 32 bits). It does not cover the headers of IP and UDP: a bit in the source port of UDP, for example, arrives unnoticed, and the payload is intact, which is what the stream is about.
+
+A sender without the checksum cannot use an ordinary UDP socket: `SO_NO_CHECK` has no safe wrapper in the libraries that the workspace uses, and the workspace forbids `unsafe` (D-025). It opens a **raw IPv4 socket** for the protocol UDP and writes the 8 bytes of the header of UDP itself, with the checksum field 0; the kernel adds the header of IP and chooses the route and the source address as for any socket. This needs `CAP_NET_RAW` in the node, which a user namespace and root have; `netscenario doctor` tests it (`raw-socket`), and a run refuses a workload with `udp-checksum: false` where a node does not have it, before anything is built. IPv6 is not possible (the checksum is required there).
+
+The receiver of such a stream is told so (`--udp-checksum off`) and reads only version 2. A datagram that is not a good packet counts as `corrupted` and is not recorded: it cannot be told from a stranger, because the bit may have been flipped in the magic or the version. So `foreign` is always 0 there.
 
 The sequence number has 32 bits. The sender refuses a stream with more than 2³² packets (at the highest supported rate of 100,000 packets per second that is about 11.9 hours) instead of letting the number wrap.
 
@@ -41,8 +48,9 @@ A file that ends inside a record is an error when it is read, not a shorter file
 
 ```text
 netscenario-agent send --to <addr> --rate <bits/s> --size <bytes> --duration-ns <ns>
-                       [--flow <n>] [--start-at-ns <monotonic ns>]
+                       [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
 netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
+                       [--udp-checksum <on|off>]
 ```
 
 Numbers are plain integers: bits per second, bytes, nanoseconds. The units of a scenario file are resolved by the program that starts the agent. Exit codes: 0 done, 1 failed (the reason is on standard error), 2 the command line is wrong.
@@ -51,7 +59,7 @@ The agents print one JSON object per line on standard output; the types are `net
 
 ```json
 {"event":"ready","flow":1,"address":"10.100.0.2:40000"}
-{"event":"received","flow":1,"packets":100,"foreign":0,"first_receive_ns":123,"last_receive_ns":456}
+{"event":"received","flow":1,"packets":100,"foreign":0,"corrupted":0,"first_receive_ns":123,"last_receive_ns":456}
 {"event":"sent","flow":1,"packets":100,"first_send_ns":120,"last_send_ns":450,"max_lateness_ns":9000,"errors":0,"first_error":null}
 ```
 

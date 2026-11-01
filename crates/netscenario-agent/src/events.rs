@@ -50,8 +50,15 @@ pub struct ReceiveSummary {
     /// How many packets were recorded.
     pub packets: u64,
     /// How many datagrams were not packets of the agent (wrong magic, version or flags, or too short). They
-    /// are not recorded.
+    /// are not recorded. A receiver of a stream without the UDP checksum counts none as foreign: a bit that
+    /// is flipped in the magic cannot be told from a stranger, so every datagram that is not a good packet
+    /// is `corrupted`.
     pub foreign: u64,
+    /// How many datagrams arrived damaged, in a stream without the UDP checksum (the CRC-32 does not match, or
+    /// the header is not one). They are not recorded. Always 0 with the checksum on, where the kernel drops
+    /// a damaged packet.
+    #[serde(default)]
+    pub corrupted: u64,
     /// When the first packet arrived, if one did.
     pub first_receive_ns: Option<u64>,
     /// When the last packet arrived, if one did.

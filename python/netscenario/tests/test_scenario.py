@@ -70,6 +70,32 @@ def test_shorthands_for_the_jitter_and_the_loss_mean_a_uniform_jitter_and_a_rand
     assert link["loss"] == {"model": "random", "p": "1%"}
 
 
+def test_a_stream_without_the_checksum_is_written_as_a_boolean_and_checked_by_the_core() -> None:
+    builder = ns.Scenario.builder("t", duration="2s").nodes("a", "b").link("l", "a", "b")
+    scenario = builder.udp_cbr(
+        "w", "a", "b", rate="1mbit", packet_size="1000b", udp_checksum=False
+    ).build()
+    assert scenario.data["workloads"][0]["udp-checksum"] is False
+    # The default writes nothing, so a scenario that does not ask for it is unchanged
+    plain = (
+        ns.Scenario.builder("t", duration="2s")
+        .nodes("a", "b")
+        .link("l", "a", "b")
+        .udp_cbr("w", "a", "b", rate="1mbit", packet_size="1000b")
+        .build()
+    )
+    assert "udp-checksum" not in plain.data["workloads"][0]
+    # Canary: the core refuses a payload that cannot carry the CRC-32, and says why
+    with pytest.raises(ns.ScenarioError, match="too small for `udp-checksum: false`"):
+        (
+            ns.Scenario.builder("t", duration="2s")
+            .nodes("a", "b")
+            .link("l", "a", "b")
+            .udp_cbr("w", "a", "b", rate="1mbit", packet_size="18b", udp_checksum=False)
+            .build()
+        )
+
+
 def test_the_data_is_a_copy() -> None:
     scenario = ns.Scenario.from_yaml(MINIMAL)
     scenario.data["name"] = "changed"

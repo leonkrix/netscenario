@@ -423,6 +423,7 @@ fn workload_result(
             first_error: flow.sent.first_error.clone(),
         },
         foreign_datagrams: flow.received.foreign,
+        corrupted: flow.received.corrupted,
         records_file: records_name(index),
         packets_file,
     })
@@ -594,6 +595,15 @@ fn agent_program(options: &RunOptions, arguments: &[String]) -> Program {
     Program::new(argv).with_memory_limit(options.agent_memory_limit)
 }
 
+/// `--udp-checksum off` for a workload that sends without the checksum of UDP, nothing for one that does not.
+fn checksum_argument(workload: &UdpCbr) -> Vec<String> {
+    if workload.udp_checksum.is_on() {
+        Vec::new()
+    } else {
+        strings(&["--udp-checksum", "off"])
+    }
+}
+
 fn strings(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|part| (*part).to_owned()).collect()
 }
@@ -615,6 +625,7 @@ fn start_receivers(
             "--out",
             &flow.records_file.display().to_string(),
         ]));
+        arguments.extend(checksum_argument(flow.workload));
         let program = backend.start_program(flow.to_node, &agent_program(options, &arguments))?;
         let line = wait_for_line(backend, program, options.ready_timeout, &what, control)?;
         match event(&line, &what)? {
@@ -652,6 +663,7 @@ fn start_senders(
         arguments.push(flow.index.to_string());
         arguments.push("--start-at-ns".to_owned());
         arguments.push((begin + nanos(flow.start)).to_string());
+        arguments.extend(checksum_argument(flow.workload));
         senders.push((
             backend.start_program(flow.from_node, &agent_program(options, &arguments))?,
             what,
@@ -880,7 +892,7 @@ fn tally_directions(
         let sent: u64 = carried.iter().map(|m| m.sent.packets).sum();
         let delivered: u64 = carried
             .iter()
-            .map(|m| m.received.packets + m.received.foreign)
+            .map(|m| m.received.packets + m.received.foreign + m.received.corrupted)
             .sum();
         let reached_node = after.frames_received.saturating_sub(before.frames_received);
         let receive_buffer_drops = after
@@ -983,6 +995,11 @@ mod tests {
         /// first reading.
         frames: Option<([u64; 2], u64)>,
         readings: [u32; 2],
+        /// The value of `--udp-checksum` each agent was started with, as `recv off`, in the order of starting.
+        checksum: Vec<String>,
+        /// How many datagrams the receiver reports as damaged: 2 when it was told that the checksum is off,
+        /// because the two packets that the fake never records are the ones that arrived damaged.
+        damaged: u64,
     }
 
     struct Played {
@@ -1001,6 +1018,8 @@ mod tests {
                 counts: None,
                 frames: None,
                 readings: [0; 2],
+                checksum: Vec::new(),
+                damaged: 0,
             }
         }
 
@@ -1116,6 +1135,13 @@ mod tests {
             assert_eq!(program.memory_limit, Some(1 << 30), "agents are limited");
             self.calls
                 .push(format!("start {} {}", argv[1], argument(argv, "--flow")));
+            if argv.iter().any(|argument| argument == "--udp-checksum") {
+                self.checksum
+                    .push(format!("{} {}", argv[1], argument(argv, "--udp-checksum")));
+                if argv[1] == "recv" {
+                    self.damaged = 2;
+                }
+            }
             let played = match argv[1].as_str() {
                 "recv" if self.trouble == Some("recv-exits-early") => Played {
                     lines: VecDeque::new(),
@@ -1201,7 +1227,10 @@ mod tests {
             self.calls.push(format!("line {line}"));
             let played = &mut self.programs[program.0 as usize];
             if played.stops_on_line && line == "stop" {
-                played.lines.push_back(r#"{"event":"received","flow":0,"packets":8,"foreign":0,"first_receive_ns":1,"last_receive_ns":2}"#.to_owned());
+                played.lines.push_back(format!(
+                    r#"{{"event":"received","flow":0,"packets":8,"foreign":0,"corrupted":{},"first_receive_ns":1,"last_receive_ns":2}}"#,
+                    self.damaged
+                ));
                 played.exit = Some(ProgramExit::Code(0));
             }
             Ok(())
@@ -1436,6 +1465,52 @@ mod tests {
 
     /// Canary: a datagram that the node dropped for a full buffer is not called corruption, and a frame that
     /// arrived and was not delivered is not called lost.
+    /// A stream without the checksum of UDP: both agents are told so, the damaged packets are counted in the
+    /// result, they are in `lost` (an intact packet is what `received` counts), and they are among the datagrams
+    /// that were delivered, so the node is not blamed for dropping them.
+    #[test]
+    fn a_stream_without_the_checksum_starts_both_agents_that_way_and_counts_what_arrived_damaged() {
+        let yaml = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { corrupt: 20% }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b, udp-checksum: false }\n";
+        let scenario = Scenario::from_yaml(yaml, "t.yaml").unwrap();
+        let mut backend = Fake::with_frames([10, 0], 0);
+        let options = options("no-checksum");
+        let result = run(&mut backend, &scenario, &options).unwrap();
+        assert_eq!(backend.checksum, ["recv off", "send off"]);
+        let workload = &result.workloads[0];
+        assert_eq!(
+            (
+                workload.stats.sent,
+                workload.stats.received,
+                workload.stats.lost,
+                workload.corrupted
+            ),
+            (10, 8, 2, 2)
+        );
+        let tally = &result.directions[0];
+        assert_eq!(
+            (
+                tally.delivered,
+                tally.dropped_corrupted,
+                tally.lost_in_queue
+            ),
+            (10, 0, Some(0)),
+            "the two damaged packets reached the receiver, so the node dropped nothing"
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Canary for the test above: a stream with the checksum on starts its agents without the argument and
+    /// reports no damaged packet.
+    #[test]
+    fn a_stream_with_the_checksum_starts_its_agents_without_the_argument() {
+        let mut backend = Fake::new(None);
+        let options = options("checksum");
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        assert!(backend.checksum.is_empty(), "{:?}", backend.checksum);
+        assert_eq!(result.workloads[0].corrupted, 0);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
     #[test]
     fn a_full_receive_buffer_is_not_corruption() {
         let mut backend = Fake::with_frames([9, 0], 1);

@@ -2,8 +2,9 @@
 //!
 //! ```text
 //! netscenario-agent send --to <addr> --rate <bits/s> --size <bytes> --duration-ns <ns>
-//!                        [--flow <n>] [--start-at-ns <monotonic ns>]
+//!                        [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
 //! netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
+//!                        [--udp-checksum <on|off>]
 //! ```
 //!
 //! Numbers are plain integers (bits per second, bytes, nanoseconds): the units of a scenario file are
@@ -34,8 +35,9 @@ pub const USAGE: u8 = 2;
 const USAGE_TEXT: &str = "\
 Usage:
   netscenario-agent send --to <addr> --rate <bits/s> --size <bytes> --duration-ns <ns>
-                         [--flow <n>] [--start-at-ns <monotonic ns>]
+                         [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
   netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
+                         [--udp-checksum <on|off>]
 
 The agent is started by netscenario inside a node; see docs/AGENT.md.
 ";
@@ -126,14 +128,22 @@ where
         }
         "send" => Options::parse(
             rest,
-            &["to", "rate", "size", "duration-ns", "flow", "start-at-ns"],
+            &[
+                "to",
+                "rate",
+                "size",
+                "duration-ns",
+                "flow",
+                "start-at-ns",
+                "udp-checksum",
+            ],
             &[],
         )
         .map_err(Problem::Usage)
         .and_then(|options| send_command(&options, out)),
         "recv" => Options::parse(
             rest,
-            &["bind", "out", "flow", "max-time-ns"],
+            &["bind", "out", "flow", "max-time-ns", "udp-checksum"],
             &["ignore-stdin"],
         )
         .map_err(Problem::Usage)
@@ -182,6 +192,7 @@ fn send_command(options: &Options, out: &mut impl Write) -> Result<u8, Problem> 
         },
         duration_ns: options.required("duration-ns")?,
         start_at_ns: options.optional("start-at-ns")?,
+        udp_checksum: options.optional("udp-checksum")?.unwrap_or_default(),
     };
     let summary = send(&config).map_err(|error| Problem::Failed(error.to_string()))?;
     say(out, &Event::Sent(summary));
@@ -197,6 +208,7 @@ fn recv_command(
         bind: options.required::<SocketAddr>("bind")?,
         flow: options.optional("flow")?.unwrap_or(0),
         max_time_ns: options.optional("max-time-ns")?,
+        udp_checksum: options.optional("udp-checksum")?.unwrap_or_default(),
     };
     let path: String = options.required("out")?;
     let file = std::fs::File::create(&path)
@@ -289,6 +301,19 @@ mod tests {
                     "127.0.0.1:9",
                 ][..],
                 "--to is given twice",
+            ),
+            (
+                &[
+                    "agent",
+                    "recv",
+                    "--bind",
+                    "127.0.0.1:0",
+                    "--out",
+                    "x",
+                    "--udp-checksum",
+                    "maybe",
+                ][..],
+                "'maybe' is not a valid value for --udp-checksum",
             ),
             (
                 &["agent", "recv", "--verbose"][..],

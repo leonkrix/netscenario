@@ -46,8 +46,10 @@ pub use read::MAX_FILE_BYTES;
 pub use scenario::{
     Backend, Change, Command, Direction, Edit, Event, FormatVersion, Impairments,
     ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, Ready, Reorder, Scenario, Shutdown,
-    Signal, Topology, True, UdpCbr, Workload, WorkloadKind,
+    Signal, Topology, True, UdpCbr, UdpChecksum, Workload, WorkloadKind,
 };
 pub use schema::json_schema;
 pub use units::{Duration, Name, Probability, Rate, Size, ValueError};
-pub use validate::{MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE};
+pub use validate::{
+    MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM,
+};

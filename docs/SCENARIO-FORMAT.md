@@ -208,9 +208,10 @@ A workload has a `kind`. `udp-cbr` (WRK-01) is UDP at a constant bit rate, sent 
 | `kind` | yes | `udp-cbr` or `command`. |
 | `from`, `to` | yes | Two different nodes from `nodes`. |
 | `rate` | yes | A Rate. **The rate of the payload**: the number of payload bits per second. The packets per second follow from it and `packet-size`. |
-| `packet-size` | yes | A Size: the payload of one packet. From the size of the header of the agent (16 bytes) to 1472 bytes, the largest payload that fits the MTU of 1500 without fragmentation (fragmentation arrives with release 0.3). |
+| `packet-size` | yes | A Size: the payload of one packet. From the size of the header of the agent (16 bytes, 20 with `udp-checksum: false`) to 1472 bytes, the largest payload that fits the MTU of 1500 without fragmentation (fragmentation arrives with release 0.3). |
 | `start` | no | A Duration, default `0s`. Relative to the start of the measured phase. |
 | `stop` | no | A Duration, default `duration`. Must be greater than `start` and not greater than `duration`. |
+| `udp-checksum` | no | A boolean, default `true`. `false` sends the packets without the checksum of UDP, with a CRC-32 in the payload in its place, so that a packet which a link with `corrupt` damages arrives and is counted as `corrupted` instead of being dropped by the receiving kernel (D-040, D-056). Only `true` and `false` are values, and not `on` and `off`: YAML 1.1 reads those as booleans and YAML 1.2 as text, so a file would mean two things. IPv4 only, and the Kernel backend needs `CAP_NET_RAW` in the node ([DOCTOR.md](DOCTOR.md)). |
 
 Packets per second are at most **100,000** per workload. A higher rate is an error that says so: the agent was measured up to that rate (spike S8) and the format does not promise more than has been measured.
 
@@ -328,7 +329,7 @@ The JSON Schema of the format is [`docs/schema/scenario-v0.json`](schema/scenari
 
 The following sketches show where the format is heading. They are **not** part of version 0 in release 0.1 and may change. The release in brackets is the plan of `FEATURES.md`.
 
-**Corruption that arrives (0.2).** `udp-checksum: off` on a `udp-cbr` workload lets the corrupted payload arrive, and the result then counts `corrupted` (D-040). The keys `corrupt`, `reorder`, `duplicate` and the loss models are in Part 1.
+**The sequence numbers of corrupted packets (0.2).** With `corrupt` and the checksum on, the result already counts how many packets the node dropped as damaged; naming them by sequence number is the next step (D-040). The keys `corrupt`, `reorder`, `duplicate`, `udp-checksum` and the loss models are in Part 1.
 
 **Link models (0.3 to 0.6).** `model: { kind: trace, file: ..., format: mahimahi }`, Markov, periodic and geometry-based models, with mobility (0.6). A model replaces the static values of its link. Traces are files named by a path; hashes of their content come with 0.3.
 

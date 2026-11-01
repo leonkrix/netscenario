@@ -58,6 +58,7 @@ fn stream(
     size: &str,
     duration_ns: &str,
     label: &str,
+    extra: &[&str],
 ) -> (SendSummary, ReceiveSummary, records::File) {
     let agent = agent_exe().expect("checked by the caller");
     let dir = work_dir(label);
@@ -66,9 +67,10 @@ fn stream(
     let built = provision(&mut backend, &scenario("", link)).unwrap();
     let (client, server) = (built.nodes[0].1, built.nodes[1].1);
     let limit = 1 << 30;
+    // `extra` goes to both programs: the checksum of UDP is the same at both ends
     let argv = |args: &[&str]| {
         let mut argv = vec![agent.display().to_string()];
-        argv.extend(args.iter().map(|a| (*a).to_owned()));
+        argv.extend(args.iter().chain(extra).map(|a| (*a).to_owned()));
         Program::new(argv).with_memory_limit(limit)
     };
 
@@ -140,6 +142,7 @@ fn the_agent_measures_the_delay_of_the_link() {
         "1200",
         "1000000000",
         "agent-delay",
+        &[],
     );
     assert_eq!(sent.packets, 209);
     assert_eq!((sent.errors, received.foreign), (0, 0));
@@ -210,6 +213,7 @@ fn a_delay_in_the_other_direction_does_not_touch_the_stream() {
         "500",
         "500000000",
         "agent-reverse",
+        &[],
     );
     assert_eq!(received.packets, 125);
     let mut delays: Vec<u64> = file.records.iter().map(records::Record::delay_ns).collect();
@@ -299,4 +303,100 @@ fn the_loss_of_the_link_shows_as_missing_sequence_numbers() {
         first.len()
     );
     assert_eq!(first, second, "the same seed must lose the same packets");
+}
+
+/// A stream without the checksum of UDP is sent through a raw socket, and the receiver checks the CRC-32 that
+/// takes the place of the checksum. On a link without impairment every packet arrives whole.
+#[test]
+fn a_stream_without_the_checksum_arrives_whole_on_a_clean_link() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let (sent, received, file) = stream(
+        "      forward: { delay: 5ms }\n",
+        "2000000",
+        "1200",
+        "1000000000",
+        "agent-no-checksum",
+        &["--udp-checksum", "off"],
+    );
+    assert_eq!(
+        (sent.packets, sent.errors),
+        (209, 0),
+        "{:?}",
+        sent.first_error
+    );
+    assert_eq!(
+        (received.packets, received.corrupted, received.foreign),
+        (209, 0, 0)
+    );
+    let sequences: Vec<u64> = file.records.iter().map(|r| r.sequence).collect();
+    assert_eq!(sequences, (0..209).collect::<Vec<u64>>());
+    // The raw socket sends at the same moments as the socket of UDP: the delay is the one of the link
+    let median = {
+        let mut delays: Vec<u64> = file.records.iter().map(records::Record::delay_ns).collect();
+        delays.sort_unstable();
+        delays[delays.len() / 2]
+    };
+    assert!(
+        (5_000_000..8_000_000).contains(&median),
+        "the median delay is {median} ns"
+    );
+}
+
+/// With the link flipping bits, the stream without the checksum is the one that sees damaged packets arrive:
+/// the kernel does not drop them, the CRC-32 finds them. The same link with the checksum on is the canary: the
+/// kernel drops the damaged packets, so none arrives damaged, and fewer arrive at all.
+#[test]
+fn a_corrupted_packet_arrives_without_the_checksum_and_is_dropped_with_it() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let link = "      forward: { corrupt: 10% }\n";
+    let (sent, off, _) = stream(
+        link,
+        "2000000",
+        "200",
+        "2000000000",
+        "agent-corrupt-off",
+        &["--udp-checksum", "off"],
+    );
+    let (_, on, _) = stream(
+        link,
+        "2000000",
+        "200",
+        "2000000000",
+        "agent-corrupt-on",
+        &[],
+    );
+    // 2 mbit with 200 byte payloads is 1,250 packets per second: 2,500 in two seconds
+    assert_eq!(sent.packets, 2500);
+    assert_eq!((on.corrupted, on.foreign), (0, 0), "the kernel drops them");
+    // 10 % are corrupted, 250 of 2,500; with 200 payload bytes in a frame of 242, 83 % of the flips land in the
+    // payload and arrive: 206 with a standard deviation of 14, so the bounds are four deviations. The exact
+    // figures are for the fidelity cases; this only tells the two streams apart.
+    assert!(
+        (150..=265).contains(&off.corrupted),
+        "{} packets arrived damaged",
+        off.corrupted
+    );
+    assert_eq!(
+        off.foreign, 0,
+        "no datagram is called foreign without the checksum"
+    );
+    assert!(
+        off.packets + off.corrupted <= sent.packets,
+        "{} + {} of {}",
+        off.packets,
+        off.corrupted,
+        sent.packets
+    );
+    // With the checksum the damaged packets are gone, so fewer arrive than without it, where they are counted
+    assert!(
+        on.packets < off.packets + off.corrupted,
+        "{} arrived with the checksum, {} intact and {} damaged without it",
+        on.packets,
+        off.packets,
+        off.corrupted
+    );
 }

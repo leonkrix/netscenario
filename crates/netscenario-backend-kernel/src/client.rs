@@ -473,6 +473,39 @@ fn duplicate_tree_refusals(
         .collect()
 }
 
+/// The workloads of `scenario` that send without the checksum of UDP, refused if `ask` says that a node has no
+/// `CAP_NET_RAW`. `ask` is called at most once, and not at all if no workload needs the raw socket.
+fn raw_socket_refusals(scenario: &Scenario, ask: impl FnOnce() -> Option<String>) -> Vec<Refusal> {
+    let wanted: Vec<String> = scenario
+        .workloads
+        .iter()
+        .enumerate()
+        .filter(|(_, workload)| {
+            workload
+                .as_udp_cbr()
+                .is_some_and(|workload| !workload.udp_checksum.is_on())
+        })
+        .map(|(index, _)| format!("workloads[{index}].udp-checksum"))
+        .collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let Some(answer) = ask() else {
+        return Vec::new();
+    };
+    wanted
+        .into_iter()
+        .map(|path| Refusal {
+            feature: Feature::UdpWithoutChecksum,
+            path,
+            reason: format!(
+                "a stream without the checksum of UDP is sent through a raw socket, and a node of this machine cannot open one: {answer}"
+            ),
+            fix: "run netscenario as root, or with CAP_NET_RAW among the ambient capabilities (`setpriv --ambient-caps +net_raw`), or without `sudo` in a user namespace, which has it (`netscenario doctor` tries it); or leave out `udp-checksum: false`, or use the Engine backend (planned for release 0.4)".to_owned(),
+        })
+        .collect()
+}
+
 impl Backend for KernelBackend {
     fn name(&self) -> &'static str {
         BACKEND
@@ -516,6 +549,9 @@ impl Backend for KernelBackend {
             }
         }
         self.check_duplicate_tree(scenario, &mut refusals);
+        refusals.extend(raw_socket_refusals(scenario, || {
+            crate::doctor::raw_socket_refusal(&self.tools, self.own_rights)
+        }));
         if refusals.is_empty() {
             Ok(())
         } else {
@@ -756,6 +792,37 @@ mod tests {
                 && refusals[0].reason.contains("cannot mix")
         );
         assert!(refusals[0].fix.contains("doctor"));
+    }
+
+    /// A stream without the checksum of UDP needs a raw socket in the node, and a machine whose nodes cannot
+    /// open one refuses it before anything is built, with the capability named. A stream with the checksum does not
+    /// even ask.
+    #[test]
+    fn a_stream_without_the_checksum_is_refused_where_a_node_has_no_raw_socket() {
+        let with = |options: &str| {
+            Scenario::from_yaml(
+                &format!("{HEAD}{WORKLOAD}  - {{ id: v, kind: udp-cbr, from: b, to: a, rate: 1mbit, packet-size: 1200b{options} }}\n"),
+                "t.yaml",
+            )
+            .unwrap()
+        };
+        let refusals = raw_socket_refusals(&with(", udp-checksum: false"), || {
+            Some("CAP_NET_RAW is not among the effective capabilities of a node".to_owned())
+        });
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].path, "workloads[1].udp-checksum");
+        assert_eq!(refusals[0].feature, Feature::UdpWithoutChecksum);
+        assert!(refusals[0].reason.contains("CAP_NET_RAW"));
+        assert!(refusals[0].fix.contains("net_raw") && refusals[0].fix.contains("doctor"));
+        // Canary: where the node has the capability nothing is refused, and a plain stream does not ask
+        assert_eq!(
+            raw_socket_refusals(&with(", udp-checksum: false"), || None),
+            Vec::new()
+        );
+        assert_eq!(
+            raw_socket_refusals(&with(", udp-checksum: true"), || panic!("asked")),
+            Vec::new()
+        );
     }
 
     /// Canary: a kernel that accepts it refuses nothing, and a direction that does not need two queues does

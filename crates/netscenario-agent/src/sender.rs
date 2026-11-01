@@ -1,13 +1,17 @@
 //! The sender: a constant bit rate stream of packets to one address (WRK-01).
 
 use std::fmt;
+use std::io;
 use std::net::{SocketAddr, UdpSocket};
+use std::os::fd::OwnedFd;
 use std::time::Duration;
+
+use rustix::net::{AddressFamily, SendFlags, SocketType, ipproto};
 
 use crate::clock::monotonic_ns;
 use crate::events::SendSummary;
 use crate::schedule::Stream;
-use crate::wire::{HEADER_LEN, Header};
+use crate::wire::{HEADER_LEN, Header, UdpChecksum};
 
 /// The largest payload of an IPv4 UDP datagram. The scenario model allows far less (1472, the MTU).
 const MAX_PAYLOAD: u64 = 65_507;
@@ -25,6 +29,86 @@ pub struct SendConfig {
     pub duration_ns: u64,
     /// The moment the first packet leaves, on `CLOCK_MONOTONIC`. Without it, now.
     pub start_at_ns: Option<u64>,
+    /// Whether the packets carry the checksum of UDP. Off needs a raw socket (`CAP_NET_RAW`) and IPv4.
+    pub udp_checksum: UdpChecksum,
+}
+
+/// The length of the header of UDP.
+const UDP_HEADER_LEN: usize = 8;
+
+/// The source port of the packets of a stream without the checksum. A raw socket binds no port; the receiver
+/// does not look at it. The number is in the range of the ports that the system hands out.
+fn source_port(flow: u32) -> u16 {
+    let offset = u16::try_from(flow % 16_384).unwrap_or(0);
+    49_152 + offset
+}
+
+/// Where the packets go out: a UDP socket, or a raw IPv4 socket on which the program writes the header of UDP
+/// itself, because that is the way to a checksum of `0` in safe code (`SO_NO_CHECK` has no safe wrapper, and the
+/// workspace forbids `unsafe`, D-025). The datagram of a raw socket starts with the 8 bytes of the header of
+/// UDP, so `offset` is where the payload begins in the buffer that is sent.
+enum Outlet {
+    Udp(UdpSocket),
+    Raw(OwnedFd),
+}
+
+impl Outlet {
+    fn open(config: &SendConfig) -> Result<Self, SendError> {
+        match config.udp_checksum {
+            UdpChecksum::On => {
+                let bind: SocketAddr = if config.target.is_ipv4() {
+                    ([0, 0, 0, 0], 0).into()
+                } else {
+                    ([0_u16; 8], 0).into()
+                };
+                let socket = UdpSocket::bind(bind)
+                    .map_err(|error| SendError(format!("cannot open a socket: {error}")))?;
+                socket.connect(config.target).map_err(|error| {
+                    SendError(format!("cannot reach {}: {error}", config.target))
+                })?;
+                Ok(Self::Udp(socket))
+            }
+            UdpChecksum::Off => {
+                let SocketAddr::V4(target) = config.target else {
+                    return Err(SendError(
+                        "a stream without the checksum of UDP needs IPv4: IPv6 requires the checksum"
+                            .to_owned(),
+                    ));
+                };
+                let socket = rustix::net::socket(
+                    AddressFamily::INET,
+                    SocketType::RAW,
+                    Some(ipproto::UDP),
+                )
+                .map_err(|error| {
+                    SendError(format!(
+                        "cannot open a raw socket, which a stream without the checksum of UDP needs: {error}. The sender needs the capability CAP_NET_RAW in its node (a user namespace and root have it)"
+                    ))
+                })?;
+                // The port of a raw socket is not used; the system picks the route and the source address
+                rustix::net::connect(&socket, &std::net::SocketAddrV4::new(*target.ip(), 0))
+                    .map_err(|error| SendError(format!("cannot reach {target}: {error}")))?;
+                Ok(Self::Raw(socket))
+            }
+        }
+    }
+
+    /// How many bytes come before the payload in the buffer that `send` takes.
+    fn offset(&self) -> usize {
+        match self {
+            Self::Udp(_) => 0,
+            Self::Raw(_) => UDP_HEADER_LEN,
+        }
+    }
+
+    fn send(&self, datagram: &[u8]) -> io::Result<()> {
+        match self {
+            Self::Udp(socket) => socket.send(datagram).map(|_| ()),
+            Self::Raw(socket) => rustix::net::send(socket, datagram, SendFlags::empty())
+                .map(|_| ())
+                .map_err(io::Error::from),
+        }
+    }
 }
 
 /// Why the sender did not start.
@@ -70,11 +154,12 @@ pub fn run(config: &SendConfig) -> Result<SendSummary, SendError> {
         stream,
         duration_ns,
         start_at_ns,
+        udp_checksum,
     } = config;
     if stream.bits_per_second == 0 {
         return Err(SendError("the rate must be more than zero".to_owned()));
     }
-    let header = u64::try_from(HEADER_LEN).unwrap_or(16);
+    let header = u64::try_from(udp_checksum.header_len()).unwrap_or(16);
     if !(header..=MAX_PAYLOAD).contains(&stream.packet_size) {
         return Err(SendError(format!(
             "the packet size {} is outside {header} to {MAX_PAYLOAD} bytes",
@@ -88,17 +173,19 @@ pub fn run(config: &SendConfig) -> Result<SendSummary, SendError> {
             u64::from(u32::MAX) + 1
         )));
     }
-    let bind: SocketAddr = if target.is_ipv4() {
-        ([0, 0, 0, 0], 0).into()
-    } else {
-        ([0_u16; 8], 0).into()
-    };
-    let socket = UdpSocket::bind(bind)
-        .map_err(|error| SendError(format!("cannot open a socket: {error}")))?;
-    socket
-        .connect(target)
-        .map_err(|error| SendError(format!("cannot reach {target}: {error}")))?;
-    let mut payload = vec![0_u8; usize::try_from(stream.packet_size).unwrap_or(HEADER_LEN)];
+    let outlet = Outlet::open(config)?;
+    // The header of UDP (raw socket only) and the payload in one buffer, which is what is sent
+    let offset = outlet.offset();
+    let size = usize::try_from(stream.packet_size).unwrap_or(HEADER_LEN);
+    let mut datagram = vec![0_u8; offset + size];
+    if matches!(outlet, Outlet::Raw(_)) {
+        let length = u16::try_from(datagram.len()).unwrap_or(u16::MAX);
+        let port = target.port();
+        datagram[0..2].copy_from_slice(&source_port(*flow).to_be_bytes());
+        datagram[2..4].copy_from_slice(&port.to_be_bytes());
+        datagram[4..6].copy_from_slice(&length.to_be_bytes());
+        // The checksum field stays 0: that is the point
+    }
     let start = start_at_ns.unwrap_or_else(monotonic_ns);
     let mut summary = SendSummary {
         flow: *flow,
@@ -116,13 +203,16 @@ pub fn run(config: &SendConfig) -> Result<SendSummary, SendError> {
         let Ok(sequence) = u32::try_from(n) else {
             break;
         };
-        Header {
+        let header = Header {
             sequence,
             send_ns: now,
+        };
+        match udp_checksum {
+            UdpChecksum::On => header.write(&mut datagram[offset..]),
+            UdpChecksum::Off => header.write_v2(&mut datagram[offset..]),
         }
-        .write(&mut payload);
-        match socket.send(&payload) {
-            Ok(_) => {
+        match outlet.send(&datagram) {
+            Ok(()) => {
                 summary.packets += 1;
                 summary.first_send_ns.get_or_insert(now);
                 summary.last_send_ns = Some(now);
@@ -151,6 +241,7 @@ mod tests {
             },
             duration_ns,
             start_at_ns: None,
+            udp_checksum: UdpChecksum::On,
         }
     }
 
@@ -162,6 +253,21 @@ mod tests {
         assert!(small.0.contains("outside 16 to 65507"), "{small}");
         let huge = run(&config(1_000_000, 70_000, 1_000_000)).unwrap_err();
         assert!(huge.0.contains("outside 16 to 65507"), "{huge}");
+    }
+
+    /// Without the checksum the packet carries a CRC-32 and needs four bytes more, and the stream is IPv4:
+    /// both are refused before a raw socket is asked for (which needs a capability).
+    #[test]
+    fn a_stream_without_the_checksum_is_refused_where_it_cannot_work() {
+        let mut small = config(1_000_000, 19, 1_000_000);
+        small.udp_checksum = UdpChecksum::Off;
+        let error = run(&small).unwrap_err();
+        assert!(error.0.contains("outside 20 to 65507"), "{error}");
+        let mut six = config(1_000_000, 100, 1_000_000);
+        six.udp_checksum = UdpChecksum::Off;
+        six.target = "[::1]:9".parse().unwrap();
+        let error = run(&six).unwrap_err();
+        assert!(error.0.contains("needs IPv4"), "{error}");
     }
 
     #[test]

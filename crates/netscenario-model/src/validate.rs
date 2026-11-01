@@ -13,6 +13,9 @@ use crate::units::{Duration, Name, Probability};
 pub const MAX_PACKETS_PER_SECOND: u64 = 100_000;
 /// The smallest payload: the header of the agent.
 pub const MIN_PACKET_SIZE: u64 = 16;
+/// The smallest payload with `udp-checksum: false`: the header of the agent and the CRC-32 that takes the place
+/// of the checksum (D-040).
+pub const MIN_PACKET_SIZE_WITHOUT_CHECKSUM: u64 = 20;
 /// The largest payload that fits the MTU of 1500 without fragmentation (IPv4 and UDP headers take 28 bytes).
 pub const MAX_PACKET_SIZE: u64 = 1472;
 
@@ -179,6 +182,16 @@ impl Scenario {
                     .at_path(format!("{base}.packet-size"))
                     .with_help(format!(
                         "the smallest payload is the header of the agent ({MIN_PACKET_SIZE} bytes); the largest fits the MTU of 1500 without fragmentation ({MAX_PACKET_SIZE} bytes)"
+                    )),
+                );
+            } else if !workload.udp_checksum.is_on() && size < MIN_PACKET_SIZE_WITHOUT_CHECKSUM {
+                problems.push(
+                    Problem::new(format!(
+                        "the packet size {size} bytes is too small for `udp-checksum: false`: the packet then carries a CRC-32, and the smallest payload is {MIN_PACKET_SIZE_WITHOUT_CHECKSUM} bytes"
+                    ))
+                    .at_path(format!("{base}.packet-size"))
+                    .with_help(format!(
+                        "use a payload of {MIN_PACKET_SIZE_WITHOUT_CHECKSUM} bytes or more, or leave `udp-checksum` out (the checksum of UDP is then on, and the smallest payload is {MIN_PACKET_SIZE} bytes)"
                     )),
                 );
             } else if u128::from(workload.rate.bits_per_second())

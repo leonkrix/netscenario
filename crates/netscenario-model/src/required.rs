@@ -76,7 +76,7 @@ pub(crate) const TAGGED: &[Tagged] = &[
             (
                 "udp-cbr",
                 &["id", "from", "to", "rate", "packet-size"],
-                &["start", "stop"],
+                &["start", "stop", "udp-checksum"],
             ),
             (
                 "command",

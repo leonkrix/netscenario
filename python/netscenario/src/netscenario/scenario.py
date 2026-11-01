@@ -301,6 +301,7 @@ class ScenarioBuilder:
         packet_size: str,
         start: str | None = None,
         stop: str | None = None,
+        udp_checksum: bool = True,
     ) -> Self:
         """Add a workload of UDP packets at a constant bit rate.
 
@@ -313,6 +314,10 @@ class ScenarioBuilder:
             start: When the workload starts, from the start of the measured phase (default
                 ``"0s"``).
             stop: When it stops (default: the end of the measured phase).
+            udp_checksum: ``False`` sends the packets without the checksum of UDP, with a CRC-32
+                in the payload instead, so that a packet the link corrupts arrives and is counted
+                (``corrupted`` in the result) and is not dropped by the receiving kernel. The
+                payload must then be at least 20 bytes.
         """
         workload: dict[str, Any] = {
             "id": id,
@@ -326,6 +331,8 @@ class ScenarioBuilder:
             workload["start"] = start
         if stop is not None:
             workload["stop"] = stop
+        if not udp_checksum:
+            workload["udp-checksum"] = False
         self._workloads.append(workload)
         return self
 
