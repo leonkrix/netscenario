@@ -6,7 +6,7 @@ use netscenario_model::Impairments;
 use serde::{Deserialize, Serialize};
 
 /// A direction on the wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Way {
     Forward,
@@ -38,6 +38,18 @@ pub(crate) enum Request {
         direction: Way,
         impairments: Impairments,
         seed: Option<u64>,
+    },
+    /// Every state that one direction will have in the run, before it is built (D-059).
+    Plan {
+        link: u32,
+        direction: Way,
+        states: Vec<Impairments>,
+    },
+    /// Writes a state into the queues of one direction while the run is going (D-048, D-059).
+    Change {
+        link: u32,
+        direction: Way,
+        impairments: Impairments,
     },
     /// How many packets entered the queue of one direction, which draws its random loss.
     QueuePackets {
@@ -121,8 +133,18 @@ mod tests {
             Request::Apply {
                 link: 0,
                 direction: Way::Reverse,
-                impairments: delay,
+                impairments: delay.clone(),
                 seed: Some(7),
+            },
+            Request::Plan {
+                link: 0,
+                direction: Way::Forward,
+                states: vec![delay.clone(), delay.clone()],
+            },
+            Request::Change {
+                link: 0,
+                direction: Way::Forward,
+                impairments: delay,
             },
             Request::StartProgram {
                 node: 1,

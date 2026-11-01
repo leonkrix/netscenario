@@ -178,6 +178,24 @@ pub trait Backend {
         Ok(())
     }
 
+    /// Tells the backend every state that one direction of a link will have in the run, the first being the one
+    /// that [`apply`](Backend::apply) is given next, before it is. A backend whose queues are built for a state
+    /// can build ones that every state fits, so that [`change`](Backend::change) never has to rebuild them
+    /// (D-059). It is called only for a direction that a `set` or an `outage` of the timeline changes. The default
+    /// does nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist.
+    fn plan_states(
+        &mut self,
+        _link: LinkHandle,
+        _direction: Direction,
+        _states: &[Impairments],
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Sets the impairments of one direction of a link. What is not set in `impairments` is not impaired.
     /// `seed` seeds the random loss of this direction (see [`derive_seed`](crate::derive_seed)); without it
     /// the loss is random from run to run.
@@ -192,6 +210,27 @@ pub trait Backend {
         impairments: &Impairments,
         seed: Option<u64>,
     ) -> Result<(), Error>;
+
+    /// Changes the impairments of one direction of a link while the run is going: from now on the direction has
+    /// `impairments`, the whole state and not the difference to the last one. What the last state had and this one
+    /// does not is gone, and the queue and its random numbers go on (D-048, D-059). The state must be one of
+    /// those given to [`plan_states`](Backend::plan_states). The default says that the backend cannot.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the backend does not change impairments over time, or the change cannot be applied.
+    fn change(
+        &mut self,
+        _link: LinkHandle,
+        _direction: Direction,
+        _impairments: &Impairments,
+    ) -> Result<(), Error> {
+        Err(Error::Backend {
+            backend: self.name().to_owned(),
+            action: "change the impairments of a direction".to_owned(),
+            message: "this backend does not change impairments over time".to_owned(),
+        })
+    }
 
     /// Starts `program` in `node`. Its standard output is read by [`poll_program`](Backend::poll_program),
     /// its standard input is written by [`send_line`](Backend::send_line), and its standard error is kept.

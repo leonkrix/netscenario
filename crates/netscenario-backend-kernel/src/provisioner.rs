@@ -182,6 +182,8 @@ pub(crate) struct Provisioner {
     nodes: Vec<Node>,
     links: Vec<Link>,
     programs: Vec<RunningProgram>,
+    /// The queues planned for the directions that change in the run (D-059), by link and direction.
+    layouts: std::collections::HashMap<(u32, Way), netem::Layout>,
 }
 
 fn id(index: usize) -> Result<u32, String> {
@@ -206,6 +208,7 @@ impl Provisioner {
             nodes: Vec::new(),
             links: Vec::new(),
             programs: Vec::new(),
+            layouts: std::collections::HashMap::new(),
         })
     }
 
@@ -380,6 +383,81 @@ impl Provisioner {
         id(index)
     }
 
+    /// Plans the queues of a direction for every state it will have (D-059). It must come before `apply`, which
+    /// builds them.
+    pub(crate) fn plan(
+        &mut self,
+        link: u32,
+        way: Way,
+        states: &[Impairments],
+    ) -> Result<(), String> {
+        if self.links.get(link as usize).is_none() {
+            return Err(format!("the link {link} does not exist in this run"));
+        }
+        let layout = netem::Layout::of(states)?;
+        self.layouts.insert((link, way), layout);
+        Ok(())
+    }
+
+    /// Writes a state into the queues of a direction that `apply` built from a plan: the whole state, in the
+    /// queues that are there, so no packet is lost to a rebuild and the random numbers go on (D-048, D-059).
+    pub(crate) fn change(
+        &mut self,
+        link: u32,
+        way: Way,
+        impairments: &Impairments,
+    ) -> Result<(), String> {
+        let layout = self.layouts.get(&(link, way)).ok_or_else(|| {
+            format!("the direction of link {link} was not planned for changes, so its queues may not fit the new state")
+        })?;
+        if !layout.fits(impairments) {
+            return Err(
+                "the new state needs a queue that this direction was not built with".to_owned(),
+            );
+        }
+        let stages = netem::change(layout, impairments)?;
+        let (pid, interface) = self.interface_of(link, way)?;
+        let mut first = vec![
+            "qdisc",
+            "change",
+            "dev",
+            interface.as_str(),
+            "root",
+            "netem",
+        ];
+        first.extend(stages.first.iter().map(String::as_str));
+        self.in_node(pid, &self.tools.tc, &first)?;
+        if let Some(second) = &stages.second {
+            let mut child = vec![
+                "qdisc",
+                "change",
+                "dev",
+                interface.as_str(),
+                "parent",
+                "1:1",
+                "handle",
+                "2:",
+                "netem",
+            ];
+            child.extend(second.iter().map(String::as_str));
+            self.in_node(pid, &self.tools.tc, &child)?;
+        }
+        Ok(())
+    }
+
+    /// The process that holds the namespace of the node that sends in a direction, and its interface.
+    fn interface_of(&self, link: u32, way: Way) -> Result<(u32, String), String> {
+        let link = self
+            .links
+            .get(link as usize)
+            .ok_or_else(|| format!("the link {link} does not exist in this run"))?;
+        let end = match way {
+            Way::Forward => &link.ends[0],
+            Way::Reverse => &link.ends[1],
+        };
+        Ok((self.nodes[end.node].pid, end.interface.clone()))
+    }
+
     pub(crate) fn apply(
         &mut self,
         link: u32,
@@ -388,6 +466,7 @@ impl Provisioner {
         seed: Option<u64>,
     ) -> Result<(), String> {
         self.failpoints.hit("apply:start");
+        let link_index = link;
         let link = self
             .links
             .get(link as usize)
@@ -397,7 +476,12 @@ impl Provisioner {
             Way::Forward => &link.ends[0],
             Way::Reverse => &link.ends[1],
         };
-        let Some(stages) = netem::arguments(impairments, seed)? else {
+        // A direction that is planned for changes is built for all its states, also if this one impairs nothing
+        let stages = if let Some(layout) = self.layouts.get(&(link_index, way)) {
+            netem::create(layout, impairments, seed)?
+        } else if let Some(stages) = netem::arguments(impairments, seed)? {
+            stages
+        } else {
             return Ok(());
         };
         let pid = self.nodes[end.node].pid;

@@ -68,6 +68,8 @@ fn hold() -> ExitCode {
     }
 }
 
+// One arm for each request of the protocol: splitting it would only hide the list
+#[allow(clippy::too_many_lines)]
 fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
     let tools = match Toolbox::locate() {
         Ok(tools) => tools,
@@ -115,6 +117,18 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                 seed,
             } => provisioner
                 .apply(link, direction, &impairments, seed)
+                .map(|()| None),
+            Request::Plan {
+                link,
+                direction,
+                states,
+            } => provisioner.plan(link, direction, &states).map(|()| None),
+            Request::Change {
+                link,
+                direction,
+                impairments,
+            } => provisioner
+                .change(link, direction, &impairments)
                 .map(|()| None),
             Request::QueuePackets { link, direction } => {
                 send(&match provisioner.queue_packets(link, direction) {

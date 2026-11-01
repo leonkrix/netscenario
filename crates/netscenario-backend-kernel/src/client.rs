@@ -473,6 +473,62 @@ fn duplicate_tree_refusals(
         .collect()
 }
 
+/// The steps of the timeline that the queues of this backend cannot follow (D-059): the jitter of a direction
+/// has a normal distribution in one state and a uniform one in another. `netem` keeps the table of the
+/// distribution that was loaded last, so going back would mean building the queue again, which drops the packets
+/// in flight and starts its random numbers over: the backend refuses it and names the step that leads to the
+/// second distribution.
+fn timeline_refusals(scenario: &Scenario) -> Vec<Refusal> {
+    use netscenario_core::timeline::{Action, states_of, steps};
+    let steps = steps(scenario);
+    let mut refusals = Vec::new();
+    for (index, link) in scenario.topology.links.iter().enumerate() {
+        for direction in [Direction::Forward, Direction::Reverse] {
+            let states = states_of(scenario, index, direction);
+            if crate::netem::Layout::of(&states).is_ok() {
+                continue;
+            }
+            // The distribution the direction begins with, or the first one it gets; the first step that leads to
+            // the other one is the one to name
+            let mut began = states[0].jitter.as_ref().map(|jitter| jitter.distribution);
+            for step in steps.iter().filter(|step| step.link == index) {
+                let Action::Impair {
+                    direction: moved,
+                    impairments,
+                    ..
+                } = &step.action
+                else {
+                    continue;
+                };
+                if *moved != direction {
+                    continue;
+                }
+                let found = impairments
+                    .jitter
+                    .as_ref()
+                    .map(|jitter| jitter.distribution);
+                match (began, found) {
+                    (None, found) => began = found,
+                    (Some(began), Some(found)) if began != found => {
+                        refusals.push(Refusal {
+                            feature: Feature::ScheduledSteps,
+                            path: format!("timeline[{}]", step.event),
+                            reason: format!(
+                                "the jitter of link '{}' ({direction:?}) has a normal distribution at one time and a uniform one at another, and `netem` keeps the distribution that was loaded last, so the queue would have to be built again, which drops the packets in flight and starts its random numbers over",
+                                link.id
+                            ),
+                            fix: "keep one distribution for the link through the whole run (the amount can change), or use the Engine backend (planned for release 0.4)".to_owned(),
+                        });
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    refusals
+}
+
 /// The workloads of `scenario` that send without the checksum of UDP, refused if `ask` says that a node has no
 /// `CAP_NET_RAW`. `ask` is called at most once, and not at all if no workload needs the raw socket.
 fn raw_socket_refusals(scenario: &Scenario, ask: impl FnOnce() -> Option<String>) -> Vec<Refusal> {
@@ -549,6 +605,7 @@ impl Backend for KernelBackend {
             }
         }
         self.check_duplicate_tree(scenario, &mut refusals);
+        refusals.extend(timeline_refusals(scenario));
         refusals.extend(raw_socket_refusals(scenario, || {
             crate::doctor::raw_socket_refusal(&self.tools, self.own_rights)
         }));
@@ -596,6 +653,36 @@ impl Backend for KernelBackend {
             seed,
         };
         self.call("apply the impairments of a link", &request)
+            .map(|_| ())
+    }
+
+    fn plan_states(
+        &mut self,
+        link: LinkHandle,
+        direction: Direction,
+        states: &[Impairments],
+    ) -> Result<(), Error> {
+        let request = Request::Plan {
+            link: link.0,
+            direction: Way::from(direction),
+            states: states.to_vec(),
+        };
+        self.call("plan the states of a direction", &request)
+            .map(|_| ())
+    }
+
+    fn change(
+        &mut self,
+        link: LinkHandle,
+        direction: Direction,
+        impairments: &Impairments,
+    ) -> Result<(), Error> {
+        let request = Request::Change {
+            link: link.0,
+            direction: Way::from(direction),
+            impairments: impairments.clone(),
+        };
+        self.call("change the impairments of a direction", &request)
             .map(|_| ())
     }
 
@@ -792,6 +879,52 @@ mod tests {
                 && refusals[0].reason.contains("cannot mix")
         );
         assert!(refusals[0].fix.contains("doctor"));
+    }
+
+    /// A jitter that is normal at one time and uniform at another cannot be had in the queues of this backend: the step
+    /// that leads to the second distribution is named. The same distribution all the time, or none in between, is
+    /// fine.
+    #[test]
+    fn a_timeline_that_changes_the_distribution_of_a_jitter_is_refused_at_the_step() {
+        let with = |link: &str, timeline: &str| {
+            Scenario::from_yaml(
+                &format!("{HEAD}{link}{WORKLOAD}timeline:\n{timeline}"),
+                "t.yaml",
+            )
+            .unwrap()
+        };
+        let normal =
+            "      forward: { delay: 20ms, jitter: { amount: 5ms, distribution: normal } }\n";
+        let refusals = timeline_refusals(&with(
+            normal,
+            "  - { at: 2s, link: l, set: { forward: { delay: 30ms } } }\n  - { at: 4s, link: l, set: { forward: { jitter: { amount: 5ms } } } }\n",
+        ));
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert_eq!(refusals[0].path, "timeline[1]");
+        assert!(
+            refusals[0]
+                .reason
+                .contains("normal distribution at one time")
+        );
+        // Canaries: the amount may change, the jitter may go away and come back in the same distribution, and a
+        // direction that begins without a jitter may take one
+        for timeline in [
+            "  - { at: 2s, link: l, set: { forward: { jitter: { amount: 2ms, distribution: normal } } } }\n",
+            "  - { at: 2s, link: l, set: { forward: { jitter: null } } }\n  - { at: 4s, link: l, set: { forward: { jitter: { amount: 1ms, distribution: normal } } } }\n",
+        ] {
+            assert_eq!(
+                timeline_refusals(&with(normal, timeline)),
+                Vec::new(),
+                "{timeline}"
+            );
+        }
+        assert_eq!(
+            timeline_refusals(&with(
+                "      forward: { delay: 20ms }\n",
+                "  - { at: 2s, link: l, set: { forward: { jitter: { amount: 2ms } } } }\n"
+            )),
+            Vec::new()
+        );
     }
 
     /// A stream without the checksum of UDP needs a raw socket in the node, and a machine whose nodes cannot

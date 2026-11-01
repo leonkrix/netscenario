@@ -1,7 +1,7 @@
 //! The features of a backend that a scenario can ask for, as the rows of the coverage matrix
 //! (`docs/COVERAGE.md`), and which of them a scenario needs.
 
-use netscenario_model::{JitterDistribution, Loss, Scenario, WorkloadKind};
+use netscenario_model::{Impairments, Loss, Scenario, WorkloadKind};
 
 /// Something a backend reproduces faithfully, in part, or not at all. Each feature is a row of the coverage
 /// matrix; [`Feature::label`] is the text of that row, and a test keeps the two in step.
@@ -132,6 +132,35 @@ pub struct Requirement {
     pub path: String,
 }
 
+/// The features that a set of impairments needs, at `path`.
+fn needs_of(impairments: &Impairments, path: &str, need: &mut dyn FnMut(Feature, String)) {
+    if impairments.delay.is_some() {
+        need(Feature::FixedDelay, format!("{path}.delay"));
+    }
+    if impairments.jitter.is_some() {
+        need(Feature::Jitter, format!("{path}.jitter"));
+    }
+    match &impairments.loss {
+        None => {}
+        Some(Loss::Random { .. }) => need(Feature::IndependentLoss, format!("{path}.loss")),
+        Some(Loss::GilbertElliott { .. } | Loss::Markov4 { .. }) => {
+            need(Feature::BurstLoss, format!("{path}.loss"));
+        }
+    }
+    if impairments.reorder.is_some() {
+        need(Feature::Reordering, format!("{path}.reorder"));
+    }
+    if impairments.duplicate.is_some() {
+        need(Feature::Duplication, format!("{path}.duplicate"));
+    }
+    if impairments.corrupt.is_some() {
+        need(Feature::Corruption, format!("{path}.corrupt"));
+    }
+    if impairments.rate.is_some() {
+        need(Feature::RateLimit, format!("{path}.rate"));
+    }
+}
+
 /// The features that `scenario` needs, each once, in the order of their first use.
 #[must_use]
 pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
@@ -143,7 +172,6 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
     };
     need(Feature::PointToPoint, "topology".to_owned());
     need(Feature::Ipv4, "topology".to_owned());
-    let mut has_random = false;
     for (index, link) in scenario.topology.links.iter().enumerate() {
         let base = format!("topology.links[{index}]");
         for (name, impairments) in [
@@ -158,37 +186,23 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             if name != "both" {
                 need(Feature::DifferentValuesPerDirection, path.clone());
             }
-            if impairments.delay.is_some() {
-                need(Feature::FixedDelay, format!("{path}.delay"));
-            }
-            if let Some(jitter) = &impairments.jitter {
-                match jitter.distribution {
-                    JitterDistribution::Uniform | JitterDistribution::Normal => {
-                        need(Feature::Jitter, format!("{path}.jitter"));
-                    }
-                }
-            }
-            has_random |= impairments.is_random();
-            if let Some(loss) = &impairments.loss {
-                match loss {
-                    Loss::Random { .. } => need(Feature::IndependentLoss, format!("{path}.loss")),
-                    Loss::GilbertElliott { .. } | Loss::Markov4 { .. } => {
-                        need(Feature::BurstLoss, format!("{path}.loss"));
-                    }
-                }
-            }
-            if impairments.reorder.is_some() {
-                need(Feature::Reordering, format!("{path}.reorder"));
-            }
-            if impairments.duplicate.is_some() {
-                need(Feature::Duplication, format!("{path}.duplicate"));
-            }
-            if impairments.corrupt.is_some() {
-                need(Feature::Corruption, format!("{path}.corrupt"));
-            }
-            if impairments.rate.is_some() {
-                need(Feature::RateLimit, format!("{path}.rate"));
-            }
+            needs_of(impairments, &path, &mut need);
+        }
+    }
+    // What a `set` of the timeline leads to is asked for as well: a link that has nothing at the start and gets
+    // a reordering at 5 s needs a backend that reorders. An outage is a loss of all packets and needs `Outages`.
+    for step in crate::timeline::steps(scenario) {
+        if let crate::timeline::Action::Impair {
+            impairments,
+            outage: false,
+            ..
+        } = &step.action
+        {
+            needs_of(
+                impairments,
+                &format!("timeline[{}].set", step.event),
+                &mut need,
+            );
         }
     }
     for (index, event) in scenario.timeline.iter().enumerate() {
@@ -218,7 +232,7 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             );
         }
     }
-    if has_random && scenario.seed.is_some() {
+    if crate::timeline::draws_random_numbers(scenario) && scenario.seed.is_some() {
         need(Feature::SeededLoss, "seed".to_owned());
     }
     found
@@ -358,6 +372,42 @@ mod tests {
             "{HEAD}topology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\nworkloads:\n  - {{ id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b, udp-checksum: true }}\n"
         ));
         assert!(!features(&explicit).contains(&Feature::UdpWithoutChecksum));
+    }
+
+    /// What a `set` leads to is asked for, with the path of the step: a link with nothing at the start that gets a
+    /// reordering and a rate at 5 s needs a backend that does both. An outage needs `Outages` and no loss.
+    #[test]
+    fn what_a_step_leads_to_is_a_requirement_with_the_path_of_the_step() {
+        let s = scenario(&format!(
+            "{HEAD}topology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n{TAIL}timeline:\n  - {{ at: 5s, link: l, set: {{ forward: {{ delay: 10ms, reorder: {{ share: 25% }}, rate: 2mbit }} }} }}\n  - {{ at: 7s, link: l, outage: 1s }}\n"
+        ));
+        let found = requirements(&s);
+        let at = |f: Feature| {
+            found
+                .iter()
+                .find(|r| r.feature == f)
+                .map(|r| r.path.as_str())
+        };
+        assert_eq!(at(Feature::Reordering), Some("timeline[0].set.reorder"));
+        assert_eq!(at(Feature::RateLimit), Some("timeline[0].set.rate"));
+        assert_eq!(at(Feature::Outages), Some("timeline[1]"));
+        // Canary: the loss of the outage is not a loss the scenario asks for
+        assert_eq!(at(Feature::IndependentLoss), None);
+    }
+
+    /// A seed matters for a loss that a step switches on, and not for an outage alone.
+    #[test]
+    fn a_loss_that_comes_with_a_step_needs_the_seed_and_an_outage_does_not() {
+        let with = |timeline: &str| {
+            scenario(&format!(
+                "{HEAD}seed: 3\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n{TAIL}timeline:\n{timeline}"
+            ))
+        };
+        let lossy =
+            with("  - { at: 5s, link: l, set: { forward: { loss: { model: random, p: 5% } } } }\n");
+        assert!(features(&lossy).contains(&Feature::SeededLoss));
+        let outage = with("  - { at: 5s, link: l, outage: 1s }\n");
+        assert!(!features(&outage).contains(&Feature::SeededLoss));
     }
 
     #[test]

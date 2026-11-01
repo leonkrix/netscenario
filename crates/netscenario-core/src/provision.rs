@@ -10,6 +10,7 @@ use crate::capability::{Accepted, Support, check};
 use crate::error::Error;
 use crate::feature::Feature;
 use crate::seed::{derive_seed, draw_seed};
+use crate::timeline;
 
 /// The address of a node on a link.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,12 +73,7 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
     };
     // A scenario whose result depends on random numbers (loss of any model, duplication, corruption,
     // reordering): the same seed gives the same lost packets only if the backend can apply one
-    let has_random = scenario.topology.links.iter().any(|link| {
-        [&link.forward, &link.reverse, &link.both]
-            .into_iter()
-            .flatten()
-            .any(Impairments::is_random)
-    });
+    let has_random = timeline::draws_random_numbers(scenario);
     match build(backend, scenario, seed) {
         Ok((nodes, links, addresses)) => Ok(Provisioned {
             nodes,
@@ -132,12 +128,23 @@ fn build(
         };
         let handle = backend.create_link(&link.id, [first, second])?;
         for direction in [Direction::Forward, Direction::Reverse] {
+            // The states the timeline leads the direction through, the one it starts with first. A direction
+            // that the timeline does not touch has only that one.
+            let states = timeline::states_of(scenario, index, direction);
+            let changes = states.len() > 1;
+            if changes {
+                backend.plan_states(handle, direction, &states)?;
+            }
+            // Only what draws random numbers uses the seed, and a state that comes later counts as well: the
+            // queue is seeded when it is built (a change keeps its generator)
+            let seed = seed
+                .filter(|_| states.iter().any(Impairments::is_random))
+                .map(|seed| derive_seed(seed, index, direction));
             if let Some(impairments) = impairments_of(link, direction) {
-                // Only what draws random numbers uses the seed
-                let seed = seed
-                    .filter(|_| impairments.is_random())
-                    .map(|seed| derive_seed(seed, index, direction));
                 backend.apply(handle, direction, impairments, seed)?;
+            } else if changes {
+                // Nothing at the start and something later: the queue has to be there to be changed
+                backend.apply(handle, direction, &Impairments::default(), seed)?;
             }
         }
         for (end, node) in link.between.iter().enumerate() {
@@ -262,6 +269,18 @@ mod tests {
             )
         }
 
+        fn plan_states(
+            &mut self,
+            link: LinkHandle,
+            direction: Direction,
+            states: &[Impairments],
+        ) -> Result<(), Error> {
+            self.step(
+                format!("plan {} {direction:?} {} states", link.0, states.len()),
+                "plan_states",
+            )
+        }
+
         fn start_program(&mut self, _: NodeHandle, _: &Program) -> Result<ProgramHandle, Error> {
             unreachable!("not part of provisioning")
         }
@@ -352,6 +371,66 @@ mod tests {
             &backend.calls[3..],
             ["apply 3 Forward 5ms", "apply 3 Reverse 5ms"]
         );
+    }
+
+    /// A direction that the timeline changes is told its states before it is built, and is built also if it has
+    /// nothing at the start; a direction that the timeline does not touch is built as before.
+    #[test]
+    fn a_direction_that_the_timeline_changes_is_planned_before_it_is_built() {
+        let mut backend = Fake::new();
+        let scenario = Scenario::from_yaml(
+            "version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { delay: 20ms }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\ntimeline:\n  - { at: 2s, link: l, set: { forward: { delay: 40ms } } }\n  - { at: 4s, link: l, set: { reverse: { delay: 5ms } } }\n",
+            "t.yaml",
+        )
+        .unwrap();
+        provision(&mut backend, &scenario).unwrap();
+        assert_eq!(
+            &backend.calls[3..],
+            [
+                "plan 3 Forward 2 states",
+                "apply 3 Forward 20ms",
+                "plan 3 Reverse 2 states",
+                // Nothing at the start, and the queue is there to be changed
+                "apply 3 Reverse "
+            ]
+        );
+        // Canary: the same scenario without its timeline plans nothing and builds only what it has
+        let mut plain = Fake::new();
+        provision(
+            &mut plain,
+            &self::scenario("      forward: { delay: 20ms }\n"),
+        )
+        .unwrap();
+        assert!(plain.calls.iter().all(|call| !call.starts_with("plan")));
+        assert_eq!(plain.calls.len(), 4);
+    }
+
+    /// A loss that a step switches on later needs a seed from the start: the queue is built once, and a change keeps
+    /// its generator.
+    #[test]
+    fn a_loss_that_comes_later_is_seeded_when_the_queue_is_built() {
+        let mut backend = Fake::new();
+        let scenario = Scenario::from_yaml(
+            "version: 0\nname: t\nseed: 9\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { delay: 20ms }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\ntimeline:\n  - { at: 2s, link: l, set: { forward: { loss: { model: random, p: 5% } } } }\n",
+            "t.yaml",
+        )
+        .unwrap();
+        let built = provision(&mut backend, &scenario).unwrap();
+        assert!(built.loss_reproducible);
+        let apply = backend
+            .calls
+            .iter()
+            .find(|call| call.starts_with("apply"))
+            .unwrap();
+        assert!(apply.contains(" seed "), "{apply}");
+        // Canary: without a loss in any state there is no seed
+        let mut quiet = Fake::new();
+        provision(
+            &mut quiet,
+            &self::scenario("      forward: { delay: 20ms }\n"),
+        )
+        .unwrap();
+        assert!(!quiet.calls[3].contains("seed"));
     }
 
     #[test]
