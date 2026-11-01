@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use netscenario_core::{Backend, Direction, LinkHandle, NodeHandle, Program};
 use netscenario_model::{Impairments, Name};
-use support::{assert_nothing_left, backend, namespaces_available, scenario, tools};
+use support::{assert_nothing_left, backend, batch_of, namespaces_available, scenario, tools};
 
 /// The impairments written as the keys of a `both`.
 fn state(text: &str) -> Impairments {
@@ -199,6 +199,9 @@ fn walk_through_every_pair(states: &[(&str, Impairments)]) {
             );
         }
     }
+    // Every change went through the batch of the node and none had to be made the slow way (D-063): a batch that
+    // could not be started, or stopped working, is a note
+    assert_eq!(walk.backend.notes(), Vec::<String>::new());
     walk.backend.teardown().unwrap();
     assert_nothing_left(walk.backend.run_id(), "after the teardown");
 }
@@ -329,4 +332,121 @@ fn a_change_without_a_plan_is_refused() {
         .to_string();
     assert!(error.contains("was not planned"), "{error}");
     backend.teardown().unwrap();
+}
+
+/// A `tc` that stops answering is replaced by a process for the change, the change is the same, and the result says
+/// so (D-063). The batch is stopped with `SIGSTOP`, which is what a hang looks like from outside (S11 saw one on a
+/// runner). The change that meets it waits for the time limit of the batch, so this test takes about two seconds.
+#[test]
+fn a_batch_that_stops_answering_is_replaced_by_a_process_and_the_state_is_the_same() {
+    if !namespaces_available() {
+        return;
+    }
+    let states = two_queue_states();
+    let mut walk = Walk::new(&states);
+    let references: Vec<Vec<serde_json::Value>> =
+        (0..states.len()).map(|i| walk.queues_of(i + 1)).collect();
+    let run_id = walk.backend.run_id().to_owned();
+    let batch = batch_of(&run_id).expect("the node has a tc batch while the run stands");
+    assert_eq!(walk.backend.notes(), Vec::<String>::new());
+    // The first change works, the batch is stopped, and the next changes meet a tc that does not answer
+    walk.backend
+        .change(walk.main, Direction::Forward, &states[1].1)
+        .unwrap();
+    let stopped = std::process::Command::new("sh")
+        .args(["-c", &format!("kill -STOP {batch}")])
+        .status()
+        .unwrap();
+    assert!(stopped.success());
+    let before = Instant::now();
+    walk.backend
+        .change(walk.main, Direction::Forward, &states[2].1)
+        .unwrap();
+    let waited = before.elapsed();
+    // The wait is the limit of the batch (2 s) and then the change by a process
+    assert!(
+        waited >= Duration::from_millis(1900) && waited < Duration::from_secs(8),
+        "{waited:?}"
+    );
+    assert_eq!(walk.queues_of(0), references[2], "after the replacement");
+    // The batch is ended and the next changes go by a process, without a wait
+    assert!(
+        batch_of(&run_id).is_none(),
+        "the stopped batch is still there"
+    );
+    let before = Instant::now();
+    walk.backend
+        .change(walk.main, Direction::Forward, &states[3].1)
+        .unwrap();
+    assert!(before.elapsed() < Duration::from_secs(1));
+    assert_eq!(walk.queues_of(0), references[3]);
+    // One note, not one for each change
+    let notes = walk.backend.notes();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("stopped working") && notes[0].contains("did not answer in time"),
+        "{}",
+        notes[0]
+    );
+    walk.backend.teardown().unwrap();
+    assert_nothing_left(&run_id, "after the teardown");
+}
+
+/// One batch serves every interface of a node: the changes of two links that leave the same node go through the same
+/// `tc` and each lands on its own link (D-063). The batch has no filter or parent left over from the line before:
+/// `tc` keeps some between the lines of a batch, and this is the case where that would show.
+#[test]
+fn the_changes_of_two_links_of_one_node_go_through_one_batch_and_each_lands_on_its_own_link() {
+    if !namespaces_available() {
+        return;
+    }
+    let one = state("{ delay: 20ms, loss: { model: random, p: 10% } }");
+    let two = state("{ delay: 30ms, jitter: { amount: 5ms }, rate: 5mbit }");
+    let states = [one.clone(), two.clone()];
+    let mut backend = backend(|_| {});
+    let nodes = [
+        backend.create_node(&Name::new("a").unwrap()).unwrap(),
+        backend.create_node(&Name::new("b").unwrap()).unwrap(),
+        backend.create_node(&Name::new("c").unwrap()).unwrap(),
+    ];
+    let mut links = Vec::new();
+    for (name, other) in [("first", nodes[1]), ("second", nodes[2])] {
+        let link = backend
+            .create_link(&Name::new(name).unwrap(), [nodes[0], other])
+            .unwrap();
+        backend
+            .plan_states(link, Direction::Forward, &states)
+            .unwrap();
+        backend
+            .apply(link, Direction::Forward, &one, Some(1))
+            .unwrap();
+        links.push(link);
+    }
+    // The queues of the two links in the two states, from fresh queues
+    let mut expected = Vec::new();
+    for (i, link) in links.iter().enumerate() {
+        let mut both = Vec::new();
+        for target in &states {
+            backend.change(*link, Direction::Forward, target).unwrap();
+            both.push(queues(&mut backend, nodes[0], &format!("l{i}")));
+        }
+        expected.push(both);
+    }
+    // Alternating between the links and the states: each change lands where it was sent, and only there
+    for round in 0..6_usize {
+        let link = round % 2;
+        let target = (round / 2) % 2;
+        backend
+            .change(links[link], Direction::Forward, &states[target])
+            .unwrap();
+        assert_eq!(
+            queues(&mut backend, nodes[0], &format!("l{link}")),
+            expected[link][target],
+            "round {round}: link {link} after a change to state {target}"
+        );
+    }
+    assert_eq!(backend.notes(), Vec::<String>::new());
+    let run_id = backend.run_id().to_owned();
+    backend.teardown().unwrap();
+    assert_nothing_left(&run_id, "after the teardown");
 }

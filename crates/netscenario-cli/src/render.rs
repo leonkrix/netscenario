@@ -73,6 +73,9 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
     }
     directions_text(&mut text, result);
     events_text(&mut text, result);
+    for note in &result.notes {
+        let _ = writeln!(text, "  note: {note}");
+    }
     let _ = writeln!(text, "\nresult: {}", out_dir.join("result.json").display());
     text
 }
@@ -484,6 +487,17 @@ result: out/result.json
                 "at 6.000 s  link access reverse  set  before packet 2250, which waited 0.002 ms"
             ),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn what_the_backend_notes_about_the_run_is_shown_and_only_when_there_is_something() {
+        let mut result = result();
+        assert!(!summary(&result, Path::new("out")).contains("note:"));
+        result.notes = vec!["the changes were made the slow way".to_owned()];
+        assert!(
+            summary(&result, Path::new("out"))
+                .contains("  note: the changes were made the slow way\n")
         );
     }
 

@@ -80,6 +80,8 @@ pub(crate) enum Request {
         line: String,
     },
     Teardown,
+    /// What the backend says about the run besides its result (D-063).
+    Notes,
 }
 
 /// The answer to a request, and the first line that the supervisor sends when it is ready.
@@ -98,6 +100,8 @@ pub(crate) enum Response {
         receive_buffer_drops: u64,
     },
     /// What a program has done since the last poll.
+    /// The answer to `Notes`.
+    Notes { lines: Vec<String> },
     Program {
         lines: Vec<String>,
         exit: Option<Exit>,
@@ -160,6 +164,7 @@ mod tests {
                 line: "stop".to_owned(),
             },
             Request::Teardown,
+            Request::Notes,
         ] {
             let text = serde_json::to_string(&request).unwrap();
             assert!(!text.contains('\n'));

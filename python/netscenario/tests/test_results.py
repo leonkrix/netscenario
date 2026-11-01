@@ -235,6 +235,14 @@ def test_the_steps_of_the_timeline_are_read_in_seconds_and_none_means_no_timelin
     assert third.lateness == 0.0
 
 
+def test_the_notes_of_the_backend_are_read_and_none_means_the_run_went_as_usual() -> None:
+    assert result().notes == ()
+    data = json.loads(json.dumps(RESULT))
+    data["notes"] = ["the changes were made the slow way"]
+    read = ns.Result.from_json(json.dumps(data), Path("/out"))
+    assert read.notes == ("the changes were made the slow way",)
+
+
 def test_canary_a_file_that_is_not_a_result_or_of_another_version_is_refused() -> None:
     with pytest.raises(ValueError, match="not a netscenario result"):
         ns.Result.from_json('{"format": "something-else"}', Path())

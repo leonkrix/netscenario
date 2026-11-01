@@ -6,6 +6,7 @@
 //! its own. When it dies, the kernel ends everything that belongs to the run. [`KernelBackend`] starts the
 //! supervisor and implements [`netscenario_core::Backend`]; [`capabilities()`] declares what it reproduces.
 
+mod batch;
 mod capabilities;
 pub mod clean;
 mod client;

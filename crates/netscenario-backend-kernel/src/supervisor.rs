@@ -172,6 +172,12 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                 provisioner.send_line(program, &line).map(|()| None)
             }
             Request::Teardown => provisioner.teardown().map(|()| None),
+            Request::Notes => {
+                send(&Response::Notes {
+                    lines: provisioner.notes(),
+                });
+                continue;
+            }
         });
         send(&response);
         if finished {

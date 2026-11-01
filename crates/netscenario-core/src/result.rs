@@ -42,6 +42,11 @@ pub struct RunResult {
     /// done (D-038). Empty for a scenario without a timeline.
     #[serde(default)]
     pub events: Vec<EventRecord>,
+    /// What the backend says about how it did the run, besides the result: one sentence for each fact, for example
+    /// that the changes of a link were made the slow way after the fast way stopped working (D-063). Empty if the
+    /// run went as usual.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 impl EventRecord {
@@ -423,6 +428,7 @@ mod tests {
                 packets_file: None,
             }],
             events: Vec::new(),
+            notes: vec!["a note".to_owned()],
             directions: vec![DirectionTally {
                 link: "l".to_owned(),
                 direction: "forward".to_owned(),
