@@ -2,7 +2,7 @@
 # A program of your own in a node: the scenario starts `my-server` in the node `server`, waits until it has a
 # UDP socket open, and a stream goes from the client to the node. `{server.addr}` is the address of the node.
 # A `command` runs code, so it is written in the file where everybody can see it (SECURITY.md).
-# The Kernel backend starts programs from release 0.2 (step 4.6); until then `netscenario run` refuses the
+# The Kernel backend starts programs from release 0.2; until then `netscenario run` refuses the
 # file and names the feature, and `validate` accepts it.
 version: 0
 name: program-under-test

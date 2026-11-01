@@ -1,6 +1,6 @@
 # Scenario format, version 0 (release 0.1)
 
-**Status: the contract for release 0.1, with the impairments, the timeline and the program of release 0.2 added** (the format reads them; the Kernel backend applies the loss models, the reordering, the duplication and the corruption since steps 4.2a and 4.2b, and refuses what it does not apply yet - the timeline, the program - and says so). Part 1 describes exactly what a scenario file may contain. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01, committed as `docs/schema/scenario-v0.json`); that schema and the tests are the final authority, and this page is checked against them.
+**Status: the contract for release 0.1, with the impairments, the timeline and the program of release 0.2 added** (the format reads them; the Kernel backend applies the loss models, the reordering, the duplication and the corruption since D-054 and D-055, and refuses what it does not apply yet - the timeline, the program - and says so). Part 1 describes exactly what a scenario file may contain. Anything not in Part 1 is not part of the format and is refused with an error that says in which release it is planned. Part 2 sketches what comes later and is not binding. A JSON Schema is generated from the Rust types (`netscenario schema`, SCN-01, committed as `docs/schema/scenario-v0.json`); that schema and the tests are the final authority, and this page is checked against them.
 
 The format is versioned with the line `version: 0`. **Version 0 is the series before 1.0: it may change in any minor release, and the changelog says how.** From 1.0 on the version is 1, and a change that breaks files raises it (SCN-08 adds `netscenario migrate`).
 
@@ -259,7 +259,7 @@ A `command` is the only way for a scenario to run code, and it always says so in
 
 A port is read from outside, so the program needs no help and a UDP port (which cannot be probed by connecting) works. Probing by connecting was left out for that reason.
 
-**What the Kernel backend does with it.** It starts programs from step 4.6 of release 0.2; until then it refuses a scenario with a `command` and names the feature ([COVERAGE.md](COVERAGE.md)). Running a scenario file that you did not write is running its programs: read the `command` entries first ([SECURITY.md](../SECURITY.md)).
+**What the Kernel backend does with it.** It starts programs from release 0.2 on; until then it refuses a scenario with a `command` and names the feature ([COVERAGE.md](COVERAGE.md)). Running a scenario file that you did not write is running its programs: read the `command` entries first ([SECURITY.md](../SECURITY.md)).
 
 ## Keys that are reserved
 

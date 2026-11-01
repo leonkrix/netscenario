@@ -4,6 +4,11 @@
 # docs/FIDELITY.md). The sender of the agent spins for the last stretch before every packet, so two such tests
 # side by side on a machine with four cores would disturb each other, and so would any other test. A test of
 # this binary therefore asks for all the threads: it runs alone.
+#
+# The tests of the timeline (`tests/timeline.rs` of the Kernel backend) judge how late a step of the timeline is
+# done, and a step is a `tc` process that is started: while the machine was busy with other work (a build beside
+# the test run) one such step came 98 ms late against the bound of 50 ms, and the test passed in three runs in a
+# row once the binary ran alone. A test that measures time runs alone for the same reason.
 [[profile.default.overrides]]
-filter = 'binary(fidelity)'
+filter = 'binary(fidelity) | binary(timeline)'
 threads-required = "num-cpus"

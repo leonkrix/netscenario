@@ -1,5 +1,5 @@
 //! The loop of a run while the workloads go: it waits for the senders, and does the steps of the timeline
-//! (steps 4.3b and 4.3c).
+//! (D-060, D-062).
 //!
 //! A step is done in one of two ways.
 //!

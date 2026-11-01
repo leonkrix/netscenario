@@ -43,8 +43,10 @@ jobs:
           tools: just@1.40.0
       - run: just clippy
 
-  # The tests run on both Ubuntu images that the project supports and with the current stable Rust and
-  # with the lowest supported one (rust-version in Cargo.toml, 1.89)
+  # The tests but the fidelity ones run on both Ubuntu images that the project supports and with the current
+  # stable Rust and with the lowest supported one (rust-version in Cargo.toml, 1.89). The fidelity tests are a job
+  # of their own below: they are most of the time of the tests, and they measure the network, which does not
+  # depend on the version of Rust.
   test:
     name: Tests (${{ matrix.os }}, Rust ${{ matrix.rust }})
     runs-on: ${{ matrix.os }}
@@ -64,16 +66,7 @@ jobs:
           tools: just@1.40.0,cargo-nextest@0.9.150
       # A tc that knows the seed of netem, and the permission to create user namespaces
       - uses: ./.github/actions/namespaces
-      - run: just test
-      # What the fidelity tests measured on this runner (QA-06, docs/FIDELITY.md): one table for each test job,
-      # to be compared with the table in the repository.
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: fidelity-${{ matrix.os }}-rust-${{ matrix.rust }}
-          path: target/tmp/fidelity/
-          if-no-files-found: warn
-          retention-days: 30
+      - run: just test-quick
       # The same tests once more with the rights of root, so that both ways of running a scenario are tested
       # (an ordinary user runs it in a user namespace, root with its own rights, D-022). The environment is
       # passed on: `sudo` would drop the toolchain and the `PATH` with the newer `tc`.
@@ -85,6 +78,40 @@ jobs:
       - name: Give target/ back to the runner user
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" target
+
+  # The fidelity tests (QA-06, docs/FIDELITY.md): does the network do what the scenario says, to within the bounds
+  # of the cases. Each of them measures time, so it runs alone on its machine (`.config/nextest.toml`), and that makes
+  # them the longest part of the tests: they are cut in two halves that run on two machines at once, on both
+  # images, with the current Rust only. They are not run as root: the rights decide how the namespaces are made, not
+  # what netem does to a packet.
+  fidelity:
+    name: Fidelity (${{ matrix.os }}, part ${{ matrix.part }} of 2)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        part: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          tools: just@1.40.0,cargo-nextest@0.9.150
+      # A tc that knows the seed of netem, and the permission to create user namespaces
+      - uses: ./.github/actions/namespaces
+      - run: just fidelity-test ${{ matrix.part }} 2
+      # What the cases measured on this runner: one table for each half, to be compared with the table in the
+      # repository.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: fidelity-${{ matrix.os }}-part-${{ matrix.part }}
+          path: target/tmp/fidelity/
+          if-no-files-found: warn
+          retention-days: 30
 
   docs:
     name: Documentation (rustdoc)
@@ -244,7 +271,7 @@ jobs:
   ci-ok:
     name: CI passed
     if: always()
-    needs: [fmt, clippy, test, docs, deny, package, semver, python, wheels, actionlint, dependency-review]
+    needs: [fmt, clippy, test, fidelity, docs, deny, package, semver, python, wheels, actionlint, dependency-review]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

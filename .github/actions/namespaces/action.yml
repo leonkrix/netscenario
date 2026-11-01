@@ -7,15 +7,38 @@ runs:
     # Neither iproute2 5.15 (Ubuntu 22.04) nor 6.1.0 (Ubuntu 24.04) knows the `seed` of `netem` (D-013), and
     # the tests of reproducible loss need it. Build the release that the development machine has, from the
     # tarball of kernel.org, checked against the checksum that kernel.org publishes (sha256sums.asc).
-    - name: Build iproute2 6.15.0 (for netem seed)
+    #
+    # Every job that runs scenarios needs it and each would build it from source, so the build is kept in a cache. The
+    # key has the version and the image: a build is not moved to another distribution. The tarball is checked
+    # against its checksum when the build is made, and the key changes with the version (and, by hand, with the
+    # number at the end) when the recipe does.
+    - name: Name the image (for the cache of iproute2)
+      id: image
       shell: bash
       run: |
-        sudo apt-get install -y --no-install-recommends bison flex pkg-config libelf-dev libmnl-dev
+        . /etc/os-release
+        echo "name=$ID-$VERSION_ID-$(uname -m)" >> "$GITHUB_OUTPUT"
+    - name: Libraries for iproute2 (to build it and to run it)
+      shell: bash
+      run: sudo apt-get install -y --no-install-recommends bison flex pkg-config libelf-dev libmnl-dev
+    - name: Restore the build of iproute2 6.15.0
+      id: iproute2
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: iproute2-6.15.0
+        key: iproute2-6.15.0-${{ steps.image.outputs.name }}-1
+    - name: Build iproute2 6.15.0 (for netem seed)
+      if: steps.iproute2.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
         curl --fail --silent --show-error --location --output iproute2.tar.xz \
           https://www.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.15.0.tar.xz
         echo "8041854a882583ad5263466736c9c8c68c74b1a35754ab770d23343f947528fb  iproute2.tar.xz" | sha256sum --check
         tar --extract --xz --file iproute2.tar.xz
         make -C iproute2-6.15.0 -j"$(nproc)"
+    - name: Use iproute2 6.15.0
+      shell: bash
+      run: |
         "$PWD/iproute2-6.15.0/tc/tc" -V
         echo "$PWD/iproute2-6.15.0/tc" >> "$GITHUB_PATH"
         # A `tc` that is not installed looks for the tables of the distributions (`normal.dist`) in

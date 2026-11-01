@@ -22,10 +22,11 @@ fmt-check:
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-# The tests of the Kernel backend alone. The CI runs them a second time as root (`sudo`); on a machine
-# without sudo, `unshare --user --map-root-user just test-kernel` takes the same code path as root.
-# The fidelity tests are left out here: they take a minute, say the same on every run, and the CI runs them
-# in the first pass already. `just fidelity` runs them.
+# The CI runs these a second time as root (`sudo`); on a machine without sudo,
+# `unshare --user --map-root-user just test-kernel` takes the same code path as root. The fidelity tests are left
+# out here: they take minutes, say the same on every run, and the CI runs them in jobs of their own
+# (`just fidelity-test`; `just fidelity` also rewrites docs/FIDELITY.md).
+# The tests of the Kernel backend and the agent, without the fidelity tests
 test-kernel:
     cargo nextest run -p netscenario-backend-kernel -p netscenario-agent --all-features --no-tests=pass -E 'not binary(fidelity)'
 
@@ -35,11 +36,24 @@ fidelity:
     rm -rf target/tmp/fidelity
     UPDATE_FIDELITY=1 cargo nextest run -p netscenario-backend-kernel -p netscenario-agent --all-features -E 'binary(fidelity)'
 
-# Unit and doc tests (nextest does not run doc tests). The Python extension is a cdylib: cargo has no doc
-# tests for it and would say so on every run, so it is left out of the doc tests.
-test:
-    cargo nextest run --workspace --all-features --no-tests=pass
+# The CI runs the two parts as jobs of their own, and cuts the fidelity tests in halves (see `ci.yml`).
+# All the tests: the quick ones, then the fidelity tests
+test: test-quick fidelity-test
+
+# Nextest does not run doc tests. The Python extension is a cdylib: cargo has no doc tests for it and would say
+# so on every run, so it is left out of the doc tests.
+# Everything but the fidelity tests, and the doc tests
+test-quick:
+    cargo nextest run --workspace --all-features --no-tests=pass -E 'not binary(fidelity)'
     cargo test --workspace --exclude netscenario-py --all-features --doc
+
+# About four and a half minutes, one test at a time because each of them measures time (`.config/nextest.toml`).
+# `just fidelity-test 1 2` runs the first half, `2 2` the second: the CI runs the halves on two machines at once.
+# Each case writes its table to target/tmp/fidelity/.
+# The fidelity tests (QA-06), or a part of them, without touching docs/FIDELITY.md
+fidelity-test part="1" of="1":
+    rm -rf target/tmp/fidelity
+    cargo nextest run -p netscenario-backend-kernel -p netscenario-agent --all-features --no-tests=pass -E 'binary(fidelity)' --partition count:{{part}}/{{of}}
 
 # The API documentation; a broken link or a missing item is an error
 doc:
@@ -86,7 +100,7 @@ schema:
 snapshots:
     INSTA_UPDATE=always cargo nextest run -p netscenario-model --test corpus
 
-# Run the spikes of Phase 0 (needs iproute2, python3 and, for S1 to S5, user namespaces)
+# Run the spikes (needs iproute2, python3 and, for S1 to S5, user namespaces)
 spikes:
     bash spikes/run-all.sh
 
