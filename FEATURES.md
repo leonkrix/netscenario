@@ -182,7 +182,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ENV-04 | `netscenario doctor`: what this machine can do, and what it cannot | M | 0.1 | done for the Kernel backend ([DOCTOR.md](docs/DOCTOR.md), `tests/doctor.rs`); the probe of other backends comes with them |
 | ENV-05 | Report on timer and clock precision | S | 0.3 | planned |
 | ENV-06 | Result format with a version | M | 0.1 | done (`format` and `version`, 0 until 1.0) |
-| ENV-07 | Reproducibility check: the run compares the packet counter of each queue with the packets of the workload, and marks a run in which something else entered the queue as not reproducible; `doctor` checks that `tc` knows `seed` | M | 0.1 | done (`doctor` checks that `tc` knows `seed`; a run counts the packets of the queue of each direction with loss and compares them with the packets the workloads sent: `check_queues` in `run.rs`, `tests/run.rs` with a canary that sends one extra packet, D-036) |
+| ENV-07 | Reproducibility check: the run compares the packet counter of each queue with the packets of the workload, and marks a run in which something else entered the queue as not reproducible; `doctor` checks that `tc` knows `seed` | M | 0.1 | done (`doctor` checks that `tc` knows `seed`; a run counts the packets of the queue of each direction with loss and compares them with the packets the workloads sent: `check_queues` in `run.rs`, `tests/run.rs` with a canary that sends one extra packet, D-036; two workloads in one direction whose queue draws are said not to be reproducible, D-065, because the count cannot see the order of their packets) |
 
 ## Safety (SAF)
 

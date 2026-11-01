@@ -5,9 +5,9 @@
 //! packet clock, so the packet number is plain arithmetic on integers, the same that the sender uses for the moments
 //! at which its packets leave. A step that no sender can wait for is left to the clock: no workload sends into its
 //! direction, or its moment lies after the last packet, or it is an end of an outage, which is a moment in the time
-//! of the receiver (D-064). And the run says, for such a step and for a direction that a second workload also sends
-//! into, that the lost packets of a seed are not promised to repeat, if the step changes what the queue draws random
-//! numbers for.
+//! of the receiver (D-064). And the run says, for such a step, that the lost packets of a seed are not promised to
+//! repeat, if the step changes what the queue draws random numbers for. (A direction that two workloads send into has
+//! a reason of its own for the whole run, in `run.rs`.)
 
 use netscenario_agent::schedule::Stream;
 use netscenario_model::{Name, Scenario};
@@ -91,12 +91,6 @@ pub(crate) fn plan(
             bindings.push(None);
             continue;
         };
-        if candidates.len() > 1 && matters {
-            note(format!(
-                "two workloads send into link '{}' ({word}) and the timeline changes what it draws random numbers for: the order in which their packets reach the queue is not fixed on a real kernel, so the lost packets of one seed can differ",
-                link.id
-            ));
-        }
         let first = &sending[sender];
         let packet = packet_at(first, step.at.as_nanos());
         if packet >= first.stream.packets_in(first.duration_ns) {

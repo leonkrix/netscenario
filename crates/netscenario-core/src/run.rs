@@ -427,11 +427,56 @@ fn not_reproducible_because(
             .any(|impairments| impairments.corrupt.is_some())
     });
     reasons.extend(clock_reasons);
+    reasons.extend(shared_directions(scenario));
     if corrupts {
         reasons.push(
             "the scenario corrupts packets: the seed fixes which packets are corrupted, but not where `netem` flips the bit, and a bit in the source address of the Ethernet header harms nothing, so a few corrupted packets arrive in one run and are dropped in another (the packets lost in the queue are the same)"
                 .to_owned(),
         );
+    }
+    reasons
+}
+
+/// The directions that two or more workloads send into while their queue draws random numbers, one sentence for each
+/// (D-038, D-065). Which packet draws which number depends on the order in which the packets reach the queue, and with
+/// two senders that order is not fixed on a real kernel: their packets can be microseconds apart. The number of packets
+/// that are lost agrees, the packets do not.
+fn shared_directions(scenario: &Scenario) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for (index, link) in scenario.topology.links.iter().enumerate() {
+        for (direction, word, from, to) in [
+            (
+                Direction::Forward,
+                "forward",
+                &link.between[0],
+                &link.between[1],
+            ),
+            (
+                Direction::Reverse,
+                "reverse",
+                &link.between[1],
+                &link.between[0],
+            ),
+        ] {
+            let senders: Vec<String> = scenario
+                .workloads
+                .iter()
+                .filter_map(Workload::as_udp_cbr)
+                .filter(|workload| workload.from == *from && workload.to == *to)
+                .map(|workload| format!("'{}'", workload.id))
+                .collect();
+            if senders.len() > 1
+                && timeline::states_of(scenario, index, direction)
+                    .iter()
+                    .any(Impairments::is_random)
+            {
+                reasons.push(format!(
+                    "the workloads {} send into link '{}' ({word}) and its queue draws random numbers: the order in which their packets reach the queue is not fixed on a real kernel, so which packet draws which number, and so which packets are lost, can differ from run to run with the same seed",
+                    senders.join(", "),
+                    link.id
+                ));
+            }
+        }
     }
     reasons
 }
@@ -1988,7 +2033,7 @@ mod tests {
         assert!(
             because
                 .iter()
-                .any(|why| why.contains("two workloads send into link 'l' (forward)")),
+                .any(|why| why.contains("send into link 'l' (forward)")),
             "{because:?}"
         );
         // The barriers off: the clock does it, and the run says so
@@ -1998,6 +2043,80 @@ mod tests {
             because
                 .iter()
                 .any(|why| why.contains("barriers are switched off")),
+            "{because:?}"
+        );
+    }
+
+    /// Two workloads that send into one direction whose queue draws random numbers are not a repeatable experiment,
+    /// also without a timeline (D-038, D-065): the order of their packets at the queue is not fixed. The result says
+    /// so and names the workloads. It says nothing where the second workload goes the other way, where nothing is
+    /// drawn, or where there is one workload.
+    #[test]
+    fn two_workloads_in_a_direction_with_a_loss_are_not_reproducible_and_one_each_way_are() {
+        let run_with = |link: &str, workloads: &str, name: &str| {
+            let yaml = format!(
+                "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n{link}workloads:\n{workloads}"
+            );
+            let mut backend = Fake::new(None);
+            let options = options(name);
+            let result = run(
+                &mut backend,
+                &Scenario::from_yaml(&yaml, "t.yaml").unwrap(),
+                &options,
+            )
+            .unwrap();
+            let _ = std::fs::remove_dir_all(&options.out_dir);
+            (
+                result.seed.loss_reproducible,
+                result.seed.not_reproducible_because,
+            )
+        };
+        let lossy = "      both: { delay: 5ms, loss: { model: random, p: 5% } }\n";
+        let w = "  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n";
+        let v = "  - { id: v, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n";
+        let back =
+            "  - { id: v, kind: udp-cbr, from: b, to: a, rate: 800kbit, packet-size: 1000b }\n";
+        // Two in one direction: the reason names both and the link and the direction
+        let (reproducible, because) = run_with(lossy, &format!("{w}{v}"), "shared-1");
+        assert!(!reproducible);
+        assert_eq!(because.len(), 1, "{because:?}");
+        assert!(
+            because[0].contains("'w', 'v'") && because[0].contains("link 'l' (forward)"),
+            "{because:?}"
+        );
+        // Canaries: one each way, one alone, and two where nothing is drawn say nothing
+        let (reproducible, because) = run_with(lossy, &format!("{w}{back}"), "shared-2");
+        assert!(reproducible && because.is_empty(), "{because:?}");
+        let (reproducible, because) = run_with(lossy, w, "shared-3");
+        assert!(reproducible && because.is_empty(), "{because:?}");
+        let (reproducible, because) = run_with(
+            "      both: { delay: 5ms }\n",
+            &format!("{w}{v}"),
+            "shared-4",
+        );
+        assert!(reproducible && because.is_empty(), "{because:?}");
+        // A draw that only a later step brings counts as well
+        let (reproducible, because) = {
+            let yaml = format!(
+                "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: {{ delay: 5ms }}\nworkloads:\n{w}{v}timeline:\n  - {{ at: 500ms, link: l, set: {{ forward: {{ duplicate: 5% }} }} }}\n"
+            );
+            let mut backend = Fake::new(None);
+            let options = options("shared-5");
+            let result = run(
+                &mut backend,
+                &Scenario::from_yaml(&yaml, "t.yaml").unwrap(),
+                &options,
+            )
+            .unwrap();
+            let _ = std::fs::remove_dir_all(&options.out_dir);
+            (
+                result.seed.loss_reproducible,
+                result.seed.not_reproducible_because,
+            )
+        };
+        assert!(!reproducible);
+        assert!(
+            because.iter().any(|why| why.contains("link 'l' (forward)")),
             "{because:?}"
         );
     }
