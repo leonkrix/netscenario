@@ -345,6 +345,9 @@ mod tests {
                     reordered: 0,
                     unexpected: 0,
                     delay: None,
+                    reordering: None,
+                    jitter: None,
+                    loss_runs: crate::patterns::LossRuns::default(),
                     throughput: Throughput {
                         bin_ns: 1_000_000_000,
                         bits_per_second: vec![8000.0],

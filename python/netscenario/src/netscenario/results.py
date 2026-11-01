@@ -51,6 +51,104 @@ class Delay:
 
 
 @dataclass(frozen=True)
+class Extent:
+    """How far the reordered packets were out of place, in packets (RFC 4737, section 4.2).
+
+    The extent of a packet is the number of arrivals between it and the earliest-arrived packet
+    with a higher sequence number: a packet that arrives right after the one that overtook it has
+    extent 1.
+    """
+
+    max: int
+    """The largest extent: a buffer that restores the order needs about this much room."""
+    mean: float
+    """The mean extent."""
+    p50: int
+    """The median (nearest rank)."""
+    p95: int
+    """Percentile 95."""
+    p99: int
+    """Percentile 99."""
+
+
+@dataclass(frozen=True)
+class LateTime:
+    """How long the reordered packets arrived after the packet that overtook them (RFC 4737, 4.3).
+
+    In seconds: how long a receiver would have waited to restore the order.
+    """
+
+    max: float
+    """The largest late time."""
+    mean: float
+    """The mean."""
+    p50: float
+    """The median (nearest rank)."""
+    p95: float
+    """Percentile 95."""
+    p99: float
+    """Percentile 99."""
+
+
+@dataclass(frozen=True)
+class Reordering:
+    """How the reordered packets were out of place. Absent (``None``) where none was reordered."""
+
+    extent: Extent
+    """In packets."""
+    late_time: LateTime
+    """In seconds."""
+
+
+@dataclass(frozen=True)
+class InterarrivalJitter:
+    """The interarrival jitter of RFC 3550 (appendix A.8), in seconds.
+
+    For two packets that arrive one after the other, ``D = (R_j - R_i) - (S_j - S_i)`` is the
+    difference of their transit times, and the estimate moves a sixteenth of the way towards
+    ``|D|`` with every packet. The packets are paired in the order of arrival, so a reordered
+    packet makes a large ``D``.
+    """
+
+    last: float
+    """The estimate after the last packet (what an RTCP report at the end would carry)."""
+    mean: float
+    """The mean of the estimate over the run: one number that does not depend on the last sixteen
+    packets."""
+    max: float
+    """The largest value the estimate had."""
+
+
+@dataclass(frozen=True)
+class LossRun:
+    """How many runs of lost packets had one length."""
+
+    length: int
+    """The length of the run, in packets."""
+    runs: int
+    """How many runs had it."""
+
+
+@dataclass(frozen=True)
+class LossRuns:
+    """The runs of lost packets (the "loss period" of RFC 3357).
+
+    A run is a stretch of consecutive sequence numbers none of which arrived.
+
+    Independent loss gives mostly runs of length 1; a link with bursts gives longer ones.
+    """
+
+    runs: int
+    """How many runs there were."""
+    longest: int
+    """The length of the longest run (0 if no packet was lost)."""
+    mean: float
+    """The mean length, ``lost / runs`` (0 if no packet was lost)."""
+    histogram: tuple[LossRun, ...]
+    """For each length that occurred, how many runs had it, by ascending length."""
+
+
+@dataclass(frozen=True)
 class Throughput:
     """The payload that arrived in each second, counted from the first packet that was sent."""
 
@@ -123,6 +221,12 @@ class Workload:
     """The sending side."""
     foreign_datagrams: int
     """Datagrams that reached the receiver and were not packets of the agent."""
+    reordering: Reordering | None
+    """How far the reordered packets were out of place, or ``None`` if none was."""
+    jitter: InterarrivalJitter | None
+    """The interarrival jitter (RFC 3550), or ``None`` for fewer than two arrivals."""
+    loss_runs: LossRuns
+    """The runs of lost packets."""
     records_file: Path
     """The binary file of per-packet records (``docs/AGENT.md``)."""
     packets_file: Path | None
@@ -379,6 +483,52 @@ class Result:
         )
 
 
+def _reordering(data: dict[str, Any] | None) -> Reordering | None:
+    if data is None:
+        return None
+    extent, late = data["extent"], data["late_time"]
+    return Reordering(
+        extent=Extent(
+            max=int(extent["max"]),
+            mean=float(extent["mean"]),
+            p50=int(extent["p50"]),
+            p95=int(extent["p95"]),
+            p99=int(extent["p99"]),
+        ),
+        late_time=LateTime(
+            max=_seconds(late["max_ns"]),
+            mean=_seconds(late["mean_ns"]),
+            p50=_seconds(late["p50_ns"]),
+            p95=_seconds(late["p95_ns"]),
+            p99=_seconds(late["p99_ns"]),
+        ),
+    )
+
+
+def _jitter(data: dict[str, Any] | None) -> InterarrivalJitter | None:
+    if data is None:
+        return None
+    return InterarrivalJitter(
+        last=_seconds(data["last_ns"]),
+        mean=_seconds(data["mean_ns"]),
+        max=_seconds(data["max_ns"]),
+    )
+
+
+def _loss_runs(data: dict[str, Any] | None) -> LossRuns:
+    # A result from before the runs were counted has none: "no run", as for a run without loss
+    if data is None:
+        return LossRuns(runs=0, longest=0, mean=0.0, histogram=())
+    return LossRuns(
+        runs=int(data["runs"]),
+        longest=int(data["longest"]),
+        mean=float(data["mean"]),
+        histogram=tuple(
+            LossRun(length=int(b["length"]), runs=int(b["runs"])) for b in data["histogram"]
+        ),
+    )
+
+
 def _workload(entry: dict[str, Any], directory: Path) -> Workload:
     delay = entry["delay"]
     throughput = entry["throughput"]
@@ -423,6 +573,9 @@ def _workload(entry: dict[str, Any], directory: Path) -> Workload:
             first_error=sender["first_error"],
         ),
         foreign_datagrams=int(entry["foreign_datagrams"]),
+        reordering=_reordering(entry.get("reordering")),
+        jitter=_jitter(entry.get("jitter")),
+        loss_runs=_loss_runs(entry.get("loss_runs")),
         records_file=directory / entry["records_file"],
         packets_file=None if entry["packets_file"] is None else directory / entry["packets_file"],
         corrupted=int(entry.get("corrupted", 0)),

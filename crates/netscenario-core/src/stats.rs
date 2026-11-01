@@ -12,6 +12,8 @@ use std::collections::HashSet;
 use netscenario_agent::records::Record;
 use serde::{Deserialize, Serialize};
 
+use crate::patterns::{self, Jitter, LossRuns, Reordering};
+
 /// The width of a bin of the throughput series: one second.
 pub const THROUGHPUT_BIN_NS: u64 = 1_000_000_000;
 
@@ -74,6 +76,15 @@ pub struct FlowStats {
     pub unexpected: u64,
     /// The delays of the packets that arrived (the first arrival of each), or `None` if none did.
     pub delay: Option<DelaySummary>,
+    /// How far the reordered packets were out of place (RFC 4737), or `None` if none was reordered.
+    #[serde(default)]
+    pub reordering: Option<Reordering>,
+    /// The interarrival jitter (RFC 3550), or `None` for fewer than two arrivals.
+    #[serde(default)]
+    pub jitter: Option<Jitter>,
+    /// The runs of lost packets.
+    #[serde(default)]
+    pub loss_runs: LossRuns,
     /// The payload that arrived in each second.
     pub throughput: Throughput,
 }
@@ -142,6 +153,7 @@ pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -
     }
     let received = delays.len() as u64;
     let lost = sent - received;
+    let arrivals = patterns::first_arrivals(sent, records);
     delays.sort_unstable();
     let delay = (!delays.is_empty()).then(|| DelaySummary {
         min_ns: delays[0],
@@ -170,6 +182,9 @@ pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -
         reordered,
         unexpected,
         delay,
+        reordering: patterns::reordering(&arrivals),
+        jitter: patterns::interarrival_jitter(&arrivals),
+        loss_runs: patterns::loss_runs(sent, &arrivals),
         throughput: Throughput {
             bin_ns: THROUGHPUT_BIN_NS,
             bits_per_second: bins
@@ -182,6 +197,77 @@ pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -
 
 #[cfg(test)]
 mod tests {
+    /// The statistics of a workload carry the patterns: one series with a reordered packet, a lost run and a
+    /// duplicate, worked out by hand.
+    #[test]
+    fn the_statistics_of_a_workload_carry_the_extent_the_jitter_and_the_runs() {
+        // Sent 0..=7. Arrivals: 0, 2, 1 (late by one), 1 again (a copy), 5, 6. Lost: 3-4 (a run of 2) and 7 (1).
+        let records = [
+            Record {
+                sequence: 0,
+                send_ns: 0,
+                receive_ns: 10_000_000,
+            },
+            Record {
+                sequence: 2,
+                send_ns: 2_000_000,
+                receive_ns: 12_000_000,
+            },
+            Record {
+                sequence: 1,
+                send_ns: 1_000_000,
+                receive_ns: 13_000_000,
+            },
+            Record {
+                sequence: 1,
+                send_ns: 1_000_000,
+                receive_ns: 14_000_000,
+            },
+            Record {
+                sequence: 5,
+                send_ns: 5_000_000,
+                receive_ns: 15_000_000,
+            },
+            Record {
+                sequence: 6,
+                send_ns: 6_000_000,
+                receive_ns: 16_000_000,
+            },
+        ];
+        let stats = analyse(8, &records, 100, 0);
+        assert_eq!(
+            (
+                stats.received,
+                stats.lost,
+                stats.duplicates,
+                stats.reordered
+            ),
+            (5, 3, 1, 1)
+        );
+        let reordering = stats.reordering.unwrap();
+        assert_eq!(
+            (reordering.extent.max, reordering.late_time.max_ns),
+            (1, 1_000_000)
+        );
+        // Transit times 10, 10, 12, 10, 10: D = 0, 2, -2, 0 ms in the order of arrival
+        let jitter = stats.jitter.unwrap();
+        assert_eq!(jitter.max_ns, jitter.max_ns.max(jitter.last_ns));
+        assert!(jitter.max_ns > 0 && jitter.last_ns > 0, "{jitter:?}");
+        assert_eq!((stats.loss_runs.runs, stats.loss_runs.longest), (2, 2));
+        assert!((stats.loss_runs.mean - 1.5).abs() < 1e-12);
+        // Canary: nothing out of order, nothing lost, a steady stream has none of the three
+        let steady: Vec<Record> = (0..10_u64)
+            .map(|n| Record {
+                sequence: n,
+                send_ns: n * 1_000_000,
+                receive_ns: n * 1_000_000 + 7_000_000,
+            })
+            .collect();
+        let calm = analyse(10, &steady, 100, 0);
+        assert_eq!((calm.reordering, calm.loss_runs.runs), (None, 0));
+        assert_eq!(calm.jitter.unwrap().max_ns, 0);
+    }
+
     fn at(sequence: u64) -> Record {
         Record {
             sequence,

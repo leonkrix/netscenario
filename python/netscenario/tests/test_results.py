@@ -148,6 +148,43 @@ def test_the_names_of_the_damaged_packets_are_read_and_their_absence_is_visible(
     assert unavailable.corrupted_seq_unavailable == "CAP_NET_RAW is missing"
 
 
+def test_the_patterns_of_the_arrivals_are_in_seconds_and_a_result_without_them_means_none() -> None:
+    media = result()["media"]
+    # A result from before the patterns were counted: nothing to say, and no run of lost packets
+    assert (media.reordering, media.jitter) == (None, None)
+    assert (media.loss_runs.runs, media.loss_runs.histogram) == (0, ())
+    data = json.loads(json.dumps(RESULT))
+    data["workloads"][0].update(
+        reordering={
+            "extent": {"max": 4, "mean": 1.5, "p50": 1, "p95": 4, "p99": 4},
+            "late_time": {
+                "max_ns": 3_000_000,
+                "mean_ns": 1_000_000,
+                "p50_ns": 1_000_000,
+                "p95_ns": 3_000_000,
+                "p99_ns": 3_000_000,
+            },
+        },
+        jitter={"last_ns": 180_000, "mean_ns": 150_000, "max_ns": 210_000},
+        loss_runs={
+            "runs": 3,
+            "longest": 2,
+            "mean": 5 / 3,
+            "histogram": [{"length": 1, "runs": 2}, {"length": 2, "runs": 1}],
+        },
+    )
+    media = ns.Result.from_json(json.dumps(data), Path("/out"))["media"]
+    assert media.reordering is not None
+    assert media.jitter is not None
+    assert (media.reordering.extent.max, media.reordering.extent.mean) == (4, 1.5)
+    assert media.reordering.late_time.max == pytest.approx(0.003)
+    assert (media.jitter.last, media.jitter.mean, media.jitter.max) == pytest.approx(
+        (0.00018, 0.00015, 0.00021)
+    )
+    assert (media.loss_runs.runs, media.loss_runs.longest) == (3, 2)
+    assert [(b.length, b.runs) for b in media.loss_runs.histogram] == [(1, 2), (2, 1)]
+
+
 def test_canary_a_file_that_is_not_a_result_or_of_another_version_is_refused() -> None:
     with pytest.raises(ValueError, match="not a netscenario result"):
         ns.Result.from_json('{"format": "something-else"}', Path())

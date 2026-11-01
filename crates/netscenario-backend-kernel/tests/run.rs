@@ -181,9 +181,21 @@ fn the_same_seed_gives_the_same_lost_packets() {
     assert_queues_saw_the_workloads(&result, 417);
 }
 
+/// The delay of the link in the test of the seed for the reordering: a packet that `netem` holds arrives no earlier.
+const HELD_FOR_AT_LEAST_NS: u64 = 10_000_000;
+
+/// What a run of the test of the seed drew: the sequence numbers of the packets lost, arrived twice and sent on at
+/// once, and the delay in nanoseconds of the first arrival of each packet (for the message of a failure).
+struct Drawn {
+    lost: Vec<u64>,
+    doubled: Vec<u64>,
+    early: Vec<u64>,
+    delays: Vec<(u64, u64)>,
+}
+
 /// What a seed repeats in a direction with a burst loss, a duplication and a reordering (D-054): the packets that
 /// were lost, the ones that arrived twice, and the ones that `netem` sent on at once.
-fn drawn_by(dir: &Path, workload: &str) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+fn drawn_by(dir: &Path, workload: &str) -> Drawn {
     let lines: Vec<serde_json::Value> =
         std::fs::read_to_string(dir.join(format!("packets-{workload}.jsonl")))
             .unwrap()
@@ -197,14 +209,26 @@ fn drawn_by(dir: &Path, workload: &str) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
             .map(|v| v["sequence"].as_u64().unwrap())
             .collect()
     };
-    (
-        sequences(&|v| v["lost"] == true),
-        sequences(&|v| v["duplicate"] == true),
-        // The held packets wait 10 ms, the others arrive within the time of the rate (2 ms at most)
-        sequences(&|v| {
-            v["duplicate"] != true && v["delay_ns"].as_u64().is_some_and(|d| d < 5_000_000)
+    Drawn {
+        lost: sequences(&|v| v["lost"] == true),
+        doubled: sequences(&|v| v["duplicate"] == true),
+        // A packet that `netem` holds waits the whole delay of 10 ms behind the rate, so it arrives after 10 ms or
+        // later and never before: the lower bound is physics. A packet that is sent on at once needs only the rate
+        // (a millisecond or two), and a busy machine makes it later, as late as 7 ms in a run under load. The line
+        // between the two is therefore the delay itself, as far from the noise as it can be; at half the delay a
+        // stall of a few milliseconds on a shared runner moved a packet over it and failed the test.
+        early: sequences(&|v| {
+            v["duplicate"] != true
+                && v["delay_ns"]
+                    .as_u64()
+                    .is_some_and(|d| d < HELD_FOR_AT_LEAST_NS)
         }),
-    )
+        delays: lines
+            .iter()
+            .filter(|v| v["duplicate"] != true)
+            .filter_map(|v| Some((v["sequence"].as_u64()?, v["delay_ns"].as_u64()?)))
+            .collect(),
+    }
 }
 
 /// The same seed repeats a loss in bursts, the duplication and the reordering, in a direction of two queues; another
@@ -228,9 +252,12 @@ fn the_same_seed_repeats_burst_loss_duplication_and_reordering() {
         let _ = std::fs::remove_dir_all(dir);
         (drawn, result)
     };
-    let ((lost, doubled, early), result) = drawn(7, "run-models-a");
-    let ((lost_again, doubled_again, early_again), _) = drawn(7, "run-models-b");
-    let ((lost_other, doubled_other, early_other), _) = drawn(8, "run-models-c");
+    let (first, result) = drawn(7, "run-models-a");
+    let (again, _) = drawn(7, "run-models-b");
+    let (other, _) = drawn(8, "run-models-c");
+    let (lost, doubled, early) = (&first.lost, &first.doubled, &first.early);
+    let (lost_again, doubled_again, early_again) = (&again.lost, &again.doubled, &again.early);
+    let (lost_other, doubled_other, early_other) = (&other.lost, &other.doubled, &other.early);
     // Something of each happened, so that "the same" means something
     assert!(!lost.is_empty() && !doubled.is_empty() && !early.is_empty());
     assert_eq!(lost, lost_again, "the same seed must lose the same packets");
@@ -238,9 +265,30 @@ fn the_same_seed_repeats_burst_loss_duplication_and_reordering() {
         doubled, doubled_again,
         "the same seed must duplicate the same packets"
     );
+    let differing: Vec<u64> = early
+        .iter()
+        .filter(|s| !early_again.contains(s))
+        .chain(early_again.iter().filter(|s| !early.contains(s)))
+        .copied()
+        .collect();
+    let delay_of = |delays: &[(u64, u64)], sequence: u64| {
+        delays
+            .iter()
+            .find(|(s, _)| *s == sequence)
+            .map(|(_, ns)| *ns)
+    };
     assert_eq!(
-        early, early_again,
-        "the same seed must send the same packets on at once"
+        early,
+        early_again,
+        "the same seed must send the same packets on at once; delays (ns) of {differing:?}: {:?} and {:?}",
+        differing
+            .iter()
+            .map(|s| delay_of(&first.delays, *s))
+            .collect::<Vec<_>>(),
+        differing
+            .iter()
+            .map(|s| delay_of(&again.delays, *s))
+            .collect::<Vec<_>>()
     );
     assert!(lost != lost_other && doubled != doubled_other && early != early_other);
     assert!(result.seed.loss_reproducible);

@@ -57,6 +57,12 @@ enum Metric {
     NodeDropRatio,
     /// The packets that the queue of the link dropped, as a share of the packets sent (the same tally).
     LostInQueueRatio,
+    /// The mean of the interarrival jitter of RFC 3550 over the run, in milliseconds.
+    JitterMeanMs,
+    /// The mean extent of the reordered packets (RFC 4737), in packets.
+    ExtentMean,
+    /// The mean late time of the reordered packets (RFC 4737), in milliseconds.
+    LateTimeMeanMs,
     /// The damaged packets that the result names by sequence number, as a share of the frames the node dropped
     /// as damaged: what the tap in the receiving node could read.
     NamedShare,
@@ -89,6 +95,9 @@ impl Metric {
             Metric::LostInQueueRatio => "packets lost in the queue",
             Metric::DamagedRatio => "packets that arrived damaged",
             Metric::NamedShare => "dropped packets named by sequence number",
+            Metric::JitterMeanMs => "interarrival jitter (mean of RFC 3550)",
+            Metric::ExtentMean => "mean extent of the reordered packets",
+            Metric::LateTimeMeanMs => "mean late time of the reordered packets",
             Metric::NamedExcess => "names without a dropped frame",
             Metric::Unaccounted => "packets not accounted for",
         }
@@ -105,7 +114,7 @@ impl Metric {
             | Metric::NamedShare
             | Metric::EarlyShare => format!("{:.2} %", value * 100.0),
             Metric::Unaccounted | Metric::NamedExcess => format!("{value:.0} packets"),
-            Metric::MeanLossRun => format!("{value:.2} packets"),
+            Metric::MeanLossRun | Metric::ExtentMean => format!("{value:.2} packets"),
             Metric::SteadyGoodputBps => format!("{:.4} mbit/s", value / 1e6),
             _ => format!("{value:.3} ms"),
         }
@@ -137,6 +146,9 @@ struct Measurement {
     damaged_ratio: f64,
     named_share: f64,
     named_excess: f64,
+    jitter_mean_ms: f64,
+    extent_mean: f64,
+    late_time_mean_ms: f64,
     unaccounted: f64,
     sent: u64,
     kernel: String,
@@ -171,6 +183,9 @@ impl Measurement {
             Metric::DamagedRatio => self.damaged_ratio,
             Metric::NamedShare => self.named_share,
             Metric::NamedExcess => self.named_excess,
+            Metric::JitterMeanMs => self.jitter_mean_ms,
+            Metric::ExtentMean => self.extent_mean,
+            Metric::LateTimeMeanMs => self.late_time_mean_ms,
             Metric::Unaccounted => self.unaccounted,
         }
     }
@@ -399,6 +414,27 @@ fn cases() -> Vec<Case> {
                     lo: 0.3,
                     hi: 0.8,
                     reason: "KNOWN: jitter larger than the gap between packets (1 ms here) reorders them, because `netem` sends each packet at its own time; 58 % were seen",
+                },
+                Bound {
+                    metric: Metric::JitterMeanMs,
+                    expected: 3.543,
+                    lo: 3.39,
+                    hi: 3.69,
+                    reason: "MODEL (RFC 3550, appendix A.8): the delays are independent and uniform over 10 ms, a packet every millisecond, and the estimate pairs packets in the order of arrival, so the pair is not independent of its delays (the mean of |D| for neighbours in sequence would be 10 / 3 = 3.33 ms); a simulation of 120 runs of 6,000 packets, written apart from the code under test, gave 3.543 ms with a standard deviation of 0.032 ms between runs; four of them on each side, and 0.02 ms for the machine",
+                },
+                Bound {
+                    metric: Metric::ExtentMean,
+                    expected: 3.70,
+                    lo: 3.57,
+                    hi: 3.83,
+                    reason: "MODEL (RFC 4737, section 4.2): the same simulation, the mean over the reordered packets of the number of arrivals since the first packet that overtook them: 3.70 with a standard deviation of 0.032 between runs, four of them on each side",
+                },
+                Bound {
+                    metric: Metric::LateTimeMeanMs,
+                    expected: 3.185,
+                    lo: 3.05,
+                    hi: 3.32,
+                    reason: "MODEL (RFC 4737, section 4.3): the same simulation, the mean time between a reordered packet and the first packet that overtook it: 3.185 ms with a standard deviation of 0.032 ms between runs, four of them on each side, and 0.01 ms for the machine",
                 },
             ],
         },
@@ -1084,6 +1120,13 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
     let early_share = delays_ms.iter().filter(|d| **d < 5.0).count() as f64 / n_or_one(&delays_ms);
     let received: std::collections::BTreeSet<u64> =
         file.records.iter().map(|r| r.sequence).collect();
+    // The runs of lost packets in the result against the oracle of this file, which counts them its own way
+    let oracle = mean_loss_run(&received, workload.stats.sent);
+    assert!(
+        (workload.stats.loss_runs.mean - oracle).abs() < 1e-9,
+        "the result says a mean run of {} lost packets and the test counts {oracle}",
+        workload.stats.loss_runs.mean
+    );
     let tally = &result.directions[0];
     // A duplicating direction has no count of the packets the queue dropped: the measures that need it are not
     // numbers there, and a bound on one of them fails, as it should
@@ -1099,7 +1142,24 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         node_drop_ratio: tally.dropped_corrupted as f64 / tally.reached_node.max(1) as f64,
         lost_in_queue_ratio: lost_in_queue.map_or(f64::NAN, |lost| lost / tally.sent.max(1) as f64),
         damaged_ratio: workload.corrupted as f64 / workload.stats.sent.max(1) as f64,
-        // NaN where the result names nothing, so that a bound on it fails
+        // NaN where the result has nothing, so that a bound on it fails
+        jitter_mean_ms: workload
+            .stats
+            .jitter
+            .as_ref()
+            .map_or(f64::NAN, |jitter| jitter.mean_ns as f64 / 1e6),
+        extent_mean: workload
+            .stats
+            .reordering
+            .as_ref()
+            .map_or(f64::NAN, |reordering| reordering.extent.mean),
+        late_time_mean_ms: workload
+            .stats
+            .reordering
+            .as_ref()
+            .map_or(f64::NAN, |reordering| {
+                reordering.late_time.mean_ns as f64 / 1e6
+            }),
         named_share: workload.corrupted_named.map_or(f64::NAN, |named| {
             named as f64 / tally.dropped_corrupted.max(1) as f64
         }),
@@ -1176,7 +1236,10 @@ fn fragment(case: &Case, measurement: &Measurement, verdicts: &[Verdict<'_>]) ->
             | Metric::EarlyShare => {
                 format!("{:+.2} pp", (verdict.value - bound.expected) * 100.0)
             }
-            Metric::MeanLossRun | Metric::Unaccounted | Metric::NamedExcess => {
+            Metric::MeanLossRun
+            | Metric::Unaccounted
+            | Metric::NamedExcess
+            | Metric::ExtentMean => {
                 format!("{:+.2} packets", verdict.value - bound.expected)
             }
             Metric::SteadyGoodputBps => {
@@ -1548,6 +1611,9 @@ fn synthetic(delays_ms: &[f64], loss: f64, reordered: f64, goodput: f64) -> Meas
         damaged_ratio: 0.0,
         named_share: 0.0,
         named_excess: 0.0,
+        jitter_mean_ms: 0.0,
+        extent_mean: 0.0,
+        late_time_mean_ms: 0.0,
         unaccounted: 0.0,
         sent: 0,
         kernel: String::new(),
@@ -1807,6 +1873,23 @@ fn canary_a_checksum_that_is_on_or_a_corruption_that_is_missing_fails_the_case_w
         none.contains(&Metric::DamagedRatio) && none.contains(&Metric::LossRatio),
         "{none:?}"
     );
+}
+
+/// A link without a jitter has no jitter and reorders nothing: the cases for the jitter fail it, with the jitter
+/// as NaN for the extent (nothing was reordered) and near zero for the estimate.
+#[test]
+fn canary_a_link_without_a_jitter_fails_the_jitter_and_the_extent() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let none = wrong_on_purpose("4-jitter-uniform", "delay: 20ms", 3, 1);
+    for metric in [
+        Metric::JitterMeanMs,
+        Metric::ExtentMean,
+        Metric::LateTimeMeanMs,
+    ] {
+        assert!(none.contains(&metric), "{metric:?} passed: {none:?}");
+    }
 }
 
 /// The tally must add up. A measurement in which a packet is missing from it fails the judging.

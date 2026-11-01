@@ -185,6 +185,9 @@ The seed of one direction is derived from the seed of the run, the index of the 
 | `loss_ratio` | `lost / sent` (0 if nothing was sent), a number between 0 and 1. |
 | `duplicates` | Arrivals of a packet that had arrived before. They are not counted in `received` and not in the delays. |
 | `reordered` | Packets that arrived after a packet with a higher sequence number (RFC 4737, type-P-reordered). A packet that is overtaken by several counts once; duplicates are not counted. `netem` reorders packets when the jitter is larger than the gap between them ([FIDELITY.md](FIDELITY.md)). |
+| `reordering` | How far the reordered packets were out of place (RFC 4737), or `null` if none was: `extent` (`max`, `mean`, `p50`, `p95`, `p99`, in packets) and `late_time` (`max_ns`, `mean_ns`, `p50_ns`, `p95_ns`, `p99_ns`). See "The pattern of the arrivals" below. |
+| `jitter` | The interarrival jitter of RFC 3550, or `null` for fewer than two arrivals: `last_ns`, `mean_ns` and `max_ns` of the running estimate. See below. |
+| `loss_runs` | The runs of lost packets (RFC 3357): `runs`, `longest`, `mean` (0 if nothing was lost) and `histogram`, a list of `{length, runs}` by ascending length. See below. |
 | `unexpected` | Records with a sequence number the sender never used. Always 0 with a correct sender and receiver; a value above 0 is a bug to report. |
 | `delay` | The one-way delay of the packets that arrived (the first arrival of each), in nanoseconds: `min_ns`, `mean_ns` (rounded down), `p50_ns`, `p90_ns`, `p95_ns`, `p99_ns`, `p999_ns`, `max_ns`; `null` if no packet arrived. |
 | `throughput` | `bin_ns` (one second) and `bits_per_second`: the payload bits that arrived in each second, counted from the moment the first packet was sent. See below. |
@@ -196,6 +199,23 @@ The seed of one direction is derived from the seed of the run, the index of the 
 | `corrupted_seq` | The first 1,000 of those sequence numbers, in ascending order; `--packets` marks all of them. |
 | `corrupted_seq_unavailable` | Why a direction that corrupts could not be named, if it could not: the receiver needs `CAP_NET_RAW` in the node to read the interface (the run goes on without it), and the names are withdrawn where the node dropped datagrams for a full receive buffer, because a packet that is missing then may not be damaged. |
 | `records_file`, `packets_file` | The files of this workload, relative to `result.json`. `packets_file` is `null` unless the export was asked for. |
+
+### The pattern of the arrivals (PRB-04, PRB-06)
+
+The ratio of lost packets and the delays do not say how the packets are spread. Three numbers do, each from the **first arrivals** in the order they happened (a packet that arrives twice counts once, at its first arrival):
+
+- **Reordering.** A packet is reordered if it arrives after a packet with a higher number (`reordered`). Its **extent** is the number of arrivals between it and the earliest-arrived packet with a higher number (RFC 4737, section 4.2): a packet that comes right after the one that overtook it has extent 1; the largest extent is about the room a buffer needs to put the packets back in order. Its **late time** is the time between those two arrivals (section 4.3): how long that buffer would have waited. Both are over the reordered packets only. The code is checked against all the worked examples of the RFC, including the late times, and against the definition on every order of six packets.
+- **Jitter.** The estimate of RFC 3550 (appendix A.8): for two packets that arrive one after the other, `D = (R_j - R_i) - (S_j - S_i)` is the difference of their transit times, and the estimate moves a sixteenth of the way to `|D|` with every packet. The pairs are **in the order of arrival**, as the RFC says, so a packet that is reordered makes a large `D`; for a link with a jitter this is more than the spread of the delays divided by three (a uniform delay of 10 ms gives 3.5 ms, measured and modelled, not 10 / 3 = 3.3). Send and receive times are readings of the one clock of the machine, so `D` is exact. The RFC defines the running estimate; a test wants one number for a run, so the result has `last_ns` (the estimate after the last packet, what a report at the end would carry), `mean_ns` (its mean over the run, which does not depend on the last sixteen packets: **use this one in a test**) and `max_ns`.
+- **Loss runs.** A run is a stretch of consecutive sequence numbers none of which arrived (the "loss period" of RFC 3357). Independent loss gives mostly runs of length 1, bursts give longer ones: a link that loses 5 % in bursts of 10 and a link that loses 5 % one packet at a time are told apart here and nowhere else. A packet that arrived damaged (`corrupted`) did not arrive and is in a run, as it is in `lost`.
+
+Real numbers of `scenarios/lte-like.yaml` (30 s, a normal jitter of 5 ms, 0.75 % loss):
+
+```json
+"reordering": { "extent": { "max": 5, "mean": 1.46, "p50": 1, "p95": 3, "p99": 4 },
+                "late_time": { "max_ns": 20743100, "mean_ns": 4234990, "p50_ns": 3402984, "p95_ns": 11335475, "p99_ns": 15068642 } },
+"jitter": { "last_ns": 5267369, "mean_ns": 5961500, "max_ns": 9546054 },
+"loss_runs": { "runs": 47, "longest": 1, "mean": 1.0, "histogram": [ { "length": 1, "runs": 47 } ] }
+```
 
 ### `directions` (D-040)
 
@@ -235,5 +255,5 @@ One JSON object on each line, one line for each packet of the workload, in the o
 ## What a result does not say
 
 - **Round trip time** (PRB-12) is not measured in release 0.1; the one-way delay is. The round trip needs a workload that is answered (WRK-05, release 0.3).
-- **The extent of reordering** (PRB-04: how far a packet is out of place, and the RFC 3550 jitter) is not measured; `reordered` counts the packets, and the export shows which ones (a sequence number that arrives after a higher one).
+- **The other metrics of RFC 4737** (the byte offset and the gap between reordered packets) and the loss distance of RFC 3357 are not computed. The export of every packet has what they need.
 - A packet that needed longer than `settle_ns` counts as lost. With a rate limit that builds a long queue, set the `settle` (the option exists in the library; the command line follows).

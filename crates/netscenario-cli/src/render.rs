@@ -110,6 +110,46 @@ fn directions_text(text: &mut String, result: &RunResult) {
     }
 }
 
+/// A time with three decimals, for the jitter, which is often a fraction of a millisecond.
+fn ms_fine(ns: u64) -> String {
+    #[allow(clippy::cast_precision_loss)] // delays are far below 2^52 nanoseconds
+    let value = ns as f64 / 1e6;
+    format!("{value:.3} ms")
+}
+
+/// The lines about the pattern of the arrivals: the order (RFC 4737), the jitter (RFC 3550) and the runs of lost
+/// packets, each only where there is something to say (PRB-04, PRB-06).
+fn pattern_lines(text: &mut String, stats: &netscenario_core::stats::FlowStats) {
+    if let Some(reordering) = &stats.reordering {
+        let _ = writeln!(
+            text,
+            "  reordering  extent max {}  mean {:.1}  p95 {}  late time max {}  p95 {}",
+            reordering.extent.max,
+            reordering.extent.mean,
+            reordering.extent.p95,
+            ms(reordering.late_time.max_ns),
+            ms(reordering.late_time.p95_ns)
+        );
+    }
+    if let Some(jitter) = &stats.jitter {
+        let _ = writeln!(
+            text,
+            "  jitter  mean {}  last {}  max {}  (RFC 3550)",
+            ms_fine(jitter.mean_ns),
+            ms_fine(jitter.last_ns),
+            ms_fine(jitter.max_ns)
+        );
+    }
+    let runs = &stats.loss_runs;
+    if runs.runs > 0 {
+        let _ = writeln!(
+            text,
+            "  loss runs  {} runs  longest {}  mean {:.2}",
+            runs.runs, runs.longest, runs.mean
+        );
+    }
+}
+
 /// How many sequence numbers of damaged packets the summary shows; the result has up to 1,000 and the count.
 const MAX_NAMED_SHOWN: usize = 8;
 
@@ -199,6 +239,7 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
             let _ = writeln!(text, "  delay  no packet arrived");
         }
     }
+    pattern_lines(text, stats);
     let bins = &stats.throughput.bits_per_second;
     if bins.len() <= MAX_LISTED_SECONDS {
         let seconds: Vec<String> = bins.iter().map(|bits| rate(*bits)).collect();
@@ -407,6 +448,45 @@ result: out/result.json
         assert!(
             summary(&result, Path::new("out"))
                 .contains("damaged packets could not be named: CAP_NET_RAW is missing")
+        );
+    }
+
+    #[test]
+    fn the_pattern_of_the_arrivals_is_shown_only_where_there_is_something_to_show() {
+        let mut result = result();
+        let plain = summary(&result, Path::new("out"));
+        assert!(
+            !plain.contains("reordering  extent") && !plain.contains("loss runs"),
+            "{plain}"
+        );
+        let json = serde_json::to_value(&result).unwrap();
+        let mut json = json;
+        let stats = &mut json["workloads"][0];
+        stats["reordering"] = serde_json::json!({
+            "extent": {"max": 4, "mean": 1.5, "p50": 1, "p95": 4, "p99": 4},
+            "late_time": {"max_ns": 3_000_000, "mean_ns": 1_000_000, "p50_ns": 1_000_000, "p95_ns": 3_000_000, "p99_ns": 3_000_000}
+        });
+        stats["jitter"] =
+            serde_json::json!({"last_ns": 180_000, "mean_ns": 150_000, "max_ns": 210_000});
+        stats["loss_runs"] = serde_json::json!({
+            "runs": 3, "longest": 2, "mean": 1.67,
+            "histogram": [{"length": 1, "runs": 2}, {"length": 2, "runs": 1}]
+        });
+        result = RunResult::from_json(&json.to_string()).unwrap();
+        let text = summary(&result, Path::new("out"));
+        assert!(
+            text.contains(
+                "reordering  extent max 4  mean 1.5  p95 4  late time max 3.0 ms  p95 3.0 ms"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("jitter  mean 0.150 ms  last 0.180 ms  max 0.210 ms  (RFC 3550)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("loss runs  3 runs  longest 2  mean 1.67"),
+            "{text}"
         );
     }
 
