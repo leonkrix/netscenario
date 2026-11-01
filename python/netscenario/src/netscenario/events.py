@@ -2,9 +2,10 @@
 
 The events come in this order: :class:`Provisioned`, :class:`ReceiversReady`, :class:`Started`,
 :class:`Progress` (once a second, and a last time at the full length), :class:`Settling`,
-:class:`Collecting`, :class:`TearingDown` and :class:`Finished`. :class:`TearingDown` also comes
-after an error or a cancel; :class:`Finished` only after a run that succeeded. All times are in
-seconds.
+:class:`Collecting`, :class:`TearingDown` and :class:`Finished`; a :class:`StepDone` for each
+step of the timeline comes between :class:`Started` and :class:`Settling`. :class:`TearingDown`
+also comes after an error or a cancel; :class:`Finished` only after a run that succeeded. All
+times are in seconds.
 """
 
 from __future__ import annotations
@@ -71,6 +72,16 @@ class Finished:
     """The run is done and its result is written."""
 
 
+@dataclass(frozen=True)
+class StepDone:
+    """A step of the timeline was done: an impairment of a link changed."""
+
+    event: int
+    """The place of the event in ``timeline`` of the scenario."""
+    lateness: float
+    """How late the step was, in seconds: from the moment the file gives to its end."""
+
+
 RunEvent = (
     Provisioned
     | ReceiversReady
@@ -80,6 +91,7 @@ RunEvent = (
     | Collecting
     | TearingDown
     | Finished
+    | StepDone
 )
 """Any of the events of a run."""
 
@@ -103,6 +115,8 @@ def make_event(kind: str, fields: dict[str, float]) -> RunEvent | None:
             return TearingDown()
         case "finished":
             return Finished()
+        case "step_done":
+            return StepDone(event=int(fields["event"]), lateness=fields["lateness"])
         case _:
             # An event of a newer core than this package knows: it is not passed on
             return None
