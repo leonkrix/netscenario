@@ -55,6 +55,12 @@ pub trait Barriers {
     /// Waits for the answer to `id`. `true` if it came, `false` if the sender gave up waiting (it goes on, and the
     /// summary says so, because the guarantee of D-038 does not hold for that barrier).
     fn wait(&mut self, id: u32) -> bool;
+
+    /// Whether the run has told the sender to stop (D-066). It is looked at before every packet and while the sender
+    /// waits for the next one. The default never stops.
+    fn stopped(&self) -> bool {
+        false
+    }
 }
 
 /// Asks the barriers of `planned` from index `from` on that belong to `packet`, and notes when.
@@ -173,17 +179,25 @@ impl fmt::Display for SendError {
 impl std::error::Error for SendError {}
 
 /// Waits until `CLOCK_MONOTONIC` reads `target_ns`: it sleeps while the moment is far away and spins for the
-/// last stretch, because a sleep wakes up some tens of microseconds late.
-fn wait_until(target_ns: u64) {
+/// last stretch, because a sleep wakes up some tens of microseconds late. A sleep is never longer than
+/// `LONGEST_SLEEP_NS`, so that a stop (`stopped`) is noticed within that time also by a stream of one packet a
+/// minute. `false` if it was stopped.
+fn wait_until(target_ns: u64, stopped: &dyn Fn() -> bool) -> bool {
     const SPIN_NS: u64 = 150_000;
+    const LONGEST_SLEEP_NS: u64 = 20_000_000;
     loop {
+        if stopped() {
+            return false;
+        }
         let now = monotonic_ns();
         if now >= target_ns {
-            return;
+            return true;
         }
         let remaining = target_ns - now;
         if remaining > SPIN_NS * 2 {
-            std::thread::sleep(Duration::from_nanos(remaining - SPIN_NS));
+            std::thread::sleep(Duration::from_nanos(
+                (remaining - SPIN_NS).min(LONGEST_SLEEP_NS),
+            ));
         } else {
             std::hint::spin_loop();
         }
@@ -260,6 +274,7 @@ pub fn run_with(
         first_error: None,
         refused: Vec::new(),
         refused_unrecorded: 0,
+        stopped: false,
         barriers: Vec::new(),
         barrier_timeouts: 0,
     };
@@ -269,7 +284,10 @@ pub fn run_with(
     ask(planned, 0, 0, &mut asked, barriers);
     for n in 0..count {
         let due = start.saturating_add(stream.offset_ns(n));
-        wait_until(due);
+        if !wait_until(due, &|| barriers.stopped()) {
+            summary.stopped = true;
+            break;
+        }
         // What the run is to do before this packet is done by now, or the packet waits for it
         while let Some((barrier, asked_at)) = asked.get(next_barrier).copied() {
             if barrier.packet != n {
@@ -286,6 +304,11 @@ pub fn run_with(
                 held_ns: monotonic_ns().saturating_sub(began),
             });
             next_barrier += 1;
+        }
+        // A stop that came while the packet waited for the run (or just now) ends the stream before the packet
+        if barriers.stopped() {
+            summary.stopped = true;
+            break;
         }
         let now = monotonic_ns();
         let Ok(sequence) = u32::try_from(n) else {
@@ -371,6 +394,7 @@ mod tests {
             first_error: None,
             refused: Vec::new(),
             refused_unrecorded: 0,
+            stopped: false,
             barriers: Vec::new(),
             barrier_timeouts: 0,
         }
@@ -403,6 +427,63 @@ mod tests {
         note_refused(&mut sent, last[1] + 1);
         assert_eq!(sent.refused.last().unwrap()[1], last[1] + 1);
         assert_eq!(sent.refused_unrecorded, 1);
+    }
+
+    /// A run that tells the sender to stop after `after`.
+    struct StopsAfter {
+        flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl StopsAfter {
+        fn new(after: Duration) -> Self {
+            let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let setter = std::sync::Arc::clone(&flag);
+            std::thread::spawn(move || {
+                std::thread::sleep(after);
+                setter.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            Self { flag }
+        }
+    }
+
+    impl Barriers for StopsAfter {
+        fn ask(&mut self, _id: u32, _packet: u64) {}
+        fn wait(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn stopped(&self) -> bool {
+            self.flag.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    /// A stop ends the stream before its end, with the packets sent so far in the summary, and the sender does not
+    /// wait for the next packet of a slow stream to notice it (D-066). 1 packet a second for a minute: stopped after
+    /// 300 ms, it returns in far less than a second; the packets that were never sent are not in the summary.
+    #[test]
+    fn a_stop_ends_the_stream_early_also_when_the_next_packet_is_far_away() {
+        // 8,000 bits a second in packets of 1,000 bytes is one packet a second
+        let mut stream = config(8_000, 1000, 60_000_000_000);
+        stream.target = ([127, 0, 0, 1], 9).into();
+        let began = std::time::Instant::now();
+        let summary = run_with(&stream, &mut StopsAfter::new(Duration::from_millis(300))).unwrap();
+        assert!(summary.stopped);
+        assert_eq!(summary.packets, 1, "only the packet at the start was sent");
+        assert!(
+            began.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            began.elapsed()
+        );
+    }
+
+    /// Canary: without a stop the same stream goes on to its end, so the test above does not pass by the stream being
+    /// short.
+    #[test]
+    fn without_a_stop_the_stream_goes_on_to_its_end() {
+        let mut stream = config(800_000, 1000, 300_000_000);
+        stream.target = ([127, 0, 0, 1], 9).into();
+        let summary = run_with(&stream, &mut NoBarriers).unwrap();
+        assert!(!summary.stopped);
+        assert_eq!(summary.packets + summary.errors, 30);
     }
 
     #[test]
@@ -440,7 +521,7 @@ mod tests {
     #[test]
     fn waiting_ends_at_the_moment_and_not_before() {
         let target = monotonic_ns() + 3_000_000;
-        wait_until(target);
+        wait_until(target, &|| false);
         let now = monotonic_ns();
         assert!(now >= target);
         assert!(
@@ -449,6 +530,6 @@ mod tests {
             now - target
         );
         // A moment in the past returns at once
-        wait_until(1);
+        wait_until(1, &|| false);
     }
 }

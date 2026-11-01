@@ -142,6 +142,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `addresses` | The IPv4 address of each end of each link: `node`, `link`, `address`. They are assigned by the backend (`10.100.n.1` and `.2` for link `n` in the Kernel backend) and are not part of the scenario. |
 | `timing.duration_ns` | The `duration` of the scenario. |
 | `timing.settle_ns` | How long the run waited after the last packet was sent for the packets still in the network. A packet that needs longer counts as lost. Without a setting this is one second plus twice the longest hold of the scenario (the largest delay plus four times the largest jitter of any direction). |
+| `timing.interrupted_ns` | `null` for a run that went to its end. If the run was interrupted while the workloads ran (Ctrl-C on the command line, D-066): how long after the start of the measured phase the senders were told to stop. The workloads ended there, the later steps of the timeline were not done, `settle_ns` was waited all the same, and everything in the result is about the part that ran. |
 | `workloads` | One entry for each workload, in the order of the scenario. |
 | `directions` | Where the packets of each direction went, below. |
 | `events` | What the run did to the links while it ran (the timeline), below. Empty for a scenario without one. |

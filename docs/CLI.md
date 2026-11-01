@@ -27,6 +27,7 @@ They are part of the interface. A script can rely on them.
 | 2 | The command line or the scenario is wrong: an unknown option, a file that cannot be read, a scenario with problems, or a scenario that asks for something the backend cannot reproduce exactly (the message names the feature, the backend and the way out). |
 | 3 | The machine does not allow the run: a tool or a permission is missing (`doctor` fails, the agent is not next to the program, the namespaces cannot be created). Run `netscenario doctor`. |
 | 4 | The run failed after it started: an agent did not start, did not answer or ended badly. The network is torn down all the same. |
+| 130, 143 | The run was interrupted by SIGINT (Ctrl-C) or SIGTERM (`kill`): 128 and the number of the signal. If the workloads had begun, a result of the part that ran was written and printed (see below); otherwise there is none. |
 
 Errors go to standard error, results to standard output; with `--json` standard output is JSON and nothing else.
 
@@ -43,6 +44,8 @@ netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--packe
 | `--settle <duration>` | How long to wait after the last packet for the packets still in the network, for example `2s`. Default: one second and twice the longest delay of the scenario. A packet that needs longer counts as lost. Use it for a rate limit that builds a long queue. |
 | `--packets` | Also write `packets-<id>.jsonl` with one line for each packet ([RESULTS.md](RESULTS.md)). |
 | `--json` | Print `result.json` on standard output instead of the summary. The file is written either way. |
+
+**Ctrl-C** (or SIGTERM) while the workloads run stops them, waits for the packets that are still in the network (the settle time), writes the result of the part that ran and exits with 130 (143). The summary says how long it ran, and `result.json` has `timing.interrupted_ns`. The steps of the timeline that were not due are not done, and the packets that were not sent are not lost: the result counts what the senders sent. **Ctrl-C a second time quits at once**; the network is removed all the same (D-022). The supervisor, the nodes and the agents are in a process group of their own, so the signal of the terminal reaches the program only and the run can stop in an orderly way (D-066).
 
 On a terminal, one line shows how far the run is (`running, 12 of 30 s`) and is erased before the summary; in a file or a CI log, where standard error is not a terminal, one line says what runs. Nothing about progress goes to standard output.
 

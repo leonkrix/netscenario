@@ -2,6 +2,7 @@
 
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -235,7 +236,12 @@ impl KernelBackend {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            // A process group of its own: the signal that a terminal sends for Ctrl-C goes to the program that was
+            // started from the terminal and not to the supervisor, the nodes and the agents, so the program can stop
+            // the run in an orderly way and keep what it has (D-066). If the program dies, the pipe of the supervisor
+            // closes and it tears the network down (D-022), as before.
+            .process_group(0);
         // The tools answer in English whatever the language of the user is: the hints below look for their words
         command.env("LC_ALL", "C");
         if let Some(point) = &self.options.fail_at {

@@ -7,7 +7,7 @@
 //!
 //! The network is torn down whatever happens. If the run fails, the first error is returned.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -77,6 +77,12 @@ pub struct RunOptions {
     /// result then says that the lost packets are not promised to repeat, if a step changes what is drawn. It
     /// exists for the tests that show what the barrier is for. Default `true`.
     pub barriers: bool,
+    /// What a cancel does while the workloads run (D-066). `false`, the default: the run ends with
+    /// [`Error::Cancelled`] as before. `true`: the senders are told to stop, the run waits for the packets that are
+    /// in the network, collects the records and returns a result of the part that ran, with
+    /// `timing.interrupted_ns` set. A cancel before the workloads begin, or after they ended, is
+    /// [`Error::Cancelled`] either way: there is nothing to keep, or the result is whole.
+    pub partial_on_cancel: bool,
 }
 
 impl std::fmt::Debug for RunOptions {
@@ -91,6 +97,7 @@ impl std::fmt::Debug for RunOptions {
             .field("observer", &self.observer.as_ref().map(|_| "<observer>"))
             .field("cancel", &self.cancel)
             .field("barriers", &self.barriers)
+            .field("partial_on_cancel", &self.partial_on_cancel)
             .finish()
     }
 }
@@ -109,6 +116,7 @@ impl RunOptions {
             observer: None,
             cancel: CancelToken::new(),
             barriers: true,
+            partial_on_cancel: false,
         }
     }
 
@@ -123,6 +131,14 @@ impl RunOptions {
     #[must_use]
     pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
         self.cancel = cancel;
+        self
+    }
+
+    /// The same options, with a cancel while the workloads run giving the result of the part that ran
+    /// ([`partial_on_cancel`](RunOptions::partial_on_cancel)).
+    #[must_use]
+    pub fn with_partial_on_cancel(mut self) -> Self {
+        self.partial_on_cancel = true;
         self
     }
 }
@@ -142,6 +158,12 @@ pub(crate) struct Control<'a> {
     cancel: &'a CancelToken,
     observer: Option<&'a dyn RunObserver>,
     workloads: RefCell<Option<Workloads>>,
+    /// A cancel while the workloads run ends them and keeps the result (D-066).
+    partial: bool,
+    /// Whether the workloads are running.
+    measuring: Cell<bool>,
+    /// Whether a cancel was taken as an interruption: from then on a cancel is not an error any more.
+    interrupted: Cell<bool>,
 }
 
 impl<'a> Control<'a> {
@@ -150,7 +172,25 @@ impl<'a> Control<'a> {
             cancel: &options.cancel,
             observer: options.observer.as_deref(),
             workloads: RefCell::new(None),
+            partial: options.partial_on_cancel,
+            measuring: Cell::new(false),
+            interrupted: Cell::new(false),
         }
+    }
+
+    /// Whether the run was cancelled while the workloads run and it keeps what it has: `true` once, at the first time
+    /// it is asked after the cancel, and the observer is told. The loop that runs the workloads asks it.
+    pub(crate) fn take_interruption(&self) -> bool {
+        if self.partial
+            && self.measuring.get()
+            && !self.interrupted.get()
+            && self.cancel.is_cancelled()
+        {
+            self.interrupted.set(true);
+            self.emit(&RunEvent::Interrupted);
+            return true;
+        }
+        false
     }
 
     pub(crate) fn emit(&self, event: &RunEvent) {
@@ -162,7 +202,10 @@ impl<'a> Control<'a> {
     /// Called in every loop that waits and between the steps: stops the run if it was cancelled, and reports
     /// the progress of the workloads once a second.
     pub(crate) fn checkpoint(&self) -> Result<(), Error> {
-        if self.cancel.is_cancelled() {
+        // A cancel that is taken as an interruption is not an error: the run goes on to its end with what it has
+        if self.cancel.is_cancelled()
+            && !(self.partial && (self.measuring.get() || self.interrupted.get()))
+        {
             return Err(Error::Cancelled);
         }
         let report = {
@@ -188,6 +231,7 @@ impl<'a> Control<'a> {
 
     /// The workloads begin at `begin` and last `total`.
     fn workloads_started(&self, begin: Instant, total: Duration) {
+        self.measuring.set(true);
         *self.workloads.borrow_mut() = Some(Workloads {
             begin,
             total,
@@ -198,6 +242,7 @@ impl<'a> Control<'a> {
 
     /// The workloads are over: a last report at the full length.
     fn workloads_done(&self) {
+        self.measuring.set(false);
         let done = self.workloads.borrow_mut().take();
         if let Some(w) = done {
             self.emit(&RunEvent::Progress {
@@ -262,6 +307,8 @@ struct Measurement {
     directions: Vec<DirectionTally>,
     events: Vec<EventRecord>,
     notes: Vec<String>,
+    /// When the workloads were told to stop, if the run was interrupted (D-066).
+    interrupted_ns: Option<u64>,
     /// Why the steps of the timeline may not give the same lost packets for the same seed (see [`barriers::plan`]).
     clock_reasons: Vec<String>,
 }
@@ -306,6 +353,7 @@ pub fn run(
         directions,
         events,
         notes,
+        interrupted_ns,
         clock_reasons,
     } = measured?;
     torn_down?;
@@ -366,6 +414,7 @@ pub fn run(
         timing: Timing {
             duration_ns: nanos(Duration::from(scenario.duration)),
             settle_ns: nanos(settle),
+            interrupted_ns,
         },
         workloads,
         directions,
@@ -912,6 +961,7 @@ fn measure(
     )?;
     let sent = driven.sent;
     let events = driven.events;
+    let interrupted_ns = driven.interrupted_ns;
     control.workloads_done();
 
     // The packets that are still in the network arrive before the receivers are told to stop
@@ -942,6 +992,7 @@ fn measure(
         directions,
         events,
         notes: backend.notes(),
+        interrupted_ns,
         clock_reasons: plan.reasons,
     })
 }
@@ -1281,6 +1332,8 @@ mod tests {
         exit: Option<ProgramExit>,
         stderr: String,
         stops_on_line: bool,
+        /// A sender that goes on until it is told to stop (D-066).
+        ends_on_stop: bool,
     }
 
     impl Fake {
@@ -1344,6 +1397,7 @@ mod tests {
                 exit: Some(ProgramExit::Code(0)),
                 stderr: String::new(),
                 stops_on_line: false,
+                ends_on_stop: false,
             }
         }
 
@@ -1505,6 +1559,7 @@ mod tests {
                     exit: Some(ProgramExit::Code(1)),
                     stderr: "cannot listen on 10.100.0.2:5000: address in use".to_owned(),
                     stops_on_line: false,
+                    ends_on_stop: false,
                 },
                 "recv" => {
                     // Ten packets sent, the ones with sequence numbers 3 and 7 never arrived
@@ -1553,6 +1608,7 @@ mod tests {
                         exit: None,
                         stderr: String::new(),
                         stops_on_line: true,
+                        ends_on_stop: false,
                     }
                 }
                 "send" if self.trouble == Some("send-fails") => Played {
@@ -1560,6 +1616,7 @@ mod tests {
                     exit: Some(ProgramExit::Code(1)),
                     stderr: "cannot reach 10.100.0.2:5000: network is unreachable".to_owned(),
                     stops_on_line: false,
+                    ends_on_stop: false,
                 },
                 "send" if self.trouble == Some("send-refused") => {
                     // Two of ten sequence numbers were refused by the kernel: eight packets went into the link
@@ -1568,8 +1625,16 @@ mod tests {
                         exit: Some(ProgramExit::Code(0)),
                         stderr: String::new(),
                         stops_on_line: false,
+                        ends_on_stop: false,
                     }
                 }
+                "send" if self.trouble == Some("sender-waits-for-stop") => Played {
+                    lines: VecDeque::new(),
+                    exit: None,
+                    stderr: String::new(),
+                    stops_on_line: false,
+                    ends_on_stop: true,
+                },
                 "send" => self.play_sender(argv),
                 other => panic!("unexpected {other}"),
             };
@@ -1596,6 +1661,10 @@ mod tests {
         fn send_line(&mut self, program: ProgramHandle, line: &str) -> Result<(), Error> {
             self.calls.push(format!("line {line}"));
             let played = &mut self.programs[program.0 as usize];
+            if played.ends_on_stop && line == "stop" {
+                played.lines.push_back(r#"{"event":"sent","flow":0,"packets":5,"first_send_ns":1000,"last_send_ns":400001000,"max_lateness_ns":1234,"errors":0,"first_error":null,"stopped":true}"#.to_owned());
+                played.exit = Some(ProgramExit::Code(0));
+            }
             if played.stops_on_line && line == "stop" {
                 let wire = self.wire_packets.map_or_else(String::new, |packets| {
                     format!(r#","wire_packets":{packets}"#)
@@ -2045,6 +2114,103 @@ mod tests {
                 .any(|why| why.contains("barriers are switched off")),
             "{because:?}"
         );
+    }
+
+    /// A cancel that keeps the result (D-066): the senders are told to stop, the run goes on through the settling and
+    /// the collecting, and the result says when the workloads were stopped. The sender here never ends by itself.
+    #[test]
+    fn a_cancel_that_keeps_the_result_stops_the_senders_and_returns_what_was_recorded() {
+        let token = CancelToken::new();
+        let heard = Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+        let observer = {
+            let (token, heard) = (token.clone(), Arc::clone(&heard));
+            Arc::new(move |event: &RunEvent| {
+                let name = match event {
+                    RunEvent::Started { .. } => {
+                        // The user presses Ctrl-C just as the workloads begin
+                        token.cancel();
+                        "started"
+                    }
+                    RunEvent::Interrupted => "interrupted",
+                    RunEvent::Settling { .. } => "settling",
+                    RunEvent::Collecting => "collecting",
+                    RunEvent::Finished => "finished",
+                    _ => return,
+                };
+                heard.lock().unwrap().push(name);
+            })
+        };
+        let mut backend = Fake::new(Some("sender-waits-for-stop"));
+        let options = self::options("interrupt-kept")
+            .with_observer(observer)
+            .with_cancel(token)
+            .with_partial_on_cancel();
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        assert!(result.timing.interrupted_ns.is_some());
+        assert_eq!(
+            *heard.lock().unwrap(),
+            [
+                "started",
+                "interrupted",
+                "settling",
+                "collecting",
+                "finished"
+            ]
+        );
+        // The sender was told to stop once, and what it said is in the result
+        let stops = backend
+            .calls
+            .iter()
+            .filter(|call| *call == "line stop")
+            .count();
+        assert_eq!(
+            stops, 2,
+            "one for the sender and one for the receiver at the end"
+        );
+        assert_eq!(result.workloads[0].stats.sent, 5);
+        assert_eq!(backend.calls.last().map(String::as_str), Some("teardown"));
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Canaries: without the option the same cancel is an error, and with it a cancel before the workloads begin has
+    /// nothing to keep and is an error too.
+    #[test]
+    fn a_cancel_without_the_option_or_before_the_workloads_is_an_error() {
+        let token = CancelToken::new();
+        let observer = {
+            let token = token.clone();
+            Arc::new(move |event: &RunEvent| {
+                if matches!(event, RunEvent::Started { .. }) {
+                    token.cancel();
+                }
+            })
+        };
+        let mut backend = Fake::new(Some("sender-waits-for-stop"));
+        let options = self::options("interrupt-error")
+            .with_observer(observer)
+            .with_cancel(token);
+        let error = run(&mut backend, &scenario(), &options).unwrap_err();
+        assert!(matches!(error, Error::Cancelled), "{error}");
+        assert_eq!(backend.calls.last().map(String::as_str), Some("teardown"));
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+
+        let token = CancelToken::new();
+        let observer = {
+            let token = token.clone();
+            Arc::new(move |event: &RunEvent| {
+                if matches!(event, RunEvent::ReceiversReady { .. }) {
+                    token.cancel();
+                }
+            })
+        };
+        let mut backend = Fake::new(Some("sender-waits-for-stop"));
+        let options = self::options("interrupt-early")
+            .with_observer(observer)
+            .with_cancel(token)
+            .with_partial_on_cancel();
+        let error = run(&mut backend, &scenario(), &options).unwrap_err();
+        assert!(matches!(error, Error::Cancelled), "{error}");
+        let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 
     /// Two workloads that send into one direction whose queue draws random numbers are not a repeatable experiment,

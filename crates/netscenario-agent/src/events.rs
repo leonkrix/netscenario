@@ -69,6 +69,10 @@ pub struct SendSummary {
     /// The barriers that were asked and answered (D-038), in the order they were asked.
     #[serde(default)]
     pub barriers: Vec<BarrierDone>,
+    /// Whether the run told the sender to stop (a line `stop` on its standard input, D-066) and it ended before the
+    /// end of its stream. The packets it did not send are not lost, they were never sent.
+    #[serde(default)]
+    pub stopped: bool,
     /// How many barriers were not answered in time: the sender went on without the answer, so the guarantee of
     /// D-038 does not hold for them. The run fails on it.
     #[serde(default)]
@@ -139,6 +143,7 @@ mod tests {
             first_error: Some("Network is unreachable".to_owned()),
             refused: vec![[1, 2]],
             refused_unrecorded: 0,
+            stopped: false,
             barriers: Vec::new(),
             barrier_timeouts: 0,
         });

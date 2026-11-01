@@ -439,6 +439,10 @@ class Result:
     """The length of the measured phase, in seconds."""
     settle: float
     """How long the run waited for the packets still in the network, in seconds."""
+    interrupted: float | None
+    """If the run was interrupted while the workloads ran and kept what it had: how many seconds
+    after the start of the measured phase the senders were told to stop. ``None`` for a run that
+    went to its end."""
     workloads: Mapping[str, Workload]
     """The workloads by id, in the order of the scenario."""
     out_dir: Path
@@ -519,6 +523,11 @@ class Result:
             addresses=tuple(Address(a["node"], a["link"], a["address"]) for a in raw["addresses"]),
             duration=_seconds(raw["timing"]["duration_ns"]),
             settle=_seconds(raw["timing"]["settle_ns"]),
+            interrupted=(
+                None
+                if raw["timing"].get("interrupted_ns") is None
+                else _seconds(raw["timing"]["interrupted_ns"])
+            ),
             workloads=MappingProxyType(workloads),
             directions=tuple(
                 DirectionTally(

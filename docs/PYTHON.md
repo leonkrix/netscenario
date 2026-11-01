@@ -115,7 +115,7 @@ result = ns.run(scenario, observer=show, cancel=token)   # token.cancel() from a
 
 The events are `Provisioned`, `ReceiversReady`, `Started`, `Progress` (once a second), `Settling`, `Collecting`, `TearingDown` and `Finished`, and a `StepDone` (the event of the timeline and how late it was) for each step of a timeline, between `Started` and `Settling` ([ARCHITECTURE.md](ARCHITECTURE.md), "Watching and stopping a run"). An exception in the observer stops the run and is raised.
 
-`ns.run` blocks, but it gives up the GIL and looks for interrupts every 100 ms. **Ctrl-C** (`KeyboardInterrupt`) and `pytest-timeout` stop the run: the network is torn down first, then the interrupt is raised. A run cannot be left behind: everything runs in a PID namespace that the kernel ends when the run's supervisor dies (D-022).
+`ns.run` blocks, but it gives up the GIL and looks for interrupts every 100 ms. **Ctrl-C** (`KeyboardInterrupt`) and `pytest-timeout` stop the run: the network is torn down first, then the interrupt is raised. A cancel from Python is an error and not a partial result: the option that keeps what was recorded (`RunOptions::partial_on_cancel`, D-066) is for the command line. A run cannot be left behind: everything runs in a PID namespace that the kernel ends when the run's supervisor dies (D-022).
 
 ## The programs of a run
 

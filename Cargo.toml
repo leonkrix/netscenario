@@ -28,6 +28,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The agent reads the clock and sets socket buffers through this safe interface, so no crate of ours needs `unsafe`
 rustix = { version = "1", default-features = false, features = ["std", "time", "net"] }
+# The command line stops a run in an orderly way on Ctrl-C (D-066). The handler of the signal is in this crate, so no crate of
+# ours needs `unsafe`
+signal-hook = "0.4"
 serde-saphyr = "2"
 # The parser that serde-saphyr uses; read directly to find the position of every value in the file
 granit-parser = "2"

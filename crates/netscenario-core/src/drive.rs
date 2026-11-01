@@ -52,6 +52,9 @@ pub(crate) struct Driven {
     pub(crate) sent: Vec<SendSummary>,
     /// The steps that were done, in the order they were done.
     pub(crate) events: Vec<EventRecord>,
+    /// If the run was cancelled and keeps what it has (D-066): when the senders were told to stop, in nanoseconds from
+    /// the start of the workloads.
+    pub(crate) interrupted_ns: Option<u64>,
 }
 
 /// Below this a wait for a step is a sleep to the exact moment and not a wait for news of a sender: the wait for
@@ -98,8 +101,22 @@ pub(crate) fn drive(
     let mut events: Vec<EventRecord> = Vec::new();
     // Where in `events` the record of a step is, by the id of its barrier
     let mut recorded: HashMap<u32, usize> = HashMap::new();
+    let mut interrupted_ns: Option<u64> = None;
     loop {
         control.checkpoint()?;
+        // A cancel that keeps the result (D-066): every sender is told to stop and no step is done any more. The
+        // senders end at their next packet and say what they sent; the loop waits for that like for their end.
+        if interrupted_ns.is_none() && control.take_interruption() {
+            interrupted_ns = Some(monotonic_ns().saturating_sub(begin.ns));
+            for (index, (program, _)) in senders.iter().enumerate() {
+                if !ended[index] {
+                    // A sender that has ended in the meantime has nobody to read it: that is not an error
+                    let _ = backend.send_line(*program, "stop");
+                }
+            }
+            pending.clear();
+            at_barriers = 0;
+        }
         // The steps by the clock that are due, in order. A step that is a moment away is waited for to the
         // microsecond.
         while let Some((_, step)) = pending.front() {
@@ -151,6 +168,10 @@ pub(crate) fn drive(
                 let Event::Barrier { id, .. } = event(line, what)? else {
                     continue;
                 };
+                // A sender that asked just before it was told to stop is not answered: it ends
+                if interrupted_ns.is_some() {
+                    continue;
+                }
                 let place = usize::try_from(id).unwrap_or(usize::MAX);
                 let Some(binding) = bindings.get(place).copied().flatten() else {
                     return Err(failure(
@@ -252,7 +273,11 @@ pub(crate) fn drive(
             }
         }
     }
-    Ok(Driven { sent, events })
+    Ok(Driven {
+        sent,
+        events,
+        interrupted_ns,
+    })
 }
 
 /// Tells the observer that a step was done.

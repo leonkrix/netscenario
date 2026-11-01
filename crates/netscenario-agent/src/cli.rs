@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use crate::events::Event;
 use crate::receiver::{ReceiveConfig, Receiver};
 use crate::schedule::Stream;
-use crate::sender::{Barrier, Barriers, SendConfig, run as send, run_with as send_with};
+use crate::sender::{Barrier, Barriers, SendConfig, run_with as send_with};
 use crate::tap::Tap;
 
 /// The exit code for success.
@@ -194,10 +194,13 @@ fn say(out: &mut impl Write, event: &Event) {
     }
 }
 
-/// The answers of the run to the barriers of a sender: the lines `go <id>` on its standard input (D-038).
+/// The answers of the run to the barriers of a sender: the lines `go <id>` on its standard input (D-038), and the line
+/// `stop` that ends the stream early (D-066).
 struct Gate {
     state: Mutex<GateState>,
     changed: Condvar,
+    /// The run said `stop`. Looked at before every packet, so it is not behind the lock.
+    stopped: AtomicBool,
 }
 
 #[derive(Default)]
@@ -213,6 +216,7 @@ impl Gate {
         Arc::new(Self {
             state: Mutex::new(GateState::default()),
             changed: Condvar::new(),
+            stopped: AtomicBool::new(false),
         })
     }
 
@@ -222,6 +226,13 @@ impl Gate {
         std::thread::spawn(move || {
             for line in input.lines() {
                 let Ok(line) = line else { break };
+                if line.trim() == "stop" {
+                    // A sender that waits for an answer is let go, and the stream ends before its next packet
+                    gate.stopped.store(true, Ordering::SeqCst);
+                    let _held = gate.state.lock().unwrap_or_else(PoisonError::into_inner);
+                    gate.changed.notify_all();
+                    continue;
+                }
                 if let Some(id) = line
                     .trim()
                     .strip_prefix("go ")
@@ -244,7 +255,7 @@ impl Gate {
         let deadline = Instant::now() + limit;
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         loop {
-            if state.released.contains(&id) || state.closed {
+            if state.released.contains(&id) || state.closed || self.stopped.load(Ordering::SeqCst) {
                 return true;
             }
             let left = deadline.saturating_duration_since(Instant::now());
@@ -286,6 +297,10 @@ impl<W: Write> Barriers for StandardBarriers<'_, W> {
     fn wait(&mut self, id: u32) -> bool {
         self.gate.wait(id, BARRIER_TIMEOUT)
     }
+
+    fn stopped(&self) -> bool {
+        self.gate.stopped.load(Ordering::SeqCst)
+    }
 }
 
 /// `12:0,40:1` as the barriers before packet 12 (number 0) and before packet 40 (number 1), in the order of the
@@ -326,19 +341,16 @@ fn send_command(
         udp_checksum: options.optional("udp-checksum")?.unwrap_or_default(),
         barriers,
     };
-    let summary = if config.barriers.is_empty() {
-        send(&config)
-    } else {
-        let gate = Gate::new();
-        gate.listen(stdin);
-        let mut port = StandardBarriers {
-            flow: config.flow,
-            out: &mut *out,
-            gate,
-        };
-        send_with(&config, &mut port)
-    }
-    .map_err(|error| Problem::Failed(error.to_string()))?;
+    // The standard input is read for the answers to the barriers and for `stop`, also by a stream without barriers
+    let gate = Gate::new();
+    gate.listen(stdin);
+    let mut port = StandardBarriers {
+        flow: config.flow,
+        out: &mut *out,
+        gate,
+    };
+    let summary =
+        send_with(&config, &mut port).map_err(|error| Problem::Failed(error.to_string()))?;
     say(out, &Event::Sent(summary));
     Ok(OK)
 }

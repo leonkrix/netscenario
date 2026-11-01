@@ -66,6 +66,7 @@ The agents print one JSON object per line on standard output; the types are `net
 
 - `recv` prints `ready` once it listens (the sender starts after it), runs until it reads a line `stop` or the end of its standard input (so a receiver whose supervisor died does not run for ever), or until `--max-time-ns`. Packets that are already queued when the stop comes are still recorded, for at most 100 ms. `--ignore-stdin` is for use by hand.
 - `send` starts at `--start-at-ns` (a reading of `CLOCK_MONOTONIC`, so that the supervisor can start several workloads at one moment) or at once.
+- The sender reads its standard input also when it has no barriers. A line `stop` ends the stream before its next packet (also while it waits for a barrier or for the moment of the next packet of a slow stream, within 20 ms): the summary has `"stopped":true` and the packets sent so far; the packets that were never sent are not lost (D-066). The end of the input does not stop it.
 - A packet that the kernel refuses to take (the interface is down, D-064) uses its sequence number all the same, so a packet keeps its place in time. `errors` counts them and `refused` lists them as runs `[first, last]`; `packets` counts only the ones that were handed to the kernel. A sender keeps at most 10,000 separate runs and counts the rest in `refused_unrecorded`, and the run fails on that: it could not say which packets were sent.
 
 ## The tap: naming the packets that the node drops (`--wire-out`)

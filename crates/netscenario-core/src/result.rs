@@ -239,6 +239,11 @@ pub struct Timing {
     /// How long the run waited after the last packet was sent for the packets still in the network. A packet
     /// that needs longer counts as lost.
     pub settle_ns: u64,
+    /// If the run was interrupted while the workloads ran (D-066): how long after the start of the measured phase the
+    /// senders were told to stop, in nanoseconds. The workloads ended there, the steps of the timeline after it were
+    /// not done, and the result is of the part that ran. `null` for a run that went to its end.
+    #[serde(default)]
+    pub interrupted_ns: Option<u64>,
 }
 
 /// What the sending side did.
@@ -391,6 +396,7 @@ mod tests {
             timing: Timing {
                 duration_ns: 1,
                 settle_ns: 2,
+                interrupted_ns: None,
             },
             workloads: vec![WorkloadResult {
                 id: "w".to_owned(),

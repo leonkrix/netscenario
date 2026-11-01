@@ -7,11 +7,14 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
-use netscenario_core::{Error, RunEvent, RunObserver, RunOptions, agent_next_to, rfc3339_utc, run};
+use netscenario_core::{
+    CancelToken, Error, RunEvent, RunObserver, RunOptions, agent_next_to, rfc3339_utc, run,
+};
 use netscenario_model::Duration;
 
 use crate::args::{Parsed, Spec};
 use crate::exit;
+use crate::interrupt::{Watch, code_of};
 use crate::render::summary;
 use crate::validate::{Loaded, load};
 
@@ -31,9 +34,14 @@ that it creates is touched, and everything is removed afterwards, also after an 
 
 The result is described in docs/RESULTS.md. Run `netscenario doctor` first on a new machine.
 
+Ctrl-C (or SIGTERM) stops the workloads at once, waits for the packets that are still in the network and
+writes the result of the part that ran, which says how long it ran (`timing.interrupted_ns`). Ctrl-C a
+second time quits at once; the network is removed all the same.
+
 Exit codes: 0 the run finished, 2 the scenario or the command line is wrong (or the backend cannot
 reproduce what the scenario asks for), 3 the machine does not allow the run (a tool or a permission is
-missing), 4 the run failed.
+missing), 4 the run failed, 130 or 143 the run was interrupted by SIGINT or SIGTERM (128 and the number of
+the signal; with a result if the workloads had begun).
 ";
 
 pub(crate) const RUN_SPEC: Spec = Spec {
@@ -74,6 +82,7 @@ fn describe(event: &RunEvent) -> Option<String> {
         }
         RunEvent::Collecting => "reading the records".to_owned(),
         RunEvent::TearingDown => "removing the network".to_owned(),
+        RunEvent::Interrupted => "interrupted, waiting for the packets in the network".to_owned(),
         // The line is cleared when the run returns; `Finished` and later events say nothing new
         _ => return None,
     })
@@ -206,6 +215,9 @@ pub(crate) fn run_command<S: AsRef<str>>(
     let mut options = RunOptions::new(agent, &out_dir);
     options.settle = settle;
     options.export_packets = parsed.flag("packets");
+    // Ctrl-C stops the workloads and keeps what was recorded (D-066)
+    let token = CancelToken::new();
+    options = options.with_cancel(token.clone()).with_partial_on_cancel();
 
     let mut backend = match KernelBackend::new(KernelOptions::for_scenario(&exe, &scenario)) {
         Ok(backend) => backend,
@@ -223,20 +235,67 @@ pub(crate) fn run_command<S: AsRef<str>>(
             scenario.name, scenario.duration
         );
     }
+    let watch = Watch::start(token, on_terminal);
     let outcome = run(&mut backend, &scenario, &options);
     if on_terminal {
         ProgressLine::clear();
     }
+    let signal = watch.as_ref().and_then(Watch::signal);
+    conclude(
+        outcome,
+        &Ending {
+            json: parsed.flag("json"),
+            out_dir: &out_dir,
+            signal,
+        },
+        &loaded,
+        out,
+        err,
+    )
+}
+
+/// How the run ended, as far as the printing and the exit code are concerned.
+struct Ending<'a> {
+    /// Whether standard output is the JSON of the result.
+    json: bool,
+    /// Where the result is.
+    out_dir: &'a std::path::Path,
+    /// The signal that interrupted the run, if one did.
+    signal: Option<i32>,
+}
+
+/// Prints the result or the error of a run and returns the exit code.
+fn conclude(
+    outcome: Result<netscenario_core::RunResult, Error>,
+    ending: &Ending<'_>,
+    loaded: &Loaded,
+    out: &mut impl Write,
+    err: &mut impl Write,
+) -> u8 {
+    // 128 and the number of the signal; a run is only interrupted by a signal, and SIGINT is the one a person sends
+    let by_signal = || ending.signal.map_or(code_of(2), code_of);
     match outcome {
         Ok(result) => {
-            if parsed.flag("json") {
+            if ending.json {
                 let _ = write!(out, "{}", result.to_json());
             } else {
-                let _ = write!(out, "{}", summary(&result, &out_dir));
+                let _ = write!(out, "{}", summary(&result, ending.out_dir));
             }
-            exit::OK
+            // A run that was interrupted has a result, and the exit code says that it is not the whole one
+            if result.timing.interrupted_ns.is_some() {
+                by_signal()
+            } else {
+                exit::OK
+            }
         }
-        Err(error) => report(&error, &loaded, err),
+        Err(Error::Cancelled) if ending.signal.is_some() => {
+            let _ = writeln!(
+                err,
+                "netscenario: interrupted before the workloads began, so there is no result"
+            );
+            by_signal()
+        }
+        Err(error) => report(&error, loaded, err),
     }
 }
 
@@ -277,6 +336,10 @@ mod tests {
             ),
             (RunEvent::Collecting, Some("reading the records")),
             (RunEvent::TearingDown, Some("removing the network")),
+            (
+                RunEvent::Interrupted,
+                Some("interrupted, waiting for the packets in the network"),
+            ),
             (RunEvent::Finished, None),
         ] {
             assert_eq!(describe(&event).as_deref(), expected, "{event:?}");
