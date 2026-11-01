@@ -34,7 +34,7 @@ pub enum Feature {
     RateLimit,
     /// Values of a link that change at moments of the run (`timeline` with `set`).
     ScheduledSteps,
-    /// Windows in which nothing is delivered (`timeline` with `outage`).
+    /// Windows in which nothing is delivered, not even a packet that is on its way (`timeline` with `outage`, D-064).
     Outages,
     /// The interface of a link goes down and comes up (`timeline` with `down` and `up`).
     LinkDownUp,
@@ -190,14 +190,9 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
         }
     }
     // What a `set` of the timeline leads to is asked for as well: a link that has nothing at the start and gets
-    // a reordering at 5 s needs a backend that reorders. An outage is a loss of all packets and needs `Outages`.
+    // a reordering at 5 s needs a backend that reorders. An outage changes no value and needs `Outages`.
     for step in crate::timeline::steps(scenario) {
-        if let crate::timeline::Action::Impair {
-            impairments,
-            outage: false,
-            ..
-        } = &step.action
-        {
+        if let crate::timeline::Action::Impair { impairments, .. } = &step.action {
             needs_of(
                 impairments,
                 &format!("timeline[{}].set", step.event),
@@ -375,7 +370,7 @@ mod tests {
     }
 
     /// What a `set` leads to is asked for, with the path of the step: a link with nothing at the start that gets a
-    /// reordering and a rate at 5 s needs a backend that does both. An outage needs `Outages` and no loss.
+    /// reordering and a rate at 5 s needs a backend that does both. An outage needs `Outages` and no loss or other value.
     #[test]
     fn what_a_step_leads_to_is_a_requirement_with_the_path_of_the_step() {
         let s = scenario(&format!(
@@ -391,7 +386,7 @@ mod tests {
         assert_eq!(at(Feature::Reordering), Some("timeline[0].set.reorder"));
         assert_eq!(at(Feature::RateLimit), Some("timeline[0].set.rate"));
         assert_eq!(at(Feature::Outages), Some("timeline[1]"));
-        // Canary: the loss of the outage is not a loss the scenario asks for
+        // Canary: an outage asks for no loss
         assert_eq!(at(Feature::IndependentLoss), None);
     }
 

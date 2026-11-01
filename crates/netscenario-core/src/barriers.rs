@@ -1,11 +1,13 @@
 //! Which step of the timeline a sender waits for, and what is left to the clock (D-038).
 //!
-//! A step is bound to the first workload that sends into its direction, and to the first packet of that workload at
-//! or after the moment of the step: the sender knows its packet clock, so the packet number is plain arithmetic
-//! on integers, the same that the sender uses for the moments at which its packets leave. A step that no sender can
-//! wait for is left to the clock: no workload sends into its direction, or its moment lies after the last
-//! packet. And the run says, for such a step and for a direction that a second workload also sends into, that the
-//! lost packets of a seed are not promised to repeat, if the step changes what the queue draws random numbers for.
+//! A step is bound to the first workload that sends into its direction (a `down` or an `up`, to the first that sends
+//! over the link), and to the first packet of that workload at or after the moment of the step: the sender knows its
+//! packet clock, so the packet number is plain arithmetic on integers, the same that the sender uses for the moments
+//! at which its packets leave. A step that no sender can wait for is left to the clock: no workload sends into its
+//! direction, or its moment lies after the last packet, or it is an end of an outage, which is a moment in the time
+//! of the receiver (D-064). And the run says, for such a step and for a direction that a second workload also sends
+//! into, that the lost packets of a seed are not promised to repeat, if the step changes what the queue draws random
+//! numbers for.
 
 use netscenario_agent::schedule::Stream;
 use netscenario_model::{Name, Scenario};
@@ -43,23 +45,34 @@ pub(crate) fn plan(
     let mut reasons: Vec<String> = Vec::new();
     let mut bindings = Vec::with_capacity(steps.len());
     for (place, step) in steps.iter().enumerate() {
-        let Action::Impair { direction, .. } = &step.action else {
-            bindings.push(None);
-            continue;
-        };
         let link = &scenario.topology.links[step.link];
-        let (from, to) = match direction {
-            Direction::Forward => (&link.between[0], &link.between[1]),
-            Direction::Reverse => (&link.between[1], &link.between[0]),
-        };
-        let word = match direction {
-            Direction::Forward => "forward",
-            Direction::Reverse => "reverse",
+        let (ends, word) = match &step.action {
+            // The window of an outage is in the time of the receiver, and no packet of the sender is to wait for it
+            Action::Blackout { .. } => {
+                bindings.push(None);
+                continue;
+            }
+            Action::Impair {
+                direction: Direction::Forward,
+                ..
+            } => (vec![(&link.between[0], &link.between[1])], "forward"),
+            Action::Impair {
+                direction: Direction::Reverse,
+                ..
+            } => (vec![(&link.between[1], &link.between[0])], "reverse"),
+            // A link that goes down or comes up is met by a workload in either direction
+            Action::Down | Action::Up => (
+                vec![
+                    (&link.between[0], &link.between[1]),
+                    (&link.between[1], &link.between[0]),
+                ],
+                "both ways",
+            ),
         };
         let candidates: Vec<usize> = sending
             .iter()
             .enumerate()
-            .filter(|(_, other)| other.from == from && other.to == to)
+            .filter(|(_, other)| ends.contains(&(other.from, other.to)))
             .map(|(index, _)| index)
             .collect();
         let matters = drawn.contains(&place);

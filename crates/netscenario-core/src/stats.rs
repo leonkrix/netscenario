@@ -100,11 +100,32 @@ pub struct FlowStats {
 /// that the queue dropped. The run says so where a loss and a corruption are together.
 #[must_use]
 pub fn name_damaged(sent: u64, delivered: &[Record], seen: &[Record]) -> Vec<u64> {
+    name_damaged_refused(sent, &[], delivered, seen)
+}
+
+/// As [`name_damaged`], for a sender that used `slots` sequence numbers of which the kernel refused those in `refused`
+/// (runs `[first, last]`, ascending and apart): a number that was never sent is not named, whatever a flipped bit made
+/// of a frame.
+#[must_use]
+pub fn name_damaged_refused(
+    slots: u64,
+    refused: &[[u64; 2]],
+    delivered: &[Record],
+    seen: &[Record],
+) -> Vec<u64> {
     let delivered: HashSet<u64> = delivered.iter().map(|record| record.sequence).collect();
+    let was_refused = |sequence: u64| {
+        let place = refused.partition_point(|[_, last]| *last < sequence);
+        refused
+            .get(place)
+            .is_some_and(|[first, _]| *first <= sequence)
+    };
     let mut named: Vec<u64> = seen
         .iter()
         .map(|record| record.sequence)
-        .filter(|sequence| *sequence < sent && !delivered.contains(sequence))
+        .filter(|sequence| {
+            *sequence < slots && !was_refused(*sequence) && !delivered.contains(sequence)
+        })
         .collect();
     named.sort_unstable();
     named.dedup();
@@ -125,13 +146,34 @@ fn nearest_rank(sorted: &[u64], permille: u64) -> u64 {
 /// clock of the records, from which the throughput bins are counted.
 #[must_use]
 pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -> FlowStats {
+    analyse_refused(sent, &[], records, packet_size, start_ns)
+}
+
+/// As [`analyse`], for a sender that used `slots` sequence numbers of which the kernel refused those in `refused`
+/// (runs `[first, last]`, ascending and apart). A refused packet was never sent: it is not in `sent`, not lost, and
+/// an arrival with its number is `unexpected`. `sent` of the result is `slots` less the refused ones.
+#[must_use]
+pub fn analyse_refused(
+    slots: u64,
+    refused: &[[u64; 2]],
+    records: &[Record],
+    packet_size: u64,
+    start_ns: u64,
+) -> FlowStats {
+    let sent = patterns::sent_between(refused, 0, slots);
+    let was_refused = |sequence: u64| {
+        let place = refused.partition_point(|[_, last]| *last < sequence);
+        refused
+            .get(place)
+            .is_some_and(|[first, _]| *first <= sequence)
+    };
     let mut seen = HashSet::with_capacity(records.len());
     let mut delays = Vec::with_capacity(records.len());
     let mut bins: Vec<u64> = Vec::new();
     let (mut duplicates, mut unexpected, mut reordered) = (0_u64, 0_u64, 0_u64);
     let mut highest: Option<u64> = None;
     for record in records {
-        if record.sequence >= sent {
+        if record.sequence >= slots || was_refused(record.sequence) {
             unexpected += 1;
             continue;
         }
@@ -153,7 +195,11 @@ pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -
     }
     let received = delays.len() as u64;
     let lost = sent - received;
-    let arrivals = patterns::first_arrivals(sent, records);
+    let arrivals = patterns::first_arrivals(slots, records);
+    let arrivals: Vec<Record> = arrivals
+        .into_iter()
+        .filter(|record| !was_refused(record.sequence))
+        .collect();
     delays.sort_unstable();
     let delay = (!delays.is_empty()).then(|| DelaySummary {
         min_ns: delays[0],
@@ -184,7 +230,7 @@ pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -
         delay,
         reordering: patterns::reordering(&arrivals),
         jitter: patterns::interarrival_jitter(&arrivals),
-        loss_runs: patterns::loss_runs(sent, &arrivals),
+        loss_runs: patterns::loss_runs_refused(slots, refused, &arrivals),
         throughput: Throughput {
             bin_ns: THROUGHPUT_BIN_NS,
             bits_per_second: bins
@@ -295,6 +341,65 @@ mod tests {
     }
 
     use super::*;
+
+    /// The sender used 10 sequence numbers and the kernel refused 4 to 6 (a link that was down): 7 were sent. Two of
+    /// them are lost (1 and 8), the others arrived. Refused packets are not lost, are not in `sent`, and do not make a
+    /// run of lost packets longer: 1 is a run of one, 8 is a run of one.
+    #[test]
+    fn refused_packets_were_never_sent_so_they_are_not_lost() {
+        let records: Vec<Record> = [0, 2, 3, 7, 9]
+            .into_iter()
+            .map(|sequence| arrival(sequence, sequence * 10, sequence * 10 + 5))
+            .collect();
+        let stats = analyse_refused(10, &[[4, 6]], &records, 100, 0);
+        assert_eq!((stats.sent, stats.received, stats.lost), (7, 5, 2));
+        assert!((stats.loss_ratio - 2.0 / 7.0).abs() < 1e-12);
+        assert_eq!(stats.unexpected, 0);
+        assert_eq!((stats.loss_runs.runs, stats.loss_runs.longest), (2, 1));
+    }
+
+    /// Canary: the same arrivals read as if the sender had used 7 numbers (what the statistics did before they knew
+    /// about refused packets) count the arrivals 7 and 9 as unexpected and invent 2 lost packets more.
+    #[test]
+    fn canary_ignoring_the_refused_packets_gives_the_wrong_numbers() {
+        let records: Vec<Record> = [0, 2, 3, 7, 9]
+            .into_iter()
+            .map(|sequence| arrival(sequence, sequence * 10, sequence * 10 + 5))
+            .collect();
+        let wrong = analyse(7, &records, 100, 0);
+        assert_eq!((wrong.unexpected, wrong.lost), (2, 4));
+        let right = analyse_refused(10, &[[4, 6]], &records, 100, 0);
+        assert_ne!(
+            (wrong.unexpected, wrong.lost),
+            (right.unexpected, right.lost)
+        );
+    }
+
+    /// A packet that arrives with the number of a refused one cannot come from the sender, and is counted as such. A
+    /// lost run that has a refused run inside it is one run of the packets that were sent.
+    #[test]
+    fn an_arrival_of_a_refused_packet_is_unexpected_and_a_lost_run_goes_through_a_refusal() {
+        let stats = analyse_refused(
+            8,
+            &[[3, 4]],
+            &[arrival(4, 0, 5), arrival(0, 0, 5), arrival(7, 0, 5)],
+            100,
+            0,
+        );
+        assert_eq!(stats.unexpected, 1);
+        // Sent: 0 1 2 5 6 7; arrived 0 and 7; lost 1 2 5 6 are one run of four
+        assert_eq!((stats.sent, stats.received, stats.lost), (6, 2, 4));
+        assert_eq!((stats.loss_runs.runs, stats.loss_runs.longest), (1, 4));
+    }
+
+    #[test]
+    fn a_refused_packet_is_not_named_as_damaged() {
+        let at = |sequence| arrival(sequence, 0, 5);
+        assert_eq!(
+            name_damaged_refused(8, &[[3, 4]], &[at(0)], &[at(0), at(2), at(3), at(6), at(9)]),
+            [2, 6]
+        );
+    }
 
     fn arrival(sequence: u64, send_ns: u64, delay_ns: u64) -> Record {
         Record {

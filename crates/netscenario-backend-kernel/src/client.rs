@@ -413,9 +413,10 @@ fn collect(mut pipe: impl Read + Send + 'static, into: Arc<Mutex<String>>) -> Ar
 }
 
 impl KernelBackend {
-    /// A direction with a duplication, a rate and a jitter or a reordering is two `netem` in one tree, and some
-    /// kernels refuse a duplicating `netem` next to another one (D-052). The kernel is asked once, and only if
-    /// a scenario has such a direction; where it says no the scenario is refused before anything is built.
+    /// A direction with a duplication, and a rate with a jitter or a reordering, or an outage, is two or more `netem`
+    /// in one tree, and some kernels refuse a duplicating `netem` next to another one (D-052, D-064). The kernel is
+    /// asked once, and only if a scenario has such a direction; where it says no the scenario is refused before
+    /// anything is built.
     fn check_duplicate_tree(&self, scenario: &Scenario, refusals: &mut Vec<Refusal>) {
         let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").map_or_else(
             |_| "this kernel".to_owned(),
@@ -429,24 +430,28 @@ impl KernelBackend {
     }
 }
 
-/// The directions of `scenario` that need a duplicating `netem` next to another one, refused if `ask` says that the
-/// kernel refuses it. `ask` is called at most once, and not at all if no direction needs the tree.
+/// The directions of `scenario` that need a duplicating `netem` next to another one (a rate with a jitter or a
+/// reordering, or an outage), refused if `ask` says that the kernel refuses it. `ask` is called at most once, and not at all if no direction needs the tree.
 fn duplicate_tree_refusals(
     scenario: &Scenario,
     ask: impl FnOnce() -> Option<String>,
     release: &str,
 ) -> Vec<Refusal> {
-    use netscenario_core::timeline::{Action, states_of, steps};
+    use netscenario_core::timeline::{Action, outage_directions, states_of, steps};
+    let outages = outage_directions(scenario);
     let mut wanted: Vec<String> = Vec::new();
     for (index, link) in scenario.topology.links.iter().enumerate() {
         for direction in [Direction::Forward, Direction::Reverse] {
-            // A direction is two queues for the whole run if any state needs two (D-059), so a duplication in
-            // any state, also one that has no rate of its own, is a duplicating queue next to another one
+            // A direction is two queues for the whole run if any state needs two (D-059), and has the blackout
+            // behind them if it has an outage, so a duplication in any state, also one that has no rate of its own,
+            // is a duplicating queue next to another one
             let states = states_of(scenario, index, direction);
-            let Ok(layout) = crate::netem::Layout::of(&states) else {
+            let Ok(layout) =
+                crate::netem::Layout::of(&states, outages.contains(&(index, direction)))
+            else {
                 continue;
             };
-            if !layout.is_two_queues() {
+            if !layout.is_a_tree() {
                 continue;
             }
             let path = if states[0].duplicate.is_some() {
@@ -463,7 +468,6 @@ fn duplicate_tree_refusals(
                     Action::Impair {
                         direction: moved,
                         impairments,
-                        outage: false,
                     } if step.link == index
                         && *moved == direction
                         && impairments.duplicate.is_some() =>
@@ -492,9 +496,9 @@ fn duplicate_tree_refusals(
             feature: Feature::Duplication,
             path,
             reason: format!(
-                "{release} refuses a duplicating netem next to another netem, which a direction with a rate and a jitter or a reordering needs: {answer}"
+                "{release} refuses a duplicating netem next to another netem, which a direction with a rate and a jitter or a reordering, or with an outage, needs: {answer}"
             ),
-            fix: "leave out the duplication, the rate, or the jitter and the reordering in this direction, use a kernel that accepts it (the check was added in 2025 and removed again later; `netscenario doctor` tries it), or the Engine backend (planned for release 0.4)".to_owned(),
+            fix: "leave out the duplication, the rate, the jitter and the reordering, or the outage in this direction, use a kernel that accepts it (the check was added in 2025 and removed again later; `netscenario doctor` tries it), or the Engine backend (planned for release 0.4)".to_owned(),
         })
         .collect()
 }
@@ -511,7 +515,7 @@ fn timeline_refusals(scenario: &Scenario) -> Vec<Refusal> {
     for (index, link) in scenario.topology.links.iter().enumerate() {
         for direction in [Direction::Forward, Direction::Reverse] {
             let states = states_of(scenario, index, direction);
-            if crate::netem::Layout::of(&states).is_ok() {
+            if crate::netem::Layout::of(&states, false).is_ok() {
                 continue;
             }
             // The distribution the direction begins with, or the first one it gets; the first step that leads to
@@ -521,7 +525,6 @@ fn timeline_refusals(scenario: &Scenario) -> Vec<Refusal> {
                 let Action::Impair {
                     direction: moved,
                     impairments,
-                    ..
                 } = &step.action
                 else {
                     continue;
@@ -687,11 +690,13 @@ impl Backend for KernelBackend {
         link: LinkHandle,
         direction: Direction,
         states: &[Impairments],
+        outage: bool,
     ) -> Result<(), Error> {
         let request = Request::Plan {
             link: link.0,
             direction: Way::from(direction),
             states: states.to_vec(),
+            outage,
         };
         self.call("plan the states of a direction", &request)
             .map(|_| ())
@@ -710,6 +715,41 @@ impl Backend for KernelBackend {
         };
         self.call("change the impairments of a direction", &request)
             .map(|_| ())
+    }
+
+    fn set_outage(
+        &mut self,
+        link: LinkHandle,
+        direction: Direction,
+        on: bool,
+    ) -> Result<(), Error> {
+        let request = Request::SetOutage {
+            link: link.0,
+            direction: Way::from(direction),
+            on,
+        };
+        self.call(
+            if on {
+                "begin an outage"
+            } else {
+                "end an outage"
+            },
+            &request,
+        )
+        .map(|_| ())
+    }
+
+    fn set_link(&mut self, link: LinkHandle, up: bool) -> Result<(), Error> {
+        let request = Request::SetLink { link: link.0, up };
+        self.call(
+            if up {
+                "bring a link up"
+            } else {
+                "take a link down"
+            },
+            &request,
+        )
+        .map(|_| ())
     }
 
     fn queue_packets(

@@ -11,7 +11,8 @@
 //!   gives the same lost packets.
 //! - **By the clock.** The loop asks the backend at the moment the file gives, counted from the moment the
 //!   workloads start. This is for a step that no workload can wait for: no workload sends into its direction, or
-//!   the moment lies after the last packet. A packet that is sent between the moment and the end of the change
+//!   the moment lies after the last packet, and for the two steps of an outage, which is a window in the time of
+//!   the receiver (D-064). A packet that is sent between the moment and the end of the change
 //!   meets the old state, and which one differs from run to run.
 //!
 //! The result records both ways (`packet` is set for a barrier).
@@ -226,6 +227,16 @@ pub(crate) fn drive(
     // What each sender lived through at its barriers: how long the packet waited, and whether it went on without
     // an answer, which the guarantee of D-038 does not allow
     for (summary, (_, what)) in sent.iter().zip(senders) {
+        if summary.refused_unrecorded > 0 {
+            return Err(failure(
+                what.clone(),
+                format!(
+                    "the kernel refused packets in more than {} separate runs ({} more packets are not recorded), so the run cannot say which packets were sent and its statistics would be wrong",
+                    netscenario_agent::sender::MAX_REFUSED_RUNS,
+                    summary.refused_unrecorded
+                ),
+            ));
+        }
         if summary.barrier_timeouts > 0 {
             return Err(failure(
                 what.clone(),
@@ -277,12 +288,17 @@ fn do_step(
                 Direction::Reverse => "reverse".to_owned(),
             })
         }
+        Action::Blackout { direction, on } => {
+            backend.set_outage(handle, *direction, *on)?;
+            Some(match direction {
+                Direction::Forward => "forward".to_owned(),
+                Direction::Reverse => "reverse".to_owned(),
+            })
+        }
         Action::Down | Action::Up => {
-            // A backend that declares `Link down and up` has to say how; none does yet
-            return Err(failure(
-                format!("do the step '{}' of the timeline", step.kind.word()),
-                "this build of the run cannot take a link down or up",
-            ));
+            backend.set_link(handle, matches!(step.action, Action::Up))?;
+            // A link has both directions, and a step of the whole link names none
+            None
         }
     };
     Ok(EventRecord {

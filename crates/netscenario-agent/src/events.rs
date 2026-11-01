@@ -42,7 +42,9 @@ pub enum Event {
 pub struct SendSummary {
     /// The workload.
     pub flow: u32,
-    /// How many packets were handed to the kernel. The sequence numbers are `0` up to this number minus one.
+    /// How many packets were handed to the kernel. A packet that the kernel refused (`errors`) uses its sequence
+    /// number all the same, so the sequence numbers are `0` up to `packets + errors` minus one, without the ones in
+    /// `refused`.
     pub packets: u64,
     /// When the first packet was sent (`CLOCK_MONOTONIC`, nanoseconds), if one was.
     pub first_send_ns: Option<u64>,
@@ -55,6 +57,15 @@ pub struct SendSummary {
     pub errors: u64,
     /// The first such error, as text.
     pub first_error: Option<String>,
+    /// The sequence numbers of the packets that the kernel refused, as runs: `[first, last]`, both included, in
+    /// ascending order. A link that is down refuses a run of packets, and the run needs to know which ones they were
+    /// to tell a packet that was never sent from one that was lost.
+    #[serde(default)]
+    pub refused: Vec<[u64; 2]>,
+    /// How many refused packets are not in `refused` because there were more than `MAX_REFUSED_RUNS` separate runs of
+    /// them. The run does not go on with statistics that cannot say which packets were sent.
+    #[serde(default)]
+    pub refused_unrecorded: u64,
     /// The barriers that were asked and answered (D-038), in the order they were asked.
     #[serde(default)]
     pub barriers: Vec<BarrierDone>,
@@ -124,8 +135,10 @@ mod tests {
             first_send_ns: Some(10),
             last_send_ns: Some(30),
             max_lateness_ns: 5,
-            errors: 0,
-            first_error: None,
+            errors: 2,
+            first_error: Some("Network is unreachable".to_owned()),
+            refused: vec![[1, 2]],
+            refused_unrecorded: 0,
             barriers: Vec::new(),
             barrier_timeouts: 0,
         });

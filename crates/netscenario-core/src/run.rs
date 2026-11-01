@@ -22,7 +22,7 @@ use crate::backend::{
     Backend, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramHandle,
 };
 use crate::error::Error;
-use crate::export::write_packets_marked;
+use crate::export::write_packets_refused;
 use crate::hash::sha256_hex;
 use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
@@ -31,7 +31,7 @@ use crate::result::{
     AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, QueueCheck, RESULT_FORMAT,
     RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
 };
-use crate::stats::analyse;
+use crate::stats::analyse_refused;
 use crate::timeline;
 use crate::{barriers, drive};
 
@@ -398,6 +398,28 @@ fn not_reproducible_because(
             check.link, check.direction, check.counted, check.expected
         ));
     }
+    for index in timeline::links_that_go_down(scenario) {
+        let link = &scenario.topology.links[index];
+        let draws = [Direction::Forward, Direction::Reverse]
+            .into_iter()
+            .any(|direction| {
+                timeline::states_of(scenario, index, direction)
+                    .iter()
+                    .any(Impairments::is_random)
+            });
+        if draws {
+            reasons.push(format!(
+                "link '{}' goes down while a queue of it draws random numbers: the kernel drops the packets in flight, which are not the same packets in every run, and the queue cannot be checked against the packets that were sent",
+                link.id
+            ));
+        }
+    }
+    if !timeline::outage_directions(scenario).is_empty() {
+        reasons.push(
+            "the scenario has an outage: it begins and ends in the time of the receiver and is placed by the clock, so the packet at each edge can be lost in one run and delivered in another (the packets that the seed loses are the same)"
+                .to_owned(),
+        );
+    }
     let corrupts = scenario.topology.links.iter().any(|link| {
         [&link.forward, &link.reverse, &link.both]
             .into_iter()
@@ -432,10 +454,11 @@ fn workload_result(
         let name = format!("packets-{}.jsonl", workload.id);
         let file = std::fs::File::create(options.out_dir.join(&name))
             .map_err(|error| failure("write the packets", format!("{name}: {error}")))?;
-        write_packets_marked(
+        write_packets_refused(
             std::io::BufWriter::new(file),
             workload.id.as_str(),
-            flow.sent.packets,
+            flow.sent.packets + flow.sent.errors,
+            &flow.sent.refused,
             &flow.records.records,
             first_send,
             match &flow.naming {
@@ -460,8 +483,9 @@ fn workload_result(
         packet_size_bytes: workload.packet_size.bytes(),
         start_ns: nanos(start),
         duration_ns: nanos(stop.saturating_sub(start)),
-        stats: analyse(
-            flow.sent.packets,
+        stats: analyse_refused(
+            flow.sent.packets + flow.sent.errors,
+            &flow.sent.refused,
             &flow.records.records,
             workload.packet_size.bytes(),
             first_send,
@@ -470,6 +494,7 @@ fn workload_result(
             max_lateness_ns: flow.sent.max_lateness_ns,
             send_errors: flow.sent.errors,
             first_error: flow.sent.first_error.clone(),
+            refused: flow.sent.refused.clone(),
         },
         foreign_datagrams: flow.received.foreign,
         corrupted: flow.received.corrupted,
@@ -917,7 +942,7 @@ fn stop_receivers(
                 format!("{}: {error}", flow.records_file.display()),
             )
         })?;
-        let naming = name_from_the_wire(flow, receiver, &received, sent.packets, &records);
+        let naming = name_from_the_wire(flow, receiver, &received, &sent, &records);
         measured.push(Measured {
             sent,
             received,
@@ -933,7 +958,7 @@ fn name_from_the_wire(
     flow: &Flow<'_>,
     started: &Started,
     received: &ReceiveSummary,
-    sent: u64,
+    sent: &SendSummary,
     delivered: &records::File,
 ) -> Naming {
     let Some(path) = &flow.wire_file else {
@@ -956,8 +981,9 @@ fn name_from_the_wire(
             records::read(std::io::BufReader::new(file)).map_err(|error| error.to_string())
         });
     match seen {
-        Ok(seen) => Naming::Named(crate::stats::name_damaged(
-            sent,
+        Ok(seen) => Naming::Named(crate::stats::name_damaged_refused(
+            sent.packets + sent.errors,
+            &sent.refused,
             &delivered.records,
             &seen.records,
         )),
@@ -1129,7 +1155,13 @@ fn check_queues(
     if provisioned.seed.is_none() {
         return Ok(checks);
     }
+    // A link that goes down drops the packets that are in its queue without counting them, so the queue cannot be
+    // held to the number of packets that were sent; the run says so (D-064)
+    let goes_down = timeline::links_that_go_down(scenario);
     for way in ways(scenario, provisioned) {
+        if goes_down.contains(&way.index) {
+            continue;
+        }
         let link = &scenario.topology.links[way.index];
         // A duplicating direction is not checked: the queue counts the copies it makes as well, and the count
         // cannot tell them from a packet that nobody asked for (D-054)
@@ -1345,6 +1377,19 @@ mod tests {
                 .rate
                 .map_or("no rate".to_owned(), |rate| rate.to_string());
             self.calls.push(format!("change {direction:?} {rate}"));
+            Ok(())
+        }
+
+        fn set_outage(
+            &mut self,
+            _: LinkHandle,
+            direction: Direction,
+            on: bool,
+        ) -> Result<(), Error> {
+            self.calls.push(format!(
+                "outage {direction:?} {}",
+                if on { "on" } else { "off" }
+            ));
             Ok(())
         }
 
@@ -1685,6 +1730,45 @@ mod tests {
                 .any(|reason| reason.contains("corrupts packets")),
             "{:?}",
             seed.not_reproducible_because
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// An outage is placed by the clock in the time of the receiver, and the result says that the packet at its edges
+    /// can differ (D-064). The run does the two steps of it, and a scenario without an outage gives no such reason.
+    #[test]
+    fn an_outage_is_two_steps_and_the_result_says_that_its_edges_are_placed_by_the_clock() {
+        let yaml = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { delay: 10ms }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\ntimeline:\n  - { at: 300ms, link: l, outage: 300ms, direction: forward }\n";
+        let mut backend = Fake::new(None);
+        let options = self::options("outage-reason");
+        let result = run(
+            &mut backend,
+            &Scenario::from_yaml(yaml, "t.yaml").unwrap(),
+            &options,
+        )
+        .unwrap();
+        let outage: Vec<&String> = backend
+            .calls
+            .iter()
+            .filter(|call| call.starts_with("outage"))
+            .collect();
+        assert_eq!(outage, ["outage Forward on", "outage Forward off"]);
+        let kinds: Vec<(&str, Option<u64>)> = result
+            .events
+            .iter()
+            .map(|event| (event.kind.as_str(), event.packet))
+            .collect();
+        // By the clock, never at a barrier: no packet of the sender waits for the window of the receiver
+        assert_eq!(kinds, [("outage-start", None), ("outage-end", None)]);
+        assert!(!result.seed.loss_reproducible);
+        assert!(
+            result
+                .seed
+                .not_reproducible_because
+                .iter()
+                .any(|reason| reason.contains("has an outage")),
+            "{:?}",
+            result.seed
         );
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }

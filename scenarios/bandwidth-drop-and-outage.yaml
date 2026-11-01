@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=../docs/schema/scenario-v0.json
 # A link that is limited to 2 mbit from the tenth second, goes quiet for two seconds, and is not limited any more
 # from the twenty-fifth (`null` takes an impairment away).
-# The outage of this file arrives with release 0.2 (the steps that change a link are applied already): until then
-# `netscenario run` refuses the file and names the feature, and `validate` accepts it.
+# Nothing is delivered in the outage, not even a packet that was on its way when it began: the receiver is quiet from
+# the twentieth to the twenty-second second.
 version: 0
 name: bandwidth-drop-and-outage
 seed: 3

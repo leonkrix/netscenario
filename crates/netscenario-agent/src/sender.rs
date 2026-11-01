@@ -258,6 +258,8 @@ pub fn run_with(
         max_lateness_ns: 0,
         errors: 0,
         first_error: None,
+        refused: Vec::new(),
+        refused_unrecorded: 0,
         barriers: Vec::new(),
         barrier_timeouts: 0,
     };
@@ -306,6 +308,7 @@ pub fn run_with(
             Err(error) => {
                 summary.errors += 1;
                 summary.first_error.get_or_insert_with(|| error.to_string());
+                note_refused(&mut summary, n);
             }
         }
         summary.max_lateness_ns = summary.max_lateness_ns.max(now.saturating_sub(due));
@@ -319,6 +322,23 @@ pub fn run_with(
         );
     }
     Ok(summary)
+}
+
+/// The most separate runs of refused packets that a sender records. A link that is down refuses one run for as long as
+/// it lasts; this many runs means the machine could not send, not a link that went up and down.
+pub const MAX_REFUSED_RUNS: usize = 10_000;
+
+/// Records that packet `n` was refused: it extends the run that ends at the packet before, or begins a new one.
+fn note_refused(summary: &mut SendSummary, n: u64) {
+    if let Some(last) = summary.refused.last_mut()
+        && last[1] + 1 == n
+    {
+        last[1] = n;
+    } else if summary.refused.len() < MAX_REFUSED_RUNS {
+        summary.refused.push([n, n]);
+    } else {
+        summary.refused_unrecorded += 1;
+    }
 }
 
 #[cfg(test)]
@@ -338,6 +358,51 @@ mod tests {
             udp_checksum: UdpChecksum::On,
             barriers: Vec::new(),
         }
+    }
+
+    fn summary() -> SendSummary {
+        SendSummary {
+            flow: 0,
+            packets: 0,
+            first_send_ns: None,
+            last_send_ns: None,
+            max_lateness_ns: 0,
+            errors: 0,
+            first_error: None,
+            refused: Vec::new(),
+            refused_unrecorded: 0,
+            barriers: Vec::new(),
+            barrier_timeouts: 0,
+        }
+    }
+
+    /// Packets that the kernel refuses one after the other are one run; a packet that was sent in between ends it.
+    #[test]
+    fn refused_packets_are_recorded_as_runs_of_sequence_numbers() {
+        let mut sent = summary();
+        for n in [3, 4, 5, 9, 12, 13] {
+            note_refused(&mut sent, n);
+        }
+        assert_eq!(sent.refused, [[3, 5], [9, 9], [12, 13]]);
+        assert_eq!(sent.refused_unrecorded, 0);
+    }
+
+    /// Canary: past the limit the runs are counted and not kept, and a run that goes on is still extended.
+    #[test]
+    fn refused_runs_beyond_the_limit_are_counted_not_kept() {
+        let mut sent = summary();
+        for n in 0..MAX_REFUSED_RUNS as u64 {
+            note_refused(&mut sent, n * 2);
+        }
+        assert_eq!(sent.refused.len(), MAX_REFUSED_RUNS);
+        note_refused(&mut sent, MAX_REFUSED_RUNS as u64 * 2);
+        assert_eq!(sent.refused.len(), MAX_REFUSED_RUNS);
+        assert_eq!(sent.refused_unrecorded, 1);
+        // The last run that is kept ends at its packet, and the next packet extends it
+        let last = sent.refused.last().copied().unwrap();
+        note_refused(&mut sent, last[1] + 1);
+        assert_eq!(sent.refused.last().unwrap()[1], last[1] + 1);
+        assert_eq!(sent.refused_unrecorded, 1);
     }
 
     #[test]

@@ -509,9 +509,6 @@ pub struct Probability(u32);
 const HUNDRED_PERCENT: u32 = 100_000_000;
 
 impl Probability {
-    /// Every time: 100 %.
-    pub const ALWAYS: Self = Self(HUNDRED_PERCENT);
-
     /// A probability of `millionths` of a percent (100,000,000 is 100 %), or `None` if that is above 100 %.
     #[must_use]
     pub const fn from_micro_percent(millionths: u32) -> Option<Self> {

@@ -71,7 +71,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M | 0.3 | planned |
 | LNK-10 | MTU and fragmentation | S | 0.3 | planned |
 | LNK-11 | Different values per direction | M | 0.1 | done (`tests/provision.rs`: `the_impairments_are_in_the_queues_of_the_right_interfaces`; `tests/agent.rs`) |
-| LNK-12 | Outages (windows without any delivery) | M | 0.2 | in progress (format done with D-050; the backend follows) |
+| LNK-12 | Outages (windows without any delivery, also of the packets on their way) | M | 0.2 | done (format with D-050; the Kernel backend since D-064; `tests/timeline.rs`: nothing arrives in the window and the packets in flight are dropped; the edges are placed by the clock) |
 | LNK-13 | ECN marking | C | 0.4 | idea |
 
 ## Link models over time (LMD)
@@ -79,7 +79,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | LMD-01 | Static model | M | 0.1 | done (a link keeps its values for the whole run; changes over time are TML-01, 0.2) |
-| LMD-02 | Scheduled steps | M | 0.2 | in progress (format done with D-050; the backend follows) |
+| LMD-02 | Scheduled steps | M | 0.2 | done (format with D-050; the Kernel backend applies the steps by the clock or at a barrier of the workload, D-060, D-062, D-064) |
 | LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces) | M | 0.3 | planned |
 | LMD-04 | Markov models with states and transitions | S | 0.3 | planned |
 | LMD-05 | Periodic patterns (a satellite pass, a duty cycle) | S | 0.3 | planned |
@@ -90,8 +90,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID     | Feature                                                    | Prio | Release | Status  |
 | ------ | ---------------------------------------------------------- | ---- | ------- | ------- |
-| TML-01 | Events at times: change parameters                         | M    | 0.2     | in progress (format done with D-050; the queues and the whole-state change, D-059; `set` is recorded in `events`, D-060, and done at a barrier of the workload so that the same seed gives the same lost packets, D-062, by a `tc` that lives for the run, D-063; `outage`, `down` and `up` follow) |
-| TML-02 | Link down and up                                           | M    | 0.2     | in progress (format done with D-050; the backend follows) |
+| TML-01 | Events at times: change parameters                         | M    | 0.2     | done (format with D-050; the queues and the whole-state change, D-059; every step is recorded in `events`, D-060, and done at a barrier of the workload so that the same seed gives the same lost packets, D-062, by a `tc` that lives for the run, D-063; `outage`, `down` and `up` are steps too, D-064) |
+| TML-02 | Link down and up                                           | M    | 0.2     | done (format with D-050; the Kernel backend since D-064; `tests/timeline.rs`: the sender is refused for exactly the packets of the window, the statistics leave the refused packets out) |
 | TML-03 | Repeating events                                           | S    | 0.3     | planned |
 | TML-04 | Events tied to a milestone of a workload (after N packets) | C    | 0.7     | idea    |
 | TML-05 | Change a link from test code while the run is going        | S    | 0.3     | planned |

@@ -11,7 +11,8 @@
 //! The times are nanoseconds since the first packet of the workload was sent, so that they mean something
 //! outside the machine. A packet that did not arrive has only `lost`. A second arrival of a packet follows its
 //! first line with `duplicate`. A lost packet that the receiving node saw on the wire and dropped as damaged has
-//! `corrupted` as well (D-040).
+//! `corrupted` as well (D-040). A packet that the kernel refused to take (the interface was down) has only
+//! `refused`: it was never sent, so it is not lost (D-064).
 
 use std::io::{self, Write};
 
@@ -26,6 +27,8 @@ struct Line<'a> {
     sequence: u64,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     lost: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    refused: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     corrupted: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -63,13 +66,32 @@ pub fn write_packets(
 ///
 /// The error of `out`.
 pub fn write_packets_marked(
-    mut out: impl Write,
+    out: impl Write,
     workload: &str,
     sent: u64,
     records: &[Record],
     start_ns: u64,
     damaged: &[u64],
 ) -> io::Result<()> {
+    write_packets_refused(out, workload, sent, &[], records, start_ns, damaged)
+}
+
+/// As [`write_packets_marked`], for a sender that used `slots` sequence numbers of which the kernel refused those in
+/// `refused` (runs `[first, last]`, ascending and apart): they get a line with `refused` and nothing else.
+///
+/// # Errors
+///
+/// The error of `out`.
+pub fn write_packets_refused(
+    mut out: impl Write,
+    workload: &str,
+    slots: u64,
+    refused: &[[u64; 2]],
+    records: &[Record],
+    start_ns: u64,
+    damaged: &[u64],
+) -> io::Result<()> {
+    let sent = slots;
     // The arrivals in the order of the sequence numbers, and in the order of arrival for the same number
     let mut order: Vec<usize> = (0..records.len()).collect();
     order.sort_by_key(|&index| (records[index].sequence, index));
@@ -82,6 +104,7 @@ pub fn write_packets_marked(
         workload,
         sequence: record.sequence,
         lost: false,
+        refused: false,
         corrupted: false,
         duplicate,
         unexpected,
@@ -91,6 +114,30 @@ pub fn write_packets_marked(
     };
     let mut next = 0_usize;
     for sequence in 0..sent {
+        let place = refused.partition_point(|[_, last]| *last < sequence);
+        if refused
+            .get(place)
+            .is_some_and(|[first, _]| *first <= sequence)
+        {
+            write(&Line {
+                workload,
+                sequence,
+                lost: false,
+                refused: true,
+                corrupted: false,
+                duplicate: false,
+                unexpected: false,
+                send_ns: None,
+                receive_ns: None,
+                delay_ns: None,
+            })?;
+            // An arrival with the number of a packet that was never sent cannot happen; it is written as unexpected
+            while next < order.len() && records[order[next]].sequence == sequence {
+                write(&arrived(&records[order[next]], false, true))?;
+                next += 1;
+            }
+            continue;
+        }
         let mut first = true;
         while next < order.len() && records[order[next]].sequence == sequence {
             write(&arrived(&records[order[next]], !first, false))?;
@@ -102,6 +149,7 @@ pub fn write_packets_marked(
                 workload,
                 sequence,
                 lost: true,
+                refused: false,
                 corrupted: damaged.binary_search(&sequence).is_ok(),
                 duplicate: false,
                 unexpected: false,
@@ -121,6 +169,29 @@ pub fn write_packets_marked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refused packet has a line of its own that says so, is not lost, and the packets after it keep their numbers.
+    #[test]
+    fn a_refused_packet_is_written_as_refused_and_not_as_lost() {
+        let mut out = Vec::new();
+        write_packets_refused(
+            &mut out,
+            "w",
+            5,
+            &[[1, 2]],
+            &[record(0, 0, 10), record(4, 40, 50)],
+            0,
+            &[],
+        )
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 5, "{text}");
+        assert_eq!(lines[1], r#"{"workload":"w","sequence":1,"refused":true}"#);
+        assert_eq!(lines[2], r#"{"workload":"w","sequence":2,"refused":true}"#);
+        assert!(lines[3].contains(r#""sequence":3"#) && lines[3].contains(r#""lost":true"#));
+        assert!(!text.contains(r#""sequence":1,"lost""#));
+    }
 
     fn record(sequence: u64, send: u64, receive: u64) -> Record {
         Record {

@@ -115,6 +115,7 @@ fn build(
     };
     let mut links = Vec::new();
     let mut addresses = Vec::new();
+    let outages = timeline::outage_directions(scenario);
     for (index, link) in scenario.topology.links.iter().enumerate() {
         let (Some(first), Some(second)) = (node(&link.between[0]), node(&link.between[1])) else {
             // `validate` has checked this, so it only happens if that check and this code disagree
@@ -131,9 +132,10 @@ fn build(
             // The states the timeline leads the direction through, the one it starts with first. A direction
             // that the timeline does not touch has only that one.
             let states = timeline::states_of(scenario, index, direction);
-            let changes = states.len() > 1;
+            let outage = outages.contains(&(index, direction));
+            let changes = states.len() > 1 || outage;
             if changes {
-                backend.plan_states(handle, direction, &states)?;
+                backend.plan_states(handle, direction, &states, outage)?;
             }
             // Only what draws random numbers uses the seed, and a state that comes later counts as well: the
             // queue is seeded when it is built (a change keeps its generator)
@@ -274,6 +276,7 @@ mod tests {
             link: LinkHandle,
             direction: Direction,
             states: &[Impairments],
+            _outage: bool,
         ) -> Result<(), Error> {
             self.step(
                 format!("plan {} {direction:?} {} states", link.0, states.len()),

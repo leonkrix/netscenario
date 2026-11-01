@@ -14,6 +14,7 @@ mod support;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use netscenario_agent::records;
 use netscenario_core::{
     Backend, CancelToken, Direction, Error, EventRecord, LinkHandle, NodeHandle, Program,
     ProgramHandle, RunEvent, RunOptions, run,
@@ -320,8 +321,9 @@ impl Backend for Slow {
         link: LinkHandle,
         direction: Direction,
         states: &[Impairments],
+        outage: bool,
     ) -> Result<(), Error> {
-        self.inner.plan_states(link, direction, states)
+        self.inner.plan_states(link, direction, states, outage)
     }
     fn apply(
         &mut self,
@@ -530,4 +532,428 @@ fn a_step_by_the_clock_that_changes_the_loss_says_why_the_run_cannot_be_repeated
         media.sent
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The sequence numbers of the packets that arrived, in the order of arrival, and when (nanoseconds).
+fn arrivals(result: &netscenario_core::RunResult, dir: &std::path::Path) -> Vec<(u64, u64)> {
+    let file =
+        records::read(std::fs::File::open(dir.join(&result.workloads[0].records_file)).unwrap())
+            .unwrap();
+    file.records
+        .iter()
+        .map(|record| (record.sequence, record.receive_ns))
+        .collect()
+}
+
+/// What the steps of an outage and the arrivals say about its window, in sequence numbers.
+struct Window {
+    /// The first packet that can have been dropped, and the last that can have been the first one dropped.
+    first: (u64, u64),
+    /// The first packet that can have been the last one dropped, and the last that can have been.
+    last: (u64, u64),
+    /// When the start step began and when it was done, in nanoseconds on the clock of the arrivals.
+    began: (u64, u64),
+    /// The same for the end step.
+    ended: (u64, u64),
+}
+
+/// The window of the outage of a run in sequence numbers and in time, from what the run recorded: the moments at which
+/// the steps began and ended, and the delay that the packets have (`delay_ns`). A packet is dropped if it is let go by
+/// the queue of the delay while the blackout is on, so the packet `k` of a stream that leaves at `k * gap` is dropped
+/// if `k * gap + delay` lies between the moment the start step was done and the moment the end step began. `slack`
+/// covers the lateness of the sender and the timer of the queue.
+fn window_of(
+    result: &netscenario_core::RunResult,
+    records: &[records::Record],
+    delay_ns: u64,
+) -> Window {
+    let (start, end) = (&result.events[0], &result.events[1]);
+    assert_eq!(
+        (start.kind.as_str(), end.kind.as_str()),
+        ("outage-start", "outage-end")
+    );
+    let base = start_of(records);
+    let slack = result.workloads[0].sender.max_lateness_ns + 5_000_000;
+    let at = |moment: u64| base + moment;
+    let packet = |moment: u64, round_up: bool| {
+        let sent_at = moment.saturating_sub(delay_ns);
+        if round_up {
+            sent_at.div_ceil(GAP_NS)
+        } else {
+            sent_at / GAP_NS
+        }
+    };
+    Window {
+        first: (
+            packet(start.started_ns.saturating_sub(slack), false),
+            packet(start.applied_ns + slack, true),
+        ),
+        last: (
+            packet(end.started_ns.saturating_sub(slack), false).saturating_sub(1),
+            packet(end.applied_ns + slack, true),
+        ),
+        began: (at(start.started_ns), at(start.applied_ns)),
+        ended: (at(end.started_ns), at(end.applied_ns)),
+    }
+}
+
+/// The moment the measured phase began, on the clock of the records: a packet is never sent before its slot, so
+/// `send_ns - sequence * gap` is at or after the start for every packet, and the smallest of them (the packet that was
+/// the least late) is the start to within the lateness of that packet, a few microseconds.
+fn start_of(records: &[records::Record]) -> u64 {
+    records
+        .iter()
+        .map(|record| record.send_ns.saturating_sub(record.sequence * GAP_NS))
+        .min()
+        .expect("a packet arrived")
+}
+
+/// The packets that arrived although they were let go by the queue in the window, which cannot happen: a packet is
+/// let go at its own moment of sending plus the least delay of the link, or later, and it is delivered after that. So a
+/// packet that was sent late enough to be let go after the start step was done, and was received before the end step
+/// began, was delivered in a window in which nothing is delivered. This holds whatever the machine does, also when the
+/// receiver is held back and reads a packet long after it came (1 ms is for the start, which is known to a few
+/// microseconds).
+fn delivered_in_the_window(
+    records: &[records::Record],
+    applied_start: u64,
+    started_end: u64,
+    least_delay_ns: u64,
+) -> Vec<u64> {
+    records
+        .iter()
+        .filter(|record| {
+            record.send_ns + least_delay_ns >= applied_start + 1_000_000
+                && record.receive_ns + 1_000_000 < started_end
+        })
+        .map(|record| record.sequence)
+        .collect()
+}
+
+/// The arrivals of the packets of the first workload, in the order of arrival.
+fn records_of(result: &netscenario_core::RunResult, dir: &std::path::Path) -> Vec<records::Record> {
+    records::read(std::fs::File::open(dir.join(&result.workloads[0].records_file)).unwrap())
+        .unwrap()
+        .records
+}
+
+/// An outage is a window in the time of the receiver: nothing arrives in it, not even a packet that was on its way when
+/// it began (LNK-12, D-064). 375 packets a second, a delay of 100 ms, an outage from 2 s to 4 s: the packets sent in
+/// the 100 ms before 2 s are on their way when it begins, 37 of them, and they are dropped too; an outage that only
+/// lost what enters the link would lose 750 to 1,499 and nothing before. The window is placed by the clock, so the
+/// packet at each edge can differ from run to run, and the bounds come from the moments that the steps recorded.
+#[test]
+fn an_outage_is_a_window_in_which_nothing_arrives_not_even_what_was_on_its_way() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("timeline-outage");
+    let mut backend = backend(|_| {});
+    let result = run(
+        &mut backend,
+        &scenario(
+            "",
+            "      forward: { delay: 100ms }\n",
+            "6s",
+            "  - { at: 2s, link: access, outage: 2s, direction: forward }\n",
+        ),
+        &options(&dir),
+    )
+    .unwrap();
+    let records = records_of(&result, &dir);
+    let window = window_of(&result, &records, 100_000_000);
+    let stats = &result.workloads[0].stats;
+    // What arrived is every packet but one run of them
+    let mut got: Vec<u64> = records.iter().map(|record| record.sequence).collect();
+    got.sort_unstable();
+    let missing: Vec<u64> = (0..stats.sent)
+        .filter(|n| got.binary_search(n).is_err())
+        .collect();
+    let (first, last) = (missing[0], *missing.last().unwrap());
+    assert_eq!(
+        missing,
+        (first..=last).collect::<Vec<u64>>(),
+        "the lost packets are not one run"
+    );
+    // The in-flight packets are in it: it begins about 37 packets before the packet that the moment 2 s is, not at it
+    assert!(
+        first < 750 - 30,
+        "the packets on their way were not dropped: the run begins at {first}"
+    );
+    assert!(
+        (window.first.0..=window.first.1).contains(&first),
+        "the run begins at {first}, the steps allow {:?}",
+        window.first
+    );
+    assert!(
+        (window.last.0..=window.last.1).contains(&last),
+        "the run ends at {last}, the steps allow {:?}",
+        window.last
+    );
+    // Nothing was delivered in the window
+    let inside = delivered_in_the_window(&records, window.began.1, window.ended.0, 100_000_000);
+    assert_eq!(inside, Vec::<u64>::new(), "packets arrived in the window");
+    let kinds: Vec<(&str, Option<&str>, Option<u64>)> = result
+        .events
+        .iter()
+        .map(|e| (e.kind.as_str(), e.direction.as_deref(), e.packet))
+        .collect();
+    // By the clock, never at a barrier: the window is in the time of the receiver
+    assert_eq!(
+        kinds,
+        [
+            ("outage-start", Some("forward"), None),
+            ("outage-end", Some("forward"), None)
+        ]
+    );
+    assert_eq!(
+        lateness_problems(&result.events, GAP_NS),
+        Vec::<String>::new()
+    );
+    // The edges are placed by the clock, and the result says so
+    assert!(!result.seed.loss_reproducible);
+    assert!(
+        result
+            .seed
+            .not_reproducible_because
+            .iter()
+            .any(|reason| reason.contains("has an outage")),
+        "{:?}",
+        result.seed
+    );
+    assert_eq!(result.notes, Vec::<String>::new());
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// An outage is a window and not a value (D-064): a loss that a `set` leaves inside it goes on as the file says, and a
+/// `set` inside the window is done like any other. After the window the link is what the file says it is. Here the
+/// delay changes in the middle of an outage, and the packets that leave after its end have the new delay.
+#[test]
+fn a_set_inside_an_outage_is_done_and_the_values_go_on_after_it() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("timeline-outage-set");
+    let mut backend = backend(|_| {});
+    let result = run(
+        &mut backend,
+        &scenario(
+            "",
+            "      forward: { delay: 20ms }\n",
+            "5s",
+            "  - { at: 1s, link: access, outage: 2s, direction: forward }\n  - { at: 2s, link: access, set: { forward: { delay: 80ms, loss: { model: random, p: 100% } } } }\n  - { at: 3500ms, link: access, set: { forward: { loss: null } } }\n",
+        ),
+        &options(&dir),
+    )
+    .unwrap();
+    let order: Vec<&str> = result.events.iter().map(|e| e.kind.as_str()).collect();
+    assert_eq!(order, ["outage-start", "set", "outage-end", "set"]);
+    let records = records_of(&result, &dir);
+    // The link had a loss of 100 % from 2 s to 3.5 s: nothing sent in that time arrived, outage or not; before the
+    // outage and after both everything did, with the delay the file says
+    let sent_in = |from_ms: u64, to_ms: u64| -> Vec<&records::Record> {
+        records
+            .iter()
+            .filter(|r| {
+                let at = r.sequence * GAP_NS / 1_000_000;
+                at >= from_ms && at < to_ms
+            })
+            .collect()
+    };
+    assert!(
+        sent_in(2050, 3450).is_empty(),
+        "packets got through a loss of 100 %"
+    );
+    // 700 ms at 375 packets a second are about 260 packets, and nothing is lost before the outage
+    assert!(sent_in(100, 800).len() > 250);
+    let late = sent_in(3600, 4800);
+    // 1,200 ms are about 450 packets
+    assert!(late.len() > 430, "{} packets", late.len());
+    let delays: Vec<u64> = late.iter().map(|r| r.delay_ns()).collect();
+    assert!(
+        delays.iter().all(|d| (80_000_000..90_000_000).contains(d)),
+        "the delay after the window was not the new one: {:?}",
+        (delays.iter().min(), delays.iter().max())
+    );
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// An outage in a direction of two queues (a rate with a jitter, then the delay) and a loss: the blackout is the third
+/// queue, nothing arrives in the window whatever the jitter does, and the count of the first queue still agrees with
+/// the packets that were sent (the packets that the blackout drops are in its counters, D-064).
+#[test]
+fn an_outage_in_two_queues_with_a_loss_drops_what_leaves_and_the_queue_still_counts() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("timeline-outage-two");
+    let mut backend = backend(|_| {});
+    let result = run(
+        &mut backend,
+        &scenario(
+            "seed: 9\n",
+            "      forward: { delay: 60ms, jitter: { amount: 10ms }, rate: 20mbit, loss: { model: random, p: 10% } }\n",
+            "4s",
+            "  - { at: 1500ms, link: access, outage: 1s, direction: forward }\n",
+        ),
+        &options(&dir),
+    )
+    .unwrap();
+    let records = records_of(&result, &dir);
+    let base = start_of(&records);
+    // The least delay of the link is 60 ms less the 10 ms of the jitter, and the rate only adds
+    let inside = delivered_in_the_window(
+        &records,
+        base + result.events[0].applied_ns,
+        base + result.events[1].started_ns,
+        50_000_000,
+    );
+    assert_eq!(inside, Vec::<u64>::new(), "packets arrived in the window");
+    assert!(records.len() > 700, "{} packets arrived", records.len());
+    // The queue counted every packet that the workload sent into it, the blackout's drops included
+    let [check] = result.seed.queue_checks.as_slice() else {
+        panic!("{:?}", result.seed.queue_checks);
+    };
+    assert!(check.agrees(), "{check:?}");
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A link that is down refuses what its senders send, and the sender counts it; the packets that were on their way
+/// are dropped by the kernel, a handful at 10 ms of delay; afterwards everything arrives again (TML-02, D-064). The
+/// sender asks the run at a barrier, so the number of refused packets is exact: 375 a second from 2 s to 3 s.
+#[test]
+fn a_link_that_is_down_refuses_the_packets_sent_while_it_is_down_and_comes_back() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("timeline-down");
+    let mut backend = backend(|_| {});
+    let result = run(
+        &mut backend,
+        &scenario(
+            "",
+            "      forward: { delay: 10ms }\n",
+            "5s",
+            "  - { at: 2s, link: access, down: true }\n  - { at: 3s, link: access, up: true }\n",
+        ),
+        &options(&dir),
+    )
+    .unwrap();
+    let workload = &result.workloads[0];
+    assert_eq!(workload.sender.send_errors, 375, "{:?}", workload.sender);
+    let first_error = workload.sender.first_error.as_deref().unwrap_or("");
+    assert!(first_error.contains("unreachable"), "{first_error}");
+    // 1,875 packets are due in 5 s; 375 were refused, the others were handed to the kernel. The refused ones are a
+    // run of sequence numbers, they are not sent and not lost, and no arrival is out of the range (D-064)
+    assert_eq!(workload.sender.refused, [[750, 1124]]);
+    assert_eq!(workload.stats.sent, 1500);
+    assert_eq!(workload.stats.unexpected, 0, "{:?}", workload.stats);
+    // Lost: the packets that were in flight when the interface went down. 10 ms of delay at 375 packets a second
+    // is 3.75 packets, so at most 4 are in the queue (the sender is not late, the bound is the physical one)
+    assert!(workload.stats.lost <= 4, "{:?}", workload.stats);
+    let seen = arrivals(&result, &dir);
+    assert!(
+        seen.iter()
+            .all(|(sequence, _)| !(750..1125).contains(sequence)),
+        "a packet that was refused arrived"
+    );
+    assert!(
+        seen.iter().any(|(sequence, _)| *sequence >= 1870),
+        "nothing arrived at the end"
+    );
+    let kinds: Vec<(&str, Option<&str>, Option<u64>)> = result
+        .events
+        .iter()
+        .map(|e| (e.kind.as_str(), e.direction.as_deref(), e.packet))
+        .collect();
+    assert_eq!(kinds, [("down", None, Some(750)), ("up", None, Some(1125))]);
+    assert_eq!(result.notes, Vec::<String>::new());
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A link that goes down while its queue draws random numbers cannot be held to the count of packets that were sent
+/// (the kernel drops the packets in flight without counting them), and the run says so instead of reporting a
+/// disagreement of the queue (D-064).
+#[test]
+fn a_link_that_goes_down_with_a_loss_says_why_the_queue_is_not_checked() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("timeline-down-loss");
+    let mut backend = backend(|_| {});
+    let result = run(
+        &mut backend,
+        &scenario(
+            "seed: 5\n",
+            "      forward: { delay: 10ms, loss: { model: random, p: 10% } }\n",
+            "3s",
+            "  - { at: 1s, link: access, down: true }\n  - { at: 2s, link: access, up: true }\n",
+        ),
+        &options(&dir),
+    )
+    .unwrap();
+    assert!(!result.seed.loss_reproducible);
+    assert!(result.seed.queue_checks.is_empty(), "{:?}", result.seed);
+    let reasons = &result.seed.not_reproducible_because;
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(reasons[0].contains("goes down"), "{}", reasons[0]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The same seed gives the same lost packets with an outage in the run, outside the edges of its window: the queues that
+/// draw numbers do not know of the outage, and the packets at the two edges are placed by the clock (D-064). The loss
+/// is 20 % all the time, and the count of the first queue agrees in both runs.
+#[test]
+fn the_same_seed_loses_the_same_packets_outside_the_edges_of_an_outage() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let mut runs = Vec::new();
+    for round in 0..2 {
+        let dir = work_dir(&format!("timeline-outage-seed-{round}"));
+        let mut backend = backend(|_| {});
+        let result = run(
+            &mut backend,
+            &scenario(
+                "seed: 11\n",
+                "      forward: { delay: 50ms, loss: { model: random, p: 20% } }\n",
+                "4s",
+                "  - { at: 1500ms, link: access, outage: 1s, direction: forward }\n",
+            ),
+            &options(&dir),
+        )
+        .unwrap();
+        let [check] = result.seed.queue_checks.as_slice() else {
+            panic!("{:?}", result.seed.queue_checks);
+        };
+        assert!(check.agrees(), "{check:?}");
+        let records = records_of(&result, &dir);
+        let window = window_of(&result, &records, 50_000_000);
+        let mut got: Vec<u64> = records.iter().map(|record| record.sequence).collect();
+        got.sort_unstable();
+        got.dedup();
+        runs.push((got, window));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    // Outside the widest span that either run allows for the edges, the two runs lost the same packets
+    let from = runs.iter().map(|(_, w)| w.first.0).min().unwrap();
+    let to = runs.iter().map(|(_, w)| w.last.1).max().unwrap();
+    let outside = |got: &[u64]| -> Vec<u64> {
+        got.iter()
+            .copied()
+            .filter(|n| *n < from || *n > to)
+            .collect()
+    };
+    assert_eq!(outside(&runs[0].0), outside(&runs[1].0));
+    // And the loss is there outside it: about 20 % of the packets, 4 s at 375 a second is 1,500 packets
+    let kept = outside(&runs[0].0).len() as f64;
+    let wanted = (1500 - (to - from + 1)) as f64;
+    assert!(
+        (kept / wanted - 0.8).abs() < 0.05,
+        "{kept} of {wanted} packets outside the window"
+    );
 }

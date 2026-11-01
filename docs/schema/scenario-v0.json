@@ -214,7 +214,7 @@
     },
     "Event": {
       "additionalProperties": false,
-      "description": "One event of the timeline: at a moment, one thing happens to a link. It does exactly one of `set`,\n`outage`, `down` and `up`.\n\nAn event is applied before the first packet that its workload sends at or after the moment (D-038), so the\nsame seed gives the same lost packets. Events at the same moment are applied in the order of the file.",
+      "description": "One event of the timeline: at a moment, one thing happens to a link. It does exactly one of `set`,\n`outage`, `down` and `up`.\n\nA `set`, a `down` and an `up` are applied before the first packet that its workload sends at or after the moment\n(D-038), so the same seed gives the same lost packets; an `outage` is placed by the clock (D-064). Events at the\nsame moment are applied in the order of the file.",
       "properties": {
         "at": {
           "$ref": "#/$defs/Duration",
@@ -255,7 +255,7 @@
               "type": "null"
             }
           ],
-          "description": "Nothing is delivered for this long (a loss of 100 %), and the sender notices nothing (D-039). Then\nthe link has the values it had before."
+          "description": "Nothing is delivered for this long, not even a packet that is on its way, and the sender notices nothing\n(D-039, D-064). It is a window in the time of the receiver: from this moment on, for this long, nothing\nleaves the link. It does not change the values of the link, which act as before, and the packets that\nreach the end of the link in the window are lost."
         },
         "set": {
           "anyOf": [

@@ -179,10 +179,11 @@ pub trait Backend {
     }
 
     /// Tells the backend every state that one direction of a link will have in the run, the first being the one
-    /// that [`apply`](Backend::apply) is given next, before it is. A backend whose queues are built for a state
-    /// can build ones that every state fits, so that [`change`](Backend::change) never has to rebuild them
-    /// (D-059). It is called only for a direction that a `set` or an `outage` of the timeline changes. The default
-    /// does nothing.
+    /// that [`apply`](Backend::apply) is given next, before it is, and whether the direction has an outage
+    /// (`outage`, D-064). A backend whose queues are built for a state can build ones that every state fits, and the
+    /// one that holds an outage, so that [`change`](Backend::change) and [`set_outage`](Backend::set_outage) never
+    /// have to rebuild them (D-059). It is called only for a direction that a `set` or an `outage` of the timeline
+    /// touches. The default does nothing.
     ///
     /// # Errors
     ///
@@ -192,6 +193,7 @@ pub trait Backend {
         _link: LinkHandle,
         _direction: Direction,
         _states: &[Impairments],
+        _outage: bool,
     ) -> Result<(), Error> {
         Ok(())
     }
@@ -229,6 +231,43 @@ pub trait Backend {
             backend: self.name().to_owned(),
             action: "change the impairments of a direction".to_owned(),
             message: "this backend does not change impairments over time".to_owned(),
+        })
+    }
+
+    /// Begins (`on`) or ends an outage of one direction of a link (D-064): while it lasts nothing is delivered in
+    /// that direction, not even a packet that is on its way, and the sender notices nothing. The impairments of the
+    /// direction are not touched and act as they did. The direction must have been planned with `outage` set. The
+    /// default says that the backend cannot.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the backend does not have outages, or the direction was not planned for one.
+    fn set_outage(
+        &mut self,
+        _link: LinkHandle,
+        _direction: Direction,
+        _on: bool,
+    ) -> Result<(), Error> {
+        Err(Error::Backend {
+            backend: self.name().to_owned(),
+            action: "begin or end an outage".to_owned(),
+            message: "this backend does not have outages".to_owned(),
+        })
+    }
+
+    /// Takes the interface of a link down (`up` false) or brings it up again (D-039, D-064). Both ends go: a
+    /// sender on either side gets errors while it is down, which the agent counts, and the packets that were in
+    /// flight are dealt with by the kernel. The impairments of the link are what they were when it comes back. The
+    /// default says that the backend cannot.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the backend does not take links down, or the link cannot be switched.
+    fn set_link(&mut self, _link: LinkHandle, _up: bool) -> Result<(), Error> {
+        Err(Error::Backend {
+            backend: self.name().to_owned(),
+            action: "take a link down or bring it up".to_owned(),
+            message: "this backend does not take links down".to_owned(),
         })
     }
 

@@ -61,11 +61,12 @@ The agents print one JSON object per line on standard output; the types are `net
 {"event":"ready","flow":1,"address":"10.100.0.2:40000"}
 {"event":"ready","flow":1,"address":"10.100.0.2:40000","wire_error":"cannot read the frames of the interface: Operation not permitted (os error 1)"}
 {"event":"received","flow":1,"packets":100,"foreign":0,"corrupted":0,"wire_packets":100,"first_receive_ns":123,"last_receive_ns":456}
-{"event":"sent","flow":1,"packets":100,"first_send_ns":120,"last_send_ns":450,"max_lateness_ns":9000,"errors":0,"first_error":null}
+{"event":"sent","flow":1,"packets":100,"first_send_ns":120,"last_send_ns":450,"max_lateness_ns":9000,"errors":0,"first_error":null,"refused":[]}
 ```
 
 - `recv` prints `ready` once it listens (the sender starts after it), runs until it reads a line `stop` or the end of its standard input (so a receiver whose supervisor died does not run for ever), or until `--max-time-ns`. Packets that are already queued when the stop comes are still recorded, for at most 100 ms. `--ignore-stdin` is for use by hand.
 - `send` starts at `--start-at-ns` (a reading of `CLOCK_MONOTONIC`, so that the supervisor can start several workloads at one moment) or at once.
+- A packet that the kernel refuses to take (the interface is down, D-064) uses its sequence number all the same, so a packet keeps its place in time. `errors` counts them and `refused` lists them as runs `[first, last]`; `packets` counts only the ones that were handed to the kernel. A sender keeps at most 10,000 separate runs and counts the rest in `refused_unrecorded`, and the run fails on that: it could not say which packets were sent.
 
 ## The tap: naming the packets that the node drops (`--wire-out`)
 
