@@ -611,7 +611,8 @@ fn kernel_checks(findings: &Findings, tc: &Tool, checks: &mut Vec<Check>) {
 }
 
 /// The capability that a stream without the checksum of UDP needs (`udp-checksum: false`): the sender writes
-/// the header of UDP itself, on a raw socket.
+/// the header of UDP itself, on a raw socket. The receiver that names damaged packets reads the interface with a
+/// packet socket, which needs the same capability.
 fn raw_socket_check(outcome: &Outcome, not_tested: &str) -> Check {
     let title = "raw socket in a node";
     match outcome {
@@ -619,7 +620,7 @@ fn raw_socket_check(outcome: &Outcome, not_tested: &str) -> Check {
             "raw-socket",
             title,
             Status::Ok,
-            "a node has CAP_NET_RAW, so a stream can be sent without the checksum of UDP",
+            "a node has CAP_NET_RAW, so a stream can be sent without the checksum of UDP, and the damaged packets of a link with `corrupt` can be named by sequence number",
             None,
         ),
         Some(Err(error)) => kernel(
@@ -627,7 +628,7 @@ fn raw_socket_check(outcome: &Outcome, not_tested: &str) -> Check {
             title,
             Status::Warn,
             &format!(
-                "{error}; a workload with `udp-checksum: false` is refused by the run"
+                "{error}; a workload with `udp-checksum: false` is refused by the run, and the damaged packets of a link with `corrupt` are counted but not named by sequence number"
             ),
             Some("run netscenario as root, or with CAP_NET_RAW among the ambient capabilities (`setpriv --ambient-caps +net_raw`, `AmbientCapabilities=` in systemd), or in a user namespace, which has it".to_owned()),
         ),

@@ -78,6 +78,28 @@ pub struct FlowStats {
     pub throughput: Throughput,
 }
 
+/// The packets that were seen on the wire of the receiving node and never delivered intact: the sequence numbers in
+/// `seen` (what the tap read from the frames) that are below `sent` and in none of the `delivered` records, once
+/// each, in ascending order (D-040).
+///
+/// These are the packets that arrived damaged: the node dropped them (the UDP checksum caught the bit), or a
+/// stream without the checksum found them by their CRC-32. It names what the frame shows. A bit in the
+/// sequence number of a frame makes another number, which is named if it is in range and was not delivered: with
+/// a link that only corrupts that is another packet that was damaged too, and with a loss it can be a packet
+/// that the queue dropped. The run says so where a loss and a corruption are together.
+#[must_use]
+pub fn name_damaged(sent: u64, delivered: &[Record], seen: &[Record]) -> Vec<u64> {
+    let delivered: HashSet<u64> = delivered.iter().map(|record| record.sequence).collect();
+    let mut named: Vec<u64> = seen
+        .iter()
+        .map(|record| record.sequence)
+        .filter(|sequence| *sequence < sent && !delivered.contains(sequence))
+        .collect();
+    named.sort_unstable();
+    named.dedup();
+    named
+}
+
 /// The delay at the nearest rank for `permille` (500 is the median, 999 is percentile 99.9) in `sorted`.
 fn nearest_rank(sorted: &[u64], permille: u64) -> u64 {
     let n = sorted.len() as u64;
@@ -160,6 +182,32 @@ pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -
 
 #[cfg(test)]
 mod tests {
+    fn at(sequence: u64) -> Record {
+        Record {
+            sequence,
+            send_ns: 0,
+            receive_ns: 1,
+        }
+    }
+
+    /// The names are the sequences that the wire showed and the socket did not get, in range, once each.
+    #[test]
+    fn a_packet_seen_on_the_wire_and_not_delivered_is_named() {
+        let delivered = [at(0), at(1), at(3)];
+        // 2 and 4 were seen and not delivered (4 twice, a duplicated frame); 3 was both; 99 is not a packet
+        // of this stream (a bit in the sequence number); 7 was never seen
+        let seen = [at(0), at(1), at(2), at(3), at(4), at(4), at(99)];
+        assert_eq!(name_damaged(5, &delivered, &seen), [2, 4]);
+        // Canary: nothing is named where everything that was seen was delivered, or nothing was seen
+        assert_eq!(
+            name_damaged(5, &delivered, &[at(0), at(3)]),
+            Vec::<u64>::new()
+        );
+        assert_eq!(name_damaged(5, &delivered, &[]), Vec::<u64>::new());
+        // and a packet that was delivered late (after it was seen) is not named, whatever the order
+        assert_eq!(name_damaged(5, &[at(2)], &[at(2)]), Vec::<u64>::new());
+    }
+
     use super::*;
 
     fn arrival(sequence: u64, send_ns: u64, delay_ns: u64) -> Record {

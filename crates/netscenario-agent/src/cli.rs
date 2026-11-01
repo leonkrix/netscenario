@@ -4,7 +4,7 @@
 //! netscenario-agent send --to <addr> --rate <bits/s> --size <bytes> --duration-ns <ns>
 //!                        [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
 //! netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
-//!                        [--udp-checksum <on|off>]
+//!                        [--udp-checksum <on|off>] [--wire-out <file>]
 //! ```
 //!
 //! Numbers are plain integers (bits per second, bytes, nanoseconds): the units of a scenario file are
@@ -24,6 +24,7 @@ use crate::events::Event;
 use crate::receiver::{ReceiveConfig, Receiver};
 use crate::schedule::Stream;
 use crate::sender::{SendConfig, run as send};
+use crate::tap::Tap;
 
 /// The exit code for success.
 pub const OK: u8 = 0;
@@ -37,7 +38,7 @@ Usage:
   netscenario-agent send --to <addr> --rate <bits/s> --size <bytes> --duration-ns <ns>
                          [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
   netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
-                         [--udp-checksum <on|off>]
+                         [--udp-checksum <on|off>] [--wire-out <file>]
 
 The agent is started by netscenario inside a node; see docs/AGENT.md.
 ";
@@ -143,7 +144,14 @@ where
         .and_then(|options| send_command(&options, out)),
         "recv" => Options::parse(
             rest,
-            &["bind", "out", "flow", "max-time-ns", "udp-checksum"],
+            &[
+                "bind",
+                "out",
+                "flow",
+                "max-time-ns",
+                "udp-checksum",
+                "wire-out",
+            ],
             &["ignore-stdin"],
         )
         .map_err(Problem::Usage)
@@ -219,6 +227,24 @@ fn recv_command(
         .local_addr()
         .map_err(|error| Problem::Failed(error.to_string()))?;
     let stop = Arc::new(AtomicBool::new(false));
+    // The tap that names the damaged packets is a help: where it cannot be opened (no `CAP_NET_RAW`), the
+    // receiver runs without it and says why
+    let mut wire_error = None;
+    let tap = match options.optional::<String>("wire-out")? {
+        None => None,
+        Some(path) => match open_tap(&config, &path) {
+            Ok(opened) => Some(opened),
+            Err(error) => {
+                wire_error = Some(error);
+                None
+            }
+        },
+    };
+    let tap = tap.map(|(tap, file)| {
+        let stop = Arc::clone(&stop);
+        let flow = config.flow;
+        std::thread::spawn(move || tap.run(flow, &stop, file))
+    });
     if !options.has("ignore-stdin") {
         let stop = Arc::clone(&stop);
         std::thread::spawn(move || {
@@ -236,13 +262,29 @@ fn recv_command(
         &Event::Ready {
             flow: config.flow,
             address: address.to_string(),
+            wire_error,
         },
     );
-    let summary = receiver
+    let mut summary = receiver
         .run(&stop, file)
         .map_err(|error| Problem::Failed(format!("cannot record: {error}")))?;
+    if let Some(tap) = tap {
+        // The receiver ends on the stop flag and so does the tap; a tap that failed while running leaves the
+        // packets of its file as they were, and the run sees a file with fewer records than the interface counted
+        stop.store(true, Ordering::SeqCst);
+        summary.wire_packets = tap.join().ok().and_then(Result::ok).map(|tap| tap.packets);
+    }
     say(out, &Event::Received(summary));
     Ok(OK)
+}
+
+/// The tap and the file it writes, or the reason for the `ready` line why there is none.
+fn open_tap(config: &ReceiveConfig, path: &str) -> Result<(Tap, std::fs::File), String> {
+    let tap = Tap::open(config.bind, config.udp_checksum)
+        .map_err(|error| format!("cannot read the frames of the interface: {error}"))?;
+    let file =
+        std::fs::File::create(path).map_err(|error| format!("cannot create {path}: {error}"))?;
+    Ok((tap, file))
 }
 
 #[cfg(test)]

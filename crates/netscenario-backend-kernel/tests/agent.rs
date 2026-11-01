@@ -59,10 +59,17 @@ fn stream(
     duration_ns: &str,
     label: &str,
     extra: &[&str],
-) -> (SendSummary, ReceiveSummary, records::File) {
+    wire: bool,
+) -> (
+    SendSummary,
+    ReceiveSummary,
+    records::File,
+    Option<records::File>,
+) {
     let agent = agent_exe().expect("checked by the caller");
     let dir = work_dir(label);
     let file = dir.join("flow-1.records");
+    let wire_file = dir.join("flow-1.wire");
     let mut backend = backend(|_| {});
     let built = provision(&mut backend, &scenario("", link)).unwrap();
     let (client, server) = (built.nodes[0].1, built.nodes[1].1);
@@ -74,19 +81,20 @@ fn stream(
         Program::new(argv).with_memory_limit(limit)
     };
 
+    let mut receive_arguments = vec![
+        "recv",
+        "--bind",
+        "10.100.0.2:5000",
+        "--flow",
+        "1",
+        "--out",
+        file.to_str().unwrap(),
+    ];
+    if wire {
+        receive_arguments.extend(["--wire-out", wire_file.to_str().unwrap()]);
+    }
     let receiver = backend
-        .start_program(
-            server,
-            &argv(&[
-                "recv",
-                "--bind",
-                "10.100.0.2:5000",
-                "--flow",
-                "1",
-                "--out",
-                file.to_str().unwrap(),
-            ]),
-        )
+        .start_program(server, &argv(&receive_arguments))
         .unwrap();
     // The sender starts when the receiver is ready
     let ready = backend
@@ -96,7 +104,8 @@ fn stream(
         serde_json::from_str::<Event>(&ready.lines[0]).unwrap(),
         Event::Ready {
             flow: 1,
-            address: "10.100.0.2:5000".to_owned()
+            address: "10.100.0.2:5000".to_owned(),
+            wire_error: None
         },
         "{}",
         ready.stderr
@@ -126,8 +135,9 @@ fn stream(
     let heard = received(events_until_exit(&mut backend, receiver));
     backend.teardown().unwrap();
     let records = records::read(std::fs::File::open(&file).unwrap()).unwrap();
+    let wire = wire.then(|| records::read(std::fs::File::open(&wire_file).unwrap()).unwrap());
     let _ = std::fs::remove_dir_all(dir);
-    (sent, heard, records)
+    (sent, heard, records, wire)
 }
 
 #[test]
@@ -136,13 +146,14 @@ fn the_agent_measures_the_delay_of_the_link() {
         return;
     }
     // 2 mbit with 1200 byte payloads is 208.3 packets per second: 209 in one second
-    let (sent, received, file) = stream(
+    let (sent, received, file, _) = stream(
         "      forward: { delay: 20ms }\n",
         "2000000",
         "1200",
         "1000000000",
         "agent-delay",
         &[],
+        false,
     );
     assert_eq!(sent.packets, 209);
     assert_eq!((sent.errors, received.foreign), (0, 0));
@@ -207,13 +218,14 @@ fn a_delay_in_the_other_direction_does_not_touch_the_stream() {
     if !namespaces_available() || agent_exe().is_none() {
         return;
     }
-    let (_, received, file) = stream(
+    let (_, received, file, _) = stream(
         "      reverse: { delay: 50ms }\n",
         "1000000",
         "500",
         "500000000",
         "agent-reverse",
         &[],
+        false,
     );
     assert_eq!(received.packets, 125);
     let mut delays: Vec<u64> = file.records.iter().map(records::Record::delay_ns).collect();
@@ -312,13 +324,14 @@ fn a_stream_without_the_checksum_arrives_whole_on_a_clean_link() {
     if !namespaces_available() || agent_exe().is_none() {
         return;
     }
-    let (sent, received, file) = stream(
+    let (sent, received, file, _) = stream(
         "      forward: { delay: 5ms }\n",
         "2000000",
         "1200",
         "1000000000",
         "agent-no-checksum",
         &["--udp-checksum", "off"],
+        false,
     );
     assert_eq!(
         (sent.packets, sent.errors),
@@ -353,21 +366,23 @@ fn a_corrupted_packet_arrives_without_the_checksum_and_is_dropped_with_it() {
         return;
     }
     let link = "      forward: { corrupt: 10% }\n";
-    let (sent, off, _) = stream(
+    let (sent, off, _, _) = stream(
         link,
         "2000000",
         "200",
         "2000000000",
         "agent-corrupt-off",
         &["--udp-checksum", "off"],
+        false,
     );
-    let (_, on, _) = stream(
+    let (_, on, _, _) = stream(
         link,
         "2000000",
         "200",
         "2000000000",
         "agent-corrupt-on",
         &[],
+        false,
     );
     // 2 mbit with 200 byte payloads is 1,250 packets per second: 2,500 in two seconds
     assert_eq!(sent.packets, 2500);
@@ -399,4 +414,86 @@ fn a_corrupted_packet_arrives_without_the_checksum_and_is_dropped_with_it() {
         off.packets,
         off.corrupted
     );
+}
+
+/// The tap in the receiving node sees the packets that the node then drops as damaged, and with their sequence
+/// numbers. The link here only corrupts (10 %), so every packet that was not delivered was damaged, and every
+/// sequence that the tap saw and the socket did not get is one of them: the names are a subset of what the
+/// sender sent, none was delivered, and most of the damaged packets are named.
+#[test]
+fn the_tap_names_the_packets_that_the_node_dropped_as_damaged() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let (sent, received, file, wire) = stream(
+        "      forward: { corrupt: 10% }\n",
+        "2000000",
+        "200",
+        "2000000000",
+        "agent-tap",
+        &[],
+        true,
+    );
+    let wire = wire.unwrap();
+    assert_eq!(sent.packets, 2500);
+    assert_eq!(received.wire_packets, Some(wire.records.len() as u64));
+    let delivered: std::collections::BTreeSet<u64> =
+        file.records.iter().map(|r| r.sequence).collect();
+    let seen: std::collections::BTreeSet<u64> = wire.records.iter().map(|r| r.sequence).collect();
+    // Everything that was delivered was seen by the tap first (it sees the frame before the stack does)
+    assert!(
+        delivered.difference(&seen).count() <= 3,
+        "{} delivered packets were not seen on the wire (a bit in the sequence number can make one look unseen)",
+        delivered.difference(&seen).count()
+    );
+    // A bit in the sequence number can make a number the sender never used; the run judges the range
+    let named: Vec<u64> = seen
+        .difference(&delivered)
+        .copied()
+        .filter(|sequence| *sequence < sent.packets)
+        .collect();
+    let dropped = sent.packets - received.packets;
+    // 10 % of 2,500 are corrupted, 236 of 242 bytes of a frame drop it: 244 dropped, give or take 4 deviations
+    assert!(
+        (190..=300).contains(&dropped),
+        "{dropped} packets were not delivered"
+    );
+    // The names are a subset of the packets that were not delivered: the link loses nothing
+    assert!(
+        u64::try_from(named.len()).unwrap() <= dropped,
+        "{} names for {dropped} dropped packets",
+        named.len()
+    );
+    // 200 byte payloads: 218 of the 236 bytes that drop a frame leave it readable, 92 %, less the bits that
+    // turn a sequence number into another one (4 bytes). Far from all, far from none.
+    let share = named.len() as f64 / dropped as f64;
+    assert!(
+        (0.80..=0.95).contains(&share),
+        "{} of {dropped} dropped packets were named ({share:.3})",
+        named.len()
+    );
+}
+
+/// Canary: a link that does not corrupt has nothing to name, and the tap still sees every packet.
+#[test]
+fn the_tap_names_nothing_on_a_link_that_does_not_corrupt() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let (sent, received, file, wire) = stream(
+        "      forward: { delay: 5ms }\n",
+        "2000000",
+        "200",
+        "1000000000",
+        "agent-tap-clean",
+        &[],
+        true,
+    );
+    let wire = wire.unwrap();
+    // 2 mbit with 200 byte payloads is 1,250 packets per second
+    assert_eq!((sent.packets, received.packets), (1250, 1250));
+    assert_eq!(wire.records.len(), 1250, "the tap sees every packet once");
+    let delivered: std::collections::BTreeSet<u64> =
+        file.records.iter().map(|r| r.sequence).collect();
+    assert!(wire.records.iter().all(|r| delivered.contains(&r.sequence)));
 }

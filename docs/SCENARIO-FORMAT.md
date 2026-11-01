@@ -138,7 +138,7 @@ forward:
 | `loss` | `model` and its parameters, see below | `netem loss` (LNK-03, LNK-04). `trace` is planned for 0.3. |
 | `reorder` | `share`: Probability, `gap`: whole number, at least 1 (optional, default 1) | `netem reorder P gap G` (LNK-05). **Needs `delay`** (`tc` refuses it without). `share` is the share of the packets that are sent on at once; the others wait for the delay and arrive after later ones. With `gap` the share sent on at once is `1 / (gap - 1 + 1 / share)`: 25 % with `gap: 5` is 12.5 %. Measured in D-048. |
 | `duplicate` | Probability | `netem duplicate` (LNK-06). The copy is impaired on its own. |
-| `corrupt` | Probability | `netem corrupt` (LNK-07). One bit of the frame is flipped, anywhere in it, the Ethernet header included; a receiver with the UDP checksum on drops the packet (D-040), so the program sees loss, and the result tells the two apart (`directions`, [RESULTS.md](RESULTS.md)). The share of packets that are dropped is a little less than `P`: a bit in the source address of the Ethernet header harms nothing. |
+| `corrupt` | Probability | `netem corrupt` (LNK-07). One bit of the frame is flipped, anywhere in it, the Ethernet header included; a receiver with the UDP checksum on drops the packet (D-040), so the program sees loss, and the result tells the two apart (`directions`, [RESULTS.md](RESULTS.md)) and names most of them by sequence number (`corrupted_seq`). The share of packets that are dropped is a little less than `P`: a bit in the source address of the Ethernet header harms nothing. |
 | `rate` | Rate | `netem rate` (LNK-08). |
 
 **The loss models.** The parameters are those of `netem` and have its names, without aliases; every parameter of a model is required (a default of `tc` that the file does not show would be a value nobody wrote). There is no `correlation` key for any loss, duplication or reordering, because the correlation argument of `netem` does not keep the probability (D-048).
@@ -329,7 +329,7 @@ The JSON Schema of the format is [`docs/schema/scenario-v0.json`](schema/scenari
 
 The following sketches show where the format is heading. They are **not** part of version 0 in release 0.1 and may change. The release in brackets is the plan of `FEATURES.md`.
 
-**The sequence numbers of corrupted packets (0.2).** With `corrupt` and the checksum on, the result already counts how many packets the node dropped as damaged; naming them by sequence number is the next step (D-040). The keys `corrupt`, `reorder`, `duplicate`, `udp-checksum` and the loss models are in Part 1.
+The keys `corrupt`, `reorder`, `duplicate`, `udp-checksum` and the loss models of release 0.2 are in Part 1.
 
 **Link models (0.3 to 0.6).** `model: { kind: trace, file: ..., format: mahimahi }`, Markov, periodic and geometry-based models, with mobility (0.6). A model replaces the static values of its link. Traces are files named by a path; hashes of their content come with 0.3.
 

@@ -21,7 +21,7 @@ use crate::backend::{
     Backend, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramHandle,
 };
 use crate::error::Error;
-use crate::export::write_packets;
+use crate::export::write_packets_marked;
 use crate::hash::sha256_hex;
 use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
@@ -34,6 +34,10 @@ use crate::stats::analyse;
 
 /// The port of the first workload; the next uses the next port.
 const BASE_PORT: u16 = 5000;
+
+/// How many sequence numbers of damaged packets `corrupted_seq` of a workload lists; the count is complete, and the
+/// export of every packet (`--packets`) names them all.
+const MAX_LISTED_SEQUENCES: usize = 1000;
 
 /// How far ahead of the moment all the senders have to start, so that they are all ready when it comes.
 const START_MARGIN: Duration = Duration::from_millis(500);
@@ -209,8 +213,27 @@ struct Flow<'a> {
     to_node: NodeHandle,
     to_address: String,
     records_file: PathBuf,
+    /// Where the tap of the receiver writes the packets it sees on the wire, for a workload whose direction
+    /// corrupts packets (they are named by sequence number, D-040).
+    wire_file: Option<PathBuf>,
     start: Duration,
     duration: Duration,
+}
+
+/// A receiver that said `ready`, and the reason why its tap could not be opened, if it could not.
+struct Started {
+    program: ProgramHandle,
+    wire_error: Option<String>,
+}
+
+/// What came of naming the damaged packets of a workload.
+enum Naming {
+    /// The direction does not corrupt, so there is nothing to name.
+    NotAsked,
+    /// It was asked for and cannot be said, and why.
+    Unavailable(String),
+    /// The sequence numbers that were seen on the wire of the receiving node and not delivered intact.
+    Named(Vec<u64>),
 }
 
 /// What came back from one workload.
@@ -218,6 +241,7 @@ struct Measured {
     sent: SendSummary,
     received: ReceiveSummary,
     records: records::File,
+    naming: Naming,
 }
 
 /// What the phases of a run found out besides the workloads.
@@ -387,12 +411,16 @@ fn workload_result(
         let name = format!("packets-{}.jsonl", workload.id);
         let file = std::fs::File::create(options.out_dir.join(&name))
             .map_err(|error| failure("write the packets", format!("{name}: {error}")))?;
-        write_packets(
+        write_packets_marked(
             std::io::BufWriter::new(file),
             workload.id.as_str(),
             flow.sent.packets,
             &flow.records.records,
             first_send,
+            match &flow.naming {
+                Naming::Named(names) => names,
+                _ => &[],
+            },
         )
         .map_err(|error| failure("write the packets", format!("{name}: {error}")))?;
         Some(name)
@@ -424,6 +452,18 @@ fn workload_result(
         },
         foreign_datagrams: flow.received.foreign,
         corrupted: flow.received.corrupted,
+        corrupted_named: match &flow.naming {
+            Naming::Named(names) => Some(names.len() as u64),
+            _ => None,
+        },
+        corrupted_seq: match &flow.naming {
+            Naming::Named(names) => names.iter().take(MAX_LISTED_SEQUENCES).copied().collect(),
+            _ => Vec::new(),
+        },
+        corrupted_seq_unavailable: match &flow.naming {
+            Naming::Unavailable(why) => Some(why.clone()),
+            _ => None,
+        },
         records_file: records_name(index),
         packets_file,
     })
@@ -439,6 +479,21 @@ fn port(index: usize) -> u16 {
 
 fn records_name(index: usize) -> String {
     format!("flow-{index}.records")
+}
+
+fn wire_name(index: usize) -> String {
+    format!("flow-{index}.wire")
+}
+
+/// Whether the direction that `workload` sends through corrupts packets, so that the receiver reads the wire to name
+/// the damaged ones.
+fn corrupts_on_the_way(scenario: &Scenario, provisioned: &Provisioned, workload: &UdpCbr) -> bool {
+    ways(scenario, provisioned).any(|way| {
+        way.from == &workload.from
+            && way.to == &workload.to
+            && impairments_of(&scenario.topology.links[way.index], way.direction)
+                .is_some_and(|impairments| impairments.corrupt.is_some())
+    })
 }
 
 /// The address of the sending node and of the receiving node of a workload.
@@ -511,6 +566,8 @@ fn plan<'a>(
                 to_node: node(&workload.to)?,
                 to_address: format!("{to_address}:{}", port(index)),
                 records_file: options.out_dir.join(records_name(index)),
+                wire_file: corrupts_on_the_way(scenario, provisioned, workload)
+                    .then(|| options.out_dir.join(wire_name(index))),
                 start,
                 duration: stop.saturating_sub(start),
             })
@@ -614,7 +671,7 @@ fn start_receivers(
     flows: &[Flow<'_>],
     options: &RunOptions,
     control: &Control<'_>,
-) -> Result<Vec<ProgramHandle>, Error> {
+) -> Result<Vec<Started>, Error> {
     let mut receivers = Vec::new();
     for flow in flows {
         control.checkpoint()?;
@@ -626,18 +683,24 @@ fn start_receivers(
             &flow.records_file.display().to_string(),
         ]));
         arguments.extend(checksum_argument(flow.workload));
+        if let Some(wire) = &flow.wire_file {
+            arguments.extend(strings(&["--wire-out", &wire.display().to_string()]));
+        }
         let program = backend.start_program(flow.to_node, &agent_program(options, &arguments))?;
         let line = wait_for_line(backend, program, options.ready_timeout, &what, control)?;
-        match event(&line, &what)? {
-            Event::Ready { .. } => {}
+        let wire_error = match event(&line, &what)? {
+            Event::Ready { wire_error, .. } => wire_error,
             other => {
                 return Err(failure(
                     what,
                     format!("expected ready, the agent said {other:?}"),
                 ));
             }
-        }
-        receivers.push(program);
+        };
+        receivers.push(Started {
+            program,
+            wire_error,
+        });
     }
     Ok(receivers)
 }
@@ -743,8 +806,9 @@ fn measure(
     let queue_checks = check_queues(backend, scenario, provisioned, &flows, &sent)?;
     let after = node_counts(backend, scenario, provisioned)?;
     control.emit(&RunEvent::Collecting);
-    let measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
+    let mut measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
     let directions = tally_directions(scenario, provisioned, &flows, &measured, &before, &after);
+    refuse_names_after_buffer_drops(scenario, provisioned, &flows, &directions, &mut measured);
     Ok(Measurement {
         measured,
         settle,
@@ -756,7 +820,7 @@ fn measure(
 /// Stops the receivers one after the other and reads what each of them recorded, with what its sender said.
 fn stop_receivers(
     backend: &mut dyn Backend,
-    receivers: &[ProgramHandle],
+    receivers: &[Started],
     flows: &[Flow<'_>],
     sent: Vec<SendSummary>,
     control: &Control<'_>,
@@ -765,10 +829,10 @@ fn stop_receivers(
     for ((receiver, flow), sent) in receivers.iter().zip(flows).zip(sent) {
         control.checkpoint()?;
         let what = format!("stop the receiver of '{}'", flow.workload.id);
-        backend.send_line(*receiver, "stop")?;
+        backend.send_line(receiver.program, "stop")?;
         let lines = wait_for_end(
             backend,
-            *receiver,
+            receiver.program,
             Instant::now() + END_MARGIN,
             &what,
             control,
@@ -794,13 +858,83 @@ fn stop_receivers(
                 format!("{}: {error}", flow.records_file.display()),
             )
         })?;
+        let naming = name_from_the_wire(flow, receiver, &received, sent.packets, &records);
         measured.push(Measured {
             sent,
             received,
             records,
+            naming,
         });
     }
     Ok(measured)
+}
+
+/// Reads the file of the tap of a receiver and names the damaged packets, or says why it cannot (D-040).
+fn name_from_the_wire(
+    flow: &Flow<'_>,
+    started: &Started,
+    received: &ReceiveSummary,
+    sent: u64,
+    delivered: &records::File,
+) -> Naming {
+    let Some(path) = &flow.wire_file else {
+        return Naming::NotAsked;
+    };
+    if let Some(error) = &started.wire_error {
+        return Naming::Unavailable(format!(
+            "{error}; the capability CAP_NET_RAW is needed in the node (`netscenario doctor` tests it)"
+        ));
+    }
+    if received.wire_packets.is_none() {
+        return Naming::Unavailable(
+            "the tap of the receiver did not finish, so the file of what it saw cannot be trusted"
+                .to_owned(),
+        );
+    }
+    let seen = std::fs::File::open(path)
+        .map_err(|error| error.to_string())
+        .and_then(|file| {
+            records::read(std::io::BufReader::new(file)).map_err(|error| error.to_string())
+        });
+    match seen {
+        Ok(seen) => Naming::Named(crate::stats::name_damaged(
+            sent,
+            &delivered.records,
+            &seen.records,
+        )),
+        Err(error) => Naming::Unavailable(format!("{}: {error}", path.display())),
+    }
+}
+
+/// A node that dropped datagrams because the buffer of a socket was full did not deliver packets that were not
+/// damaged, and those would be named as damaged: where that happened, the names are withdrawn (D-040).
+fn refuse_names_after_buffer_drops(
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+    flows: &[Flow<'_>],
+    directions: &[DirectionTally],
+    measured: &mut [Measured],
+) {
+    for (flow, measured) in flows.iter().zip(measured) {
+        if !matches!(measured.naming, Naming::Named(_)) {
+            continue;
+        }
+        let overflowed = ways(scenario, provisioned)
+            .filter(|way| way.from == &flow.workload.from && way.to == &flow.workload.to)
+            .any(|way| {
+                directions.iter().any(|tally| {
+                    tally.link == way.name.as_str()
+                        && tally.direction == way.word
+                        && tally.receive_buffer_drops > 0
+                })
+            });
+        if overflowed {
+            measured.naming = Naming::Unavailable(
+                "the node dropped datagrams because the receive buffer of a socket was full, so a packet that is missing may not be a damaged one"
+                    .to_owned(),
+            );
+        }
+    }
 }
 
 /// One direction of a link of the scenario.
@@ -1000,6 +1134,8 @@ mod tests {
         /// How many datagrams the receiver reports as damaged: 2 when it was told that the checksum is off,
         /// because the two packets that the fake never records are the ones that arrived damaged.
         damaged: u64,
+        /// How many packets the tap of the receiver reports, when it was asked for one and could be opened.
+        wire_packets: Option<u64>,
     }
 
     struct Played {
@@ -1020,6 +1156,7 @@ mod tests {
                 readings: [0; 2],
                 checksum: Vec::new(),
                 damaged: 0,
+                wire_packets: None,
             }
         }
 
@@ -1164,9 +1301,33 @@ mod tests {
                             .unwrap();
                     }
                     writer.finish().unwrap();
+                    // The tap sees the packets that were delivered and the two that were not (3 and 7, one of
+                    // them twice), and a frame whose sequence number was damaged into one that was never sent
+                    let mut wire_error = String::new();
+                    if argv.iter().any(|argument| argument == "--wire-out") {
+                        if self.trouble == Some("no-tap") {
+                            wire_error = r#","wire_error":"cannot read the frames of the interface: Operation not permitted (os error 1)""#.to_owned();
+                        } else {
+                            let mut tap = Writer::new(
+                                std::fs::File::create(argument(argv, "--wire-out")).unwrap(),
+                                0,
+                            )
+                            .unwrap();
+                            for sequence in [0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 99] {
+                                tap.write(&Record {
+                                    sequence,
+                                    send_ns: 1_000,
+                                    receive_ns: 2_000,
+                                })
+                                .unwrap();
+                            }
+                            tap.finish().unwrap();
+                            self.wire_packets = Some(12);
+                        }
+                    }
                     Played {
                         lines: VecDeque::from([format!(
-                            r#"{{"event":"ready","flow":0,"address":"{}"}}"#,
+                            r#"{{"event":"ready","flow":0,"address":"{}"{wire_error}}}"#,
                             argument(argv, "--bind")
                         )]),
                         exit: None,
@@ -1227,8 +1388,11 @@ mod tests {
             self.calls.push(format!("line {line}"));
             let played = &mut self.programs[program.0 as usize];
             if played.stops_on_line && line == "stop" {
+                let wire = self.wire_packets.map_or_else(String::new, |packets| {
+                    format!(r#","wire_packets":{packets}"#)
+                });
                 played.lines.push_back(format!(
-                    r#"{{"event":"received","flow":0,"packets":8,"foreign":0,"corrupted":{},"first_receive_ns":1,"last_receive_ns":2}}"#,
+                    r#"{{"event":"received","flow":0,"packets":8,"foreign":0,"corrupted":{}{wire},"first_receive_ns":1,"last_receive_ns":2}}"#,
                     self.damaged
                 ));
                 played.exit = Some(ProgramExit::Code(0));
@@ -1495,6 +1659,93 @@ mod tests {
             ),
             (10, 0, Some(0)),
             "the two damaged packets reached the receiver, so the node dropped nothing"
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    const CORRUPTING: &str = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { corrupt: 20% }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n";
+
+    /// A direction that corrupts is read on the wire, and the packets that the tap saw and the socket did not get
+    /// are named: 3 (seen twice, named once) and 7. The number 99 was never sent and is not named, and the
+    /// export of every packet marks the two.
+    #[test]
+    fn the_damaged_packets_of_a_direction_that_corrupts_are_named_from_the_wire() {
+        let scenario = Scenario::from_yaml(CORRUPTING, "t.yaml").unwrap();
+        let mut backend = Fake::new(None);
+        let mut options = options("named");
+        options.export_packets = true;
+        let result = run(&mut backend, &scenario, &options).unwrap();
+        let workload = &result.workloads[0];
+        assert_eq!(workload.corrupted_named, Some(2));
+        assert_eq!(workload.corrupted_seq, [3, 7]);
+        assert_eq!(workload.corrupted_seq_unavailable, None);
+        let packets = std::fs::read_to_string(
+            options
+                .out_dir
+                .join(workload.packets_file.as_ref().unwrap()),
+        )
+        .unwrap();
+        let marked: Vec<&str> = packets
+            .lines()
+            .filter(|line| line.contains(r#""corrupted":true"#))
+            .collect();
+        assert_eq!(marked.len(), 2, "{packets}");
+        assert!(marked[0].contains(r#""sequence":3"#) && marked[0].contains(r#""lost":true"#));
+        assert!(marked[1].contains(r#""sequence":7"#));
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Where the tap cannot be opened the run goes on, without names and with the reason; a direction that does not
+    /// corrupt does not ask for a tap at all.
+    #[test]
+    fn a_tap_that_cannot_be_opened_leaves_the_names_out_and_says_why() {
+        let scenario = Scenario::from_yaml(CORRUPTING, "t.yaml").unwrap();
+        let mut backend = Fake::new(Some("no-tap"));
+        let options = options("no-tap");
+        let result = run(&mut backend, &scenario, &options).unwrap();
+        let workload = &result.workloads[0];
+        assert_eq!(
+            (workload.corrupted_named, workload.corrupted_seq.len()),
+            (None, 0)
+        );
+        let why = workload.corrupted_seq_unavailable.as_deref().unwrap();
+        assert!(
+            why.contains("Operation not permitted") && why.contains("CAP_NET_RAW"),
+            "{why}"
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+        // Canary: no corruption, no tap, nothing to say
+        let mut backend = Fake::new(None);
+        let options = self::options("no-tap-plain");
+        let result = run(&mut backend, &self::scenario(), &options).unwrap();
+        let workload = &result.workloads[0];
+        assert_eq!(
+            (
+                workload.corrupted_named,
+                workload.corrupted_seq_unavailable.as_ref()
+            ),
+            (None, None)
+        );
+        assert!(!options.out_dir.join("flow-0.wire").exists());
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// A node that dropped datagrams for a full buffer did not deliver packets that were whole, and those would be
+    /// named as damaged: the names are withdrawn.
+    #[test]
+    fn names_are_withdrawn_where_the_node_dropped_datagrams_for_a_full_buffer() {
+        let scenario = Scenario::from_yaml(CORRUPTING, "t.yaml").unwrap();
+        let mut backend = Fake::with_frames([9, 0], 1);
+        let options = options("named-buffer");
+        let result = run(&mut backend, &scenario, &options).unwrap();
+        let workload = &result.workloads[0];
+        assert_eq!(workload.corrupted_named, None);
+        assert!(
+            workload
+                .corrupted_seq_unavailable
+                .as_deref()
+                .is_some_and(|why| why.contains("receive buffer")),
+            "{workload:?}"
         );
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }

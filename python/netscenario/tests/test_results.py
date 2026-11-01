@@ -129,6 +129,25 @@ def test_the_damaged_packets_of_a_stream_without_the_checksum_are_counted() -> N
     assert media.lost == 5, "a damaged packet is not an intact one: it stays in lost"
 
 
+def test_the_names_of_the_damaged_packets_are_read_and_their_absence_is_visible() -> None:
+    media = result()["media"]
+    assert (media.corrupted_named, media.corrupted_seq, media.corrupted_seq_unavailable) == (
+        None,
+        (),
+        None,
+    )
+    data = json.loads(json.dumps(RESULT))
+    data["workloads"][0].update(corrupted_named=3, corrupted_seq=[4, 9, 17])
+    named = ns.Result.from_json(json.dumps(data), Path("/out"))["media"]
+    assert (named.corrupted_named, named.corrupted_seq) == (3, (4, 9, 17))
+    data["workloads"][0].update(
+        corrupted_named=None, corrupted_seq=[], corrupted_seq_unavailable="CAP_NET_RAW is missing"
+    )
+    unavailable = ns.Result.from_json(json.dumps(data), Path("/out"))["media"]
+    assert unavailable.corrupted_named is None
+    assert unavailable.corrupted_seq_unavailable == "CAP_NET_RAW is missing"
+
+
 def test_canary_a_file_that_is_not_a_result_or_of_another_version_is_refused() -> None:
     with pytest.raises(ValueError, match="not a netscenario result"):
         ns.Result.from_json('{"format": "something-else"}', Path())

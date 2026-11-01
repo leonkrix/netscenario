@@ -231,6 +231,23 @@ pub struct WorkloadResult {
     /// (`dropped_corrupted`).
     #[serde(default)]
     pub corrupted: u64,
+    /// How many packets the receiving node saw on the wire and did not deliver intact, with their sequence
+    /// numbers readable (D-040): the damaged packets that can be named. `None` if the direction does not corrupt,
+    /// or if they could not be named (`corrupted_seq_unavailable` says why). It is a count of sequence numbers
+    /// read from frames, so a bit flipped in a sequence number can name a neighbour, and a frame whose headers
+    /// or sequence are damaged is not named at all; `dropped_corrupted` of `directions` is the exact count for the
+    /// node. With a loss in the same direction a name can also be a packet that the queue dropped.
+    #[serde(default)]
+    pub corrupted_named: Option<u64>,
+    /// The first 1,000 of those sequence numbers, in ascending order. The export of every packet (`--packets`)
+    /// has `corrupted` on all of them.
+    #[serde(default)]
+    pub corrupted_seq: Vec<u64>,
+    /// Why the damaged packets of a direction that corrupts could not be named, if they could not: the tap of
+    /// the receiver needs `CAP_NET_RAW` in the node, and it is not trusted where the node dropped datagrams for
+    /// a full receive buffer.
+    #[serde(default)]
+    pub corrupted_seq_unavailable: Option<String>,
     /// The file of per-packet records of the receiver (binary, see `docs/AGENT.md`), relative to the result.
     pub records_file: String,
     /// The JSON Lines file with one line for each packet, if it was asked for, relative to the result.
@@ -340,6 +357,9 @@ mod tests {
                 },
                 foreign_datagrams: 0,
                 corrupted: 0,
+                corrupted_named: None,
+                corrupted_seq: Vec::new(),
+                corrupted_seq_unavailable: None,
                 records_file: "flow-0.records".to_owned(),
                 packets_file: None,
             }],

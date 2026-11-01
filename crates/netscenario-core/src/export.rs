@@ -4,24 +4,30 @@
 //! ```text
 //! {"workload":"media","sequence":0,"send_ns":0,"receive_ns":20016000,"delay_ns":20016000}
 //! {"workload":"media","sequence":1,"lost":true}
+//! {"workload":"media","sequence":4,"lost":true,"corrupted":true}
 //! {"workload":"media","sequence":2,"duplicate":true,"send_ns":9600000,"receive_ns":30000000,"delay_ns":20400000}
 //! ```
 //!
 //! The times are nanoseconds since the first packet of the workload was sent, so that they mean something
 //! outside the machine. A packet that did not arrive has only `lost`. A second arrival of a packet follows its
-//! first line with `duplicate`.
+//! first line with `duplicate`. A lost packet that the receiving node saw on the wire and dropped as damaged has
+//! `corrupted` as well (D-040).
 
 use std::io::{self, Write};
 
 use netscenario_agent::records::Record;
 use serde::Serialize;
 
+// The flags of a line of JSON: each is written only when it is true
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Serialize)]
 struct Line<'a> {
     workload: &'a str,
     sequence: u64,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     lost: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    corrupted: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     duplicate: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -41,11 +47,28 @@ struct Line<'a> {
 ///
 /// The error of `out`.
 pub fn write_packets(
+    out: impl Write,
+    workload: &str,
+    sent: u64,
+    records: &[Record],
+    start_ns: u64,
+) -> io::Result<()> {
+    write_packets_marked(out, workload, sent, records, start_ns, &[])
+}
+
+/// As [`write_packets`], and the lost packets whose sequence numbers are in `damaged` (ascending, once each) are
+/// marked `corrupted`.
+///
+/// # Errors
+///
+/// The error of `out`.
+pub fn write_packets_marked(
     mut out: impl Write,
     workload: &str,
     sent: u64,
     records: &[Record],
     start_ns: u64,
+    damaged: &[u64],
 ) -> io::Result<()> {
     // The arrivals in the order of the sequence numbers, and in the order of arrival for the same number
     let mut order: Vec<usize> = (0..records.len()).collect();
@@ -59,6 +82,7 @@ pub fn write_packets(
         workload,
         sequence: record.sequence,
         lost: false,
+        corrupted: false,
         duplicate,
         unexpected,
         send_ns: Some(relative(record.send_ns)),
@@ -78,6 +102,7 @@ pub fn write_packets(
                 workload,
                 sequence,
                 lost: true,
+                corrupted: damaged.binary_search(&sequence).is_ok(),
                 duplicate: false,
                 unexpected: false,
                 send_ns: None,

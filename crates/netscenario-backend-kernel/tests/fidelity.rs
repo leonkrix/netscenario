@@ -57,6 +57,12 @@ enum Metric {
     NodeDropRatio,
     /// The packets that the queue of the link dropped, as a share of the packets sent (the same tally).
     LostInQueueRatio,
+    /// The damaged packets that the result names by sequence number, as a share of the frames the node dropped
+    /// as damaged: what the tap in the receiving node could read.
+    NamedShare,
+    /// The names beyond the frames the node dropped (a name that no dropped frame stands behind): 0 on a link
+    /// that only corrupts.
+    NamedExcess,
     /// The packets that arrived damaged and were found by the CRC-32, as a share of the packets sent: only a
     /// stream without the checksum of UDP has them.
     DamagedRatio,
@@ -82,6 +88,8 @@ impl Metric {
             Metric::NodeDropRatio => "frames dropped by the node as damaged",
             Metric::LostInQueueRatio => "packets lost in the queue",
             Metric::DamagedRatio => "packets that arrived damaged",
+            Metric::NamedShare => "dropped packets named by sequence number",
+            Metric::NamedExcess => "names without a dropped frame",
             Metric::Unaccounted => "packets not accounted for",
         }
     }
@@ -94,8 +102,9 @@ impl Metric {
             | Metric::NodeDropRatio
             | Metric::LostInQueueRatio
             | Metric::DamagedRatio
+            | Metric::NamedShare
             | Metric::EarlyShare => format!("{:.2} %", value * 100.0),
-            Metric::Unaccounted => format!("{value:.0} packets"),
+            Metric::Unaccounted | Metric::NamedExcess => format!("{value:.0} packets"),
             Metric::MeanLossRun => format!("{value:.2} packets"),
             Metric::SteadyGoodputBps => format!("{:.4} mbit/s", value / 1e6),
             _ => format!("{value:.3} ms"),
@@ -126,6 +135,8 @@ struct Measurement {
     node_drop_ratio: f64,
     lost_in_queue_ratio: f64,
     damaged_ratio: f64,
+    named_share: f64,
+    named_excess: f64,
     unaccounted: f64,
     sent: u64,
     kernel: String,
@@ -158,6 +169,8 @@ impl Measurement {
             Metric::NodeDropRatio => self.node_drop_ratio,
             Metric::LostInQueueRatio => self.lost_in_queue_ratio,
             Metric::DamagedRatio => self.damaged_ratio,
+            Metric::NamedShare => self.named_share,
+            Metric::NamedExcess => self.named_excess,
             Metric::Unaccounted => self.unaccounted,
         }
     }
@@ -729,6 +742,20 @@ fn cases() -> Vec<Case> {
                     hi: 0.1026,
                     reason: "with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped",
                 },
+                Bound {
+                    metric: Metric::NamedShare,
+                    expected: 0.8218,
+                    lo: 0.7865,
+                    hi: 0.8571,
+                    reason: "KNOWN (D-040): of the 100 bytes of a 106 byte frame whose flipped bit gets it dropped, the tap can read the frame unless the bit is in the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, the magic, version, flags and sequence number of the agent): (100 - 18) / 100, and the few sequence numbers that a flipped bit turns into another number that was not delivered; binomial, about 1886 dropped frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::NamedExcess,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "on a link that only corrupts every name stands for a frame that the node dropped, so there are not more names than dropped frames",
+                },
             ],
         },
         Case {
@@ -769,6 +796,20 @@ fn cases() -> Vec<Case> {
                     hi: 0.1059,
                     reason: "with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped",
                 },
+                Bound {
+                    metric: Metric::NamedShare,
+                    expected: 0.9245,
+                    lo: 0.9005,
+                    hi: 0.9485,
+                    reason: "KNOWN (D-040): of the 236 bytes of a 242 byte frame whose flipped bit gets it dropped, the tap can read the frame unless the bit is in the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, the magic, version, flags and sequence number of the agent): (236 - 18) / 236, and the few sequence numbers that a flipped bit turns into another number that was not delivered; binomial, about 1950 dropped frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::NamedExcess,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "on a link that only corrupts every name stands for a frame that the node dropped, so there are not more names than dropped frames",
+                },
             ],
         },
         Case {
@@ -808,6 +849,20 @@ fn cases() -> Vec<Case> {
                     lo: 0.091,
                     hi: 0.108,
                     reason: "with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped",
+                },
+                Bound {
+                    metric: Metric::NamedShare,
+                    expected: 0.9856,
+                    lo: 0.9748,
+                    hi: 0.9963,
+                    reason: "KNOWN (D-040): of the 1236 bytes of a 1242 byte frame whose flipped bit gets it dropped, the tap can read the frame unless the bit is in the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, the magic, version, flags and sequence number of the agent): (1236 - 18) / 1236, and the few sequence numbers that a flipped bit turns into another number that was not delivered; binomial, about 1990 dropped frames, four standard deviations on each side",
+                },
+                Bound {
+                    metric: Metric::NamedExcess,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "on a link that only corrupts every name stands for a frame that the node dropped, so there are not more names than dropped frames",
                 },
             ],
         },
@@ -1044,6 +1099,13 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         node_drop_ratio: tally.dropped_corrupted as f64 / tally.reached_node.max(1) as f64,
         lost_in_queue_ratio: lost_in_queue.map_or(f64::NAN, |lost| lost / tally.sent.max(1) as f64),
         damaged_ratio: workload.corrupted as f64 / workload.stats.sent.max(1) as f64,
+        // NaN where the result names nothing, so that a bound on it fails
+        named_share: workload.corrupted_named.map_or(f64::NAN, |named| {
+            named as f64 / tally.dropped_corrupted.max(1) as f64
+        }),
+        named_excess: workload.corrupted_named.map_or(f64::NAN, |named| {
+            named.saturating_sub(tally.dropped_corrupted) as f64
+        }),
         unaccounted: lost_in_queue.map_or(f64::NAN, |lost| {
             tally.sent as f64
                 - (lost + (tally.dropped_corrupted + tally.delivered) as f64)
@@ -1110,10 +1172,11 @@ fn fragment(case: &Case, measurement: &Measurement, verdicts: &[Verdict<'_>]) ->
             | Metric::NodeDropRatio
             | Metric::LostInQueueRatio
             | Metric::DamagedRatio
+            | Metric::NamedShare
             | Metric::EarlyShare => {
                 format!("{:+.2} pp", (verdict.value - bound.expected) * 100.0)
             }
-            Metric::MeanLossRun | Metric::Unaccounted => {
+            Metric::MeanLossRun | Metric::Unaccounted | Metric::NamedExcess => {
                 format!("{:+.2} packets", verdict.value - bound.expected)
             }
             Metric::SteadyGoodputBps => {
@@ -1483,6 +1546,8 @@ fn synthetic(delays_ms: &[f64], loss: f64, reordered: f64, goodput: f64) -> Meas
         node_drop_ratio: 0.0,
         lost_in_queue_ratio: 0.0,
         damaged_ratio: 0.0,
+        named_share: 0.0,
+        named_excess: 0.0,
         unaccounted: 0.0,
         sent: 0,
         kernel: String::new(),
@@ -1693,6 +1758,10 @@ fn canary_a_corruption_that_is_missing_or_is_a_loss_fails_the_corruption_case() 
         none.contains(&Metric::NodeDropRatio) && none.contains(&Metric::LossRatio),
         "{none:?}"
     );
+    assert!(
+        none.contains(&Metric::NamedShare),
+        "a link that does not corrupt has no names: {none:?}"
+    );
     let as_loss = wrong_on_purpose("16-corrupt-200", "loss: { model: random, p: 9.75% }", 5, 1);
     assert!(
         as_loss.contains(&Metric::NodeDropRatio) && as_loss.contains(&Metric::LostInQueueRatio),
@@ -1750,7 +1819,44 @@ fn canary_a_tally_that_does_not_add_up_fails() {
         [
             Metric::NodeDropRatio,
             Metric::Unaccounted,
-            Metric::LossRatio
+            Metric::LossRatio,
+            Metric::NamedShare
         ]
+    );
+}
+
+/// The naming can fail too. A result with more names than the node dropped frames, and one that names nothing
+/// (no tap, or a tap that read nothing), are both judged wrong; a result with no names at all is NaN and fails.
+#[test]
+fn canary_names_without_a_dropped_frame_or_no_names_at_all_fail_the_naming() {
+    let mut faithful = synthetic(&[1.0], 0.0975, 0.0, 0.0);
+    faithful.node_drop_ratio = 0.0975;
+    faithful.named_share = 0.9245;
+    assert_eq!(
+        failing_metrics("16-corrupt-200", &faithful),
+        Vec::<Metric>::new()
+    );
+    let mut too_many = synthetic(&[1.0], 0.0975, 0.0, 0.0);
+    too_many.node_drop_ratio = 0.0975;
+    too_many.named_share = 0.9245;
+    too_many.named_excess = 2.0;
+    assert_eq!(
+        failing_metrics("16-corrupt-200", &too_many),
+        [Metric::NamedExcess]
+    );
+    let mut nothing = synthetic(&[1.0], 0.0975, 0.0, 0.0);
+    nothing.node_drop_ratio = 0.0975;
+    nothing.named_share = f64::NAN;
+    nothing.named_excess = f64::NAN;
+    assert_eq!(
+        failing_metrics("16-corrupt-200", &nothing),
+        [Metric::NamedShare, Metric::NamedExcess]
+    );
+    let mut all = synthetic(&[1.0], 0.0975, 0.0, 0.0);
+    all.node_drop_ratio = 0.0975;
+    all.named_share = 1.0;
+    assert_eq!(
+        failing_metrics("16-corrupt-200", &all),
+        [Metric::NamedShare]
     );
 }

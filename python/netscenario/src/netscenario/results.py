@@ -127,6 +127,17 @@ class Workload:
     """The binary file of per-packet records (``docs/AGENT.md``)."""
     packets_file: Path | None
     """The JSON Lines file with a line for each packet, if it was asked for."""
+    corrupted_named: int | None = None
+    """How many damaged packets the receiving node saw on the wire and did not deliver intact, with
+    their sequence numbers readable; ``None`` if the direction does not corrupt or they could not be
+    named (see ``corrupted_seq_unavailable``). A count of numbers read from frames: a frame with a
+    damaged header is not named, and a bit flipped in a number can name a neighbour. The exact count
+    for the node is ``dropped_corrupted`` of ``directions``."""
+    corrupted_seq: tuple[int, ...] = ()
+    """The first 1,000 of those sequence numbers, ascending. ``result.packets_file`` (``--packets``)
+    has all of them."""
+    corrupted_seq_unavailable: str | None = None
+    """Why the damaged packets of a corrupting direction could not be named, if they could not."""
     corrupted: int = 0
     """Datagrams that reached the receiver damaged, in a workload with ``udp_checksum=False``:
     the CRC-32 of the packet did not match. They are not in ``received``, and they are in
@@ -415,4 +426,9 @@ def _workload(entry: dict[str, Any], directory: Path) -> Workload:
         records_file=directory / entry["records_file"],
         packets_file=None if entry["packets_file"] is None else directory / entry["packets_file"],
         corrupted=int(entry.get("corrupted", 0)),
+        corrupted_named=None
+        if entry.get("corrupted_named") is None
+        else int(entry["corrupted_named"]),
+        corrupted_seq=tuple(int(n) for n in entry.get("corrupted_seq", ())),
+        corrupted_seq_unavailable=entry.get("corrupted_seq_unavailable"),
     )

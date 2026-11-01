@@ -84,6 +84,7 @@ impl Receiver {
             packets: 0,
             foreign: 0,
             corrupted: 0,
+            wire_packets: None,
             first_receive_ns: None,
             last_receive_ns: None,
         };
