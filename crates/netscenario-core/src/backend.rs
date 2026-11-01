@@ -225,7 +225,7 @@ pub trait Backend {
     /// What the node that receives in one direction of a link has counted (see [`NodeCounts`]). The run reads it
     /// before and after the workloads and accounts for every packet that was sent: lost in the queue,
     /// dropped by the node, or delivered (D-040). `None` if the backend cannot count, which is the default;
-    /// then the result has no account for the direction.
+    /// then the result has no tally for the direction.
     ///
     /// # Errors
     ///

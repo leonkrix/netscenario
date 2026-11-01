@@ -53,11 +53,11 @@ enum Metric {
     /// The mean length of a run of lost packets with consecutive numbers.
     MeanLossRun,
     /// The frames that arrived and that the receiving node dropped as damaged, as a share of the frames that
-    /// arrived (the account of the direction, D-040).
+    /// arrived (the tally of the direction, D-040).
     NodeDropRatio,
-    /// The packets that the queue of the link dropped, as a share of the packets sent (the same account).
+    /// The packets that the queue of the link dropped, as a share of the packets sent (the same tally).
     LostInQueueRatio,
-    /// The packets that are neither lost in the queue, nor dropped by the node, nor delivered: the account of
+    /// The packets that are neither lost in the queue, nor dropped by the node, nor delivered: the tally of
     /// the direction must add up to what was sent.
     Unaccounted,
 }
@@ -812,7 +812,7 @@ fn cases() -> Vec<Case> {
                     expected: 0.1878,
                     lo: 0.1767,
                     hi: 0.1988,
-                    reason: "the program sees both as loss: 0.1 + 0.9 x 0.0975 = 18.78 %; the account is what tells the two causes apart",
+                    reason: "the program sees both as loss: 0.1 + 0.9 x 0.0975 = 18.78 %; the account of the direction is what tells the two causes apart",
                 },
             ],
         },
@@ -853,10 +853,10 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
     let early_share = delays_ms.iter().filter(|d| **d < 5.0).count() as f64 / n_or_one(&delays_ms);
     let received: std::collections::BTreeSet<u64> =
         file.records.iter().map(|r| r.sequence).collect();
-    let account = &result.directions[0];
+    let tally = &result.directions[0];
     // A duplicating direction has no count of the packets the queue dropped: the measures that need it are not
     // numbers there, and a bound on one of them fails, as it should
-    let lost_in_queue = account.lost_in_queue.map(|lost| lost as f64);
+    let lost_in_queue = tally.lost_in_queue.map(|lost| lost as f64);
     Measurement {
         delays_ms,
         loss_ratio: workload.stats.loss_ratio,
@@ -865,13 +865,12 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         duplicate_ratio: workload.stats.duplicates as f64 / workload.stats.sent.max(1) as f64,
         early_share,
         mean_loss_run: mean_loss_run(&received, workload.stats.sent),
-        node_drop_ratio: account.dropped_corrupted as f64 / account.reached_node.max(1) as f64,
-        lost_in_queue_ratio: lost_in_queue
-            .map_or(f64::NAN, |lost| lost / account.sent.max(1) as f64),
+        node_drop_ratio: tally.dropped_corrupted as f64 / tally.reached_node.max(1) as f64,
+        lost_in_queue_ratio: lost_in_queue.map_or(f64::NAN, |lost| lost / tally.sent.max(1) as f64),
         unaccounted: lost_in_queue.map_or(f64::NAN, |lost| {
-            account.sent as f64
-                - (lost + (account.dropped_corrupted + account.delivered) as f64)
-                - account.receive_buffer_drops as f64
+            tally.sent as f64
+                - (lost + (tally.dropped_corrupted + tally.delivered) as f64)
+                - tally.receive_buffer_drops as f64
         }),
         sent: workload.stats.sent,
         kernel: result.provenance.kernel.clone().unwrap_or_default(),
@@ -1489,7 +1488,7 @@ fn canary_a_rate_that_is_missing_fails_the_case_of_the_rate_with_reordering() {
 }
 
 /// A corruption that is not applied, and a loss of the same size in its place: the loss the program sees
-/// is about the same as for a corruption, and only the account of the node tells them apart.
+/// is about the same as for a corruption, and only the tally of the node tells them apart.
 #[test]
 fn canary_a_corruption_that_is_missing_or_is_a_loss_fails_the_corruption_case() {
     if !namespaces_available() || agent_exe().is_none() {
@@ -1507,13 +1506,13 @@ fn canary_a_corruption_that_is_missing_or_is_a_loss_fails_the_corruption_case() 
     );
     assert!(
         !as_loss.contains(&Metric::LossRatio),
-        "the loss that the program sees is the same, so the account must be what fails: {as_loss:?}"
+        "the loss that the program sees is the same, so the tally must be what fails: {as_loss:?}"
     );
 }
 
-/// The account must add up. A measurement in which a packet is missing from it fails the judging.
+/// The tally must add up. A measurement in which a packet is missing from it fails the judging.
 #[test]
-fn canary_an_account_that_does_not_add_up_fails() {
+fn canary_a_tally_that_does_not_add_up_fails() {
     let mut missing = synthetic(&[1.0], 0.0, 0.0, 0.0);
     missing.unaccounted = 3.0;
     assert_eq!(

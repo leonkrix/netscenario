@@ -37,7 +37,7 @@ pub struct RunResult {
     /// For each direction of a link that carried a workload: where its packets went (D-040). Empty if the
     /// backend cannot count, or the scenario runs a program of your own, whose packets the agent does not count.
     #[serde(default)]
-    pub directions: Vec<DirectionAccount>,
+    pub directions: Vec<DirectionTally>,
 }
 
 /// Which scenario a result belongs to.
@@ -69,6 +69,11 @@ pub struct SeedInfo {
     /// count, or the run has no seed.
     #[serde(default)]
     pub queue_checks: Vec<QueueCheck>,
+    /// Why the run is not reproducible, one sentence for each reason; empty when `loss_reproducible` is `true`.
+    /// A backend that cannot apply a seed, a queue that counted a packet the workloads did not send, and a
+    /// scenario with corruption (where `netem` flips a bit is not seeded) are the reasons.
+    #[serde(default)]
+    pub not_reproducible_because: Vec<String>,
 }
 
 /// The packets of one direction of a link that drew a number for the random loss: counted by the queue, and
@@ -118,7 +123,7 @@ impl QueueCheck {
 /// direction together.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct DirectionAccount {
+pub struct DirectionTally {
     /// The link.
     pub link: String,
     /// `forward` (from the first node of `between` to the second) or `reverse`.
@@ -287,6 +292,7 @@ mod tests {
                 drawn: false,
                 loss_reproducible: true,
                 queue_checks: Vec::new(),
+                not_reproducible_because: Vec::new(),
             },
             accepted_restrictions: Vec::new(),
             addresses: Vec::new(),
@@ -328,7 +334,7 @@ mod tests {
                 records_file: "flow-0.records".to_owned(),
                 packets_file: None,
             }],
-            directions: vec![DirectionAccount {
+            directions: vec![DirectionTally {
                 link: "l".to_owned(),
                 direction: "forward".to_owned(),
                 sent: 2,

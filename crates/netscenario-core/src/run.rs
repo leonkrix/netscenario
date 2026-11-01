@@ -27,7 +27,7 @@ use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
 use crate::provision::{Provisioned, impairments_of, provision};
 use crate::result::{
-    AcceptedRestriction, AddressInfo, DirectionAccount, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
+    AcceptedRestriction, AddressInfo, DirectionTally, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
     RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
 };
 use crate::stats::analyse;
@@ -225,7 +225,7 @@ struct Measurement {
     measured: Vec<Measured>,
     settle: Duration,
     queue_checks: Vec<QueueCheck>,
-    directions: Vec<DirectionAccount>,
+    directions: Vec<DirectionTally>,
 }
 
 /// Runs `scenario` with `backend` and returns the result, which is also written to `result.json` in
@@ -286,6 +286,7 @@ pub fn run(
             options,
         )?);
     }
+    let reasons = not_reproducible_because(scenario, &provisioned, &queue_checks);
     let result = RunResult {
         format: RESULT_FORMAT.to_owned(),
         version: RESULT_VERSION,
@@ -300,11 +301,9 @@ pub fn run(
         seed: SeedInfo {
             value: provisioned.seed,
             drawn: provisioned.seed_drawn,
-            // The queues have counted the packets that drew a number for the loss; if one saw more or fewer than
-            // the workloads sent, the pattern of lost packets is not the one of this seed (ENV-07)
-            loss_reproducible: provisioned.loss_reproducible
-                && queue_checks.iter().all(QueueCheck::agrees),
+            loss_reproducible: reasons.is_empty(),
             queue_checks,
+            not_reproducible_because: reasons,
         },
         accepted_restrictions: provisioned
             .accepted
@@ -335,6 +334,39 @@ pub fn run(
         .map_err(|error| failure("write the result", format!("{}: {error}", path.display())))?;
     control.emit(&RunEvent::Finished);
     Ok(result)
+}
+
+/// Why the same seed may not give the same lost packets in this run, one sentence for each reason. The queues have
+/// counted the packets that drew a number for the loss: if one saw more or fewer than the workloads sent, the
+/// pattern of lost packets is not the one of this seed (ENV-07).
+fn not_reproducible_because(
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+    queue_checks: &[QueueCheck],
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if !provisioned.loss_reproducible {
+        reasons.push("the backend cannot apply a seed (iproute2 6.6.0 or newer can)".to_owned());
+    }
+    for check in queue_checks.iter().filter(|check| !check.agrees()) {
+        reasons.push(format!(
+            "the queue of link '{}' ({}) counted {} packets and the workloads sent {}, so something else entered it and the lost packets are not those of the seed",
+            check.link, check.direction, check.counted, check.expected
+        ));
+    }
+    let corrupts = scenario.topology.links.iter().any(|link| {
+        [&link.forward, &link.reverse, &link.both]
+            .into_iter()
+            .flatten()
+            .any(|impairments| impairments.corrupt.is_some())
+    });
+    if corrupts {
+        reasons.push(
+            "the scenario corrupts packets: the seed fixes which packets are corrupted, but not where `netem` flips the bit, and a bit in the source address of the Ethernet header harms nothing, so a few corrupted packets arrive in one run and are dropped in another (the packets lost in the queue are the same)"
+                .to_owned(),
+        );
+    }
+    reasons
 }
 
 /// The result of one workload: its statistics, and the files that belong to it.
@@ -700,8 +732,7 @@ fn measure(
     let after = node_counts(backend, scenario, provisioned)?;
     control.emit(&RunEvent::Collecting);
     let measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
-    let directions =
-        account_for_directions(scenario, provisioned, &flows, &measured, &before, &after);
+    let directions = tally_directions(scenario, provisioned, &flows, &measured, &before, &after);
     Ok(Measurement {
         measured,
         settle,
@@ -800,7 +831,7 @@ fn ways<'a>(scenario: &'a Scenario, provisioned: &'a Provisioned) -> impl Iterat
 
 /// What the receiving node of every direction has counted so far, in the order of [`ways`]. `None` for
 /// a direction whose backend cannot count, and for every direction in a scenario with a program of your own,
-/// whose packets the agent does not count (the account of a direction would not add up).
+/// whose packets the agent does not count (the tally of a direction would not add up).
 fn node_counts(
     backend: &mut dyn Backend,
     scenario: &Scenario,
@@ -822,16 +853,16 @@ fn node_counts(
 }
 
 /// Sets the packets that the workloads sent into each direction against what the receiving node counted and
-/// what its receivers got (D-040). A direction without a workload has no account.
-fn account_for_directions(
+/// what its receivers got (D-040). A direction without a workload has no tally.
+fn tally_directions(
     scenario: &Scenario,
     provisioned: &Provisioned,
     flows: &[Flow<'_>],
     measured: &[Measured],
     before: &[Option<NodeCounts>],
     after: &[Option<NodeCounts>],
-) -> Vec<DirectionAccount> {
-    let mut accounts = Vec::new();
+) -> Vec<DirectionTally> {
+    let mut tallies = Vec::new();
     for (way, (before, after)) in ways(scenario, provisioned).zip(before.iter().zip(after)) {
         let (Some(before), Some(after)) = (before, after) else {
             continue;
@@ -858,7 +889,7 @@ fn account_for_directions(
         // The frames of a duplicating direction include the copies, so what the queue dropped cannot be told
         let duplicates = impairments_of(link, way.direction)
             .is_some_and(|impairments| impairments.duplicate.is_some());
-        accounts.push(DirectionAccount {
+        tallies.push(DirectionTally {
             link: way.name.to_string(),
             direction: way.word.to_owned(),
             sent,
@@ -875,7 +906,7 @@ fn account_for_directions(
             receive_buffer_drops,
         });
     }
-    accounts
+    tallies
 }
 
 /// Asks the backend how many packets entered the queue of each direction with random loss, and sets it
@@ -1308,6 +1339,55 @@ mod tests {
         }
     }
 
+    /// The result says why a run cannot be repeated exactly: a queue that counted a packet too many, and a
+    /// scenario with corruption, where the kernel takes the place of the flipped bit from its own generator.
+    #[test]
+    fn a_run_that_cannot_be_repeated_exactly_says_why() {
+        let mut backend = Fake::counting([11, 0]);
+        let options = options("reasons-queue");
+        let seed = run(&mut backend, &scenario(), &options).unwrap().seed;
+        assert!(!seed.loss_reproducible);
+        assert_eq!(seed.not_reproducible_because.len(), 1);
+        assert!(
+            seed.not_reproducible_because[0]
+                .contains("counted 11 packets and the workloads sent 10"),
+            "{:?}",
+            seed.not_reproducible_because
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+
+        let yaml = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { corrupt: 10% }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n";
+        let mut backend = Fake::new(None);
+        let options = self::options("reasons-corrupt");
+        let seed = run(
+            &mut backend,
+            &Scenario::from_yaml(yaml, "t.yaml").unwrap(),
+            &options,
+        )
+        .unwrap()
+        .seed;
+        assert!(!seed.loss_reproducible);
+        assert!(
+            seed.not_reproducible_because
+                .iter()
+                .any(|reason| reason.contains("corrupts packets")),
+            "{:?}",
+            seed.not_reproducible_because
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Canary: a run that can be repeated gives no reason, and a scenario without corruption gives none for it.
+    #[test]
+    fn a_run_that_can_be_repeated_gives_no_reason() {
+        let mut backend = Fake::counting([10, 0]);
+        let options = options("reasons-none");
+        let seed = run(&mut backend, &scenario(), &options).unwrap().seed;
+        assert!(seed.loss_reproducible);
+        assert_eq!(seed.not_reproducible_because.len(), 0);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
     /// A packet that the kernel refused to take did not go into the queue, and is not in `packets` either, so the
     /// queue is expected to have counted `packets` and no fewer (the check used to subtract the errors again).
     #[test]
@@ -1326,30 +1406,30 @@ mod tests {
     #[test]
     fn every_packet_is_accounted_for_as_lost_in_the_queue_dropped_by_the_node_or_delivered() {
         let mut backend = Fake::with_frames([9, 0], 0);
-        let options = options("account");
+        let options = options("tally");
         let result = run(&mut backend, &scenario(), &options).unwrap();
-        let [account] = result.directions.as_slice() else {
+        let [tally] = result.directions.as_slice() else {
             panic!("{:?}", result.directions);
         };
         assert_eq!(
-            (account.link.as_str(), account.direction.as_str()),
+            (tally.link.as_str(), tally.direction.as_str()),
             ("l", "forward")
         );
         assert_eq!(
             (
-                account.sent,
-                account.reached_node,
-                account.delivered,
-                account.lost_in_queue,
-                account.dropped_corrupted,
-                account.receive_buffer_drops
+                tally.sent,
+                tally.reached_node,
+                tally.delivered,
+                tally.lost_in_queue,
+                tally.dropped_corrupted,
+                tally.receive_buffer_drops
             ),
             (10, 9, 8, Some(1), 1, 0)
         );
         // lost_in_queue + dropped_corrupted + delivered = sent
         assert_eq!(
-            account.lost_in_queue.unwrap() + account.dropped_corrupted + account.delivered,
-            account.sent
+            tally.lost_in_queue.unwrap() + tally.dropped_corrupted + tally.delivered,
+            tally.sent
         );
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }
@@ -1359,14 +1439,14 @@ mod tests {
     #[test]
     fn a_full_receive_buffer_is_not_corruption() {
         let mut backend = Fake::with_frames([9, 0], 1);
-        let options = options("account-buffer");
+        let options = options("tally-buffer");
         let result = run(&mut backend, &scenario(), &options).unwrap();
-        let account = &result.directions[0];
+        let tally = &result.directions[0];
         assert_eq!(
             (
-                account.dropped_corrupted,
-                account.receive_buffer_drops,
-                account.lost_in_queue
+                tally.dropped_corrupted,
+                tally.receive_buffer_drops,
+                tally.lost_in_queue
             ),
             (0, 1, Some(1))
         );
@@ -1380,20 +1460,17 @@ mod tests {
         let yaml = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: { duplicate: 20% }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n";
         let scenario = Scenario::from_yaml(yaml, "t.yaml").unwrap();
         let mut backend = Fake::with_frames([9, 0], 0);
-        let options = options("account-duplicate");
+        let options = options("tally-duplicate");
         let result = run(&mut backend, &scenario, &options).unwrap();
-        let account = &result.directions[0];
-        assert_eq!(
-            (account.lost_in_queue, account.dropped_corrupted),
-            (None, 1)
-        );
+        let tally = &result.directions[0];
+        assert_eq!((tally.lost_in_queue, tally.dropped_corrupted), (None, 1));
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 
     #[test]
-    fn a_backend_that_cannot_count_the_node_leaves_the_account_out() {
+    fn a_backend_that_cannot_count_the_node_leaves_the_tally_out() {
         let mut backend = Fake::new(None);
-        let options = options("account-none");
+        let options = options("tally-none");
         let result = run(&mut backend, &scenario(), &options).unwrap();
         assert_eq!(result.directions.len(), 0);
         let _ = std::fs::remove_dir_all(&options.out_dir);

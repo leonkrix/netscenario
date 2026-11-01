@@ -210,7 +210,7 @@ Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
 | packets lost in the queue | 10.00 % | 9.98 % ✔ | -0.03 pp | 9.15 % to 10.85 % | the loss comes first and drops 10 % of the packets in the queue; binomial, 20,000 packets, four standard deviations on each side |
 | frames dropped by the node as damaged | 9.75 % | 9.80 % ✔ | +0.05 pp | 8.87 % to 10.64 % | the corruption works on the 90 % that the loss let through: 10 % x 236 / 242 = 9.75 % of them are dropped by the node; binomial, about 18,000 frames, four standard deviations on each side |
 | packets not accounted for | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | every packet is lost in the queue, dropped by the node or delivered, to the packet |
-| loss | 18.78 % | 18.80 % ✔ | +0.02 pp | 17.67 % to 19.88 % | the program sees both as loss: 0.1 + 0.9 x 0.0975 = 18.78 %; the account is what tells the two causes apart |
+| loss | 18.78 % | 18.80 % ✔ | +0.02 pp | 17.67 % to 19.88 % | the program sees both as loss: 0.1 + 0.9 x 0.0975 = 18.78 %; the account of the direction is what tells the two causes apart |
 
 <!-- fidelity:end -->
 

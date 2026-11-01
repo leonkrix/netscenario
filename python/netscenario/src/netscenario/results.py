@@ -157,7 +157,7 @@ class QueueCheck:
 
 
 @dataclass(frozen=True)
-class DirectionAccount:
+class DirectionTally:
     """Where the packets of one direction of a link went.
 
     Lost in the queue of the link, dropped by the receiving node because they arrived damaged, or
@@ -206,6 +206,9 @@ class SeedInfo:
     """For each direction with random loss, the packets its queue counted against the packets the
     workloads sent. The pattern of lost packets depends on this number as well as on the seed. Empty
     if the backend cannot count, or the run has no seed."""
+    not_reproducible_because: tuple[str, ...] = ()
+    """Why the run is not reproducible, one sentence for each reason. Empty when
+    ``loss_reproducible`` is ``True``."""
 
 
 @dataclass(frozen=True)
@@ -273,7 +276,7 @@ class Result:
     """The directory with ``result.json`` and the files that belong to it."""
     raw: Mapping[str, Any]
     """The decoded ``result.json``, unchanged."""
-    directions: tuple[DirectionAccount, ...] = ()
+    directions: tuple[DirectionTally, ...] = ()
     """For each direction of a link that carried a workload: where its packets went. Empty if the
     backend cannot count, or the scenario runs a program of your own."""
 
@@ -332,6 +335,7 @@ class Result:
                     QueueCheck(c["link"], c["direction"], c["expected"], c["counted"])
                     for c in seed.get("queue_checks", ())
                 ),
+                tuple(seed.get("not_reproducible_because", ())),
             ),
             accepted_restrictions=tuple(
                 Restriction(r["feature"], r["restriction"]) for r in raw["accepted_restrictions"]
@@ -341,7 +345,7 @@ class Result:
             settle=_seconds(raw["timing"]["settle_ns"]),
             workloads=MappingProxyType(workloads),
             directions=tuple(
-                DirectionAccount(
+                DirectionTally(
                     link=d["link"],
                     direction=d["direction"],
                     sent=int(d["sent"]),

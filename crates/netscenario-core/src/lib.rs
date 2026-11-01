@@ -77,7 +77,7 @@ pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
 pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
 pub use result::{
-    AcceptedRestriction, AddressInfo, DirectionAccount, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
+    AcceptedRestriction, AddressInfo, DirectionTally, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
     RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};

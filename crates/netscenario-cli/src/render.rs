@@ -62,26 +62,11 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
             let _ = writeln!(text, "  no seed (the backend cannot apply one)");
         }
     }
-    if !result.seed.loss_reproducible {
-        let differing: Vec<_> = result
-            .seed
-            .queue_checks
-            .iter()
-            .filter(|check| !check.agrees())
-            .collect();
-        if differing.is_empty() {
-            let _ = writeln!(
-                text,
-                "  warning: the loss of this run is not reproducible: the backend cannot apply a seed (iproute2 6.6.0 or newer can)"
-            );
-        }
-        for check in differing {
-            let _ = writeln!(
-                text,
-                "  warning: the loss of this run is not reproducible: the queue of link '{}' ({}) counted {} packets and the workloads sent {}, so something else entered it and the lost packets are not those of the seed",
-                check.link, check.direction, check.counted, check.expected
-            );
-        }
+    for reason in &result.seed.not_reproducible_because {
+        let _ = writeln!(
+            text,
+            "  warning: the loss of this run is not reproducible: {reason}"
+        );
     }
     for workload in &result.workloads {
         workload_text(&mut text, workload);
@@ -94,32 +79,32 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
 /// Where the packets of a direction went, for each direction in which the receiving node dropped some. A
 /// direction without such drops is not listed: the loss of the workload is the whole story there (D-040).
 fn directions_text(text: &mut String, result: &RunResult) {
-    for account in result
+    for tally in result
         .directions
         .iter()
-        .filter(|account| account.dropped_corrupted > 0 || account.receive_buffer_drops > 0)
+        .filter(|tally| tally.dropped_corrupted > 0 || tally.receive_buffer_drops > 0)
     {
         let mut parts = Vec::new();
-        if let Some(lost) = account.lost_in_queue {
+        if let Some(lost) = tally.lost_in_queue {
             parts.push(format!("{lost} were lost in the queue"));
         }
         parts.push(format!(
             "{} arrived damaged and were dropped by the node",
-            account.dropped_corrupted
+            tally.dropped_corrupted
         ));
-        if account.receive_buffer_drops > 0 {
+        if tally.receive_buffer_drops > 0 {
             parts.push(format!(
                 "{} were dropped because a receive buffer was full (the receiver's fault, not the network's)",
-                account.receive_buffer_drops
+                tally.receive_buffer_drops
             ));
         }
-        parts.push(format!("{} were delivered", account.delivered));
+        parts.push(format!("{} were delivered", tally.delivered));
         let _ = writeln!(
             text,
             "\nlink {} {}: of {} packets sent, {}",
-            account.link,
-            account.direction,
-            account.sent,
+            tally.link,
+            tally.direction,
+            tally.sent,
             parts.join(", ")
         );
     }
@@ -264,6 +249,9 @@ result: out/result.json
         result.seed.queue_checks = vec![netscenario_core::QueueCheck::new(
             "access", "forward", 417, 418,
         )];
+        result.seed.not_reproducible_because = vec![
+            "the queue of link 'access' (forward) counted 418 packets and the workloads sent 417, so something else entered it and the lost packets are not those of the seed".to_owned(),
+        ];
         let text = summary(&result, Path::new("out"));
         assert!(
             text.contains("the queue of link 'access' (forward) counted 418 packets and the workloads sent 417"),
@@ -272,6 +260,7 @@ result: out/result.json
         assert!(!text.contains("cannot apply a seed"), "{text}");
         // Queues that agree say nothing
         result.seed.loss_reproducible = true;
+        result.seed.not_reproducible_because.clear();
         result.seed.queue_checks[0].counted = 417;
         assert!(!summary(&result, Path::new("out")).contains("warning"));
     }
@@ -282,6 +271,8 @@ result: out/result.json
         let mut result = result();
         result.seed.value = None;
         result.seed.loss_reproducible = false;
+        result.seed.not_reproducible_because =
+            vec!["the backend cannot apply a seed (iproute2 6.6.0 or newer can)".to_owned()];
         result.workloads[0].sender.send_errors = 3;
         result.workloads[0].sender.first_error = Some("no buffer space".to_owned());
         let text = summary(&result, Path::new("out"));
@@ -299,7 +290,7 @@ result: out/result.json
         );
     }
 
-    /// The account of a direction is shown where the node dropped something, so that a corrupted packet is not
+    /// The tally of a direction is shown where the node dropped something, so that a corrupted packet is not
     /// taken for a lost one; a direction with only loss in the queue says nothing more than the workload does.
     #[test]
     fn a_direction_in_which_the_node_dropped_packets_is_accounted_for() {
@@ -327,7 +318,7 @@ result: out/result.json
             text.contains("3 were dropped because a receive buffer was full"),
             "{text}"
         );
-        // Without an account nothing is added
+        // Without a tally nothing is added
         assert!(!summary(&self::result(), Path::new("out")).contains("link access"));
     }
 
