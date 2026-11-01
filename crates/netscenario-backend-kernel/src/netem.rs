@@ -186,6 +186,102 @@ fn rate_arguments(impairments: &Impairments) -> Vec<String> {
     })
 }
 
+/// How the queues of a direction are built, fixed for the whole run (D-059).
+///
+/// A direction is one `netem` or two (the rate in the first, the delay with its jitter and the reordering in
+/// the second, D-030), and which one it is must not change while packets are in it: rebuilding a queue drops
+/// the packets that are in flight, and a queue that is built again starts its random numbers again, which
+/// is the seed that the run promises to repeat. So the layout is made from **every state** that the
+/// direction goes through, and a change only writes a state into queues that are there. A direction whose
+/// timeline never has a rate together with a jitter or a reordering is one queue all the time; one whose
+/// timeline has it once is two queues all the time, also while the rate is not set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Layout {
+    /// Whether the direction is two queues.
+    two_stages: bool,
+    /// Whether the first (or only) queue draws numbers that the seed repeats, in some state: it is seeded when it
+    /// is built, because a change keeps the generator.
+    seeded_first: bool,
+    /// The same for the second queue.
+    seeded_second: bool,
+    /// The limit of the first (or only) queue. The longest that any state needs, so that a change never makes it
+    /// smaller than the packets that it holds.
+    first_limit: u64,
+    /// The limit of the second queue.
+    second_limit: u64,
+}
+
+impl Layout {
+    /// The layout for the states of a direction.
+    ///
+    /// # Errors
+    ///
+    /// Text if the states cannot be had in one set of queues: a jitter with a normal distribution in one and a
+    /// uniform one in another. `netem` keeps the table of the distribution that was last loaded when a change
+    /// does not name one (measured, D-059), so a queue that has been normal cannot be made uniform again
+    /// without being built again.
+    pub(crate) fn of(states: &[Impairments]) -> Result<Self, String> {
+        let mut distributions: Vec<JitterDistribution> = states
+            .iter()
+            .filter_map(|state| state.jitter.as_ref().map(|jitter| jitter.distribution))
+            .collect();
+        distributions.dedup();
+        if distributions.len() > 1 {
+            return Err(
+                "the jitter has a normal distribution in one state and a uniform one in another; `netem` keeps the distribution that was loaded last, so the queue would have to be built again, which drops the packets that are in flight and starts its random numbers over"
+                    .to_owned(),
+            );
+        }
+        let two_stages = states.iter().any(|state| {
+            state.rate.is_some() && (state.jitter.is_some() || state.reorder.is_some())
+        });
+        let longest =
+            |limit: &dyn Fn(&Impairments) -> u64| states.iter().map(limit).max().unwrap_or(0);
+        let delay_limit = |state: &Impairments| {
+            queue_limit(
+                state.delay,
+                state.jitter.as_ref().map(|jitter| jitter.amount),
+            )
+        };
+        let draws_before_the_rate = |state: &Impairments| {
+            state.loss.is_some() || state.duplicate.is_some() || state.corrupt.is_some()
+        };
+        Ok(if two_stages {
+            Self {
+                two_stages,
+                seeded_first: states.iter().any(draws_before_the_rate),
+                seeded_second: states.iter().any(|state| state.reorder.is_some()),
+                first_limit: LINK_QUEUE,
+                second_limit: longest(&delay_limit),
+            }
+        } else {
+            Self {
+                two_stages,
+                seeded_first: states.iter().any(Impairments::is_random),
+                seeded_second: false,
+                first_limit: longest(&delay_limit),
+                second_limit: 0,
+            }
+        })
+    }
+
+    /// Whether a state fits the queues of this layout: it needs a second queue only if there is one, and it does not
+    /// draw numbers in a queue that was built without a seed for them.
+    pub(crate) fn fits(&self, state: &Impairments) -> bool {
+        let needs_two = state.rate.is_some() && (state.jitter.is_some() || state.reorder.is_some());
+        if needs_two && !self.two_stages {
+            return false;
+        }
+        if self.two_stages {
+            let draws_first =
+                state.loss.is_some() || state.duplicate.is_some() || state.corrupt.is_some();
+            (!draws_first || self.seeded_first) && (state.reorder.is_none() || self.seeded_second)
+        } else {
+            !state.is_random() || self.seeded_first
+        }
+    }
+}
+
 /// The qdiscs for the impairments of a direction, or `None` if it impairs nothing.
 ///
 /// `seed` is the seed of the direction. It goes to every qdisc that draws numbers the seed is to repeat: loss,
@@ -207,47 +303,89 @@ pub(crate) fn arguments(
     {
         return Ok(None);
     }
-    let jitter = impairments.jitter.as_ref();
+    let layout = Layout::of(std::slice::from_ref(impairments))?;
+    build(&layout, impairments, seed, false).map(Some)
+}
+
+/// The arguments for building the queues of a layout in `state`, with `seed`.
+///
+/// # Errors
+///
+/// Text if a value cannot be applied exactly.
+pub(crate) fn create(
+    layout: &Layout,
+    state: &Impairments,
+    seed: Option<u64>,
+) -> Result<Stages, String> {
+    build(layout, state, seed, false)
+}
+
+/// The arguments that write `state` into queues that are built: the whole state, with the settings that `netem`
+/// keeps across a change written as zeros where the state has none (D-048: `corrupt`, `reorder`, `rate`; what
+/// else a change leaves out is reset by `netem` itself, measured), and no seed, because a change keeps the
+/// generator.
+///
+/// # Errors
+///
+/// Text if a value cannot be applied exactly.
+pub(crate) fn change(layout: &Layout, state: &Impairments) -> Result<Stages, String> {
+    build(layout, state, None, true)
+}
+
+/// A setting that is written as `zero` when `whole` is asked for and the state has none.
+fn or_zero(arguments: Vec<String>, whole: bool, zero: &[&str]) -> Vec<String> {
+    if arguments.is_empty() && whole {
+        zero.iter().map(|word| (*word).to_owned()).collect()
+    } else {
+        arguments
+    }
+}
+
+fn build(
+    layout: &Layout,
+    state: &Impairments,
+    seed: Option<u64>,
+    whole: bool,
+) -> Result<Stages, String> {
     let limit = |packets: u64| vec!["limit".to_owned(), packets.to_string()];
-    let delay_limit = queue_limit(impairments.delay, jitter.map(|j| j.amount));
-    if impairments.rate.is_some() && (jitter.is_some() || impairments.reorder.is_some()) {
+    let corrupt = |arguments: Vec<String>| or_zero(arguments, whole, &["corrupt", "0%"]);
+    let reorder = |arguments: Vec<String>| or_zero(arguments, whole, &["reorder", "0%"]);
+    let rate = |arguments: Vec<String>| or_zero(arguments, whole, &["rate", "0bit"]);
+    if layout.two_stages {
         // The duplication, the loss and the rate first, then the delay with its jitter and the reordering
-        let mut first = limit(LINK_QUEUE);
-        first.extend(loss_arguments(impairments));
-        first.extend(duplicate_arguments(impairments));
-        first.extend(corrupt_arguments(impairments));
-        if impairments.loss.is_some()
-            || impairments.duplicate.is_some()
-            || impairments.corrupt.is_some()
-        {
+        let mut first = limit(layout.first_limit);
+        first.extend(loss_arguments(state));
+        first.extend(duplicate_arguments(state));
+        first.extend(corrupt(corrupt_arguments(state)));
+        if layout.seeded_first {
             first.extend(seed_arguments(seed));
         }
-        first.extend(rate_arguments(impairments));
-        let mut second = limit(delay_limit);
-        second.extend(delay_arguments(impairments)?);
-        second.extend(reorder_arguments(impairments));
-        if impairments.reorder.is_some() {
+        first.extend(rate(rate_arguments(state)));
+        let mut second = limit(layout.second_limit);
+        second.extend(delay_arguments(state)?);
+        second.extend(reorder(reorder_arguments(state)));
+        if layout.seeded_second {
             second.extend(seed_arguments(seed.map(|seed| derive_stage_seed(seed, 1))));
         }
-        return Ok(Some(Stages {
+        return Ok(Stages {
             first,
             second: Some(second),
-        }));
+        });
     }
-    let mut first = limit(delay_limit);
-    first.extend(delay_arguments(impairments)?);
-    first.extend(loss_arguments(impairments));
-    first.extend(duplicate_arguments(impairments));
-    first.extend(corrupt_arguments(impairments));
-    first.extend(reorder_arguments(impairments));
-    if impairments.is_random() {
+    let mut first = limit(layout.first_limit);
+    first.extend(delay_arguments(state)?);
+    first.extend(loss_arguments(state));
+    first.extend(duplicate_arguments(state));
+    first.extend(corrupt(corrupt_arguments(state)));
+    first.extend(reorder(reorder_arguments(state)));
+    if layout.seeded_first {
         first.extend(seed_arguments(seed));
     }
-    first.extend(rate_arguments(impairments));
-    Ok(Some(Stages {
+    first.extend(rate(rate_arguments(state)));
+    Ok(Stages {
         first,
         second: None,
-    }))
+    })
 }
 
 #[cfg(test)]

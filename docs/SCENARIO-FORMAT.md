@@ -184,6 +184,8 @@ timeline:
 
 **What the reader refuses besides the types:** an event that does none or several of the four things; a link that does not exist (with a hint); a moment at or after the end; an outage that is not longer than zero, that ends after the end of the measured phase, or that overlaps another outage of the same direction (the end of the first would be unclear); a `loss` that is set inside an outage of its direction (an outage is a loss of 100 %); a link that goes down twice or comes up while it is up; a `direction` on anything but an outage; a step that writes no key.
 
+**What the Kernel backend cannot follow.** The jitter of a direction keeps one distribution for the whole run: `netem` cannot go back from normal to uniform without building the queue again (D-059). The amount can change.
+
 **When it happens.** An event is applied before the first packet that its workload sends at or after its moment (D-038), so the same seed gives the same lost packets; the result records when each event was really applied and how many packets had entered the queue. The Kernel backend applies the timeline from step 4.3 of release 0.2; until then it refuses a scenario with one and names the feature ([COVERAGE.md](COVERAGE.md)).
 
 ## Workloads

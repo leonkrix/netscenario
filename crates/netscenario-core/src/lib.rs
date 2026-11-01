@@ -64,6 +64,7 @@ mod result;
 mod run;
 mod seed;
 pub mod stats;
+pub mod timeline;
 
 pub use backend::{
     Backend, BackendInfo, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramExit,

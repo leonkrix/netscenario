@@ -453,9 +453,10 @@ fn the_tap_names_the_packets_that_the_node_dropped_as_damaged() {
         .filter(|sequence| *sequence < sent.packets)
         .collect();
     let dropped = sent.packets - received.packets;
-    // 10 % of 2,500 are corrupted, 236 of 242 bytes of a frame drop it: 244 dropped, give or take 4 deviations
+    // 10 % of 2,500 are corrupted, 236 of 242 bytes of a frame drop it: 243.75 dropped with a standard deviation
+    // of 14.8, so 180 to 310 is four deviations on each side and a little more
     assert!(
-        (190..=300).contains(&dropped),
+        (180..=310).contains(&dropped),
         "{dropped} packets were not delivered"
     );
     // The names are a subset of the packets that were not delivered: the link loses nothing
@@ -464,11 +465,14 @@ fn the_tap_names_the_packets_that_the_node_dropped_as_damaged() {
         "{} names for {dropped} dropped packets",
         named.len()
     );
-    // 200 byte payloads: 218 of the 236 bytes that drop a frame leave it readable, 92 %, less the bits that
-    // turn a sequence number into another one (4 bytes). Far from all, far from none.
+    // 200 byte payloads: 218 of the 236 bytes that drop a frame leave it readable, 92.4 %. Of about 244 dropped
+    // packets the share has a standard deviation of 1.7 points (2 with the fewest that the bounds above allow), so
+    // 84 % is four deviations below. There is no bound above it that means anything: that no more is named than
+    // was dropped is the assertion before, and the exact shares are the fidelity cases (D-057). An earlier
+    // bound of 95 % was 1.5 deviations above the model and failed on a runner with 252 of 263 (95.8 %).
     let share = named.len() as f64 / dropped as f64;
     assert!(
-        (0.80..=0.95).contains(&share),
+        share >= 0.84,
         "{} of {dropped} dropped packets were named ({share:.3})",
         named.len()
     );
