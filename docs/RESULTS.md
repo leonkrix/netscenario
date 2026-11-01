@@ -144,6 +144,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `timing.settle_ns` | How long the run waited after the last packet was sent for the packets still in the network. A packet that needs longer counts as lost. Without a setting this is one second plus twice the longest hold of the scenario (the largest delay plus four times the largest jitter of any direction). |
 | `workloads` | One entry for each workload, in the order of the scenario. |
 | `directions` | Where the packets of each direction went, below. |
+| `events` | What the run did to the links while it ran (the timeline), below. Empty for a scenario without one. |
 
 ### `provenance`
 
@@ -216,6 +217,21 @@ Real numbers of `scenarios/lte-like.yaml` (30 s, a normal jitter of 5 ms, 0.75 %
 "jitter": { "last_ns": 5267369, "mean_ns": 5961500, "max_ns": 9546054 },
 "loss_runs": { "runs": 47, "longest": 1, "mean": 1.0, "histogram": [ { "length": 1, "runs": 47 } ] }
 ```
+
+### `events` (TML-01, D-060)
+
+One entry for each **step** of the timeline, in the order the run did them. An event of the file can be more than one step: a `set` of `both` is one step for each direction.
+
+| Field | Meaning |
+| --- | --- |
+| `event` | The place of the event in `timeline` of the scenario, from 0. |
+| `kind` | `set`. (`outage-start`, `outage-end`, `down` and `up` come with the steps that do them.) |
+| `link`, `direction` | The link, and `forward` or `reverse`; `null` for a step of the whole link. |
+| `scheduled_ns` | When the file says it happens, in nanoseconds from the start of the measured phase, the moment at which the workloads start. |
+| `started_ns` | When the run asked the backend to do it. |
+| `applied_ns` | When the backend had done it. `applied_ns - scheduled_ns` is how late the step was: the wait for the clock, the change itself (a `tc` process, 2 ms on the development machine; the second direction of a `both` waits for the first) and what the machine added. A step is never done before its moment. |
+
+A packet that leaves between `scheduled_ns` and `applied_ns` meets the old state. For a step that changes the rate or the delay that is a few packets at the edge of the change and no more. For a step that changes what a queue draws random numbers for (a loss, an outage, a duplication, a corruption, a reordering) it also decides which packets the seed takes from there on, and the run says so: `seed.loss_reproducible` is `false` and `seed.not_reproducible_because` has the reason, until the sender waits for the change at the packet it belongs to (D-038, the next step).
 
 ### `directions` (D-040)
 

@@ -436,21 +436,47 @@ fn duplicate_tree_refusals(
     ask: impl FnOnce() -> Option<String>,
     release: &str,
 ) -> Vec<Refusal> {
-    let mut wanted = Vec::new();
+    use netscenario_core::timeline::{Action, states_of, steps};
+    let mut wanted: Vec<String> = Vec::new();
     for (index, link) in scenario.topology.links.iter().enumerate() {
-        for (name, impairments) in [
-            ("forward", &link.forward),
-            ("reverse", &link.reverse),
-            ("both", &link.both),
-        ] {
-            let Some(impairments) = impairments else {
+        for direction in [Direction::Forward, Direction::Reverse] {
+            // A direction is two queues for the whole run if any state needs two (D-059), so a duplication in
+            // any state, also one that has no rate of its own, is a duplicating queue next to another one
+            let states = states_of(scenario, index, direction);
+            let Ok(layout) = crate::netem::Layout::of(&states) else {
                 continue;
             };
-            if impairments.duplicate.is_some()
-                && impairments.rate.is_some()
-                && (impairments.jitter.is_some() || impairments.reorder.is_some())
+            if !layout.is_two_queues() {
+                continue;
+            }
+            let path = if states[0].duplicate.is_some() {
+                let name = if link.both.is_some() {
+                    "both"
+                } else if direction == Direction::Forward {
+                    "forward"
+                } else {
+                    "reverse"
+                };
+                Some(format!("topology.links[{index}].{name}.duplicate"))
+            } else {
+                steps(scenario).iter().find_map(|step| match &step.action {
+                    Action::Impair {
+                        direction: moved,
+                        impairments,
+                        outage: false,
+                    } if step.link == index
+                        && *moved == direction
+                        && impairments.duplicate.is_some() =>
+                    {
+                        Some(format!("timeline[{}].set.duplicate", step.event))
+                    }
+                    _ => None,
+                })
+            };
+            if let Some(path) = path
+                && !wanted.contains(&path)
             {
-                wanted.push(format!("topology.links[{index}].{name}.duplicate"));
+                wanted.push(path);
             }
         }
     }
@@ -879,6 +905,41 @@ mod tests {
                 && refusals[0].reason.contains("cannot mix")
         );
         assert!(refusals[0].fix.contains("doctor"));
+    }
+
+    /// A duplication that a step leads to counts too: a direction that is two queues for the run (a rate with a jitter
+    /// at some time) has the duplicating queue next to another one in every state, so the kernel is asked, and
+    /// the step is named.
+    #[test]
+    fn a_duplication_that_a_step_leads_to_in_two_queues_asks_the_kernel() {
+        let with = |link: &str, timeline: &str| {
+            Scenario::from_yaml(
+                &format!("{HEAD}{link}{WORKLOAD}timeline:\n{timeline}"),
+                "t.yaml",
+            )
+            .unwrap()
+        };
+        let two_queues = "      forward: { delay: 20ms, jitter: { amount: 5ms }, rate: 2mbit }\n";
+        let refusals = duplicate_tree_refusals(
+            &with(
+                two_queues,
+                "  - { at: 2s, link: l, set: { forward: { duplicate: 5% } } }\n",
+            ),
+            || Some(REFUSED.to_owned()),
+            "the kernel 7.1.0",
+        );
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert_eq!(refusals[0].path, "timeline[0].set.duplicate");
+        // The same duplication in a direction that stays one queue asks nothing
+        let one_queue = duplicate_tree_refusals(
+            &with(
+                "      forward: { delay: 20ms }\n",
+                "  - { at: 2s, link: l, set: { forward: { duplicate: 5% } } }\n",
+            ),
+            || panic!("the kernel is asked"),
+            "k",
+        );
+        assert_eq!(one_queue, Vec::new());
     }
 
     /// A jitter that is normal at one time and uniform at another cannot be had in the queues of this backend: the step

@@ -149,6 +149,37 @@ class LossRuns:
 
 
 @dataclass(frozen=True)
+class TimelineStep:
+    """One step of the timeline as the run did it, in seconds from the start of the workloads.
+
+    An event on ``both`` is two steps, one for each direction.
+    """
+
+    event: int
+    """The place of the event in ``timeline`` of the scenario."""
+    kind: str
+    """``set``, ``outage-start``, ``outage-end``, ``down`` or ``up``."""
+    link: str
+    """The link."""
+    direction: str | None
+    """``forward`` or ``reverse``, or ``None`` for a step of the whole link."""
+    scheduled: float
+    """When the file says it happens."""
+    started: float
+    """When the run asked the backend to do it."""
+    applied: float
+    """When the backend had done it."""
+
+    @property
+    def lateness(self) -> float:
+        """How late the step was: the clock, the change itself and what the machine added.
+
+        Never negative: a step is not done before its moment.
+        """
+        return max(0.0, self.applied - self.scheduled)
+
+
+@dataclass(frozen=True)
 class Throughput:
     """The payload that arrived in each second, counted from the first packet that was sent."""
 
@@ -400,6 +431,9 @@ class Result:
     directions: tuple[DirectionTally, ...] = ()
     """For each direction of a link that carried a workload: where its packets went. Empty if the
     backend cannot count, or the scenario runs a program of your own."""
+    steps: tuple[TimelineStep, ...] = ()
+    """What the run did to the links while it ran, in the order it was done (the ``events`` of
+    ``result.json``). Empty for a scenario without a timeline."""
 
     def __getitem__(self, workload_id: str) -> Workload:
         """The workload with this id."""
@@ -477,6 +511,18 @@ class Result:
                     receive_buffer_drops=int(d["receive_buffer_drops"]),
                 )
                 for d in raw.get("directions", ())
+            ),
+            steps=tuple(
+                TimelineStep(
+                    event=int(e["event"]),
+                    kind=e["kind"],
+                    link=e["link"],
+                    direction=e["direction"],
+                    scheduled=_seconds(e["scheduled_ns"]),
+                    started=_seconds(e["started_ns"]),
+                    applied=_seconds(e["applied_ns"]),
+                )
+                for e in raw.get("events", ())
             ),
             out_dir=directory,
             raw=MappingProxyType(raw),

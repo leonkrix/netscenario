@@ -62,6 +62,13 @@ pub enum RunEvent {
         /// How long they run, the same as in [`RunEvent::Started`].
         total: Duration,
     },
+    /// A step of the timeline was done: an impairment of a link changed.
+    StepDone {
+        /// The place of the event in `timeline`.
+        event: usize,
+        /// How late it was, from the moment the file gives to the moment the backend had done it.
+        lateness: Duration,
+    },
     /// The senders are done; the run waits for the packets that are still in the network.
     Settling {
         /// How long it waits.

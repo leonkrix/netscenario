@@ -38,6 +38,51 @@ pub struct RunResult {
     /// backend cannot count, or the scenario runs a program of your own, whose packets the agent does not count.
     #[serde(default)]
     pub directions: Vec<DirectionTally>,
+    /// What the run did to the links while it ran, one entry for each step of the timeline, in the order they were
+    /// done (D-038). Empty for a scenario without a timeline.
+    #[serde(default)]
+    pub events: Vec<EventRecord>,
+}
+
+impl EventRecord {
+    /// A record of a `set` of the forward direction of the link `l`, for a test of something that judges records.
+    #[must_use]
+    pub fn new(event: usize, scheduled_ns: u64, started_ns: u64, applied_ns: u64) -> Self {
+        Self {
+            event,
+            kind: "set".to_owned(),
+            link: "l".to_owned(),
+            direction: Some("forward".to_owned()),
+            scheduled_ns,
+            started_ns,
+            applied_ns,
+        }
+    }
+}
+
+/// One step of the timeline as the run did it: which event of the file it comes from, when it was due and when the
+/// backend had done it. The times are nanoseconds from the start of the measured phase, the moment at which the
+/// workloads start. An event on `both` is two steps, one for each direction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct EventRecord {
+    /// The place of the event in `timeline` of the scenario.
+    pub event: usize,
+    /// What the step was: `set`, `outage-start`, `outage-end`, `down` or `up`.
+    pub kind: String,
+    /// The link.
+    pub link: String,
+    /// The direction (`forward`, `reverse`), or `null` for a step of the whole link (`down`, `up`).
+    pub direction: Option<String>,
+    /// When the file says it happens.
+    pub scheduled_ns: u64,
+    /// When the run asked the backend to do it.
+    pub started_ns: u64,
+    /// When the backend had done it. The difference to `scheduled_ns` is how late the step was: the wait for the
+    /// clock, the time of the change itself, and what the machine added. A packet that left in between met the
+    /// old state (the lost packets of the run are the same for the same seed only where D-038 holds, which
+    /// `seed.not_reproducible_because` says).
+    pub applied_ns: u64,
 }
 
 /// Which scenario a result belongs to.
@@ -366,6 +411,7 @@ mod tests {
                 records_file: "flow-0.records".to_owned(),
                 packets_file: None,
             }],
+            events: Vec::new(),
             directions: vec![DirectionTally {
                 link: "l".to_owned(),
                 direction: "forward".to_owned(),

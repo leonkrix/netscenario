@@ -186,7 +186,7 @@ timeline:
 
 **What the Kernel backend cannot follow.** The jitter of a direction keeps one distribution for the whole run: `netem` cannot go back from normal to uniform without building the queue again (D-059). The amount can change.
 
-**When it happens.** An event is applied before the first packet that its workload sends at or after its moment (D-038), so the same seed gives the same lost packets; the result records when each event was really applied and how many packets had entered the queue. The Kernel backend applies the timeline from step 4.3 of release 0.2; until then it refuses a scenario with one and names the feature ([COVERAGE.md](COVERAGE.md)).
+**When it happens.** The Kernel backend applies a `set` by the clock: at the moment of the event, counted from the start of the workloads, and the result records when each step was asked for and when it was done (`events`, [RESULTS.md](RESULTS.md)). The target (D-038) is stricter: an event is applied before the first packet that its workload sends at or after its moment, so that the same seed gives the same lost packets whatever the machine does. That needs the sender to wait for the change and is the next step of release 0.2; until then a timeline that changes the loss, the duplication, the corruption or the reordering makes the result say that the lost packets are not promised to repeat. A timeline that changes only a rate or a delay is not affected. `outage`, `down` and `up` are refused until the steps that do them are built ([COVERAGE.md](COVERAGE.md)).
 
 ## Workloads
 

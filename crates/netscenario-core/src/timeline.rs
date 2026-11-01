@@ -35,6 +35,36 @@ pub enum Action {
     Up,
 }
 
+/// What the event of the file was that a step comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Kind {
+    /// A `set`.
+    Set,
+    /// The start of an `outage`.
+    OutageStart,
+    /// The end of an `outage`.
+    OutageEnd,
+    /// A `down`.
+    Down,
+    /// An `up`.
+    Up,
+}
+
+impl Kind {
+    /// The word for the result: `set`, `outage-start`, `outage-end`, `down`, `up`.
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Kind::Set => "set",
+            Kind::OutageStart => "outage-start",
+            Kind::OutageEnd => "outage-end",
+            Kind::Down => "down",
+            Kind::Up => "up",
+        }
+    }
+}
+
 /// One thing to do, and when and for which event of the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -46,6 +76,8 @@ pub struct Step {
     pub event: usize,
     /// The place of the link in `topology.links`.
     pub link: usize,
+    /// What the event of the file was.
+    pub kind: Kind,
     /// What to do.
     pub action: Action,
 }
@@ -101,13 +133,9 @@ fn directions(side: Side) -> &'static [Direction] {
     }
 }
 
-/// The steps of the timeline of `scenario`, in the order they are done: by moment, and for one moment by the order
-/// of the events in the file. A scenario without a timeline has none.
-///
-/// The scenario must be valid (`Scenario::validate`): an event of a link that does not exist is skipped.
-#[must_use]
-pub fn steps(scenario: &Scenario) -> Vec<Step> {
-    // (moment, event, what); the sort is stable, so the start of an outage keeps its place in the file
+/// What happens when, before the order of one moment is fixed: (moment, event, link, what). The sort is stable, so
+/// the start of an outage keeps its place in the file.
+fn raw_steps(scenario: &Scenario) -> Vec<(Duration, usize, usize, Raw)> {
     let mut raw: Vec<(Duration, usize, usize, Raw)> = Vec::new();
     for (index, event) in scenario.timeline.iter().enumerate() {
         let Some(link) = scenario
@@ -136,6 +164,17 @@ pub fn steps(scenario: &Scenario) -> Vec<Step> {
     }
     raw.sort_by_key(|(at, index, _, _)| (*at, *index));
 
+    raw
+}
+
+/// The steps of the timeline of `scenario`, in the order they are done: by moment, and for one moment by the order
+/// of the events in the file. A scenario without a timeline has none.
+///
+/// The scenario must be valid (`Scenario::validate`): an event of a link that does not exist is skipped.
+#[must_use]
+pub fn steps(scenario: &Scenario) -> Vec<Step> {
+    let raw = raw_steps(scenario);
+
     let mut states: Vec<[DirectionState; 2]> = scenario
         .topology
         .links
@@ -149,12 +188,20 @@ pub fn steps(scenario: &Scenario) -> Vec<Step> {
         .collect();
     let mut steps = Vec::new();
     for (at, event, link, what) in raw {
+        let kind = match &what {
+            Raw::Set(_) => Kind::Set,
+            Raw::OutageStart(_) => Kind::OutageStart,
+            Raw::OutageEnd(_) => Kind::OutageEnd,
+            Raw::Down => Kind::Down,
+            Raw::Up => Kind::Up,
+        };
         let mut impair = |state: &mut [DirectionState; 2], side: Side| {
             for &direction in directions(side) {
                 steps.push(Step {
                     at,
                     event,
                     link,
+                    kind,
                     action: Action::Impair {
                         direction,
                         impairments: Box::new(state[way(direction)].effective()),
@@ -195,12 +242,14 @@ pub fn steps(scenario: &Scenario) -> Vec<Step> {
                 at,
                 event,
                 link,
+                kind,
                 action: Action::Down,
             }),
             Raw::Up => steps.push(Step {
                 at,
                 event,
                 link,
+                kind,
                 action: Action::Up,
             }),
         }
@@ -258,6 +307,42 @@ pub fn draws_random_numbers(scenario: &Scenario) -> bool {
                 Action::Impair { impairments, outage: false, .. } if impairments.is_random()
             )
         })
+}
+
+/// Whether a step changes **what a queue draws random numbers for**: the loss (or its parameters, or an outage that
+/// begins or ends), the duplication, the corruption or the reordering of a direction. Such a step applied by the
+/// clock lands before a different packet in every run, and from there on the lost packets of one seed differ
+/// (D-038). A step that changes the rate or the delay draws nothing different, and the packets stay the same.
+#[must_use]
+pub fn changes_what_is_drawn(scenario: &Scenario) -> bool {
+    let drawn = |impairments: &Impairments| {
+        (
+            impairments.loss,
+            impairments.duplicate,
+            impairments.corrupt,
+            impairments.reorder,
+        )
+    };
+    let mut last: Vec<[_; 2]> = scenario
+        .topology
+        .links
+        .iter()
+        .map(|link| DIRECTIONS.map(|direction| drawn(&initial(link, direction))))
+        .collect();
+    steps(scenario).iter().any(|step| {
+        let Action::Impair {
+            direction,
+            impairments,
+            ..
+        } = &step.action
+        else {
+            return false;
+        };
+        let now = drawn(impairments);
+        let changed = last[step.link][way(*direction)] != now;
+        last[step.link][way(*direction)] = now;
+        changed
+    })
 }
 
 #[cfg(test)]
@@ -355,6 +440,33 @@ mod tests {
         );
         // No timeline, no step
         assert_eq!(super::steps(&scenario("", "  []\n")).len(), 0);
+    }
+
+    /// A step that changes what is drawn (a loss, an outage) is told from one that does not (a rate, a delay).
+    #[test]
+    fn only_a_step_that_changes_what_is_drawn_is_one() {
+        let lossy = "      forward: { delay: 20ms, loss: { model: random, p: 5% } }\n";
+        let timeline = |text: &str| scenario(lossy, text);
+        // Only the rate and the delay change: the same numbers are drawn
+        assert!(!changes_what_is_drawn(&timeline(
+            "  - { at: 2s, link: l, set: { forward: { rate: 2mbit, delay: 40ms } } }\n"
+        )));
+        // The loss changes, or goes away, or an outage begins
+        assert!(changes_what_is_drawn(&timeline(
+            "  - { at: 2s, link: l, set: { forward: { loss: { model: random, p: 10% } } } }\n"
+        )));
+        assert!(changes_what_is_drawn(&timeline(
+            "  - { at: 2s, link: l, set: { forward: { loss: null } } }\n"
+        )));
+        assert!(changes_what_is_drawn(&timeline(
+            "  - { at: 2s, link: l, outage: 1s }\n"
+        )));
+        // The other direction has nothing drawn, and a step that adds a duplication does change it
+        assert!(changes_what_is_drawn(&timeline(
+            "  - { at: 2s, link: l, set: { reverse: { duplicate: 5% } } }\n"
+        )));
+        // Canary: no timeline, nothing changes
+        assert!(!changes_what_is_drawn(&timeline("  []\n")));
     }
 
     /// The states of a direction: where it starts, and every state that a step leads to, once.

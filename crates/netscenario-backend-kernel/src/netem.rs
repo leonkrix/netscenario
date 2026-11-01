@@ -265,6 +265,11 @@ impl Layout {
         })
     }
 
+    /// Whether the direction is two queues, the rate in the first and the delay in the second.
+    pub(crate) fn is_two_queues(&self) -> bool {
+        self.two_stages
+    }
+
     /// Whether a state fits the queues of this layout: it needs a second queue only if there is one, and it does not
     /// draw numbers in a queue that was built without a seed for them.
     pub(crate) fn fits(&self, state: &Impairments) -> bool {

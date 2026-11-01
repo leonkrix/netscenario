@@ -52,6 +52,7 @@
 
 mod backend;
 mod capability;
+mod drive;
 mod error;
 mod export;
 mod feature;
@@ -80,8 +81,8 @@ pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering};
 pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
 pub use result::{
-    AcceptedRestriction, AddressInfo, DirectionTally, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
-    RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
+    AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, QueueCheck, RESULT_FORMAT,
+    RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
 pub use seed::{derive_seed, derive_stage_seed, draw_seed};
