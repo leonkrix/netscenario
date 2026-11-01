@@ -155,9 +155,7 @@ impl Walk {
             let link = backend
                 .create_link(&Name::new(&name).unwrap(), nodes)
                 .unwrap();
-            backend
-                .plan_states(link, Direction::Forward, &all, false)
-                .unwrap();
+            backend.plan_states(link, Direction::Forward, &all).unwrap();
             // The same seed everywhere: it is in the queue, and the comparison leaves it out
             backend
                 .apply(link, Direction::Forward, first, Some(1))
@@ -292,7 +290,7 @@ fn a_jitter_that_is_normal_in_one_state_and_uniform_in_another_cannot_be_planned
     let normal = state("{ delay: 20ms, jitter: { amount: 5ms, distribution: normal } }");
     let uniform = state("{ delay: 20ms, jitter: { amount: 5ms } }");
     let error = backend
-        .plan_states(link, Direction::Forward, &[normal.clone(), uniform], false)
+        .plan_states(link, Direction::Forward, &[normal.clone(), uniform])
         .unwrap_err()
         .to_string();
     assert!(
@@ -306,7 +304,6 @@ fn a_jitter_that_is_normal_in_one_state_and_uniform_in_another_cannot_be_planned
             link,
             Direction::Forward,
             &[normal, state("{ delay: 20ms }"), still_normal],
-            false,
         )
         .unwrap();
     backend.teardown().unwrap();
@@ -418,7 +415,7 @@ fn the_changes_of_two_links_of_one_node_go_through_one_batch_and_each_lands_on_i
             .create_link(&Name::new(name).unwrap(), [nodes[0], other])
             .unwrap();
         backend
-            .plan_states(link, Direction::Forward, &states, false)
+            .plan_states(link, Direction::Forward, &states)
             .unwrap();
         backend
             .apply(link, Direction::Forward, &one, Some(1))
@@ -479,8 +476,9 @@ fn an_outage_and_the_states_of_a_direction_do_not_touch_each_other() {
             .create_link(&Name::new(name).unwrap(), nodes)
             .unwrap();
         backend
-            .plan_states(link, Direction::Forward, &states, true)
+            .plan_states(link, Direction::Forward, &states)
             .unwrap();
+        backend.plan_outage(link, Direction::Forward).unwrap();
         backend
             .apply(link, Direction::Forward, first, Some(1))
             .unwrap();
@@ -545,7 +543,6 @@ fn an_outage_in_a_direction_that_was_not_planned_for_one_is_refused() {
             link,
             Direction::Forward,
             &[state("{ delay: 5ms }"), state("{ delay: 10ms }")],
-            false,
         )
         .unwrap();
     backend

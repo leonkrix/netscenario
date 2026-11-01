@@ -468,6 +468,7 @@ fn duplicate_tree_refusals(
                     Action::Impair {
                         direction: moved,
                         impairments,
+                        ..
                     } if step.link == index
                         && *moved == direction
                         && impairments.duplicate.is_some() =>
@@ -525,6 +526,7 @@ fn timeline_refusals(scenario: &Scenario) -> Vec<Refusal> {
                 let Action::Impair {
                     direction: moved,
                     impairments,
+                    ..
                 } = &step.action
                 else {
                     continue;
@@ -690,15 +692,22 @@ impl Backend for KernelBackend {
         link: LinkHandle,
         direction: Direction,
         states: &[Impairments],
-        outage: bool,
     ) -> Result<(), Error> {
         let request = Request::Plan {
             link: link.0,
             direction: Way::from(direction),
             states: states.to_vec(),
-            outage,
         };
         self.call("plan the states of a direction", &request)
+            .map(|_| ())
+    }
+
+    fn plan_outage(&mut self, link: LinkHandle, direction: Direction) -> Result<(), Error> {
+        let request = Request::PlanOutage {
+            link: link.0,
+            direction: Way::from(direction),
+        };
+        self.call("plan an outage of a direction", &request)
             .map(|_| ())
     }
 

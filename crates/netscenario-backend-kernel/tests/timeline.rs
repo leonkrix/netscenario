@@ -321,9 +321,8 @@ impl Backend for Slow {
         link: LinkHandle,
         direction: Direction,
         states: &[Impairments],
-        outage: bool,
     ) -> Result<(), Error> {
-        self.inner.plan_states(link, direction, states, outage)
+        self.inner.plan_states(link, direction, states)
     }
     fn apply(
         &mut self,

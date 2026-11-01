@@ -179,11 +179,9 @@ pub trait Backend {
     }
 
     /// Tells the backend every state that one direction of a link will have in the run, the first being the one
-    /// that [`apply`](Backend::apply) is given next, before it is, and whether the direction has an outage
-    /// (`outage`, D-064). A backend whose queues are built for a state can build ones that every state fits, and the
-    /// one that holds an outage, so that [`change`](Backend::change) and [`set_outage`](Backend::set_outage) never
-    /// have to rebuild them (D-059). It is called only for a direction that a `set` or an `outage` of the timeline
-    /// touches. The default does nothing.
+    /// that [`apply`](Backend::apply) is given next, before it is. A backend whose queues are built for a state can
+    /// build ones that every state fits, so that [`change`](Backend::change) never has to rebuild them (D-059). It is
+    /// called only for a direction that a `set` or an `outage` of the timeline touches. The default does nothing.
     ///
     /// # Errors
     ///
@@ -193,8 +191,19 @@ pub trait Backend {
         _link: LinkHandle,
         _direction: Direction,
         _states: &[Impairments],
-        _outage: bool,
     ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// Tells the backend that one direction of a link will have an outage in the run (D-064), so that it can build
+    /// the queue that holds one before the direction is built, and not rebuild anything when the outage begins
+    /// ([`set_outage`](Backend::set_outage)). It is called after [`plan_states`](Backend::plan_states) of the same
+    /// direction and before [`apply`](Backend::apply). The default does nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist, or the direction was not planned with `plan_states`.
+    fn plan_outage(&mut self, _link: LinkHandle, _direction: Direction) -> Result<(), Error> {
         Ok(())
     }
 
@@ -236,7 +245,7 @@ pub trait Backend {
 
     /// Begins (`on`) or ends an outage of one direction of a link (D-064): while it lasts nothing is delivered in
     /// that direction, not even a packet that is on its way, and the sender notices nothing. The impairments of the
-    /// direction are not touched and act as they did. The direction must have been planned with `outage` set. The
+    /// direction are not touched and act as they did. The direction must have been planned with [`plan_outage`](Backend::plan_outage). The
     /// default says that the backend cannot.
     ///
     /// # Errors

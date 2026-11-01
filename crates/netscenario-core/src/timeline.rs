@@ -27,19 +27,24 @@ pub enum Action {
         direction: Direction,
         /// The impairments.
         impairments: Box<Impairments>,
+        /// Whether an outage is going on in this direction at this moment. The `impairments` do not contain it: an
+        /// outage is a window at the delivery and not a value (D-064), and a backend does it with the step that
+        /// begins it.
+        outage: bool,
     },
+    /// The interface of the link goes down (D-039).
+    Down,
+    /// The interface of the link comes up again.
+    Up,
     /// Nothing is delivered in the direction from now on (`on`), or deliveries are back (not `on`): an outage
-    /// begins or ends (D-064). A packet that is on its way when it begins is lost as well.
+    /// begins or ends (D-064). A packet that is on its way when it begins is lost as well. It comes after the others
+    /// because the order of the variants is part of the API.
     Blackout {
         /// The direction.
         direction: Direction,
         /// Whether the outage begins (`true`) or ends.
         on: bool,
     },
-    /// The interface of the link goes down (D-039).
-    Down,
-    /// The interface of the link comes up again.
-    Up,
 }
 
 /// What the event of the file was that a step comes from.
@@ -157,13 +162,14 @@ fn raw_steps(scenario: &Scenario) -> Vec<(Duration, usize, usize, Raw)> {
 pub fn steps(scenario: &Scenario) -> Vec<Step> {
     let raw = raw_steps(scenario);
 
-    // The values of each direction of each link, as the file and the steps make them
+    // The values of each direction of each link, as the file and the steps make them, and whether an outage is on
     let mut bases: Vec<[Impairments; 2]> = scenario
         .topology
         .links
         .iter()
         .map(|link| DIRECTIONS.map(|direction| initial(link, direction)))
         .collect();
+    let mut outages: Vec<[bool; 2]> = vec![[false; 2]; bases.len()];
     let mut steps = Vec::new();
     for (at, event, link, what) in raw {
         let kind = match &what {
@@ -183,6 +189,7 @@ pub fn steps(scenario: &Scenario) -> Vec<Step> {
             });
         };
         let bases = &mut bases[link];
+        let outages = &mut outages[link];
         match what {
             Raw::Set(change) => {
                 for (side, edit) in [
@@ -199,6 +206,7 @@ pub fn steps(scenario: &Scenario) -> Vec<Step> {
                         step(Action::Impair {
                             direction,
                             impairments: Box::new(bases[way(direction)].clone()),
+                            outage: outages[way(direction)],
                         });
                     }
                 }
@@ -206,6 +214,7 @@ pub fn steps(scenario: &Scenario) -> Vec<Step> {
             Raw::OutageStart(side) | Raw::OutageEnd(side) => {
                 let on = matches!(kind, Kind::OutageStart);
                 for &direction in directions(side) {
+                    outages[way(direction)] = on;
                     step(Action::Blackout { direction, on });
                 }
             }
@@ -336,6 +345,7 @@ pub fn steps_that_change_what_is_drawn(scenario: &Scenario) -> Vec<usize> {
                 Action::Impair {
                     direction,
                     impairments,
+                    ..
                 } => (direction, impairments),
                 // The window of an outage acts after the queues that draw
                 Action::Blackout { .. } => return false,
@@ -444,6 +454,23 @@ mod tests {
         assert!(!steps.iter().any(|step| step.contains("100000000")));
         let kinds: Vec<Kind> = super::steps(&s).iter().map(|step| step.kind).collect();
         assert_eq!(kinds, [Kind::OutageStart, Kind::Set, Kind::OutageEnd]);
+    }
+
+    /// A `set` says whether an outage is going on at its moment; the flag does not change the impairments.
+    #[test]
+    fn a_set_says_whether_an_outage_is_going_on() {
+        let s = scenario(
+            "      forward: { delay: 20ms }\n",
+            "  - { at: 2s, link: l, set: { forward: { delay: 30ms } } }\n  - { at: 4s, link: l, outage: 4s, direction: forward }\n  - { at: 6s, link: l, set: { forward: { delay: 40ms } } }\n  - { at: 10s, link: l, set: { forward: { delay: 50ms } } }\n",
+        );
+        let flags: Vec<bool> = steps(&s)
+            .iter()
+            .filter_map(|step| match step.action {
+                Action::Impair { outage, .. } => Some(outage),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flags, [false, true, false]);
     }
 
     /// `both` is an outage in each direction, and the directions that have one are listed once, in order.

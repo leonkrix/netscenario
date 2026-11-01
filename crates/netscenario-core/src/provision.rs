@@ -135,7 +135,10 @@ fn build(
             let outage = outages.contains(&(index, direction));
             let changes = states.len() > 1 || outage;
             if changes {
-                backend.plan_states(handle, direction, &states, outage)?;
+                backend.plan_states(handle, direction, &states)?;
+            }
+            if outage {
+                backend.plan_outage(handle, direction)?;
             }
             // Only what draws random numbers uses the seed, and a state that comes later counts as well: the
             // queue is seeded when it is built (a change keeps its generator)
@@ -276,7 +279,6 @@ mod tests {
             link: LinkHandle,
             direction: Direction,
             states: &[Impairments],
-            _outage: bool,
         ) -> Result<(), Error> {
             self.step(
                 format!("plan {} {direction:?} {} states", link.0, states.len()),

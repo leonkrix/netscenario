@@ -44,9 +44,11 @@ pub(crate) enum Request {
         link: u32,
         direction: Way,
         states: Vec<Impairments>,
-        /// Whether the direction has an outage, so that its tree gets the blackout queue (D-064).
-        #[serde(default)]
-        outage: bool,
+    },
+    /// The direction has an outage in the run, so that its tree gets the blackout queue (D-064). After `Plan`.
+    PlanOutage {
+        link: u32,
+        direction: Way,
     },
     /// Begins or ends an outage of a direction (D-064).
     SetOutage {
@@ -158,7 +160,10 @@ mod tests {
                 link: 0,
                 direction: Way::Forward,
                 states: vec![delay.clone(), delay.clone()],
-                outage: true,
+            },
+            Request::PlanOutage {
+                link: 0,
+                direction: Way::Forward,
             },
             Request::SetOutage {
                 link: 0,

@@ -332,6 +332,12 @@ impl Layout {
         })
     }
 
+    /// This layout with a blackout queue behind its queues, for an outage (D-064).
+    pub(crate) fn with_blackout(mut self) -> Self {
+        self.blackout = true;
+        self
+    }
+
     /// Whether the direction is two or more queues in one tree: the rate in the first and the delay in the second,
     /// or a blackout behind them. Some kernels refuse a duplicating `netem` next to another one (D-052).
     pub(crate) fn is_a_tree(&self) -> bool {

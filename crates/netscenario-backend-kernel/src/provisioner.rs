@@ -398,13 +398,22 @@ impl Provisioner {
         link: u32,
         way: Way,
         states: &[Impairments],
-        outage: bool,
     ) -> Result<(), String> {
         if self.links.get(link as usize).is_none() {
             return Err(format!("the link {link} does not exist in this run"));
         }
-        let layout = netem::Layout::of(states, outage)?;
+        let layout = netem::Layout::of(states, false)?;
         self.layouts.insert((link, way), layout);
+        Ok(())
+    }
+
+    /// Adds the blackout queue of an outage (D-064) to the layout that `plan` made. It must come before `apply`, which
+    /// builds the queues, and after `plan`.
+    pub(crate) fn plan_outage(&mut self, link: u32, way: Way) -> Result<(), String> {
+        let layout = self.layouts.remove(&(link, way)).ok_or_else(|| {
+            format!("the direction of link {link} has to be planned with its states before it is planned for an outage")
+        })?;
+        self.layouts.insert((link, way), layout.with_blackout());
         Ok(())
     }
 

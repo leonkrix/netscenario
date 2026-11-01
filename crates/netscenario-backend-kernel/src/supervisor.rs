@@ -122,10 +122,10 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                 link,
                 direction,
                 states,
-                outage,
-            } => provisioner
-                .plan(link, direction, &states, outage)
-                .map(|()| None),
+            } => provisioner.plan(link, direction, &states).map(|()| None),
+            Request::PlanOutage { link, direction } => {
+                provisioner.plan_outage(link, direction).map(|()| None)
+            }
             Request::SetOutage {
                 link,
                 direction,
