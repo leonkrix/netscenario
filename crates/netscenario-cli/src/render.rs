@@ -112,6 +112,27 @@ fn events_text(text: &mut String, result: &RunResult) {
     }
 }
 
+/// Which packets the kernel refused, for the warning: up to three runs by their numbers, else how many runs.
+fn refused_text(refused: &[[u64; 2]]) -> String {
+    match refused {
+        [] => String::new(),
+        runs if runs.len() <= 3 => {
+            let runs: Vec<String> = runs
+                .iter()
+                .map(|[first, last]| {
+                    if first == last {
+                        format!("packet {first}")
+                    } else {
+                        format!("packets {first} to {last}")
+                    }
+                })
+                .collect();
+            format!(" ({})", runs.join(", "))
+        }
+        runs => format!(" (in {} separate runs)", runs.len()),
+    }
+}
+
 /// Seconds with the decimals they need, from nanoseconds.
 fn seconds(ns: u64) -> String {
     #[allow(clippy::cast_precision_loss)] // moments are far below 2^52 nanoseconds
@@ -305,8 +326,9 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
     if workload.sender.send_errors > 0 {
         let _ = writeln!(
             text,
-            "  warning: the kernel refused {} packets: {}",
+            "  warning: the kernel refused {} packets{}: {}",
             workload.sender.send_errors,
+            refused_text(&workload.sender.refused),
             workload
                 .sender
                 .first_error
@@ -400,6 +422,7 @@ result: out/result.json
             vec!["the backend cannot apply a seed (iproute2 6.6.0 or newer can)".to_owned()];
         result.workloads[0].sender.send_errors = 3;
         result.workloads[0].sender.first_error = Some("no buffer space".to_owned());
+        result.workloads[0].sender.refused = vec![[10, 11], [20, 20]];
         let text = summary(&result, Path::new("out"));
         assert!(
             text.contains("no seed (the backend cannot apply one)"),
@@ -410,7 +433,9 @@ result: out/result.json
             "{text}"
         );
         assert!(
-            text.contains("warning: the kernel refused 3 packets: no buffer space"),
+            text.contains(
+                "warning: the kernel refused 3 packets (packets 10 to 11, packet 20): no buffer space"
+            ),
             "{text}"
         );
     }

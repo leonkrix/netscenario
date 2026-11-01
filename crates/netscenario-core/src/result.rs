@@ -132,7 +132,8 @@ pub struct SeedInfo {
     pub queue_checks: Vec<QueueCheck>,
     /// Why the run is not reproducible, one sentence for each reason; empty when `loss_reproducible` is `true`.
     /// A backend that cannot apply a seed, a queue that counted a packet the workloads did not send, and a
-    /// scenario with corruption (where `netem` flips a bit is not seeded) are the reasons.
+    /// scenario with corruption (where `netem` flips a bit is not seeded), and a scenario with an outage (its edges
+    /// are placed by the clock, D-064) are the reasons.
     #[serde(default)]
     pub not_reproducible_because: Vec<String>,
 }
@@ -251,6 +252,11 @@ pub struct SenderInfo {
     pub send_errors: u64,
     /// The first such error.
     pub first_error: Option<String>,
+    /// The sequence numbers of the packets that the kernel refused, as runs `[first, last]`, both included, in
+    /// ascending order (D-064). A refused packet was never sent: it is not in `sent` and not in `lost`. A link that
+    /// is down refuses a run of them for as long as it lasts.
+    #[serde(default)]
+    pub refused: Vec<[u64; 2]>,
 }
 
 /// The result of one workload.
@@ -416,8 +422,9 @@ mod tests {
                 },
                 sender: SenderInfo {
                     max_lateness_ns: 3,
-                    send_errors: 0,
-                    first_error: None,
+                    send_errors: 2,
+                    first_error: Some("Network is unreachable".to_owned()),
+                    refused: vec![[5, 6]],
                 },
                 foreign_datagrams: 0,
                 corrupted: 0,

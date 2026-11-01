@@ -123,6 +123,14 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                 direction,
                 states,
             } => provisioner.plan(link, direction, &states).map(|()| None),
+            Request::PlanOutage { link, direction } => {
+                provisioner.plan_outage(link, direction).map(|()| None)
+            }
+            Request::SetOutage {
+                link,
+                direction,
+                on,
+            } => provisioner.set_outage(link, direction, on).map(|()| None),
             Request::Change {
                 link,
                 direction,
@@ -130,6 +138,7 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
             } => provisioner
                 .change(link, direction, &impairments)
                 .map(|()| None),
+            Request::SetLink { link, up } => provisioner.set_link(link, up).map(|()| None),
             Request::QueuePackets { link, direction } => {
                 send(&match provisioner.queue_packets(link, direction) {
                     Ok(packets) => Response::Count { packets },

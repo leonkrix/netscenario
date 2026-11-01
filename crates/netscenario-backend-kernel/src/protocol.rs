@@ -45,6 +45,17 @@ pub(crate) enum Request {
         direction: Way,
         states: Vec<Impairments>,
     },
+    /// The direction has an outage in the run, so that its tree gets the blackout queue (D-064). After `Plan`.
+    PlanOutage {
+        link: u32,
+        direction: Way,
+    },
+    /// Begins or ends an outage of a direction (D-064).
+    SetOutage {
+        link: u32,
+        direction: Way,
+        on: bool,
+    },
     /// Writes a state into the queues of one direction while the run is going (D-048, D-059).
     Change {
         link: u32,
@@ -52,6 +63,11 @@ pub(crate) enum Request {
         impairments: Impairments,
     },
     /// How many packets entered the queue of one direction, which draws its random loss.
+    /// Takes both interfaces of a link down or brings them up (D-064).
+    SetLink {
+        link: u32,
+        up: bool,
+    },
     QueuePackets {
         link: u32,
         direction: Way,
@@ -145,6 +161,15 @@ mod tests {
                 direction: Way::Forward,
                 states: vec![delay.clone(), delay.clone()],
             },
+            Request::PlanOutage {
+                link: 0,
+                direction: Way::Forward,
+            },
+            Request::SetOutage {
+                link: 0,
+                direction: Way::Reverse,
+                on: true,
+            },
             Request::Change {
                 link: 0,
                 direction: Way::Forward,
@@ -164,6 +189,7 @@ mod tests {
                 line: "stop".to_owned(),
             },
             Request::Teardown,
+            Request::SetLink { link: 0, up: false },
             Request::Notes,
         ] {
             let text = serde_json::to_string(&request).unwrap();

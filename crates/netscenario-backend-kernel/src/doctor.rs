@@ -955,13 +955,13 @@ mod tests {
     #[test]
     fn a_feature_the_backend_lacks_is_information_and_one_the_machine_lacks_is_a_warning() {
         let report = assess(&good());
-        assert_eq!(status(&report, "outages"), Status::Info);
+        assert_eq!(status(&report, "program"), Status::Info);
         assert_eq!(status(&report, "burst-loss"), Status::Ok);
         let mut old = good();
         old.tools[1].printed = "tc utility, iproute2-5.15.0".to_owned();
         let report = assess(&old);
         assert_eq!(status(&report, "seeded-loss"), Status::Warn);
-        assert_eq!(status(&report, "outages"), Status::Info);
+        assert_eq!(status(&report, "program"), Status::Info);
     }
 
     /// D-052: a kernel that refuses a duplicating `netem` next to another is a warning with the answer of the

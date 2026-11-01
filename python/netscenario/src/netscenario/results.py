@@ -215,6 +215,12 @@ class Sender:
     """How many packets the kernel refused to take."""
     first_error: str | None
     """The first such error."""
+    refused: tuple[tuple[int, int], ...] = ()
+    """The packets the kernel refused, as runs ``(first, last)`` of sequence numbers, both included.
+
+    A refused packet was never sent, so it is not in ``sent`` and not in ``lost``. A link that is
+    down refuses a run of them for as long as it lasts.
+    """
 
 
 @dataclass(frozen=True)
@@ -635,6 +641,7 @@ def _workload(entry: dict[str, Any], directory: Path) -> Workload:
             max_lateness=_seconds(sender["max_lateness_ns"]),
             send_errors=int(sender["send_errors"]),
             first_error=sender["first_error"],
+            refused=tuple((int(run[0]), int(run[1])) for run in sender.get("refused", ())),
         ),
         foreign_datagrams=int(entry["foreign_datagrams"]),
         reordering=_reordering(entry.get("reordering")),

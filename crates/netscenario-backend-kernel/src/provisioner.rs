@@ -402,8 +402,18 @@ impl Provisioner {
         if self.links.get(link as usize).is_none() {
             return Err(format!("the link {link} does not exist in this run"));
         }
-        let layout = netem::Layout::of(states)?;
+        let layout = netem::Layout::of(states, false)?;
         self.layouts.insert((link, way), layout);
+        Ok(())
+    }
+
+    /// Adds the blackout queue of an outage (D-064) to the layout that `plan` made. It must come before `apply`, which
+    /// builds the queues, and after `plan`.
+    pub(crate) fn plan_outage(&mut self, link: u32, way: Way) -> Result<(), String> {
+        let layout = self.layouts.remove(&(link, way)).ok_or_else(|| {
+            format!("the direction of link {link} has to be planned with its states before it is planned for an outage")
+        })?;
+        self.layouts.insert((link, way), layout.with_blackout());
         Ok(())
     }
 
@@ -424,31 +434,33 @@ impl Provisioner {
             );
         }
         let stages = netem::change(layout, impairments)?;
-        // The arguments are put into one line for the batch, so none may hold a space
-        if stages
-            .first
-            .iter()
-            .chain(stages.second.iter().flatten())
-            .any(|argument| argument.contains(char::is_whitespace))
-        {
-            return Err("an argument of the change holds a space".to_owned());
-        }
         let (pid, interface) = self.interface_of(link, way)?;
-        let mut commands = vec![format!(
-            "qdisc change dev {interface} root netem {}",
-            stages.first.join(" ")
-        )];
-        if let Some(second) = &stages.second {
-            commands.push(format!(
-                "qdisc change dev {interface} parent 1:1 handle 2: netem {}",
-                second.join(" ")
-            ));
-        }
-        if self.change_through_batch(pid, &commands)? {
+        self.run_lines(pid, &stages.lines(&interface, "change"))
+    }
+
+    /// Begins or ends an outage of a direction that `apply` built with a blackout queue (D-064): the loss of 100 %
+    /// of that queue is switched on or off, and nothing else is touched.
+    pub(crate) fn set_outage(&mut self, link: u32, way: Way, on: bool) -> Result<(), String> {
+        let (pid, interface) = self.interface_of(link, way)?;
+        let command = self
+            .layouts
+            .get(&(link, way))
+            .and_then(|layout| layout.blackout_line(&interface, on))
+            .ok_or_else(|| {
+                format!("the direction of link {link} was not planned for an outage, so it has no queue to hold one")
+            })?;
+        self.run_lines(pid, &[command])
+    }
+
+    /// Makes the changes in `lines` in the node whose holder is `pid`: through the `tc` that lives for the run if
+    /// the node has one that works, else by one process for each line. The arguments of a line are put into one
+    /// text for the batch, so none may hold a space.
+    fn run_lines(&mut self, pid: u32, lines: &[String]) -> Result<(), String> {
+        if self.change_through_batch(pid, lines)? {
             return Ok(());
         }
-        for command in &commands {
-            let words: Vec<&str> = command.split(' ').collect();
+        for line in lines {
+            let words: Vec<&str> = line.split(' ').collect();
             self.in_node(pid, &self.tools.tc, &words)?;
         }
         Ok(())
@@ -510,6 +522,28 @@ impl Provisioner {
         self.notes.clone()
     }
 
+    /// Takes both interfaces of a link down or brings them up (D-064). Down is the state of the interface, not the
+    /// loss of the carrier: a sender on either side gets an error from the kernel while it lasts, and the addresses,
+    /// the neighbours (they are fixed, not learned) and the queues stay as they are. The packets in the queues are
+    /// dropped by the kernel when the interface goes down.
+    pub(crate) fn set_link(&mut self, link: u32, up: bool) -> Result<(), String> {
+        let link = self
+            .links
+            .get(link as usize)
+            .ok_or_else(|| format!("the link {link} does not exist in this run"))?;
+        let state = if up { "up" } else { "down" };
+        let ends: Vec<(u32, String)> = link
+            .ends
+            .iter()
+            .map(|end| (self.nodes[end.node].pid, end.interface.clone()))
+            .collect();
+        // One end after the other: for a moment a sender on the first side is refused and one on the second is not
+        for (pid, interface) in &ends {
+            self.in_node(*pid, &self.tools.ip, &["link", "set", interface, state])?;
+        }
+        Ok(())
+    }
+
     /// The process that holds the namespace of the node that sends in a direction, and its interface.
     fn interface_of(&self, link: u32, way: Way) -> Result<(u32, String), String> {
         let link = self
@@ -551,22 +585,10 @@ impl Provisioner {
             return Ok(());
         };
         let pid = self.nodes[end.node].pid;
-        let interface = end.interface.as_str();
-        // `apply` builds the direction once, at time zero. The changes over time of release 0.2 have to remove
-        // the child when a change no longer needs it, because `replace` of the root keeps it.
-        let mut root = vec!["qdisc", "replace", "dev", interface, "root"];
-        if stages.second.is_some() {
-            root.extend(["handle", "1:"]);
-        }
-        root.push("netem");
-        root.extend(stages.first.iter().map(String::as_str));
-        self.in_node(pid, &self.tools.tc, &root)?;
-        if let Some(second) = &stages.second {
-            let mut child = vec![
-                "qdisc", "replace", "dev", interface, "parent", "1:1", "handle", "2:", "netem",
-            ];
-            child.extend(second.iter().map(String::as_str));
-            self.in_node(pid, &self.tools.tc, &child)?;
+        // `apply` builds the direction once, at time zero, the root first and then its children
+        for line in stages.lines(end.interface.as_str(), "replace") {
+            let words: Vec<&str> = line.split(' ').collect();
+            self.in_node(pid, &self.tools.tc, &words)?;
         }
         // A direction that changes in the run gets the `tc` that makes its changes before the workloads start, so
         // that its first change does not pay for the start of a process

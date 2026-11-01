@@ -212,9 +212,34 @@ pub fn interarrival_jitter(arrivals: &[Record]) -> Option<Jitter> {
     })
 }
 
+/// How many of the sequence numbers from `from` up to, not including, `to` were sent: those that the kernel did not
+/// refuse (`refused` are runs `[first, last]`, ascending and apart).
+#[must_use]
+pub fn sent_between(refused: &[[u64; 2]], from: u64, to: u64) -> u64 {
+    if to <= from {
+        return 0;
+    }
+    // Only the runs that touch the range are looked at, so a pass over all gaps costs the number of runs once
+    let start = refused.partition_point(|[_, last]| *last < from);
+    let refused_in: u64 = refused[start..]
+        .iter()
+        .take_while(|[first, _]| *first < to)
+        .map(|[first, last]| (last + 1).min(to) - (*first).max(from))
+        .sum();
+    to - from - refused_in
+}
+
 /// The runs of lost packets among the `sent` sequence numbers, given the `arrivals` (see [`first_arrivals`]).
 #[must_use]
 pub fn loss_runs(sent: u64, arrivals: &[Record]) -> LossRuns {
+    loss_runs_refused(sent, &[], arrivals)
+}
+
+/// As [`loss_runs`], for a sender that used `slots` sequence numbers of which the kernel refused those in `refused`
+/// (runs `[first, last]` in ascending order): a refused packet was never sent, so it is neither lost nor a break in a
+/// run of lost packets. The runs are runs of packets in the order they were sent.
+#[must_use]
+pub fn loss_runs_refused(slots: u64, refused: &[[u64; 2]], arrivals: &[Record]) -> LossRuns {
     let mut present: Vec<u64> = arrivals.iter().map(|record| record.sequence).collect();
     present.sort_unstable();
     let mut counts: BTreeMap<u64, u64> = BTreeMap::new();
@@ -226,10 +251,10 @@ pub fn loss_runs(sent: u64, arrivals: &[Record]) -> LossRuns {
     // The gap before each arrival, then the gap after the last one
     let mut next_missing = 0_u64;
     for sequence in present {
-        note(sequence - next_missing);
+        note(sent_between(refused, next_missing, sequence));
         next_missing = sequence + 1;
     }
-    note(sent - next_missing);
+    note(sent_between(refused, next_missing, slots));
     let runs: u64 = counts.values().sum();
     let lost: u64 = counts.iter().map(|(length, count)| length * count).sum();
     LossRuns {
@@ -250,6 +275,20 @@ pub fn loss_runs(sent: u64, arrivals: &[Record]) -> LossRuns {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The packets sent between two sequence numbers, with refused runs in and across the range and none at all.
+    #[test]
+    fn the_packets_sent_in_a_range_are_those_the_kernel_did_not_refuse() {
+        let refused = [[3, 5], [10, 10], [20, 29]];
+        assert_eq!(sent_between(&refused, 0, 40), 40 - 3 - 1 - 10);
+        assert_eq!(sent_between(&refused, 4, 12), 8 - 2 - 1);
+        assert_eq!(sent_between(&refused, 6, 10), 4);
+        assert_eq!(sent_between(&refused, 25, 26), 0);
+        assert_eq!(sent_between(&refused, 12, 12), 0);
+        // A range that ends before it begins is empty, whatever the runs say
+        assert_eq!(sent_between(&refused, 8, 2), 0);
+        assert_eq!(sent_between(&[], 3, 9), 6);
+    }
 
     /// An arrival of packet `sequence`, received at `receive_ms`; sent `sequence` milliseconds after the start.
     fn arrival(sequence: u64, receive_ms: u64) -> Record {

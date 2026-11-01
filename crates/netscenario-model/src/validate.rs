@@ -253,7 +253,7 @@ impl Scenario {
     }
 
     /// The states of one link after each step: the impairments must stay valid, an outage must not overlap
-    /// another or a `loss` that is set inside it, and a link goes down only if it is up.
+    /// another, and a link goes down only if it is up.
     fn walk_link(&self, link: &Link, order: &[usize], problems: &mut Vec<Problem>) {
         let start = |own: &Option<Impairments>| {
             own.clone()
@@ -273,7 +273,7 @@ impl Scenario {
             }
             let base = format!("timeline[{index}]");
             if let Some(change) = &event.set {
-                state.step_set(event, change, &base, problems);
+                state.step_set(change, &base, problems);
             }
             if let Some(length) = event.outage {
                 state.step_outage(event, length, self.duration, index, problems);
@@ -314,14 +314,8 @@ struct LinkState {
 }
 
 impl LinkState {
-    /// A `set`: no loss inside an outage, the impairments valid afterwards, and the step writes something.
-    fn step_set(
-        &mut self,
-        event: &Event,
-        change: &Change,
-        base: &str,
-        problems: &mut Vec<Problem>,
-    ) {
+    /// A `set`: the impairments valid afterwards, and the step writes something.
+    fn step_set(&mut self, change: &Change, base: &str, problems: &mut Vec<Problem>) {
         let mut earlier = Vec::new();
         check_impairments(&self.forward, &format!("{base}.set"), &mut earlier);
         check_impairments(&self.reverse, &format!("{base}.set"), &mut earlier);
@@ -338,17 +332,6 @@ impl LinkState {
                         .at_path(format!("{base}.set.{key}"))
                         .with_help("write the keys that change, or take the step away"),
                 );
-            }
-            if !change.loss.is_keep() {
-                for (_, _, to, at) in self.windows_going_on(direction, event.at) {
-                    problems.push(
-                        Problem::new(format!(
-                            "the loss is set while the outage of timeline[{at}] is going on (until {to})"
-                        ))
-                        .at_path(format!("{base}.set.{key}.loss"))
-                        .with_help("an outage is a loss of 100%; set the loss before it starts or after it ends"),
-                    );
-                }
             }
             if matches!(direction, Direction::Forward | Direction::Both) {
                 self.forward = change.applied_to(&self.forward);
@@ -369,17 +352,6 @@ impl LinkState {
                 problems.push(Problem { message, ..problem });
             }
         }
-    }
-
-    /// The outages that are going on at `moment` in a direction that shares a side with `direction`.
-    fn windows_going_on(&self, direction: Direction, moment: Duration) -> Vec<Window> {
-        self.windows
-            .iter()
-            .copied()
-            .filter(|(other, from, to, _)| {
-                overlaps_direction(*other, direction) && *from <= moment && moment < *to
-            })
-            .collect()
     }
 
     /// An `outage`: longer than zero, over before the end, and not overlapping another.

@@ -37,12 +37,13 @@ const NEEDS_TC: &[Feature] = &[
     Feature::Corruption,
     Feature::RateLimit,
     Feature::ScheduledSteps,
+    Feature::Outages,
 ];
 
 /// The features that the Kernel backend gets in later steps of release 0.2: the format knows them, the backend does
 /// not apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says
 /// `✔ 0.2` for them.
-const PLANNED: &[Feature] = &[Feature::Outages, Feature::LinkDownUp, Feature::Program];
+const PLANNED: &[Feature] = &[Feature::Program];
 
 /// What the Kernel backend reproduces on a machine with `environment`.
 #[must_use]
@@ -66,6 +67,8 @@ pub fn capabilities(environment: &Environment) -> Capabilities {
             },
         );
     }
+    // A link goes down by `ip`, which every run needs already
+    capabilities = capabilities.with(Feature::LinkDownUp, Support::Exact);
     capabilities.with(
         Feature::SeededLoss,
         tc_support(&environment.tc, Some(SEED_SINCE)),

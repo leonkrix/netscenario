@@ -450,3 +450,108 @@ fn the_changes_of_two_links_of_one_node_go_through_one_batch_and_each_lands_on_i
     backend.teardown().unwrap();
     assert_nothing_left(&run_id, "after the teardown");
 }
+
+/// The blackout queue of an outage is independent of the states (D-064): a change of the impairments does not end an
+/// outage that is going on, an outage does not touch the other queues, and ending it leaves the queues as a fresh
+/// direction in the same state has them. Both layouts: one queue and two.
+#[test]
+fn an_outage_and_the_states_of_a_direction_do_not_touch_each_other() {
+    if !namespaces_available() {
+        return;
+    }
+    let states = [
+        state("{ delay: 20ms, loss: { model: random, p: 5% } }"),
+        state("{ delay: 30ms, jitter: { amount: 5ms }, rate: 5mbit }"),
+        state("{ delay: 10ms }"),
+    ];
+    let mut backend = backend(|_| {});
+    let nodes = [
+        backend.create_node(&Name::new("a").unwrap()).unwrap(),
+        backend.create_node(&Name::new("b").unwrap()).unwrap(),
+    ];
+    let build = |backend: &mut netscenario_backend_kernel::KernelBackend,
+                 name: &str,
+                 first: &Impairments| {
+        let link = backend
+            .create_link(&Name::new(name).unwrap(), nodes)
+            .unwrap();
+        backend
+            .plan_states(link, Direction::Forward, &states)
+            .unwrap();
+        backend.plan_outage(link, Direction::Forward).unwrap();
+        backend
+            .apply(link, Direction::Forward, first, Some(1))
+            .unwrap();
+        link
+    };
+    let main = build(&mut backend, "main", &states[0]);
+    // Fresh directions in each state, with the outage off and on: what the queues must be
+    for (i, target) in states.iter().enumerate() {
+        build(&mut backend, &format!("off{i}"), target);
+        let on = build(&mut backend, &format!("on{i}"), target);
+        backend.set_outage(on, Direction::Forward, true).unwrap();
+    }
+    let queues_of = |backend: &mut netscenario_backend_kernel::KernelBackend, name: &str| {
+        queues(backend, nodes[0], name)
+    };
+    // The names of the interfaces are l0 for main, then l1 and l2 for the first state, and so on
+    let reference: Vec<(Vec<serde_json::Value>, Vec<serde_json::Value>)> = (0..states.len())
+        .map(|i| {
+            (
+                queues_of(&mut backend, &format!("l{}", 1 + 2 * i)),
+                queues_of(&mut backend, &format!("l{}", 2 + 2 * i)),
+            )
+        })
+        .collect();
+    // The outage goes on, and every state is written into the queues in front of it
+    backend.set_outage(main, Direction::Forward, true).unwrap();
+    for (to, target) in states.iter().enumerate() {
+        backend.change(main, Direction::Forward, target).unwrap();
+        assert_eq!(
+            queues_of(&mut backend, "l0"),
+            reference[to].1,
+            "a change to state {to} while the outage is on"
+        );
+    }
+    // The outage ends: the queues are those of a fresh direction in the last state
+    backend.set_outage(main, Direction::Forward, false).unwrap();
+    assert_eq!(queues_of(&mut backend, "l0"), reference[2].0);
+    // Canary: the two references differ in the blackout and in nothing else, so the comparison can tell
+    assert_ne!(reference[2].0, reference[2].1);
+    assert_eq!(backend.notes(), Vec::<String>::new());
+    let run_id = backend.run_id().to_owned();
+    backend.teardown().unwrap();
+    assert_nothing_left(&run_id, "after the teardown");
+}
+
+/// A direction that was not planned for an outage says so instead of doing something else.
+#[test]
+fn an_outage_in_a_direction_that_was_not_planned_for_one_is_refused() {
+    if !namespaces_available() {
+        return;
+    }
+    let mut backend = backend(|_| {});
+    let nodes = [
+        backend.create_node(&Name::new("a").unwrap()).unwrap(),
+        backend.create_node(&Name::new("b").unwrap()).unwrap(),
+    ];
+    let link = backend
+        .create_link(&Name::new("l").unwrap(), nodes)
+        .unwrap();
+    backend
+        .plan_states(
+            link,
+            Direction::Forward,
+            &[state("{ delay: 5ms }"), state("{ delay: 10ms }")],
+        )
+        .unwrap();
+    backend
+        .apply(link, Direction::Forward, &state("{ delay: 5ms }"), None)
+        .unwrap();
+    let error = backend
+        .set_outage(link, Direction::Forward, true)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("not planned for an outage"), "{error}");
+    backend.teardown().unwrap();
+}

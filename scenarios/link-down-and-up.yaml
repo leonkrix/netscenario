@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A cable that is pulled and put back: the interface of the link goes down for five seconds. While it is down the
+# sender gets "Network is unreachable" for every packet (the result lists them in `sender.refused`: they were never
+# sent, so they are not lost) and the packets in the queues are dropped; afterwards everything arrives again.
+# An `outage` is the other thing: the sender notices nothing, and nothing is delivered for its length.
+version: 0
+name: link-down-and-up
+duration: 20s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      both:
+        delay: 20ms
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 1mbit
+    packet-size: 1200b
+timeline:
+  - { at: 8s, link: access, down: true }
+  - { at: 13s, link: access, up: true }

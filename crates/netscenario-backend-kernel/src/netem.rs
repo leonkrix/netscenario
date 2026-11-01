@@ -16,6 +16,12 @@
 //! Duplication stays in the first qdisc: `netem` enqueues the copy at the root of the tree, so a copy made
 //! in the second qdisc would pass the loss and the rate a second time. Both qdiscs get a seed of their own
 //! where they draw numbers that the seed is to repeat (D-054).
+//!
+//! A direction that has an **outage** in its timeline gets one more `netem`, the **blackout**, as the child of the
+//! last one (D-064). A `netem` hands a packet to its child when the delay of the packet is over, so a loss of 100 %
+//! in the blackout drops what is on its way at that moment and what leaves the link in the window, and nothing
+//! else: the qdiscs in front of it go on as they did, with their random numbers. It has no delay and draws no
+//! number that the seed is to repeat, so it has no seed.
 
 use netscenario_core::derive_stage_seed;
 use netscenario_model::{
@@ -30,13 +36,66 @@ const MAX_QUEUE: u64 = 1_000_000;
 const LINK_QUEUE: u64 = 1000;
 
 /// What to tell `tc` for one direction: the arguments after `netem` of the first qdisc, and, for a direction
-/// with a jitter and a rate, those of the second qdisc, which is attached to the first as its child.
+/// with a jitter and a rate, those of the second qdisc, which is attached to the first as its child, and, for a
+/// direction with an outage, those of the blackout, which is the child of the last one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Stages {
     /// The root qdisc.
     pub(crate) first: Vec<String>,
     /// The child of the root, if the delay and its jitter must act after the rate.
     pub(crate) second: Option<Vec<String>>,
+    /// The blackout, if the direction has an outage: the child of the last qdisc above.
+    pub(crate) blackout: Option<Vec<String>>,
+}
+
+impl Stages {
+    /// These stages if no argument holds a white space, else the text that says which. The lines for `tc` are made by
+    /// joining the arguments with spaces and may be cut at them again, so an argument must not hold one.
+    fn checked(self) -> Result<Self, String> {
+        let queues = [
+            Some(&self.first),
+            self.second.as_ref(),
+            self.blackout.as_ref(),
+        ];
+        let with_space = queues
+            .into_iter()
+            .flatten()
+            .flatten()
+            .find(|argument| argument.contains(char::is_whitespace))
+            .cloned();
+        match with_space {
+            Some(argument) => Err(format!("the argument '{argument}' for `tc` holds a space")),
+            None => Ok(self),
+        }
+    }
+
+    /// The `tc` lines that put these stages on `interface`, one for each qdisc, the root first: `replace` builds
+    /// them (the root gets the handle `1:` if it has a child), `change` writes into qdiscs that are there. The
+    /// qdisc number `n` (from 1) has the handle `n:`, and the parent `n-1:1` unless it is the root.
+    pub(crate) fn lines(&self, interface: &str, verb: &str) -> Vec<String> {
+        let mut queues: Vec<&Vec<String>> = vec![&self.first];
+        queues.extend(self.second.iter());
+        queues.extend(self.blackout.iter());
+        queues
+            .iter()
+            .enumerate()
+            .map(|(place, arguments)| {
+                let position = if place == 0 {
+                    if queues.len() > 1 && verb == "replace" {
+                        "root handle 1:".to_owned()
+                    } else {
+                        "root".to_owned()
+                    }
+                } else {
+                    format!("parent {place}:1 handle {}:", place + 1)
+                };
+                format!(
+                    "qdisc {verb} dev {interface} {position} netem {}",
+                    arguments.join(" ")
+                )
+            })
+            .collect()
+    }
 }
 
 /// The packets that `netem` may hold for the delay of a link.
@@ -194,7 +253,10 @@ fn rate_arguments(impairments: &Impairments) -> Vec<String> {
 /// is the seed that the run promises to repeat. So the layout is made from **every state** that the
 /// direction goes through, and a change only writes a state into queues that are there. A direction whose
 /// timeline never has a rate together with a jitter or a reordering is one queue all the time; one whose
-/// timeline has it once is two queues all the time, also while the rate is not set.
+/// timeline has it once is two queues all the time, also while the rate is not set. A direction with an outage
+/// has the blackout queue behind them all the time, also while no outage is going on.
+// The four flags are independent facts about the queues of a direction, not the states of one thing
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Layout {
     /// Whether the direction is two queues.
@@ -209,10 +271,13 @@ pub(crate) struct Layout {
     first_limit: u64,
     /// The limit of the second queue.
     second_limit: u64,
+    /// Whether the direction has a blackout queue behind the others, for an outage (D-064).
+    blackout: bool,
 }
 
 impl Layout {
-    /// The layout for the states of a direction.
+    /// The layout for the states of a direction, with a blackout queue behind them if `blackout` (the direction has
+    /// an outage).
     ///
     /// # Errors
     ///
@@ -220,7 +285,7 @@ impl Layout {
     /// uniform one in another. `netem` keeps the table of the distribution that was last loaded when a change
     /// does not name one (measured, D-059), so a queue that has been normal cannot be made uniform again
     /// without being built again.
-    pub(crate) fn of(states: &[Impairments]) -> Result<Self, String> {
+    pub(crate) fn of(states: &[Impairments], blackout: bool) -> Result<Self, String> {
         let mut distributions: Vec<JitterDistribution> = states
             .iter()
             .filter_map(|state| state.jitter.as_ref().map(|jitter| jitter.distribution))
@@ -253,6 +318,7 @@ impl Layout {
                 seeded_second: states.iter().any(|state| state.reorder.is_some()),
                 first_limit: LINK_QUEUE,
                 second_limit: longest(&delay_limit),
+                blackout,
             }
         } else {
             Self {
@@ -261,13 +327,34 @@ impl Layout {
                 seeded_second: false,
                 first_limit: longest(&delay_limit),
                 second_limit: 0,
+                blackout,
             }
         })
     }
 
-    /// Whether the direction is two queues, the rate in the first and the delay in the second.
-    pub(crate) fn is_two_queues(&self) -> bool {
-        self.two_stages
+    /// This layout with a blackout queue behind its queues, for an outage (D-064).
+    pub(crate) fn with_blackout(mut self) -> Self {
+        self.blackout = true;
+        self
+    }
+
+    /// Whether the direction is two or more queues in one tree: the rate in the first and the delay in the second,
+    /// or a blackout behind them. Some kernels refuse a duplicating `netem` next to another one (D-052).
+    pub(crate) fn is_a_tree(&self) -> bool {
+        self.two_stages || self.blackout
+    }
+
+    /// The `tc` line that begins (`on`) or ends an outage of this direction on `interface`, or `None` if the
+    /// direction has no blackout queue. The blackout is the last queue of the tree.
+    pub(crate) fn blackout_line(&self, interface: &str, on: bool) -> Option<String> {
+        self.blackout.then(|| {
+            let place = if self.two_stages { 2 } else { 1 };
+            format!(
+                "qdisc change dev {interface} parent {place}:1 handle {}: netem {}",
+                place + 1,
+                blackout_arguments(on).join(" ")
+            )
+        })
     }
 
     /// Whether a state fits the queues of this layout: it needs a second queue only if there is one, and it does not
@@ -308,7 +395,7 @@ pub(crate) fn arguments(
     {
         return Ok(None);
     }
-    let layout = Layout::of(std::slice::from_ref(impairments))?;
+    let layout = Layout::of(std::slice::from_ref(impairments), false)?;
     build(&layout, impairments, seed, false).map(Some)
 }
 
@@ -335,6 +422,19 @@ pub(crate) fn create(
 /// Text if a value cannot be applied exactly.
 pub(crate) fn change(layout: &Layout, state: &Impairments) -> Result<Stages, String> {
     build(layout, state, None, true)
+}
+
+/// The arguments of the blackout queue: no delay, nothing to draw, and a loss of 100 % while an outage is on and of
+/// 0 % while it is not. The state is written whole each time, so nothing of the one before is left.
+fn blackout_arguments(on: bool) -> Vec<String> {
+    let loss = if on { "100.000000%" } else { "0.000000%" };
+    vec![
+        "limit".to_owned(),
+        LINK_QUEUE.to_string(),
+        "loss".to_owned(),
+        "random".to_owned(),
+        loss.to_owned(),
+    ]
 }
 
 /// A setting that is written as `zero` when `whole` is asked for and the state has none.
@@ -372,10 +472,12 @@ fn build(
         if layout.seeded_second {
             second.extend(seed_arguments(seed.map(|seed| derive_stage_seed(seed, 1))));
         }
-        return Ok(Stages {
+        return Stages {
             first,
             second: Some(second),
-        });
+            blackout: blackout_stage(layout, whole),
+        }
+        .checked();
     }
     let mut first = limit(layout.first_limit);
     first.extend(delay_arguments(state)?);
@@ -387,16 +489,94 @@ fn build(
         first.extend(seed_arguments(seed));
     }
     first.extend(rate(rate_arguments(state)));
-    Ok(Stages {
+    Stages {
         first,
         second: None,
-    })
+        blackout: blackout_stage(layout, whole),
+    }
+    .checked()
+}
+
+/// The blackout queue when the queues are built, off. A change of the impairments does not write it: an outage that
+/// is going on is not the business of a `set`.
+fn blackout_stage(layout: &Layout, whole: bool) -> Option<Vec<String>> {
+    (layout.blackout && !whole).then(|| blackout_arguments(false))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use netscenario_model::Scenario;
+
+    /// A direction with an outage has the blackout queue behind the others, and the lines put it where it belongs:
+    /// the child of the only queue, or of the second (D-064).
+    #[test]
+    fn the_blackout_is_the_last_queue_of_the_tree_and_starts_off() {
+        let one = impairments("{ delay: 20ms, loss: { model: random, p: 5% } }");
+        let layout = Layout::of(std::slice::from_ref(&one), true).unwrap();
+        assert!(layout.is_a_tree());
+        let lines = create(&layout, &one, Some(7))
+            .unwrap()
+            .lines("l0", "replace");
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("qdisc replace dev l0 root handle 1: netem limit 3000 delay 20000us loss random 5.000000%"));
+        assert_eq!(
+            lines[1],
+            "qdisc replace dev l0 parent 1:1 handle 2: netem limit 1000 loss random 0.000000%"
+        );
+        assert_eq!(
+            layout.blackout_line("l0", true).unwrap(),
+            "qdisc change dev l0 parent 1:1 handle 2: netem limit 1000 loss random 100.000000%"
+        );
+        assert_eq!(
+            layout.blackout_line("l0", false).unwrap(),
+            "qdisc change dev l0 parent 1:1 handle 2: netem limit 1000 loss random 0.000000%"
+        );
+
+        let two = impairments("{ delay: 20ms, jitter: { amount: 5ms }, rate: 2mbit }");
+        let layout = Layout::of(std::slice::from_ref(&two), true).unwrap();
+        let lines = create(&layout, &two, None).unwrap().lines("l1", "replace");
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].contains("root handle 1: netem") && lines[0].contains("rate 2000000bit"));
+        assert!(lines[1].starts_with("qdisc replace dev l1 parent 1:1 handle 2: netem"));
+        assert_eq!(
+            lines[2],
+            "qdisc replace dev l1 parent 2:1 handle 3: netem limit 1000 loss random 0.000000%"
+        );
+        assert_eq!(
+            layout.blackout_line("l1", true).unwrap(),
+            "qdisc change dev l1 parent 2:1 handle 3: netem limit 1000 loss random 100.000000%"
+        );
+    }
+
+    /// A change of the impairments never writes the blackout: an outage that is going on is not the business of a
+    /// `set`, and writing it would end the outage. Canary: building does write it, off.
+    #[test]
+    fn a_change_of_the_impairments_leaves_the_blackout_alone() {
+        let state = impairments("{ delay: 20ms }");
+        let layout = Layout::of(std::slice::from_ref(&state), true).unwrap();
+        let changed = change(&layout, &state).unwrap();
+        assert_eq!(changed.blackout, None);
+        assert_eq!(changed.lines("l0", "change").len(), 1);
+        assert!(!changed.lines("l0", "change")[0].contains("handle"));
+        assert!(create(&layout, &state, None).unwrap().blackout.is_some());
+    }
+
+    /// Without an outage there is no blackout queue and nothing about the layout changes.
+    #[test]
+    fn a_direction_without_an_outage_has_no_blackout_queue() {
+        let state = impairments("{ delay: 20ms }");
+        let layout = Layout::of(std::slice::from_ref(&state), false).unwrap();
+        assert!(!layout.is_a_tree());
+        assert_eq!(layout.blackout_line("l0", true), None);
+        let lines = create(&layout, &state, None)
+            .unwrap()
+            .lines("l0", "replace");
+        assert_eq!(
+            lines,
+            ["qdisc replace dev l0 root netem limit 3000 delay 20000us"]
+        );
+    }
 
     /// The impairments of the first link of a scenario with the text `both`.
     fn impairments(both: &str) -> Impairments {

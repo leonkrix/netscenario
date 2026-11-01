@@ -74,7 +74,7 @@ pub use backend::{
 };
 pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, check};
 pub use error::Error;
-pub use export::{write_packets, write_packets_marked};
+pub use export::{write_packets, write_packets_marked, write_packets_refused};
 pub use feature::{Feature, Requirement, requirements};
 pub use hash::sha256_hex;
 pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};

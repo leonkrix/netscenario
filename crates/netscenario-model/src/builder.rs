@@ -162,7 +162,8 @@ impl Event {
         }
     }
 
-    /// At `at`, nothing is delivered on `link` (in `direction`, or both) for `length`.
+    /// At `at`, nothing is delivered on `link` (in `direction`, or both) for `length`, not even a packet that is
+    /// on its way (D-064).
     #[must_use]
     pub fn outage(
         at: Duration,

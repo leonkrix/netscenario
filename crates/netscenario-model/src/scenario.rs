@@ -417,8 +417,9 @@ impl JsonSchema for True {
 /// One event of the timeline: at a moment, one thing happens to a link. It does exactly one of `set`,
 /// `outage`, `down` and `up`.
 ///
-/// An event is applied before the first packet that its workload sends at or after the moment (D-038), so the
-/// same seed gives the same lost packets. Events at the same moment are applied in the order of the file.
+/// A `set`, a `down` and an `up` are applied before the first packet that its workload sends at or after the moment
+/// (D-038), so the same seed gives the same lost packets; an `outage` is placed by the clock (D-064). Events at the
+/// same moment are applied in the order of the file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Event {
@@ -433,8 +434,10 @@ pub struct Event {
     /// takes the impairment away (the rule of a JSON merge patch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set: Option<Change>,
-    /// Nothing is delivered for this long (a loss of 100 %), and the sender notices nothing (D-039). Then
-    /// the link has the values it had before.
+    /// Nothing is delivered for this long, not even a packet that is on its way, and the sender notices nothing
+    /// (D-039, D-064). It is a window in the time of the receiver: from this moment on, for this long, nothing
+    /// leaves the link. It does not change the values of the link, which act as before, and the packets that
+    /// reach the end of the link in the window are lost.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outage: Option<Duration>,
     /// The interface of the link goes down: the sender gets errors (D-039).
