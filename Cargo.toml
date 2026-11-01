@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-# The spikes are scratch crates with a workspace of their own
-exclude = ["spikes"]
+# The spikes are scratch crates, and the fuzz targets need a nightly Rust; each has a workspace of its own
+exclude = ["spikes", "fuzz"]
 
 [workspace.package]
 version = "0.1.0"

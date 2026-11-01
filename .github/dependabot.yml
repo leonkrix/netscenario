@@ -34,3 +34,14 @@ updates:
     groups:
       rust:
         patterns: ['*']
+  # The crate of the fuzz targets has a lock file of its own
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: 'chore(deps)'
+    groups:
+      fuzz:
+        patterns: ['*']

@@ -90,6 +90,24 @@ snapshots:
 spikes:
     bash spikes/run-all.sh
 
+# Fuzz one parser for a while (D-045; needs `rustup toolchain install nightly` and `cargo install --locked cargo-fuzz`).
+# target is scenario, units, packet, records or result. Inputs that crash it are kept in fuzz/artifacts/<target>/.
+fuzz target seconds="60":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd fuzz
+    mkdir -p "corpus/{{target}}"
+    if [ "{{target}}" = scenario ]; then
+        seeds=(../scenarios ../scenarios/invalid ../examples/python-test ../examples/udp-protocol)
+    else
+        seeds=("seeds/{{target}}")
+    fi
+    cargo +nightly fuzz run "{{target}}" "corpus/{{target}}" "${seeds[@]}" -- -max_total_time={{seconds}} -max_len=65536 -timeout=10
+
+# The check of the fuzzing itself: the canary input must crash the target (the command fails, and the input is kept)
+fuzz-canary:
+    cd fuzz && cargo +nightly fuzz run scenario --features canary canary -- -runs=1 -max_len=64
+
 # Turn on the git hooks of this repository (once per clone)
 hooks:
     git config core.hooksPath .githooks

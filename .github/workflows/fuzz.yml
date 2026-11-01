@@ -1,0 +1,103 @@
+name: Fuzz
+
+# The parsers of input that is not trusted (D-045, QA-03): the scenario file, the values of the format, a datagram
+# that reaches a receiver, a file of records, a result file. Each target runs for a few minutes once a week and
+# keeps its corpus from run to run; an input that crashes a target fails the run and is attached to it.
+# `fuzz/` is a crate of its own because libFuzzer needs a nightly Rust.
+on:
+  schedule:
+    - cron: '43 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Seconds for each target'
+        type: string
+        default: '300'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # A fixed nightly, so that a run can be repeated; raise it when a new one is needed
+  NIGHTLY: nightly-2026-10-31
+  CARGO_FUZZ: 0.13.2
+
+jobs:
+  # A crash must be found, must fail the job and must leave the input behind. If this job does not fail
+  # where it is meant to, a quiet fuzz run means nothing.
+  canary:
+    name: A crash is reported
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$NIGHTLY" --profile minimal
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+          key: fuzz-${{ env.NIGHTLY }}
+      - run: cargo +"$NIGHTLY" install --locked cargo-fuzz --version "$CARGO_FUZZ"
+      - name: The canary input crashes the target, and the input is kept
+        working-directory: fuzz
+        run: |
+          if cargo +"$NIGHTLY" fuzz run scenario --features canary canary -- -runs=1 -max_len=64; then
+            echo "::error::the canary did not crash the target: a crash would not be found"
+            exit 1
+          fi
+          ls artifacts/scenario/crash-* > /dev/null
+
+  fuzz:
+    name: ${{ matrix.target }}
+    needs: canary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [scenario, units, packet, records, result]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$NIGHTLY" --profile minimal
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+          key: fuzz-${{ env.NIGHTLY }}
+      - run: cargo +"$NIGHTLY" install --locked cargo-fuzz --version "$CARGO_FUZZ"
+      # The corpus grows from run to run: the newest one is restored, and this run saves its own
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - name: Fuzz for a few minutes
+        working-directory: fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+          SECONDS_FOR_EACH: ${{ github.event.inputs.seconds || '300' }}
+        run: |
+          mkdir -p "corpus/$TARGET"
+          # The scenario target starts from the files of the repository, the others from fuzz/seeds
+          if [ "$TARGET" = scenario ]; then
+            seeds=(../scenarios ../scenarios/invalid ../examples/python-test ../examples/udp-protocol)
+          else
+            seeds=("seeds/$TARGET")
+          fi
+          cargo +"$NIGHTLY" fuzz run "$TARGET" "corpus/$TARGET" "${seeds[@]}" -- \
+            -max_total_time="$SECONDS_FOR_EACH" -max_len=65536 -timeout=10
+      - name: The input that crashed the target
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: warn
+          retention-days: 30

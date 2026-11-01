@@ -1,0 +1,59 @@
+[package]
+name = "netscenario-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Fuzz targets for the parsers of input that is not trusted (D-045). Not part of the workspace: libFuzzer needs a nightly Rust."
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+# The target `scenario` panics on an input that starts with CRASH: the check that a crash is found, reported
+# and kept (the workflow Fuzz runs it before the targets; `just fuzz-canary` runs it by hand)
+canary = []
+
+[dependencies]
+libfuzzer-sys = "0.4"
+netscenario-agent = { path = "../crates/netscenario-agent" }
+netscenario-core = { path = "../crates/netscenario-core" }
+netscenario-model = { path = "../crates/netscenario-model" }
+serde_json = "1"
+
+# A workspace of its own, so that the workspace of the project (stable Rust) does not see this crate
+[workspace]
+
+[[bin]]
+name = "scenario"
+path = "fuzz_targets/scenario.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "units"
+path = "fuzz_targets/units.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "packet"
+path = "fuzz_targets/packet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "records"
+path = "fuzz_targets/records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "result"
+path = "fuzz_targets/result.rs"
+test = false
+doc = false
+bench = false
