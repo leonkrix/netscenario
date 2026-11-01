@@ -24,7 +24,7 @@ A test that judges must be able to fail. Three tests run a scenario that is wron
 
 ## Measured
 
-What this machine measured. The numbers differ from run to run in the last digits and from machine to machine in the noise; the bounds do not. Each CI run uploads the same tables for its runner (the artifacts `fidelity-<os>-rust-<version>` of the run), compared below; `just fidelity` rewrites this block with what the machine that runs it measures.
+What this machine measured. The numbers differ from run to run in the last digits and from machine to machine in the noise; the bounds do not. Each CI run uploads the same tables for its runners, in two halves for each image (the artifacts `fidelity-<os>-part-<n>` of the run), compared below; `just fidelity` rewrites this block with what the machine that runs it measures.
 
 <!-- fidelity:begin -->
 Measured on kernel 6.12.113+deb13-amd64, iproute2 `tc`: iproute2 6.15.0.
@@ -328,3 +328,5 @@ just fidelity
 ```
 
 runs the fidelity tests and rewrites the block between the markers with what this machine measured. Commit the file only from a machine that you want to be the reference. The rest of the page is written by hand.
+
+`just fidelity-test` runs the same tests and judges them without touching this page, and `just fidelity-test 1 2` and `just fidelity-test 2 2` run the two halves. The CI does that: the fidelity tests are most of the time of the tests, and each of them measures time and runs alone on its machine, so the CI cuts them into two halves for each image (Ubuntu 22.04 and 24.04, the current Rust) and runs the four jobs at once, next to the jobs of the other tests. The fidelity tests are not run with Rust 1.89 or as root: the network that `netem` makes does not depend on the version of the compiler or on how the namespaces were made.

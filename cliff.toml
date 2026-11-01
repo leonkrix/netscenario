@@ -41,7 +41,7 @@ topo_order = false
 sort_commits = "oldest"
 tag_pattern = "v[0-9]*"
 commit_parsers = [
-  # The experiments that came before the workspace (Phase 0): their fixes are not changes of the product
+  # The experiments that came before the workspace: their fixes are not changes of the product
   { sha = "21561d51502c5da9bcff0d5030d170e602697170", skip = true },
   { sha = "f5b5fa38f2aa89ec8ca386be93cb7c61994860ad", skip = true },
   { sha = "972a7ce9abbd5c84fb6fce5aed8e39cb884d9a85", skip = true },

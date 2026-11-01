@@ -63,15 +63,15 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | LNK-01 | Fixed delay | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `fidelity.rs`: `a_fixed_delay_is_exact`) |
 | LNK-02 | Jitter: uniform and normal (0.1), pareto and tables (0.3) | M | 0.1 | done for 0.1 (uniform and normal: `fidelity.rs`); pareto and tables come with 0.3 |
 | LNK-03 | Independent loss | M | 0.1 | done (`fidelity.rs`: `a_random_loss_is_the_configured_ratio`; the seed: `tests/run.rs`) |
-| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov | M | 0.2 | done (the Kernel backend since 4.2a, D-054; `tests/fidelity.rs`: the stationary loss and the burst length of both models against the theory; the same seed repeats the bursts, `tests/run.rs`) |
-| LNK-05 | Reordering | M | 0.2 | done (the Kernel backend since 4.2a, D-054; `tests/fidelity.rs`: the share sent on at once, with a gap, and past a rate limit) |
-| LNK-06 | Duplication | S | 0.2 | done (the Kernel backend since 4.2a, D-054; `tests/fidelity.rs`: 20 %, with loss, and in a tree of two queues) |
-| LNK-07 | Corruption | S | 0.2 | done (format done in 4.1b; the Kernel backend applies it since 4.2b, D-055, with the account of D-040 per direction: lost in the queue, dropped by the node, delivered; `tests/fidelity.rs`: 10 % at three payload sizes and with a loss; `udp-checksum: false` is WRK-11; the corrupted packets are named by sequence number since 4.2b-3, D-057) |
+| LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov | M | 0.2 | done (the Kernel backend since D-054; `tests/fidelity.rs`: the stationary loss and the burst length of both models against the theory; the same seed repeats the bursts, `tests/run.rs`) |
+| LNK-05 | Reordering | M | 0.2 | done (the Kernel backend since D-054; `tests/fidelity.rs`: the share sent on at once, with a gap, and past a rate limit) |
+| LNK-06 | Duplication | S | 0.2 | done (the Kernel backend since D-054; `tests/fidelity.rs`: 20 %, with loss, and in a tree of two queues) |
+| LNK-07 | Corruption | S | 0.2 | done (format done with D-049; the Kernel backend applies it since D-055, with the account of D-040 per direction: lost in the queue, dropped by the node, delivered; `tests/fidelity.rs`: 10 % at three payload sizes and with a loss; `udp-checksum: false` is WRK-11; the corrupted packets are named by sequence number since D-057) |
 | LNK-08 | Rate limit (token bucket) | M | 0.1 | done (`fidelity.rs`: `a_rate_limit_counts_ethernet_frames`) |
 | LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M | 0.3 | planned |
 | LNK-10 | MTU and fragmentation | S | 0.3 | planned |
 | LNK-11 | Different values per direction | M | 0.1 | done (`tests/provision.rs`: `the_impairments_are_in_the_queues_of_the_right_interfaces`; `tests/agent.rs`) |
-| LNK-12 | Outages (windows without any delivery) | M | 0.2 | in progress (format done in 4.1c, D-050; backend in 4.3) |
+| LNK-12 | Outages (windows without any delivery) | M | 0.2 | in progress (format done with D-050; the backend follows) |
 | LNK-13 | ECN marking | C | 0.4 | idea |
 
 ## Link models over time (LMD)
@@ -79,7 +79,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | LMD-01 | Static model | M | 0.1 | done (a link keeps its values for the whole run; changes over time are TML-01, 0.2) |
-| LMD-02 | Scheduled steps | M | 0.2 | in progress (format done in 4.1c, D-050; backend in 4.3) |
+| LMD-02 | Scheduled steps | M | 0.2 | in progress (format done with D-050; the backend follows) |
 | LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces) | M | 0.3 | planned |
 | LMD-04 | Markov models with states and transitions | S | 0.3 | planned |
 | LMD-05 | Periodic patterns (a satellite pass, a duty cycle) | S | 0.3 | planned |
@@ -90,8 +90,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID     | Feature                                                    | Prio | Release | Status  |
 | ------ | ---------------------------------------------------------- | ---- | ------- | ------- |
-| TML-01 | Events at times: change parameters                         | M    | 0.2     | in progress (format done in 4.1c, D-050; the queues and the whole-state change, 4.3a, D-059; `set` is recorded in `events`, 4.3b, D-060, and done at a barrier of the workload so that the same seed gives the same lost packets, 4.3c, D-062; `outage`, `down` and `up` follow) |
-| TML-02 | Link down and up                                           | M    | 0.2     | in progress (format done in 4.1c, D-050; backend in 4.3) |
+| TML-01 | Events at times: change parameters                         | M    | 0.2     | in progress (format done with D-050; the queues and the whole-state change, D-059; `set` is recorded in `events`, D-060, and done at a barrier of the workload so that the same seed gives the same lost packets, D-062; `outage`, `down` and `up` follow) |
+| TML-02 | Link down and up                                           | M    | 0.2     | in progress (format done with D-050; the backend follows) |
 | TML-03 | Repeating events                                           | S    | 0.3     | planned |
 | TML-04 | Events tied to a milestone of a workload (after N packets) | C    | 0.7     | idea    |
 | TML-05 | Change a link from test code while the run is going        | S    | 0.3     | planned |
@@ -117,11 +117,11 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | planned |
 | WRK-04 | TCP bulk transfer | M | 0.3 | planned |
 | WRK-05 | Request and response (echo, latency) | M | 0.3 | planned |
-| WRK-06 | Your own program as a node, with the addresses in its environment | M | 0.2 | in progress (format done in 4.1c, D-051; the supervisor in 4.6) |
+| WRK-06 | Your own program as a node, with the addresses in its environment | M | 0.2 | in progress (format done with D-051; the supervisor follows) |
 | WRK-07 | A container as a node | S | 0.5 | planned |
 | WRK-08 | Replay of a pcap | C | 0.8 | idea |
 | WRK-09 | Models of real traffic (video, voice, game) | S | 0.7 | planned |
-| WRK-10 | Supervision: start order, readiness checks, orderly stop, captured logs, timeouts | M | 0.2 | in progress (readiness and stop are in the format, 4.1c, D-051; the supervisor in 4.6) |
+| WRK-10 | Supervision: start order, readiness checks, orderly stop, captured logs, timeouts | M | 0.2 | in progress (readiness and stop are in the format, D-051; the supervisor follows) |
 | WRK-11 | UDP without the checksum, so that a corrupted payload arrives and is counted (`udp-checksum: false`) | S | 0.2 | done (D-056: raw socket, wire format 2 with a CRC-32, `corrupted` in the result; `tests/fidelity.rs` cases 19 to 21 and `tests/agent.rs`) |
 
 ## Measurement (PRB)
@@ -250,7 +250,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | QA-01 | Unit tests and property tests | M | 0.1 | done for 0.1 (unit tests in every crate, property tests of the units in `netscenario-model`; it grows with every release) |
 | QA-02 | Integration tests inside namespaces, on the CI | M | 0.1 | done (the CI creates real namespaces on `ubuntu-22.04` and `ubuntu-24.04`, as a user and as root) |
-| QA-03 | Fuzzing of the parsers that read input that is not trusted: the scenario, the packets and records of the agent, the metrics of a program | S | 0.2 | in progress (the five targets and the weekly workflow `fuzz.yml` are in 4.1d: the scenario, the values, a datagram, a file of records, a result file; the metrics of a program and the replay file follow with 4.6 and 4.10; brought forward from 0.3, because release 0.2 adds parsers of such input; ClusterFuzzLite and a 24-hour run stay in 0.8) |
+| QA-03 | Fuzzing of the parsers that read input that is not trusted: the scenario, the packets and records of the agent, the metrics of a program | S | 0.2 | in progress (the five targets and the weekly workflow `fuzz.yml` are there: the scenario, the values, a datagram, a file of records, a result file; the metrics of a program and the replay file follow with the supervisor of programs and the replay file; brought forward from 0.3, because release 0.2 adds parsers of such input; ClusterFuzzLite and a 24-hour run stay in 0.8) |
 | QA-04 | Snapshot tests for reports and the schema | S | 0.2 | planned |
 | QA-05 | Benchmarks of the engine (throughput, added delay) | S | 0.4 | planned |
 | QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `tests/fidelity.rs`: delay, loss, rate, both jitters, jitter with a rate; three canaries; CI numbers per runner as artifacts) |

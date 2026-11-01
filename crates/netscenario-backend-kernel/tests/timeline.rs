@@ -1,6 +1,6 @@
-//! The timeline in a real run (TML-01, step 4.3b): a `set` changes the link while the workloads go, the result says
-//! when, and the throughput shows it. The steps are done by the clock; what that costs in reproducibility is in the
-//! result and tested here.
+//! The timeline in a real run (TML-01, D-060, D-062): a `set` changes the link while the workloads go, the result says
+//! when, and the throughput shows it. A step is done by the clock or at a barrier of the workload; what the first costs
+//! in reproducibility is in the result and tested here.
 
 #![allow(
     clippy::unwrap_used,

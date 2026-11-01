@@ -37,7 +37,7 @@ The development toolchain is the current stable Rust (`rust-toolchain.toml` inst
 | --- | --- |
 | `just check` | Everything the CI checks: format, lints (every warning is an error), tests, documentation, supply chain |
 | `just fmt` | Format the code |
-| `just clippy`, `just test`, `just doc`, `just deny` | One of the Rust checks alone |
+| `just clippy`, `just test`, `just doc`, `just deny` | One of the Rust checks alone (`just test` is `just test-quick`, everything but the fidelity tests, and then `just fidelity-test`) |
 | `just py-check` | Python: format and lints (ruff), types (pyright, strict), tests (pytest, with the tests of `examples/`); it builds the native module first |
 | `just py-fmt` | Format the Python code and fix what ruff can fix |
 | `just py-test-min` | Run the Python tests with the lowest supported Python, 3.11 |
@@ -45,6 +45,7 @@ The development toolchain is the current stable Rust (`rust-toolchain.toml` inst
 | `just publish-dry-run` | What `cargo publish` checks before it uploads: package every published crate in dependency order and build each from its package (the CI does it too) |
 | `just release-prepare X.Y.Z`, `just release-tag` | For the maintainer: prepare the release pull request (versions, lock files, changelog) and tag the release on `main`; [docs/RELEASING.md](docs/RELEASING.md) |
 | `just fidelity` | Run the fidelity tests alone and rewrite the measured block of [docs/FIDELITY.md](docs/FIDELITY.md) with what your machine measures |
+| `just test-quick`, `just fidelity-test [part of]` | The tests but the fidelity ones (a minute), and the fidelity tests without touching the page (four and a half minutes; `just fidelity-test 1 2` is the first half). The CI runs them as separate jobs |
 | `just msrv` | Build with the lowest supported Rust |
 | `just schema`, `just snapshots` | After a change to the scenario model: write the JSON Schema; accept changed error messages (read the diff before you commit it) |
 | `just test-kernel` (and `just test`) | The tests of `netscenario-backend-kernel` create real network namespaces as an unprivileged user. On a machine that does not allow that (Ubuntu 24.04 until `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`) they say `SKIPPED` and pass; on the CI (`CI` is set) they fail instead. The CI runs them a second time as root; `unshare --user --map-root-user just test-kernel` takes the same code path on your machine. Needs `ip`, `tc`, `unshare`, `nsenter` and `ping`. |
