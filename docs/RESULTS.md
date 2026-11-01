@@ -6,6 +6,7 @@ A run writes a directory (`--out`, or the `out_dir` of `RunOptions`) with these 
 | --- | --- |
 | `result.json` | The result: provenance, seed, and the statistics of each workload. This page describes it. |
 | `flow-<n>.records` | The raw per-packet records of workload `n` (the order of `workloads` in the scenario, from 0), in the binary format of [AGENT.md](AGENT.md). One record for each packet that arrived. |
+| `flow-<n>.wire` | Only for a workload whose direction has `corrupt`: the packets that the receiving node saw on its interface, in the same binary format as `flow-<n>.records` (D-057). The damaged packets are the sequences in it that are not in the records. |
 | `packets-<id>.jsonl` | Only if asked for (`export_packets`): one JSON line for each packet of workload `<id>`, described below. |
 
 The result is JSON, indented, with a line feed at the end. `format` is always `netscenario-result` and `version` is the version of this format (RPT-01, ENV-06): **0** until 1.0, which means that a field may change its meaning in a minor release and the changelog says so. A new field does not change the version. A program that reads results should refuse a `version` it does not know; `netscenario_core::RunResult::from_json` does.
@@ -104,6 +105,9 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
       },
       "foreign_datagrams": 0,
       "corrupted": 0,
+      "corrupted_named": null,
+      "corrupted_seq": [],
+      "corrupted_seq_unavailable": null,
       "records_file": "flow-0.records",
       "packets_file": "packets-media.jsonl"
     }
@@ -188,6 +192,9 @@ The seed of one direction is derived from the seed of the run, the index of the 
 | `sender.send_errors`, `sender.first_error` | Packets the kernel refused to take, and the first reason. |
 | `foreign_datagrams` | Datagrams that reached the receiver and were not packets of the agent. |
 | `corrupted` | Datagrams that reached the receiver damaged, in a workload with `udp-checksum: false`: the CRC-32 of the packet did not match, or its header was not one. They are not in `received` and not in the delays, and they **are in `lost`**, because a damaged packet is not an intact one; `lost - corrupted` is what never arrived. With the checksum on the kernel drops a damaged packet before the receiver sees it, so `corrupted` is 0 there, and such packets are told apart only per node, in `directions` (`dropped_corrupted`). Which packets are damaged is not named (the sequence number may be the damaged part). |
+| `corrupted_named` | In a workload whose direction has `corrupt`: how many damaged packets the receiving node saw on the wire and did not deliver intact, with the sequence number readable (D-057). `null` where the direction does not corrupt, or where they could not be named (`corrupted_seq_unavailable`). It is read from frames, so it is **not** the count of damaged packets: a frame whose bit hit the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, and the magic, version, flags and sequence number of the agent) cannot be named, which is 82 % of the dropped frames named at 64 byte payloads, 92 % at 200 and 99 % at 1,200 ([FIDELITY.md](FIDELITY.md)). The exact count for the node is `dropped_corrupted` of `directions`; for a direction with one workload `dropped_corrupted + corrupted - corrupted_named` is the number that could not be named. A bit in the sequence number can make another number, which is named if it is in range and was not delivered (on a link that only corrupts that is a packet that was damaged too; with a loss in the direction it can be one that the queue dropped). |
+| `corrupted_seq` | The first 1,000 of those sequence numbers, in ascending order; `--packets` marks all of them. |
+| `corrupted_seq_unavailable` | Why a direction that corrupts could not be named, if it could not: the receiver needs `CAP_NET_RAW` in the node to read the interface (the run goes on without it), and the names are withdrawn where the node dropped datagrams for a full receive buffer, because a packet that is missing then may not be damaged. |
 | `records_file`, `packets_file` | The files of this workload, relative to `result.json`. `packets_file` is `null` unless the export was asked for. |
 
 ### `directions` (D-040)
@@ -204,7 +211,7 @@ A packet that never reaches the program can have been lost in the queue of the l
 | `dropped_corrupted` | `reached_node - delivered - receive_buffer_drops`: the frames that arrived and that the node dropped, because the bit that `netem` flipped made the checksum of IP or UDP wrong, or the address not the node's. |
 | `receive_buffer_drops` | The datagrams the node dropped because the receive buffer of a socket was full (`RcvbufErrors` of UDP). This is a fault of the receiver and not of the network, so it is kept apart from `dropped_corrupted`. |
 
-For a direction without `duplicate` and without a full buffer, `lost_in_queue + dropped_corrupted + delivered = sent`, to the packet; the fidelity cases check it ([FIDELITY.md](FIDELITY.md)). The counts are those of the interface and of the node, so they hold for all the workloads in a direction together. They are exact for the node and say nothing about which packet it was; the sequence numbers of the corrupted packets are a later step (D-040). The command line lists a direction only where the node dropped something. The array is empty if the backend cannot count, and for a scenario with a program of your own (`kind: command`), whose packets the agent does not count.
+For a direction without `duplicate` and without a full buffer, `lost_in_queue + dropped_corrupted + delivered = sent`, to the packet; the fidelity cases check it ([FIDELITY.md](FIDELITY.md)). The counts are those of the interface and of the node, so they hold for all the workloads in a direction together. They are exact for the node and say nothing about which packet it was; `corrupted_named` and `corrupted_seq` of the workload name most of them (D-057). The command line lists a direction only where the node dropped something. The array is empty if the backend cannot count, and for a scenario with a program of your own (`kind: command`), whose packets the agent does not count.
 
 **Percentiles are the nearest rank.** For `n` delays in ascending order, percentile `p` is the delay at rank `ceil(p * n / 100)` (the first delay is rank 1). It is always a delay that was measured, never an interpolation. With few packets the high percentiles are the largest delays (`p999_ns` equals `max_ns` for up to 1000 packets).
 
@@ -219,10 +226,11 @@ One JSON object on each line, one line for each packet of the workload, in the o
 {"workload":"media","sequence":1,"send_ns":4799944,"receive_ns":41036749,"delay_ns":36236805}
 {"workload":"media","sequence":2,"send_ns":9599959,"receive_ns":43161561,"delay_ns":33561602}
 {"workload":"media","sequence":17,"lost":true}
+{"workload":"media","sequence":19,"lost":true,"corrupted":true}
 {"workload":"media","sequence":18,"duplicate":true,"send_ns":86400000,"receive_ns":131000000,"delay_ns":44600000}
 ```
 
-(The first three lines are from the real run of the example; the last two show the other kinds of line.) `sequence` is the number of the packet. The times are **nanoseconds since the first packet of the workload was sent**, so that they mean something outside the machine. A packet that did not arrive has only `lost: true`. A second arrival of a packet follows the line of its first arrival with `duplicate: true`. A record with a sequence number the sender never used has `unexpected: true`. The export is the way to look at *which* packets were lost, for bursts and for the pattern of a seed.
+(The first three lines are from the real run of the example; the last three show the other kinds of line. `corrupted` marks a lost packet that the receiving node saw on the wire and dropped as damaged: the `corrupted_seq` of the workload, all of them.) `sequence` is the number of the packet. The times are **nanoseconds since the first packet of the workload was sent**, so that they mean something outside the machine. A packet that did not arrive has only `lost: true`. A second arrival of a packet follows the line of its first arrival with `duplicate: true`. A record with a sequence number the sender never used has `unexpected: true`. The export is the way to look at *which* packets were lost, for bursts and for the pattern of a seed.
 
 ## What a result does not say
 

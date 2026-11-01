@@ -8,8 +8,8 @@
 //! estimated.
 //!
 //! The pieces are libraries first so that they can be tested without starting a process: [`wire`] is the
-//! packet, [`records`] the file, [`schedule`] the moments at which packets leave, and [`cli`] the command line
-//! of the program `netscenario-agent`.
+//! packet, [`records`] the file, [`schedule`] the moments at which packets leave, [`tap`] the reader of the
+//! frames that reach an interface, and [`cli`] the command line of the program `netscenario-agent`.
 
 pub mod cli;
 pub mod clock;
@@ -19,4 +19,5 @@ pub mod receiver;
 pub mod records;
 pub mod schedule;
 pub mod sender;
+pub mod tap;
 pub mod wire;

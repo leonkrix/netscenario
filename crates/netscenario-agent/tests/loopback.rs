@@ -251,7 +251,7 @@ fn the_programs_work_together_and_speak_the_documented_lines() {
         .spawn()
         .unwrap();
     let mut lines = BufReader::new(recv.stdout.take().unwrap()).lines();
-    let Event::Ready { flow, address } =
+    let Event::Ready { flow, address, .. } =
         serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap()
     else {
         panic!("the first line of recv must be ready");
@@ -311,5 +311,55 @@ fn a_closed_standard_input_stops_the_receiver() {
     assert!(last.contains(r#""event":"received""#), "{last}");
     assert!(recv.wait().unwrap().success());
     assert!(began.elapsed() < Duration::from_secs(3));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The tap that names damaged packets is a help, not a condition: where it cannot be opened (no `CAP_NET_RAW`, or
+/// a file that cannot be made) the receiver says why in its `ready` line and goes on recording. The file here
+/// cannot be made, so the test means the same on a machine that has the capability and on one that has not.
+#[test]
+fn a_receiver_whose_tap_cannot_be_opened_says_why_and_still_records() {
+    let agent = env!("CARGO_BIN_EXE_netscenario-agent");
+    let dir = std::env::temp_dir().join(format!("netscenario-agent-tap-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut recv = Command::new(agent)
+        .args(["recv", "--bind", "127.0.0.1:0", "--out"])
+        .arg(dir.join("x.records"))
+        .arg("--wire-out")
+        .arg(dir.join("no-such-directory").join("x.wire"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(recv.stdout.take().unwrap()).lines();
+    let ready = lines.next().unwrap().unwrap();
+    let Event::Ready {
+        address,
+        wire_error,
+        ..
+    } = serde_json::from_str(&ready).unwrap()
+    else {
+        panic!("the first line of recv must be ready: {ready}");
+    };
+    assert!(wire_error.is_some(), "{ready}");
+    // It still receives a packet
+    let mut payload = vec![0_u8; 100];
+    Header {
+        sequence: 0,
+        send_ns: 1,
+    }
+    .write(&mut payload);
+    UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .send_to(&payload, &address)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    writeln!(recv.stdin.take().unwrap(), "stop").unwrap();
+    let Event::Received(received) = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap()
+    else {
+        panic!("recv must say received");
+    };
+    assert!(recv.wait().unwrap().success());
+    assert_eq!((received.packets, received.wire_packets), (1, None));
     let _ = std::fs::remove_dir_all(dir);
 }

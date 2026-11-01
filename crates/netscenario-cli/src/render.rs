@@ -110,6 +110,41 @@ fn directions_text(text: &mut String, result: &RunResult) {
     }
 }
 
+/// How many sequence numbers of damaged packets the summary shows; the result has up to 1,000 and the count.
+const MAX_NAMED_SHOWN: usize = 8;
+
+/// The damaged packets that the receiving node dropped, by name, where the direction corrupts (D-040, D-057); or why
+/// they are not named.
+fn damaged_names_text(text: &mut String, workload: &WorkloadResult) {
+    match (
+        &workload.corrupted_named,
+        &workload.corrupted_seq_unavailable,
+    ) {
+        (Some(named), _) if *named > 0 => {
+            let first: Vec<String> = workload
+                .corrupted_seq
+                .iter()
+                .take(MAX_NAMED_SHOWN)
+                .map(ToString::to_string)
+                .collect();
+            let more = if *named > MAX_NAMED_SHOWN as u64 {
+                ", ..."
+            } else {
+                ""
+            };
+            let _ = writeln!(
+                text,
+                "  damaged packets named by sequence number: {named} ({}{more}); `--packets` marks all of them",
+                first.join(", ")
+            );
+        }
+        (None, Some(why)) => {
+            let _ = writeln!(text, "  damaged packets could not be named: {why}");
+        }
+        _ => {}
+    }
+}
+
 /// The part of the summary about one workload.
 fn workload_text(text: &mut String, workload: &WorkloadResult) {
     let stats = &workload.stats;
@@ -147,6 +182,7 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
         stats.lost,
         stats.loss_ratio * 100.0
     );
+    damaged_names_text(text, workload);
     match &stats.delay {
         Some(delay) => {
             let _ = writeln!(
@@ -348,6 +384,29 @@ result: out/result.json
         assert!(
             summary(&result, Path::new("out"))
                 .contains("lost 5 (0.80 %, 3 of them arrived damaged)")
+        );
+    }
+
+    #[test]
+    fn damaged_packets_are_named_where_the_result_names_them_and_the_reason_is_shown_where_it_cannot()
+     {
+        let mut result = result();
+        assert!(!summary(&result, Path::new("out")).contains("named"));
+        result.workloads[0].corrupted_named = Some(12);
+        result.workloads[0].corrupted_seq = (0..12).map(|n| n * 3 + 1).collect();
+        let text = summary(&result, Path::new("out"));
+        assert!(
+            text.contains("named by sequence number: 12 (1, 4, 7, 10, 13, 16, 19, 22, ...)"),
+            "{text}"
+        );
+        // Canary: none named is not mentioned, and a reason is
+        result.workloads[0].corrupted_named = Some(0);
+        assert!(!summary(&result, Path::new("out")).contains("named by sequence"));
+        result.workloads[0].corrupted_named = None;
+        result.workloads[0].corrupted_seq_unavailable = Some("CAP_NET_RAW is missing".to_owned());
+        assert!(
+            summary(&result, Path::new("out"))
+                .contains("damaged packets could not be named: CAP_NET_RAW is missing")
         );
     }
 

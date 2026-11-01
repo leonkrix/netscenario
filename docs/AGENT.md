@@ -50,7 +50,7 @@ A file that ends inside a record is an error when it is read, not a shorter file
 netscenario-agent send --to <addr> --rate <bits/s> --size <bytes> --duration-ns <ns>
                        [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
 netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
-                       [--udp-checksum <on|off>]
+                       [--udp-checksum <on|off>] [--wire-out <file>]
 ```
 
 Numbers are plain integers: bits per second, bytes, nanoseconds. The units of a scenario file are resolved by the program that starts the agent. Exit codes: 0 done, 1 failed (the reason is on standard error), 2 the command line is wrong.
@@ -59,12 +59,21 @@ The agents print one JSON object per line on standard output; the types are `net
 
 ```json
 {"event":"ready","flow":1,"address":"10.100.0.2:40000"}
-{"event":"received","flow":1,"packets":100,"foreign":0,"corrupted":0,"first_receive_ns":123,"last_receive_ns":456}
+{"event":"ready","flow":1,"address":"10.100.0.2:40000","wire_error":"cannot read the frames of the interface: Operation not permitted (os error 1)"}
+{"event":"received","flow":1,"packets":100,"foreign":0,"corrupted":0,"wire_packets":100,"first_receive_ns":123,"last_receive_ns":456}
 {"event":"sent","flow":1,"packets":100,"first_send_ns":120,"last_send_ns":450,"max_lateness_ns":9000,"errors":0,"first_error":null}
 ```
 
 - `recv` prints `ready` once it listens (the sender starts after it), runs until it reads a line `stop` or the end of its standard input (so a receiver whose supervisor died does not run for ever), or until `--max-time-ns`. Packets that are already queued when the stop comes are still recorded, for at most 100 ms. `--ignore-stdin` is for use by hand.
 - `send` starts at `--start-at-ns` (a reading of `CLOCK_MONOTONIC`, so that the supervisor can start several workloads at one moment) or at once.
+
+## The tap: naming the packets that the node drops (`--wire-out`)
+
+A frame that the node drops because a bit in it was flipped never reaches the socket of the receiver, but a **packet socket** (`AF_PACKET`) sees it before the stack judges it. With `--wire-out <file>` the receiver opens one in its node (`netscenario_agent::tap`, `rustix`, no `unsafe`, not bound to an interface: the destination address and port select the stream) and writes a record, in the format above, for every frame that is a packet of its stream, delivered or not. The run takes the sequence numbers in that file that are not in the records of the receiver: those are the damaged packets (D-057).
+
+A frame counts only if everything that says whose it is is intact: the type of Ethernet (IPv4), the version and header length of IP (`0x45`), its protocol (UDP) and destination address, the destination port of UDP, and the magic, the version, the flags and the sequence number of the agent: 18 bytes. A bit in any of them leaves the frame unnamed. That is stricter than the sequence number alone needs, on purpose: a frame with a damaged destination port cannot be given to a stream with certainty, and a wrong name is worse than none. The CRC-32 of a stream without the checksum is not checked here; a frame that fails it is the kind this is for.
+
+The tap needs `CAP_NET_RAW` in the node. It is a help and not a condition: where it cannot be opened (or its file cannot be made) the receiver says why in the `wire_error` of its `ready` line and goes on recording, and the run reports the damaged packets as counted and not named. `received` has `wire_packets`, the number of packets the tap wrote, when it ran. The start of a stream waits for `ready`, so the tap is open before the first packet leaves.
 
 ## How the stream is timed
 

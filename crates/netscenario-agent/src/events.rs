@@ -15,6 +15,10 @@ pub enum Event {
         flow: u32,
         /// The address it is bound to, with the port that the system chose if the port was 0.
         address: String,
+        /// Why the tap that was asked for (`--wire-out`) could not be opened, if it could not. The receiver
+        /// runs without it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wire_error: Option<String>,
     },
     /// The sender is done.
     Sent(SendSummary),
@@ -59,6 +63,9 @@ pub struct ReceiveSummary {
     /// a damaged packet.
     #[serde(default)]
     pub corrupted: u64,
+    /// How many packets of the stream the tap saw on the interface, delivered or not, if it ran (`--wire-out`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire_packets: Option<u64>,
     /// When the first packet arrived, if one did.
     pub first_receive_ns: Option<u64>,
     /// When the last packet arrived, if one did.
@@ -74,6 +81,7 @@ mod tests {
         let ready = Event::Ready {
             flow: 2,
             address: "127.0.0.1:4000".to_owned(),
+            wire_error: None,
         };
         assert_eq!(
             serde_json::to_string(&ready).unwrap(),

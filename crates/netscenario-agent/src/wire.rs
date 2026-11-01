@@ -152,6 +152,19 @@ impl Header {
         Ok(header)
     }
 
+    /// Reads the header at the start of `datagram` in the form that `checksum` says, and does **not** check the
+    /// CRC-32 of version 2. For the tap, which wants the sequence number of a packet that is damaged.
+    ///
+    /// # Errors
+    ///
+    /// A [`Refusal`] if the datagram is not a packet of that version.
+    pub fn peek(datagram: &[u8], checksum: UdpChecksum) -> Result<Self, Refusal> {
+        match checksum {
+            UdpChecksum::On => Self::read_fields(datagram, VERSION, HEADER_LEN),
+            UdpChecksum::Off => Self::read_fields(datagram, VERSION_V2, HEADER_LEN_V2),
+        }
+    }
+
     fn read_fields(datagram: &[u8], version: u8, header_len: usize) -> Result<Self, Refusal> {
         let Some(head) = datagram.get(..header_len) else {
             return Err(Refusal::TooShort);
