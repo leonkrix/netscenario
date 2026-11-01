@@ -341,20 +341,26 @@ fn the_same_seed_chooses_the_same_packets_to_corrupt_and_every_packet_is_account
     assert_ne!(tally.lost_in_queue, tally_other.lost_in_queue);
     assert_ne!(lost, lost_other);
     // The lost packets are the same but for the corrupted ones whose bit fell where it harms nothing. 41 packets
-    // are corrupted, each harmless with a chance of about 0.5 %, so more than three differences in a pair of runs is
-    // far beyond chance (about 1 in 100,000).
+    // are corrupted, each harmless with p = 6 / 1,242 (the source address of the Ethernet header), and a packet differs
+    // between two runs if it is harmless in exactly one of them: the number of differences is binomial with n = 41 and
+    // q = 2 p (1 - p) = 0.0096, so a mean of 0.39. More than three is not far beyond chance, as an earlier version of
+    // this comment said (about 1 in 100,000): it is 1 in 1,500 for a pair of runs, and a pair of runs has happened
+    // some hundreds of times in the CI. The bound is the number at which the chance is below 1 in 10 billion: more than
+    // nine is 6e-12, and 2e-7 even if p were three times larger. A seed that did not choose the packets would give
+    // about 70 differences.
     let (a, b): (std::collections::BTreeSet<_>, std::collections::BTreeSet<_>) =
         (lost.iter().collect(), lost_again.iter().collect());
     let differing = a.symmetric_difference(&b).count();
     assert!(
-        differing <= 3,
+        differing <= 9,
         "{differing} packets differ: {lost:?} against {lost_again:?}"
     );
+    // The packets that the node dropped differ at most by the packets that differ
     assert!(
         tally
             .dropped_corrupted
             .abs_diff(tally_again.dropped_corrupted)
-            <= 3,
+            <= 9,
         "{} against {}",
         tally.dropped_corrupted,
         tally_again.dropped_corrupted
@@ -749,5 +755,44 @@ fn a_run_without_an_agent_fails_and_leaves_nothing() {
     assert!(error.to_string().contains("does not exist"), "{error}");
     // The network was built and is torn down again: no process of the run is left
     assert_nothing_left(backend.run_id(), "no agent");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Two workloads that send into one lossy direction are not a repeatable experiment (D-065): the order in which their
+/// packets reach the queue is not fixed, so the result says so, and names them. The queue still counts the packets of
+/// both, so it is not the check of the queue that says it.
+#[test]
+fn two_workloads_in_a_lossy_direction_make_the_run_not_reproducible_and_the_queue_counts_both() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("run-two-senders");
+    let mut backend = backend(|_| {});
+    let workloads = format!(
+        "{MEDIA}  - {{ id: more, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1200b }}\n"
+    );
+    let result = run(
+        &mut backend,
+        &scenario(
+            "seed: 42\n",
+            "      forward: { loss: { model: random, p: 20% } }\n",
+            &workloads,
+        ),
+        &options(&dir, false),
+    )
+    .unwrap();
+    assert!(!result.seed.loss_reproducible);
+    let reasons = &result.seed.not_reproducible_because;
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("'media', 'more'") && reasons[0].contains("link 'access' (forward)"),
+        "{reasons:?}"
+    );
+    let [check] = result.seed.queue_checks.as_slice() else {
+        panic!("{:?}", result.seed.queue_checks);
+    };
+    assert!(check.agrees(), "{check:?}");
+    let sent: u64 = result.workloads.iter().map(|w| w.stats.sent).sum();
+    assert_eq!(check.expected, sent);
     let _ = std::fs::remove_dir_all(dir);
 }
