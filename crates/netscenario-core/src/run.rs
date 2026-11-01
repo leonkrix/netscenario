@@ -752,8 +752,11 @@ fn check_queues(
                 "reverse",
             ),
         ] {
-            if impairments_of(link, direction).is_none_or(|impairments| impairments.loss.is_none())
-            {
+            // A duplicating direction is not checked: the queue counts the copies it makes as well, and the count
+            // cannot tell them from a packet that nobody asked for (D-054)
+            if impairments_of(link, direction).is_none_or(|impairments| {
+                !impairments.is_random() || impairments.duplicate.is_some()
+            }) {
                 continue;
             }
             let expected = flows

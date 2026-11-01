@@ -8,7 +8,7 @@ use netscenario_model::{Impairments, Link, Name, Problem, Scenario};
 use crate::backend::{Backend, Direction, LinkHandle, NodeHandle};
 use crate::capability::{Accepted, Support, check};
 use crate::error::Error;
-use crate::feature::{Feature, requirements};
+use crate::feature::Feature;
 use crate::seed::{derive_seed, draw_seed};
 
 /// The address of a node on a link.
@@ -70,9 +70,14 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
         None if can_seed => (Some(draw_seed()), true),
         None => (None, false),
     };
-    let has_loss = requirements(scenario)
-        .iter()
-        .any(|requirement| requirement.feature == Feature::IndependentLoss);
+    // A scenario whose result depends on random numbers (loss of any model, duplication, corruption,
+    // reordering): the same seed gives the same lost packets only if the backend can apply one
+    let has_random = scenario.topology.links.iter().any(|link| {
+        [&link.forward, &link.reverse, &link.both]
+            .into_iter()
+            .flatten()
+            .any(Impairments::is_random)
+    });
     match build(backend, scenario, seed) {
         Ok((nodes, links, addresses)) => Ok(Provisioned {
             nodes,
@@ -81,7 +86,7 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
             accepted,
             seed,
             seed_drawn,
-            loss_reproducible: !has_loss || seed.is_some(),
+            loss_reproducible: !has_random || seed.is_some(),
         }),
         Err(error) => {
             // The first error is the one to report; a failure of the teardown is the backend's to log
@@ -128,9 +133,9 @@ fn build(
         let handle = backend.create_link(&link.id, [first, second])?;
         for direction in [Direction::Forward, Direction::Reverse] {
             if let Some(impairments) = impairments_of(link, direction) {
-                // Only random loss uses the seed
+                // Only what draws random numbers uses the seed
                 let seed = seed
-                    .filter(|_| impairments.loss.is_some())
+                    .filter(|_| impairments.is_random())
                     .map(|seed| derive_seed(seed, index, direction));
                 backend.apply(handle, direction, impairments, seed)?;
             }

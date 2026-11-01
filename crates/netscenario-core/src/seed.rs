@@ -26,6 +26,15 @@ pub fn derive_seed(scenario_seed: u64, link_index: usize, direction: Direction) 
     mix(mix(scenario_seed) ^ mix(part.wrapping_add(0x9e37_79b9_7f4a_7c15)))
 }
 
+/// The seed of the second `netem` queue of a direction (the one behind the rate, which holds the delay, the jitter
+/// and the reordering), from the seed of the direction. A direction with a rate and a jitter or a reordering is
+/// two queues, and each has a random generator of its own; giving both the same seed would make them draw the
+/// same numbers.
+#[must_use]
+pub fn derive_stage_seed(direction_seed: u64, stage: u32) -> u64 {
+    mix(mix(direction_seed) ^ mix(u64::from(stage).wrapping_add(0xd1b5_4a32_d192_ed03)))
+}
+
 /// A seed for a run whose scenario has none. It comes from the random keys that the standard library draws
 /// from the system for its hash tables, so two runs get different seeds, and the seed is recorded in the
 /// result so that the run can be repeated.
@@ -75,6 +84,20 @@ mod tests {
         assert_eq!(derive_seed(1234, 0, Direction::Reverse), PINNED[2]);
         assert_eq!(derive_seed(1234, 3, Direction::Reverse), PINNED[3]);
     }
+
+    /// The seed of a second queue is pinned like the others, for the same reason.
+    #[test]
+    fn the_seed_of_a_second_queue_differs_and_is_pinned() {
+        let direction = derive_seed(1234, 0, Direction::Forward);
+        assert_ne!(derive_stage_seed(direction, 1), direction);
+        assert_ne!(
+            derive_stage_seed(direction, 1),
+            derive_stage_seed(direction, 2)
+        );
+        assert_eq!(derive_stage_seed(direction, 1), PINNED_STAGE);
+    }
+
+    const PINNED_STAGE: u64 = 5_600_420_206_902_464_567;
 
     const PINNED: [u64; 4] = [
         5_197_578_548_964_807_871,

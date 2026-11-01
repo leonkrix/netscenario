@@ -72,8 +72,10 @@ jobs:
           workspaces: fuzz
           key: fuzz-${{ env.NIGHTLY }}
       - run: cargo +"$NIGHTLY" install --locked cargo-fuzz --version "$CARGO_FUZZ"
-      # The corpus grows from run to run: the newest one is restored, and this run saves its own
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The corpus grows from run to run: the newest one is restored, and this run saves its own, also when a
+      # target crashed (the corpus holds what it found until then)
+      - id: corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -84,6 +86,13 @@ jobs:
           TARGET: ${{ matrix.target }}
           SECONDS_FOR_EACH: ${{ github.event.inputs.seconds || '300' }}
         run: |
+          case "$SECONDS_FOR_EACH" in
+            '' | *[!0-9]*) echo "::error::seconds must be a whole number, not '$SECONDS_FOR_EACH'"; exit 1 ;;
+          esac
+          if [ "$SECONDS_FOR_EACH" -gt 2400 ]; then
+            echo "::error::the job stops after 45 minutes; ask for at most 2400 seconds"
+            exit 1
+          fi
           mkdir -p "corpus/$TARGET"
           # The scenario target starts from the files of the repository, the others from fuzz/seeds
           if [ "$TARGET" = scenario ]; then
@@ -91,8 +100,17 @@ jobs:
           else
             seeds=("seeds/$TARGET")
           fi
+          # -verbosity=0: libFuzzer prints one line for every new input and every reduction (10,000 lines in five
+          # minutes); a crash, the dictionary it found and the final figures are still printed
           cargo +"$NIGHTLY" fuzz run "$TARGET" "corpus/$TARGET" "${seeds[@]}" -- \
-            -max_total_time="$SECONDS_FOR_EACH" -max_len=65536 -timeout=10
+            -max_total_time="$SECONDS_FOR_EACH" -max_len=65536 -timeout=10 \
+            -verbosity=0 -print_final_stats=1
+      - name: Keep the corpus
+        if: always() && steps.corpus.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
       - name: The input that crashed the target
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

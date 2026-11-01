@@ -35,6 +35,17 @@ impl Impairments {
         Self::default()
     }
 
+    /// Whether a packet draws random numbers in this direction: loss (all models), duplication, corruption
+    /// and reordering do, a delay with a jitter does too but is not counted, because the pattern of lost
+    /// packets does not depend on it. These are the impairments for which the seed of a run matters.
+    #[must_use]
+    pub fn is_random(&self) -> bool {
+        self.loss.is_some()
+            || self.duplicate.is_some()
+            || self.corrupt.is_some()
+            || self.reorder.is_some()
+    }
+
     /// With a fixed delay.
     #[must_use]
     pub fn with_delay(mut self, delay: Duration) -> Self {

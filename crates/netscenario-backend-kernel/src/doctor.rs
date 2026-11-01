@@ -16,7 +16,7 @@ use netscenario_core::{Feature, Support};
 use serde::Serialize;
 
 use crate::capabilities::{Environment, capabilities};
-use crate::command::{find, has_own_rights, namespace_flags, run, searched};
+use crate::command::{Toolbox, find, has_own_rights, namespace_flags, run, searched};
 use crate::tools::{Tool, Version, parse_tc_version};
 
 /// The first release of iproute2 whose `tc` knows the `seed` of `netem`.
@@ -170,6 +170,19 @@ step netem "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us loss ra
 step tables "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us 500us distribution normal
 "$2" qdisc del dev np0 root >/dev/null 2>&1
 step seed "$2" qdisc replace dev np0 root netem limit 1000 loss random 1% seed 1
+"$2" qdisc del dev np0 root >/dev/null 2>&1
+step burst "$2" qdisc replace dev np0 root netem limit 1000 loss gemodel 1% 20% 100% 0% seed 1
+"$2" qdisc del dev np0 root >/dev/null 2>&1
+step chain "$2" qdisc replace dev np0 root netem limit 1000 loss state 2% 30% 20% 10% 1% seed 1
+"$2" qdisc del dev np0 root >/dev/null 2>&1
+step reorder "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us reorder 25% gap 3 seed 1
+"$2" qdisc del dev np0 root >/dev/null 2>&1
+step duplicate "$2" qdisc replace dev np0 root netem limit 1000 duplicate 20% seed 1
+"$2" qdisc del dev np0 root >/dev/null 2>&1
+# A duplicating netem next to another netem in one tree: some kernels refuse it (D-052). This is the tree that
+# the backend builds for a direction with a rate and a jitter or a reordering.
+step treeroot "$2" qdisc replace dev np0 root handle 1: netem limit 1000 duplicate 20% rate 1mbit
+step tree "$2" qdisc replace dev np0 parent 1:1 handle 2: netem limit 1000 delay 1000us 500us
 "#;
 
 fn read_trimmed(path: &str) -> Option<String> {
@@ -570,6 +583,121 @@ fn kernel_checks(findings: &Findings, tc: &Tool, checks: &mut Vec<Check>) {
         not_tested,
     ));
     checks.push(seed_check(tc, &after_veth("seed"), not_tested));
+    checks.push(models_check(
+        &after_veth("burst"),
+        &after_veth("chain"),
+        &after_veth("reorder"),
+        &after_veth("duplicate"),
+        not_tested,
+    ));
+    checks.push(tree_check(
+        &after_veth("treeroot"),
+        &after_veth("tree"),
+        not_tested,
+    ));
+}
+
+/// The loss models in bursts, the reordering and the duplication: one qdisc each.
+fn models_check(
+    burst: &Outcome,
+    chain: &Outcome,
+    reorder: &Outcome,
+    duplicate: &Outcome,
+    not_tested: &str,
+) -> Check {
+    let title = "burst loss, reordering, duplication";
+    let steps = [
+        ("the Gilbert-Elliott loss", burst),
+        ("the four-state loss", chain),
+        ("reordering", reorder),
+        ("duplication", duplicate),
+    ];
+    if steps.iter().all(|(_, outcome)| outcome.is_none()) {
+        return kernel("models", title, Status::Info, not_tested, None);
+    }
+    let refused: Vec<String> = steps
+        .iter()
+        .filter_map(|(what, outcome)| match outcome {
+            Some(Err(error)) => Some(format!("{what}: {error}")),
+            _ => None,
+        })
+        .collect();
+    if refused.is_empty() {
+        kernel(
+            "models",
+            title,
+            Status::Ok,
+            "`tc` and the kernel accept the loss in bursts (two models), reordering and duplication",
+            None,
+        )
+    } else {
+        kernel(
+            "models",
+            title,
+            Status::Warn,
+            &format!(
+                "refused: {}; a scenario that uses them is refused by the run",
+                refused.join("; ")
+            ),
+            Some("use a current iproute2 on a kernel with the `netem` models (the answers above say what was refused)".to_owned()),
+        )
+    }
+}
+
+/// A duplicating `netem` next to another `netem` in one tree (D-052): the tree of a direction with a rate and a
+/// jitter or a reordering. The kernels that refuse it say "cannot mix duplicating netems with other netems in tree".
+fn tree_check(root: &Outcome, tree: &Outcome, not_tested: &str) -> Check {
+    let title = "duplication with a jitter or reordering and a rate";
+    match (root, tree) {
+        (Some(Ok(())), Some(Ok(()))) => kernel(
+            "duplicate-tree",
+            title,
+            Status::Ok,
+            "the kernel accepts a duplicating `netem` next to another `netem` in one tree",
+            None,
+        ),
+        (Some(Ok(())), Some(Err(error))) => kernel(
+            "duplicate-tree",
+            title,
+            Status::Warn,
+            &format!(
+                "this kernel refuses a duplicating `netem` next to another one: {error}; a direction with `duplicate` and a `rate` and a `jitter` or `reorder` is refused by the run"
+            ),
+            Some("leave out the jitter or the reordering, or the rate, or the duplication in that direction, or use a kernel that accepts it (the check was added in 2025 and removed again later)".to_owned()),
+        ),
+        (Some(Err(_)), _) => kernel(
+            "duplicate-tree",
+            title,
+            Status::Info,
+            "not tested: the first queue of the tree is refused already (see above)",
+            None,
+        ),
+        _ => kernel("duplicate-tree", title, Status::Info, not_tested, None),
+    }
+}
+
+/// Whether this kernel refuses the tree of a duplicating `netem` with another one (D-052), tried on the machine
+/// in a throwaway namespace. `Some(answer)` is the answer of `tc`; `None` if the kernel accepts it, or if the
+/// question cannot be answered (the probe cannot run, or the first queue of the tree is refused already): then the run
+/// finds out for itself and reports what `tc` says.
+pub(crate) fn duplicate_tree_refusal(tools: &Toolbox, own_rights: bool) -> Option<String> {
+    let sh = find("sh")?;
+    let way = if own_rights {
+        Way::OwnRights
+    } else {
+        Way::UserNamespace
+    };
+    let steps = probe(way, &tools.unshare, &sh, &tools.ip, &tools.tc).ok()?;
+    let result = |name: &str| {
+        steps
+            .iter()
+            .find(|step| step.name == name)
+            .map(|s| s.result.clone())
+    };
+    match (result("treeroot"), result("tree")) {
+        (Some(Ok(())), Some(Err(error))) => Some(answer_of(&error).to_owned()),
+        _ => None,
+    }
 }
 
 /// The features, as the backend declares them for this machine.
@@ -698,16 +826,27 @@ mod tests {
     }
 
     fn steps(failing: &[(&str, &str)]) -> Vec<Step> {
-        ["veth", "netem", "tables", "seed"]
-            .into_iter()
-            .map(|name| Step {
-                name: name.to_owned(),
-                result: failing
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map_or(Ok(()), |(_, why)| Err((*why).to_owned())),
-            })
-            .collect()
+        [
+            "veth",
+            "netem",
+            "tables",
+            "seed",
+            "burst",
+            "chain",
+            "reorder",
+            "duplicate",
+            "treeroot",
+            "tree",
+        ]
+        .into_iter()
+        .map(|name| Step {
+            name: name.to_owned(),
+            result: failing
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map_or(Ok(()), |(_, why)| Err((*why).to_owned())),
+        })
+        .collect()
     }
 
     fn good() -> Findings {
@@ -756,13 +895,55 @@ mod tests {
     #[test]
     fn a_feature_the_backend_lacks_is_information_and_one_the_machine_lacks_is_a_warning() {
         let report = assess(&good());
-        assert_eq!(status(&report, "burst-loss"), Status::Info);
         assert_eq!(status(&report, "corruption"), Status::Info);
+        assert_eq!(status(&report, "burst-loss"), Status::Ok);
         let mut old = good();
         old.tools[1].printed = "tc utility, iproute2-5.15.0".to_owned();
         let report = assess(&old);
         assert_eq!(status(&report, "seeded-loss"), Status::Warn);
-        assert_eq!(status(&report, "burst-loss"), Status::Info);
+        assert_eq!(status(&report, "corruption"), Status::Info);
+    }
+
+    /// D-052: a kernel that refuses a duplicating `netem` next to another is a warning with the answer of the
+    /// kernel, and it does not make the plain duplication or the other models look broken.
+    #[test]
+    fn a_kernel_that_refuses_a_duplicating_tree_is_a_warning_with_its_answer() {
+        let mut findings = good();
+        findings.ways[0].outcome = Ok(steps(&[(
+            "tree",
+            "Error: netem: cannot mix duplicating netems with other netems in tree.",
+        )]));
+        let report = assess(&findings);
+        assert_eq!(status(&report, "duplicate-tree"), Status::Warn);
+        let line = report
+            .checks
+            .iter()
+            .find(|c| c.id == "duplicate-tree")
+            .unwrap();
+        assert!(
+            line.detail.contains("cannot mix duplicating netems"),
+            "{}",
+            line.detail
+        );
+        assert_eq!(status(&report, "models"), Status::Ok);
+        // and the machine that accepts it says so
+        assert_eq!(status(&assess(&good()), "duplicate-tree"), Status::Ok);
+    }
+
+    /// Canary: a model that the kernel refuses is named, and the others stay fine.
+    #[test]
+    fn a_refused_model_is_named_in_the_line_about_the_models() {
+        let mut findings = good();
+        findings.ways[0].outcome = Ok(steps(&[("chain", "Illegal \"state\"")]));
+        let report = assess(&findings);
+        let line = report.checks.iter().find(|c| c.id == "models").unwrap();
+        assert_eq!(line.status, Status::Warn);
+        assert!(
+            line.detail.contains("the four-state loss"),
+            "{}",
+            line.detail
+        );
+        assert!(!line.detail.contains("reordering"), "{}", line.detail);
     }
 
     /// Canary: the judging can fail. A machine without a tool is not ok, and the line says where it looked.

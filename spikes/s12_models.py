@@ -86,12 +86,17 @@ def counters(pid: str) -> dict[str, int]:
     return result
 
 
-def measure(pid: str, netem: str, seed: int, size: int = 200, count: int = N, no_check: bool = False) -> dict:
+def measure(pid: str, netem: str, seed: int, size: int = 200, count: int = N, no_check: bool = False, child: str | None = None) -> dict:
     # A fresh qdisc for every measurement: netem keeps corrupt, reorder, rate and slot across a change (D-048), and a
     # corruption left over from an earlier section made the first run on the CI runners lose 18.7 % instead of 10 %
     # and duplicate 16.3 % instead of 20 % in the correlation section
     subprocess.run(["tc", "qdisc", "del", "dev", "v0", "root"], capture_output=True)
-    tc("qdisc", "add", "dev", "v0", "root", "netem", "limit", "100000", *netem.split(), "seed", str(seed))
+    if child is None:
+        tc("qdisc", "add", "dev", "v0", "root", "netem", "limit", "100000", *netem.split(), "seed", str(seed))
+    else:
+        # two netem in one tree, as the backend builds a direction with a rate and a jitter or a reordering (D-030, D-054)
+        tc("qdisc", "add", "dev", "v0", "root", "handle", "1:", "netem", "limit", "100000", *netem.split(), "seed", str(seed))
+        tc("qdisc", "add", "dev", "v0", "parent", "1:1", "handle", "2:", "netem", "limit", "100000", *child.split(), "seed", str(seed + 1))
     out = os.path.join(tempfile.gettempdir(), f"s12-{os.getpid()}.json")
     receiver = subprocess.Popen(
         ["nsenter", "-t", pid, "-n", sys.executable, os.path.abspath(__file__), "recv", out], stdout=subprocess.PIPE, text=True
@@ -260,6 +265,24 @@ def reorder_and_duplicate(pid: str) -> None:
             report("INFO", "S12.5", f"{netem}: share of packets that arrived twice, without correlation {percent}%, measured {mean(shares) * 100:.2f}%")
 
 
+def reorder_and_rate(pid: str) -> None:
+    """A packet that `netem` chooses for reordering is put at the head of the queue, and the rate is worked out only for
+    the packets that are delayed (`sch_netem.c`). So in ONE netem a reordering lets a share of the packets past the rate.
+    In two netem (the rate first, the delay and the reordering in its child) it cannot. The stream here is 20,000
+    packets per second of 200 bytes, far above a rate of 2 mbit, so every packet that was held by the rate has a delay
+    of many milliseconds, and a packet with a delay below 5 ms got past it."""
+    count = N // 5
+    runs_one = [measure(pid, "delay 10ms reorder 25% rate 2mbit", s, count=count) for s in SEEDS]
+    runs_two = [measure(pid, "rate 2mbit", s, count=count, child="delay 10ms reorder 25%") for s in SEEDS]
+    past = lambda m: sum(1 for d in m["delays"].values() if d < 5_000_000) / count
+    one = [past(m) for m in runs_one]
+    two = [past(m) for m in runs_two]
+    ok_one = mean(one) > 0.15
+    ok_two = mean(two) < 0.01
+    report("PASS" if ok_one else "FAIL", "S12.9", f"one netem (delay 10ms reorder 25% rate 2mbit): packets that got past the rate (delay under 5 ms) {mean(one) * 100:.2f}% (seeds {', '.join(f'{x * 100:.2f}' for x in one)}); about the reordering share of 25% expected")
+    report("PASS" if ok_two else "FAIL", "S12.9", f"two netem (rate 2mbit, child delay 10ms reorder 25%): packets that got past the rate (delay under 5 ms) {mean(two) * 100:.2f}% (seeds {', '.join(f'{x * 100:.2f}' for x in two)}); none expected")
+
+
 def corruption(pid: str) -> None:
     """`corrupt P` flips one bit in a random byte of the frame (S13b found that the Ethernet header is among the bytes). What the
     receiver sees depends on the checksums: with the UDP checksum on (the default of every program) the first run of
@@ -337,6 +360,8 @@ def main() -> None:
         loss_models(pid)
     if only in ("", "reorder"):
         reorder_and_duplicate(pid)
+    if only in ("", "rate"):
+        reorder_and_rate(pid)
     if only in ("", "corruption"):
         corruption(pid)
     if only in ("", "correlation"):

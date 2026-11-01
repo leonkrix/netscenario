@@ -33,13 +33,14 @@ fn every_feature_has_one_row_in_the_page() {
 }
 
 #[test]
-fn what_is_exact_here_is_a_check_mark_for_release_0_1_there() {
+fn what_is_exact_here_is_a_check_mark_there() {
     let capabilities = capabilities(&Environment::complete());
     for feature in Feature::ALL {
         let cell = kernel_cell(COVERAGE, feature.label()).expect("a row");
         match capabilities.support(*feature) {
+            // 0.1 or 0.2: the release in which the Kernel backend got it
             Support::Exact => assert!(
-                cell.starts_with("✔ 0.1"),
+                cell.starts_with("✔ 0.1") || cell.starts_with("✔ 0.2"),
                 "'{}' is exact in the code, but the page says '{cell}'",
                 feature.label()
             ),
@@ -84,17 +85,19 @@ fn every_faithful_mark_of_the_kernel_links_to_a_test_that_exists() {
         "Linux, unprivileged user namespace",
         "GitHub-hosted runner",
     ];
+    let capabilities = capabilities(&Environment::complete());
+    // What is exact here, and the places where a run works; what is not built yet has no test and no check mark
     let labels = Feature::ALL
         .iter()
+        .filter(|feature| capabilities.support(**feature) == Support::Exact)
         .map(|feature| feature.label())
         .chain(places);
     for label in labels {
         let cell = kernel_cell(COVERAGE, label).unwrap_or_else(|| panic!("no row '{label}'"));
-        if cell.starts_with("✔ 0.2") {
-            // Not built yet: no test, no check mark, and the cell has none (the test above says why it is 0.2)
-            continue;
-        }
-        assert!(cell.starts_with("✔ 0.1"), "'{label}': {cell}");
+        assert!(
+            cell.starts_with("✔ 0.1") || cell.starts_with("✔ 0.2"),
+            "'{label}': {cell}"
+        );
         let target = link_in(&cell).unwrap_or_else(|| panic!("'{label}' has no link: {cell}"));
         assert!(
             docs.join(target).is_file(),

@@ -12,7 +12,6 @@ edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/leonkrix/netscenario"
-homepage = "https://github.com/leonkrix/netscenario"
 readme = "README.md"
 keywords = ["network", "emulation", "netem", "testing", "scenario"]
 categories = ["development-tools::testing", "network-programming", "simulation"]

@@ -412,6 +412,67 @@ fn collect(mut pipe: impl Read + Send + 'static, into: Arc<Mutex<String>>) -> Ar
     done
 }
 
+impl KernelBackend {
+    /// A direction with a duplication, a rate and a jitter or a reordering is two `netem` in one tree, and some
+    /// kernels refuse a duplicating `netem` next to another one (D-052). The kernel is asked once, and only if
+    /// a scenario has such a direction; where it says no the scenario is refused before anything is built.
+    fn check_duplicate_tree(&self, scenario: &Scenario, refusals: &mut Vec<Refusal>) {
+        let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").map_or_else(
+            |_| "this kernel".to_owned(),
+            |text| format!("the kernel {}", text.trim()),
+        );
+        refusals.extend(duplicate_tree_refusals(
+            scenario,
+            || crate::doctor::duplicate_tree_refusal(&self.tools, self.own_rights),
+            &release,
+        ));
+    }
+}
+
+/// The directions of `scenario` that need a duplicating `netem` next to another one, refused if `ask` says that the
+/// kernel refuses it. `ask` is called at most once, and not at all if no direction needs the tree.
+fn duplicate_tree_refusals(
+    scenario: &Scenario,
+    ask: impl FnOnce() -> Option<String>,
+    release: &str,
+) -> Vec<Refusal> {
+    let mut wanted = Vec::new();
+    for (index, link) in scenario.topology.links.iter().enumerate() {
+        for (name, impairments) in [
+            ("forward", &link.forward),
+            ("reverse", &link.reverse),
+            ("both", &link.both),
+        ] {
+            let Some(impairments) = impairments else {
+                continue;
+            };
+            if impairments.duplicate.is_some()
+                && impairments.rate.is_some()
+                && (impairments.jitter.is_some() || impairments.reorder.is_some())
+            {
+                wanted.push(format!("topology.links[{index}].{name}.duplicate"));
+            }
+        }
+    }
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let Some(answer) = ask() else {
+        return Vec::new();
+    };
+    wanted
+        .into_iter()
+        .map(|path| Refusal {
+            feature: Feature::Duplication,
+            path,
+            reason: format!(
+                "{release} refuses a duplicating netem next to another netem, which a direction with a rate and a jitter or a reordering needs: {answer}"
+            ),
+            fix: "leave out the duplication, the rate, or the jitter and the reordering in this direction, use a kernel that accepts it (the check was added in 2025 and removed again later; `netscenario doctor` tries it), or the Engine backend (planned for release 0.4)".to_owned(),
+        })
+        .collect()
+}
+
 impl Backend for KernelBackend {
     fn name(&self) -> &'static str {
         BACKEND
@@ -454,6 +515,7 @@ impl Backend for KernelBackend {
                 }
             }
         }
+        self.check_duplicate_tree(scenario, &mut refusals);
         if refusals.is_empty() {
             Ok(())
         } else {
@@ -638,5 +700,64 @@ impl Backend for KernelBackend {
 impl Drop for KernelBackend {
     fn drop(&mut self) {
         let _ = self.teardown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    const HEAD: &str = "version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n";
+    const WORKLOAD: &str = "workloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\n";
+
+    fn scenario_of(link: &str) -> Scenario {
+        Scenario::from_yaml(&format!("{HEAD}{link}{WORKLOAD}"), "t.yaml").unwrap()
+    }
+
+    const REFUSED: &str = "Error: netem: cannot mix duplicating netems with other netems in tree.";
+
+    /// D-052: a direction that needs the tree is refused with the answer of the kernel, where the kernel says no.
+    #[test]
+    fn a_duplicating_tree_is_refused_where_the_kernel_refuses_it() {
+        let scenario = scenario_of(
+            "      forward: { delay: 20ms, jitter: { amount: 5ms }, rate: 2mbit, duplicate: 5% }\n      reverse: { delay: 20ms, reorder: { share: 25% }, rate: 2mbit, duplicate: 5% }\n",
+        );
+        let refusals =
+            duplicate_tree_refusals(&scenario, || Some(REFUSED.to_owned()), "the kernel 7.1.0");
+        assert_eq!(refusals.len(), 2);
+        assert_eq!(refusals[0].path, "topology.links[0].forward.duplicate");
+        assert_eq!(refusals[1].path, "topology.links[0].reverse.duplicate");
+        assert!(
+            refusals[0].reason.contains("the kernel 7.1.0")
+                && refusals[0].reason.contains("cannot mix")
+        );
+        assert!(refusals[0].fix.contains("doctor"));
+    }
+
+    /// Canary: a kernel that accepts it refuses nothing, and a direction that does not need two queues does
+    /// not even ask: a duplication alone, a duplication with a jitter but no rate, a rate and a jitter without
+    /// it, a duplication with a rate and a delay.
+    #[test]
+    fn nothing_is_refused_that_does_not_need_the_tree_or_where_the_kernel_accepts_it() {
+        let needs = scenario_of(
+            "      both: { delay: 20ms, jitter: { amount: 5ms }, rate: 2mbit, duplicate: 5% }\n",
+        );
+        assert_eq!(duplicate_tree_refusals(&needs, || None, "k"), Vec::new());
+        for link in [
+            "      both: { duplicate: 5% }\n",
+            "      both: { delay: 20ms, jitter: { amount: 5ms }, duplicate: 5% }\n",
+            "      both: { delay: 20ms, jitter: { amount: 5ms }, rate: 2mbit }\n",
+            "      both: { delay: 20ms, rate: 2mbit, duplicate: 5% }\n",
+        ] {
+            let scenario = scenario_of(link);
+            let refusals = duplicate_tree_refusals(
+                &scenario,
+                || panic!("the kernel is asked for {link}"),
+                "k",
+            );
+            assert_eq!(refusals, Vec::new(), "{link}");
+        }
     }
 }

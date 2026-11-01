@@ -181,6 +181,76 @@ fn the_same_seed_gives_the_same_lost_packets() {
     assert_queues_saw_the_workloads(&result, 417);
 }
 
+/// What a seed repeats in a direction with a burst loss, a duplication and a reordering (D-054): the packets that
+/// were lost, the ones that arrived twice, and the ones that `netem` sent on at once.
+fn drawn_by(dir: &Path, workload: &str) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+    let lines: Vec<serde_json::Value> =
+        std::fs::read_to_string(dir.join(format!("packets-{workload}.jsonl")))
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+    let sequences = |keep: &dyn Fn(&serde_json::Value) -> bool| -> Vec<u64> {
+        lines
+            .iter()
+            .filter(|v| keep(v))
+            .map(|v| v["sequence"].as_u64().unwrap())
+            .collect()
+    };
+    (
+        sequences(&|v| v["lost"] == true),
+        sequences(&|v| v["duplicate"] == true),
+        // The held packets wait 10 ms, the others arrive within the time of the rate (2 ms at most)
+        sequences(&|v| {
+            v["duplicate"] != true && v["delay_ns"].as_u64().is_some_and(|d| d < 5_000_000)
+        }),
+    )
+}
+
+/// The same seed repeats a loss in bursts, the duplication and the reordering, in a direction of two queues; another
+/// seed does not. The queue check (ENV-07) does not apply to a duplicating direction: the queue counts the copies.
+#[test]
+fn the_same_seed_repeats_burst_loss_duplication_and_reordering() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let link = "      forward: { delay: 10ms, loss: { model: gilbert-elliott, p: 10%, r: 30%, loss-bad: 100%, loss-good: 0% }, duplicate: 20%, reorder: { share: 50% }, rate: 10mbit }\n";
+    let drawn = |seed: u32, label: &str| {
+        let dir = work_dir(label);
+        let mut backend = backend(|_| {});
+        let result = run(
+            &mut backend,
+            &scenario(&format!("seed: {seed}\n"), link, MEDIA),
+            &options(&dir, true),
+        )
+        .unwrap();
+        let drawn = drawn_by(&dir, "media");
+        let _ = std::fs::remove_dir_all(dir);
+        (drawn, result)
+    };
+    let ((lost, doubled, early), result) = drawn(7, "run-models-a");
+    let ((lost_again, doubled_again, early_again), _) = drawn(7, "run-models-b");
+    let ((lost_other, doubled_other, early_other), _) = drawn(8, "run-models-c");
+    // Something of each happened, so that "the same" means something
+    assert!(!lost.is_empty() && !doubled.is_empty() && !early.is_empty());
+    assert_eq!(lost, lost_again, "the same seed must lose the same packets");
+    assert_eq!(
+        doubled, doubled_again,
+        "the same seed must duplicate the same packets"
+    );
+    assert_eq!(
+        early, early_again,
+        "the same seed must send the same packets on at once"
+    );
+    assert!(lost != lost_other && doubled != doubled_other && early != early_other);
+    assert!(result.seed.loss_reproducible);
+    assert!(
+        result.seed.queue_checks.is_empty(),
+        "a duplicating direction is not checked: {:?}",
+        result.seed.queue_checks
+    );
+}
+
 /// The loss stays in front of the rate in a direction that is built from two qdiscs (a jitter and a rate), so
 /// the same seed still loses the same packets there (D-030).
 #[test]

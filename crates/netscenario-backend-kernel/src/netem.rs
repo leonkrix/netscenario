@@ -1,15 +1,26 @@
 //! The arguments of `tc ... netem` for the impairments of one direction.
 //!
-//! A direction has the stages **loss, rate, delay with jitter**, in this order: a packet may be dropped when it
-//! enters, the packets that are kept are sent one after the other at the rate, and each of them then travels
-//! for its own delay. `netem` does all of it in one qdisc, but not in this order: with a `rate` it sends a
-//! packet at the later of its own moment and the moment of the packet in front of it, so a jitter is cut off
-//! from below and the order is kept (measured: a configured jitter of 5 ms came out as 4.1 ms, and the mean
-//! delay 1.8 ms too high, `docs/FIDELITY.md`). A direction with both a jitter and a rate is therefore built
-//! from two `netem` qdiscs, the rate in the first and the delay with its jitter in the second, which is its
-//! child. Every other direction needs only one.
+//! A direction has the stages **duplication, loss, corruption, rate, delay with jitter and reordering**, in
+//! this order (the order of `netem_enqueue`, `docs/SCENARIO-FORMAT.md`): a packet may be duplicated, the copy
+//! and the original may each be dropped or corrupted when they enter, the packets that are kept are sent one
+//! after the other at the rate, and each of them then travels for its own delay, or, if it is chosen for
+//! reordering, is sent on at once. `netem` does all of it in one qdisc, but not in this order. With a `rate`
+//! it sends a packet at the later of its own moment and the moment of the packet in front of it, so a jitter
+//! is cut off from below and the order is kept (measured: a configured jitter of 5 ms came out as 4.1 ms,
+//! and the mean delay 1.8 ms too high, `docs/FIDELITY.md`); and a packet chosen for reordering is put at the
+//! head of the queue and bypasses the rate altogether (`sch_netem.c`: the rate is worked out only for the
+//! packets that are delayed). A direction with a rate and a jitter or a reordering is therefore built from
+//! two `netem` qdiscs, the duplication, loss, corruption and rate in the first and the delay with its jitter
+//! and the reordering in the second, which is its child. Every other direction needs only one.
+//!
+//! Duplication stays in the first qdisc: `netem` enqueues the copy at the root of the tree, so a copy made
+//! in the second qdisc would pass the loss and the rate a second time. Both qdiscs get a seed of their own
+//! where they draw numbers that the seed is to repeat (D-054).
 
-use netscenario_model::{Duration, Impairments, JitterDistribution, Loss, MAX_PACKETS_PER_SECOND};
+use netscenario_core::derive_stage_seed;
+use netscenario_model::{
+    Duration, Impairments, JitterDistribution, Loss, MAX_PACKETS_PER_SECOND, Probability, Reorder,
+};
 
 /// The most packets a queue may hold. A queue this long at the largest packet size takes 1.4 GB, so a sender
 /// that overruns a slow link cannot use all the memory of the machine.
@@ -86,30 +97,82 @@ fn delay_arguments(impairments: &Impairments) -> Result<Vec<String>, String> {
     Ok(arguments)
 }
 
-/// The arguments of the loss: `loss random P% [seed S]`. The seed is used only with loss (D-013).
-///
-/// Only `random` is built so far; the other models and the other impairments arrive with step 4.2 of
-/// release 0.2, and the capabilities of the backend say so before a run gets here.
-fn loss_arguments(impairments: &Impairments, seed: Option<u64>) -> Result<Vec<String>, String> {
-    let mut arguments = Vec::new();
+/// A probability for `tc`: `P%`.
+fn probability(value: Probability) -> String {
+    percent(value.micro_percent())
+}
+
+/// The arguments of the loss. `random` is `loss random P%`; the Gilbert-Elliott model is `loss gemodel p r
+/// 1-h 1-k`, whose third argument is the loss in the bad state and the fourth the loss in the good state
+/// (measured in S12, D-048: the letters suggest the complements, the kernel does not); the four-state model
+/// is `loss state p13 p31 p32 p23 p14`.
+fn loss_arguments(impairments: &Impairments) -> Vec<String> {
+    let words = |words: &[&str]| {
+        words
+            .iter()
+            .map(|word| (*word).to_owned())
+            .collect::<Vec<_>>()
+    };
     match &impairments.loss {
-        None => {}
+        None => Vec::new(),
         Some(Loss::Random { p }) => {
-            arguments.push("loss".to_owned());
-            arguments.push("random".to_owned());
-            arguments.push(percent(p.micro_percent()));
-            if let Some(seed) = seed {
-                arguments.push("seed".to_owned());
-                arguments.push(seed.to_string());
-            }
+            let mut arguments = words(&["loss", "random"]);
+            arguments.push(probability(*p));
+            arguments
         }
-        Some(_) => return Err(NOT_BUILT.to_owned()),
+        Some(Loss::GilbertElliott {
+            p,
+            r,
+            loss_bad,
+            loss_good,
+        }) => {
+            let mut arguments = words(&["loss", "gemodel"]);
+            arguments.extend([p, r, loss_bad, loss_good].map(|value| probability(*value)));
+            arguments
+        }
+        Some(Loss::Markov4 {
+            p13,
+            p31,
+            p32,
+            p23,
+            p14,
+        }) => {
+            let mut arguments = words(&["loss", "state"]);
+            arguments.extend([p13, p31, p32, p23, p14].map(|value| probability(*value)));
+            arguments
+        }
     }
-    Ok(arguments)
+}
+
+/// The arguments of the duplication: `duplicate P%`.
+fn duplicate_arguments(impairments: &Impairments) -> Vec<String> {
+    impairments
+        .duplicate
+        .map_or_else(Vec::new, |p| vec!["duplicate".to_owned(), probability(p)])
+}
+
+/// The arguments of the reordering: `reorder P% [gap G]`. `P` is the share of the packets that are sent on at
+/// once (measured, D-048).
+fn reorder_arguments(impairments: &Impairments) -> Vec<String> {
+    impairments
+        .reorder
+        .map_or_else(Vec::new, |Reorder { share, gap }| {
+            let mut arguments = vec!["reorder".to_owned(), probability(share)];
+            if let Some(gap) = gap {
+                arguments.push("gap".to_owned());
+                arguments.push(gap.to_string());
+            }
+            arguments
+        })
+}
+
+/// `seed S`, if there is a seed.
+fn seed_arguments(seed: Option<u64>) -> Vec<String> {
+    seed.map_or_else(Vec::new, |seed| vec!["seed".to_owned(), seed.to_string()])
 }
 
 /// What a direction is told that asks for an impairment that this build of the backend does not apply yet.
-const NOT_BUILT: &str = "this loss model, reordering, duplication and corruption are built into the Kernel backend in step 4.2 of release 0.2 and are not applied yet";
+const NOT_BUILT: &str = "corruption is built into the Kernel backend in step 4.2 of release 0.2 together with the accounting that tells a corrupted packet from a lost one (D-040), and is not applied yet";
 
 /// The arguments of the rate: `rate Nbit`.
 fn rate_arguments(impairments: &Impairments) -> Vec<String> {
@@ -120,6 +183,10 @@ fn rate_arguments(impairments: &Impairments) -> Vec<String> {
 
 /// The qdiscs for the impairments of a direction, or `None` if it impairs nothing.
 ///
+/// `seed` is the seed of the direction. It goes to every qdisc that draws numbers the seed is to repeat: loss,
+/// duplication and corruption in the first, reordering in the one with the delay (the second, or the only one),
+/// the latter under a seed derived for the second stage. A delay with a jitter alone is not seeded (D-030).
+///
 /// # Errors
 ///
 /// Text if a value cannot be applied exactly.
@@ -127,32 +194,47 @@ pub(crate) fn arguments(
     impairments: &Impairments,
     seed: Option<u64>,
 ) -> Result<Option<Stages>, String> {
-    if impairments.reorder.is_some()
-        || impairments.duplicate.is_some()
-        || impairments.corrupt.is_some()
-    {
+    if impairments.corrupt.is_some() {
         return Err(NOT_BUILT.to_owned());
     }
-    if impairments.delay.is_none() && impairments.loss.is_none() && impairments.rate.is_none() {
+    if impairments.delay.is_none()
+        && impairments.loss.is_none()
+        && impairments.rate.is_none()
+        && impairments.duplicate.is_none()
+    {
         return Ok(None);
     }
     let jitter = impairments.jitter.as_ref();
     let limit = |packets: u64| vec!["limit".to_owned(), packets.to_string()];
-    if jitter.is_some() && impairments.rate.is_some() {
-        // The rate first, with the loss in front of it, then the delay with its jitter
+    let delay_limit = queue_limit(impairments.delay, jitter.map(|j| j.amount));
+    if impairments.rate.is_some() && (jitter.is_some() || impairments.reorder.is_some()) {
+        // The duplication, the loss and the rate first, then the delay with its jitter and the reordering
         let mut first = limit(LINK_QUEUE);
-        first.extend(loss_arguments(impairments, seed)?);
+        first.extend(loss_arguments(impairments));
+        first.extend(duplicate_arguments(impairments));
+        if impairments.loss.is_some() || impairments.duplicate.is_some() {
+            first.extend(seed_arguments(seed));
+        }
         first.extend(rate_arguments(impairments));
-        let mut second = limit(queue_limit(impairments.delay, jitter.map(|j| j.amount)));
+        let mut second = limit(delay_limit);
         second.extend(delay_arguments(impairments)?);
+        second.extend(reorder_arguments(impairments));
+        if impairments.reorder.is_some() {
+            second.extend(seed_arguments(seed.map(|seed| derive_stage_seed(seed, 1))));
+        }
         return Ok(Some(Stages {
             first,
             second: Some(second),
         }));
     }
-    let mut first = limit(queue_limit(impairments.delay, jitter.map(|j| j.amount)));
+    let mut first = limit(delay_limit);
     first.extend(delay_arguments(impairments)?);
-    first.extend(loss_arguments(impairments, seed)?);
+    first.extend(loss_arguments(impairments));
+    first.extend(duplicate_arguments(impairments));
+    first.extend(reorder_arguments(impairments));
+    if impairments.is_random() {
+        first.extend(seed_arguments(seed));
+    }
     first.extend(rate_arguments(impairments));
     Ok(Some(Stages {
         first,
@@ -311,5 +393,101 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("1500ns"), "{error}");
+    }
+
+    #[test]
+    fn the_burst_models_are_passed_with_the_meaning_that_s12_measured() {
+        // The third argument of `gemodel` is the loss in the bad state and the fourth the loss in the good one
+        assert_eq!(
+            text(
+                "{ loss: { model: gilbert-elliott, p: 1%, r: 20%, loss-bad: 100%, loss-good: 0% } }",
+                Some(5)
+            ),
+            "limit 1000 loss gemodel 1.000000% 20.000000% 100.000000% 0.000000% seed 5"
+        );
+        assert_eq!(
+            text(
+                "{ loss: { model: markov4, p13: 2%, p31: 30%, p32: 20%, p23: 10%, p14: 1% } }",
+                None
+            ),
+            "limit 1000 loss state 2.000000% 30.000000% 20.000000% 10.000000% 1.000000%"
+        );
+    }
+
+    #[test]
+    fn duplication_and_reordering_are_passed_and_seeded() {
+        assert_eq!(
+            text("{ duplicate: 20% }", Some(3)),
+            "limit 1000 duplicate 20.000000% seed 3"
+        );
+        assert_eq!(
+            text("{ delay: 10ms, reorder: { share: 25% } }", Some(3)),
+            "limit 2000 delay 10000us reorder 25.000000% seed 3"
+        );
+        assert_eq!(
+            text("{ delay: 10ms, reorder: { share: 25%, gap: 5 } }", None),
+            "limit 2000 delay 10000us reorder 25.000000% gap 5"
+        );
+        // A duplication alone is an impairment: it must not come out as nothing
+        assert!(
+            arguments(&impairments("{ duplicate: 1% }"), None)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    /// Reordering puts a packet at the head of the queue, past the rate, so with a rate it belongs behind it
+    /// (the measured reason is in the module). Duplication stays with the loss and the rate, and each
+    /// queue that draws numbers has a seed of its own.
+    #[test]
+    fn a_reordering_with_a_rate_is_built_from_two_qdiscs_and_each_has_its_own_seed() {
+        let (first, second) = two(
+            "{ delay: 10ms, loss: { model: random, p: 1% }, duplicate: 5%, reorder: { share: 25%, gap: 3 }, rate: 2mbit }",
+            Some(9),
+        );
+        assert_eq!(
+            first,
+            "limit 1000 loss random 1.000000% duplicate 5.000000% seed 9 rate 2000000bit"
+        );
+        let derived = derive_stage_seed(9, 1);
+        assert_eq!(
+            second,
+            format!("limit 2000 delay 10000us reorder 25.000000% gap 3 seed {derived}")
+        );
+        assert_ne!(derived, 9);
+        // the second queue draws no numbers that the seed is to repeat when it only delays
+        let (_, second) = two(
+            "{ delay: 20ms, jitter: { amount: 5ms }, duplicate: 5%, rate: 2mbit }",
+            Some(9),
+        );
+        assert_eq!(second, "limit 3500 delay 20000us 5000us");
+    }
+
+    /// Canary: a duplication is never in the second queue, where the copy would pass the loss and the rate
+    /// again, and a delay with a rate and no reordering keeps its one qdisc.
+    #[test]
+    fn duplication_is_not_built_into_the_second_qdisc() {
+        for both in [
+            "{ delay: 20ms, jitter: { amount: 5ms }, duplicate: 5%, rate: 2mbit }",
+            "{ delay: 20ms, reorder: { share: 50% }, duplicate: 5%, rate: 2mbit }",
+        ] {
+            let stages = arguments(&impairments(both), Some(1)).unwrap().unwrap();
+            let second = stages.second.expect("two qdiscs").join(" ");
+            assert!(!second.contains("duplicate"), "{second}");
+            assert!(stages.first.join(" ").contains("duplicate"), "{both}");
+        }
+        let stages = arguments(
+            &impairments("{ delay: 20ms, duplicate: 5%, rate: 2mbit }"),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(stages.second, None);
+    }
+
+    #[test]
+    fn corruption_is_refused_until_its_accounting_exists() {
+        let error = arguments(&impairments("{ corrupt: 1% }"), None).unwrap_err();
+        assert!(error.contains("corruption"), "{error}");
     }
 }

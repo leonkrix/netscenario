@@ -137,7 +137,7 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
     };
     need(Feature::PointToPoint, "topology".to_owned());
     need(Feature::Ipv4, "topology".to_owned());
-    let mut has_loss = false;
+    let mut has_random = false;
     for (index, link) in scenario.topology.links.iter().enumerate() {
         let base = format!("topology.links[{index}]");
         for (name, impairments) in [
@@ -162,8 +162,8 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
                     }
                 }
             }
+            has_random |= impairments.is_random();
             if let Some(loss) = &impairments.loss {
-                has_loss = true;
                 match loss {
                     Loss::Random { .. } => need(Feature::IndependentLoss, format!("{path}.loss")),
                     Loss::GilbertElliott { .. } | Loss::Markov4 { .. } => {
@@ -203,7 +203,7 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             WorkloadKind::Command => need(Feature::Program, format!("workloads[{index}]")),
         }
     }
-    if has_loss && scenario.seed.is_some() {
+    if has_random && scenario.seed.is_some() {
         need(Feature::SeededLoss, "seed".to_owned());
     }
     found
