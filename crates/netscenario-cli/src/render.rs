@@ -132,9 +132,16 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
     } else {
         String::new()
     };
+    // Without the UDP checksum a damaged packet arrives and is found by its CRC-32; it is lost to the stream all
+    // the same, so it is said where the loss is
+    let damaged = if workload.corrupted > 0 {
+        format!(", {} of them arrived damaged", workload.corrupted)
+    } else {
+        String::new()
+    };
     let _ = writeln!(
         text,
-        "  sent {}  received {}  lost {} ({:.2} %){reordered}",
+        "  sent {}  received {}  lost {} ({:.2} %{damaged}){reordered}",
         stats.sent,
         stats.received,
         stats.lost,
@@ -330,6 +337,17 @@ result: out/result.json
         assert!(
             summary(&result, Path::new("out"))
                 .contains("sent 625  received 620  lost 5 (0.80 %)  reordered 337")
+        );
+    }
+
+    #[test]
+    fn damaged_packets_are_said_where_the_loss_is_and_only_when_there_were_some() {
+        let mut result = result();
+        assert!(!summary(&result, Path::new("out")).contains("damaged"));
+        result.workloads[0].corrupted = 3;
+        assert!(
+            summary(&result, Path::new("out"))
+                .contains("lost 5 (0.80 %, 3 of them arrived damaged)")
         );
     }
 

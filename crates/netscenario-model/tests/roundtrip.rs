@@ -7,8 +7,9 @@
 use netscenario_model::{
     Backend, Change, Command, Direction, Duration, Edit, Event, FormatVersion, Impairments,
     ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, MAX_PACKET_SIZE,
-    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, Name, Probability, Rate, Ready, Reorder, Scenario,
-    Shutdown, Signal, Size, Topology, UdpCbr, Workload,
+    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM, Name, Probability,
+    Rate, Ready, Reorder, Scenario, Shutdown, Signal, Size, Topology, UdpCbr, UdpChecksum,
+    Workload,
 };
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -162,29 +163,43 @@ fn workload(index: usize, duration_nanos: u64) -> impl Strategy<Value = Workload
         any::<bool>(),
         0..duration_nanos,
         1..=duration_nanos,
+        any::<bool>(),
     )
-        .prop_map(move |(size, per_second, with_window, start, stop_part)| {
-            // The rate that gives exactly `per_second` packets of `size` bytes per second
-            let rate = Rate::from_bits_per_second(size * 8 * per_second).unwrap();
-            let (start, stop) = if with_window {
-                let stop = (start + 1 + stop_part % (duration_nanos - start)).min(duration_nanos);
-                (
-                    Some(Duration::from_nanos(start)),
-                    Some(Duration::from_nanos(stop)),
-                )
-            } else {
-                (None, None)
-            };
-            Workload::UdpCbr(UdpCbr {
-                id: Name::new(&format!("stream-{index}")).unwrap(),
-                from: Name::new("a").unwrap(),
-                to: Name::new("b").unwrap(),
-                rate,
-                packet_size: Size::from_bytes(size),
-                start,
-                stop,
-            })
-        })
+        .prop_map(
+            move |(size, per_second, with_window, start, stop_part, checksum_off)| {
+                // With the checksum off the packet carries a CRC-32 and needs four bytes more
+                let size = if checksum_off {
+                    size.max(MIN_PACKET_SIZE_WITHOUT_CHECKSUM)
+                } else {
+                    size
+                };
+                // The rate that gives exactly `per_second` packets of `size` bytes per second
+                let rate = Rate::from_bits_per_second(size * 8 * per_second).unwrap();
+                let (start, stop) = if with_window {
+                    let stop =
+                        (start + 1 + stop_part % (duration_nanos - start)).min(duration_nanos);
+                    (
+                        Some(Duration::from_nanos(start)),
+                        Some(Duration::from_nanos(stop)),
+                    )
+                } else {
+                    (None, None)
+                };
+                let mut workload = UdpCbr::new(
+                    Name::new(&format!("stream-{index}")).unwrap(),
+                    Name::new("a").unwrap(),
+                    Name::new("b").unwrap(),
+                    rate,
+                    Size::from_bytes(size),
+                );
+                workload.start = start;
+                workload.stop = stop;
+                if checksum_off {
+                    workload.udp_checksum = UdpChecksum::Off;
+                }
+                Workload::UdpCbr(workload)
+            },
+        )
 }
 
 /// A program of your own, with a way to be ready that the format accepts, placeholders for both nodes, an

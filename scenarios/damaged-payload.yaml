@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A link that flips bits, and a stream that does not use the checksum of UDP, as a program does that has its own
+# check or can live with a damaged payload (media with error concealment). With the checksum on, the receiver
+# would drop a corrupted packet and the program would see loss; with `udp-checksum: false` the damaged packet
+# arrives, and the result counts it as `corrupted` (docs/RESULTS.md). The packet carries a CRC-32 for that, so
+# the smallest payload is 20 bytes.
+version: 0
+name: damaged-payload
+seed: 5
+duration: 20s
+topology:
+  nodes: [camera, viewer]
+  links:
+    - id: radio
+      between: [camera, viewer]
+      forward:
+        delay: 30ms
+        corrupt: 2%
+workloads:
+  - id: video
+    kind: udp-cbr
+    from: camera
+    to: viewer
+    rate: 2mbit
+    packet-size: 1200b
+    udp-checksum: false

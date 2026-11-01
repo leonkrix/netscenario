@@ -40,6 +40,9 @@ pub enum Feature {
     LinkDownUp,
     /// The `udp-cbr` workload.
     UdpGenerators,
+    /// A `udp-cbr` workload without the checksum of UDP (`udp-checksum: false`), so that a corrupted packet
+    /// arrives and is counted.
+    UdpWithoutChecksum,
     /// A program of your own as a node (`kind: command`).
     Program,
     /// A `seed` is written in the file and the scenario has loss: the same seed must give the same lost packets.
@@ -64,6 +67,7 @@ impl Feature {
         Feature::Outages,
         Feature::LinkDownUp,
         Feature::UdpGenerators,
+        Feature::UdpWithoutChecksum,
         Feature::Program,
         Feature::SeededLoss,
     ];
@@ -87,6 +91,7 @@ impl Feature {
             Feature::Outages => "outages",
             Feature::LinkDownUp => "link-down-up",
             Feature::UdpGenerators => "udp-generators",
+            Feature::UdpWithoutChecksum => "udp-without-checksum",
             Feature::Program => "program",
             Feature::SeededLoss => "seeded-loss",
         }
@@ -111,6 +116,7 @@ impl Feature {
             Feature::Outages => "Outages",
             Feature::LinkDownUp => "Link down and up",
             Feature::UdpGenerators => "UDP traffic generators",
+            Feature::UdpWithoutChecksum => "UDP without checksum",
             Feature::Program => "Your program as a node",
             Feature::SeededLoss => "Same seed, same loss pattern",
         }
@@ -201,6 +207,15 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
         match workload.kind() {
             WorkloadKind::UdpCbr => need(Feature::UdpGenerators, format!("workloads[{index}]")),
             WorkloadKind::Command => need(Feature::Program, format!("workloads[{index}]")),
+        }
+        if workload
+            .as_udp_cbr()
+            .is_some_and(|workload| !workload.udp_checksum.is_on())
+        {
+            need(
+                Feature::UdpWithoutChecksum,
+                format!("workloads[{index}].udp-checksum"),
+            );
         }
     }
     if has_random && scenario.seed.is_some() {
@@ -323,6 +338,26 @@ mod tests {
         assert_eq!(at(Feature::ScheduledSteps), Some("timeline[1]"));
         // the first event that asks for it, down or up
         assert_eq!(at(Feature::LinkDownUp), Some("timeline[2]"));
+    }
+
+    /// A stream without the checksum of UDP needs a backend that can send one; a plain stream does not ask.
+    #[test]
+    fn a_workload_without_the_checksum_names_its_feature_and_its_place() {
+        let without = scenario(&format!(
+            "{HEAD}topology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\nworkloads:\n  - {{ id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b, udp-checksum: false }}\n"
+        ));
+        let found = requirements(&without);
+        let place = found
+            .iter()
+            .find(|r| r.feature == Feature::UdpWithoutChecksum)
+            .map(|r| r.path.as_str());
+        assert_eq!(place, Some("workloads[0].udp-checksum"));
+        // Canary: the plain workload, and one that writes the default, do not ask for it
+        assert!(!features(&with_link("", "")).contains(&Feature::UdpWithoutChecksum));
+        let explicit = scenario(&format!(
+            "{HEAD}topology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\nworkloads:\n  - {{ id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b, udp-checksum: true }}\n"
+        ));
+        assert!(!features(&explicit).contains(&Feature::UdpWithoutChecksum));
     }
 
     #[test]

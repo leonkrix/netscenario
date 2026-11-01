@@ -15,12 +15,14 @@ use netscenario_agent::receiver::{ReceiveConfig, Receiver};
 use netscenario_agent::records;
 use netscenario_agent::schedule::Stream;
 use netscenario_agent::sender::{SendConfig, run};
+use netscenario_agent::wire::{Header, UdpChecksum};
 
 fn receiver() -> Receiver {
     Receiver::bind(&ReceiveConfig {
         bind: ([127, 0, 0, 1], 0).into(),
         flow: 4,
         max_time_ns: Some(30_000_000_000),
+        udp_checksum: UdpChecksum::On,
     })
     .unwrap()
 }
@@ -48,6 +50,7 @@ fn what_the_sender_sent_is_what_the_receiver_recorded() {
         },
         duration_ns: 800_000_000,
         start_at_ns: None,
+        udp_checksum: UdpChecksum::On,
     })
     .unwrap();
     stop.store(true, Ordering::SeqCst);
@@ -107,6 +110,93 @@ fn a_foreign_datagram_is_counted_and_not_recorded() {
     assert_eq!(records::read(&file[..]).unwrap().records.len(), 0);
 }
 
+/// A receiver of a stream without the UDP checksum: a good packet of version 2 is recorded, a damaged one is
+/// counted as `corrupted` and not recorded, and nothing is counted as foreign, because a bit flipped in the
+/// header cannot be told from a stranger. The packets are made by hand and sent over an ordinary socket, so
+/// the test needs no capability; the sender of such a stream is tested in the namespaces of the Kernel backend.
+#[test]
+fn a_receiver_without_the_checksum_counts_a_damaged_packet_as_corrupted() {
+    let receiver = Receiver::bind(&ReceiveConfig {
+        bind: ([127, 0, 0, 1], 0).into(),
+        flow: 3,
+        max_time_ns: Some(30_000_000_000),
+        udp_checksum: UdpChecksum::Off,
+    })
+    .unwrap();
+    let target = receiver.local_addr().unwrap();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let recording = {
+        let stop = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let mut file = Vec::new();
+            let summary = receiver.run(&stop, &mut file).unwrap();
+            (summary, file)
+        })
+    };
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let packet = |sequence: u32| {
+        let mut payload = vec![0_u8; 200];
+        Header {
+            sequence,
+            send_ns: 1_000 + u64::from(sequence),
+        }
+        .write_v2(&mut payload);
+        payload
+    };
+    // Ten good packets
+    for sequence in 0..10 {
+        socket.send_to(&packet(sequence), target).unwrap();
+    }
+    // One flipped bit in the zeros, one in the sequence number, one in the magic, one in the CRC itself
+    for position in [150, 5, 0, 17] {
+        let mut damaged = packet(10);
+        damaged[position] ^= 0x04;
+        socket.send_to(&damaged, target).unwrap();
+    }
+    // A packet of version 1 and a stranger are not good packets either
+    let mut old = vec![0_u8; 200];
+    Header {
+        sequence: 11,
+        send_ns: 0,
+    }
+    .write(&mut old);
+    socket.send_to(&old, target).unwrap();
+    socket.send_to(b"short", target).unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    stop.store(true, Ordering::SeqCst);
+    let (seen, file) = recording.join().unwrap();
+    assert_eq!((seen.packets, seen.corrupted, seen.foreign), (10, 6, 0));
+    let records = records::read(&file[..]).unwrap().records;
+    let sequences: Vec<u64> = records.iter().map(|record| record.sequence).collect();
+    assert_eq!(sequences, (0..10).collect::<Vec<u64>>());
+}
+
+/// The same packets with the checksum on: a packet of version 2 is not one of version 1.
+#[test]
+fn a_receiver_with_the_checksum_does_not_take_a_packet_with_a_crc() {
+    let receiver = receiver();
+    let target = receiver.local_addr().unwrap();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let recording = {
+        let stop = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || receiver.run(&stop, Vec::new()).unwrap())
+    };
+    let mut payload = vec![0_u8; 200];
+    Header {
+        sequence: 0,
+        send_ns: 0,
+    }
+    .write_v2(&mut payload);
+    UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .send_to(&payload, target)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    stop.store(true, Ordering::SeqCst);
+    let seen = recording.join().unwrap();
+    assert_eq!((seen.packets, seen.corrupted, seen.foreign), (0, 0, 1));
+}
+
 #[test]
 fn a_sender_starts_at_the_moment_it_is_given() {
     let receiver = receiver();
@@ -122,6 +212,7 @@ fn a_sender_starts_at_the_moment_it_is_given() {
         },
         duration_ns: 10_000_000,
         start_at_ns: Some(start),
+        udp_checksum: UdpChecksum::On,
     })
     .unwrap();
     assert!(sent.first_send_ns.unwrap() >= start);
@@ -134,6 +225,7 @@ fn the_receiver_stops_by_itself_when_its_time_is_up() {
         bind: ([127, 0, 0, 1], 0).into(),
         flow: 0,
         max_time_ns: Some(200_000_000),
+        udp_checksum: UdpChecksum::On,
     })
     .unwrap();
     let began = Instant::now();

@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/udp-checksum-false-packet-too-small.yaml
+---
+error: the packet size 18 bytes is too small for `udp-checksum: false`: the packet then carries a CRC-32, and the smallest payload is 20 bytes
+  --> udp-checksum-false-packet-too-small.yaml:15:18
+   |
+14 |     rate: 1mbit
+15 |     packet-size: 18b
+   |                  ^^^
+   = path: workloads[0].packet-size
+   = help: use a payload of 20 bytes or more, or leave `udp-checksum` out (the checksum of UDP is then on, and the smallest payload is 16 bytes)

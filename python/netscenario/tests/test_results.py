@@ -119,6 +119,16 @@ def test_a_workload_without_arrivals_has_no_delay() -> None:
     assert media.delay is None
 
 
+def test_the_damaged_packets_of_a_stream_without_the_checksum_are_counted() -> None:
+    # A result of this program has the key; one from before the key was added has not, and means 0
+    assert result()["media"].corrupted == 0
+    data = json.loads(json.dumps(RESULT))
+    data["workloads"][0]["corrupted"] = 7
+    media = ns.Result.from_json(json.dumps(data), Path("/out"))["media"]
+    assert media.corrupted == 7
+    assert media.lost == 5, "a damaged packet is not an intact one: it stays in lost"
+
+
 def test_canary_a_file_that_is_not_a_result_or_of_another_version_is_refused() -> None:
     with pytest.raises(ValueError, match="not a netscenario result"):
         ns.Result.from_json('{"format": "something-else"}', Path())

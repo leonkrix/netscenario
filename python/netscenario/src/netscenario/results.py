@@ -127,6 +127,12 @@ class Workload:
     """The binary file of per-packet records (``docs/AGENT.md``)."""
     packets_file: Path | None
     """The JSON Lines file with a line for each packet, if it was asked for."""
+    corrupted: int = 0
+    """Datagrams that reached the receiver damaged, in a workload with ``udp_checksum=False``:
+    the CRC-32 of the packet did not match. They are not in ``received``, and they are in
+    ``lost``: ``lost - corrupted`` is what never arrived. Always 0 with the checksum on, where the
+    kernel drops a damaged packet and the ``directions`` entry of the node counts it
+    (``dropped_corrupted``)."""
 
     @property
     def delivery_ratio(self) -> float:
@@ -408,4 +414,5 @@ def _workload(entry: dict[str, Any], directory: Path) -> Workload:
         foreign_datagrams=int(entry["foreign_datagrams"]),
         records_file=directory / entry["records_file"],
         packets_file=None if entry["packets_file"] is None else directory / entry["packets_file"],
+        corrupted=int(entry.get("corrupted", 0)),
     )

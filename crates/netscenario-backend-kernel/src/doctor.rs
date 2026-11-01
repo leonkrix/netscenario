@@ -185,6 +185,15 @@ step corrupt "$2" qdisc replace dev np0 root netem limit 1000 corrupt 10% seed 1
 # the backend builds for a direction with a rate and a jitter or a reordering.
 step treeroot "$2" qdisc replace dev np0 root handle 1: netem limit 1000 duplicate 20% rate 1mbit
 step tree "$2" qdisc replace dev np0 parent 1:1 handle 2: netem limit 1000 delay 1000us 500us
+# A stream without the checksum of UDP is sent through a raw socket, which needs CAP_NET_RAW (capability 13).
+# The effective set of this shell is the one the agent gets: all of it in a user namespace, and in a run with the
+# rights of the process what the process has. The low 32 bits are enough: the capability is among them.
+caps=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)
+if [ -n "$caps" ] && [ $(( 0x${caps#????????} >> 13 & 1 )) = 1 ]; then
+  echo "ok rawsocket"
+else
+  echo "fail rawsocket CAP_NET_RAW is not among the effective capabilities of a node"
+fi
 "#;
 
 fn read_trimmed(path: &str) -> Option<String> {
@@ -598,6 +607,49 @@ fn kernel_checks(findings: &Findings, tc: &Tool, checks: &mut Vec<Check>) {
         &after_veth("tree"),
         not_tested,
     ));
+    checks.push(raw_socket_check(&step("rawsocket"), not_tested));
+}
+
+/// The capability that a stream without the checksum of UDP needs (`udp-checksum: false`): the sender writes
+/// the header of UDP itself, on a raw socket.
+fn raw_socket_check(outcome: &Outcome, not_tested: &str) -> Check {
+    let title = "raw socket in a node";
+    match outcome {
+        Some(Ok(())) => kernel(
+            "raw-socket",
+            title,
+            Status::Ok,
+            "a node has CAP_NET_RAW, so a stream can be sent without the checksum of UDP",
+            None,
+        ),
+        Some(Err(error)) => kernel(
+            "raw-socket",
+            title,
+            Status::Warn,
+            &format!(
+                "{error}; a workload with `udp-checksum: false` is refused by the run"
+            ),
+            Some("run netscenario as root, or with CAP_NET_RAW among the ambient capabilities (`setpriv --ambient-caps +net_raw`, `AmbientCapabilities=` in systemd), or in a user namespace, which has it".to_owned()),
+        ),
+        None => kernel("raw-socket", title, Status::Info, not_tested, None),
+    }
+}
+
+/// Whether a node of this machine has no `CAP_NET_RAW`, tried in a throwaway namespace with the same probe as
+/// `doctor`. `Some(answer)` if it has not; `None` if it has, or if the question cannot be answered (the probe cannot
+/// run): then the sender finds out for itself and its error names the capability.
+pub(crate) fn raw_socket_refusal(tools: &Toolbox, own_rights: bool) -> Option<String> {
+    let sh = find("sh")?;
+    let way = if own_rights {
+        Way::OwnRights
+    } else {
+        Way::UserNamespace
+    };
+    let steps = probe(way, &tools.unshare, &sh, &tools.ip, &tools.tc).ok()?;
+    match steps.iter().find(|step| step.name == "rawsocket")?.result {
+        Err(ref error) => Some(answer_of(error).to_owned()),
+        Ok(()) => None,
+    }
 }
 
 /// The loss models in bursts, the reordering, the duplication and the corruption: one qdisc each.
@@ -843,6 +895,7 @@ mod tests {
             "corrupt",
             "treeroot",
             "tree",
+            "rawsocket",
         ]
         .into_iter()
         .map(|name| Step {
@@ -934,6 +987,33 @@ mod tests {
         assert_eq!(status(&report, "models"), Status::Ok);
         // and the machine that accepts it says so
         assert_eq!(status(&assess(&good()), "duplicate-tree"), Status::Ok);
+    }
+
+    /// A node without `CAP_NET_RAW` is a warning that says what is lost, and the rest of the machine is fine.
+    #[test]
+    fn a_node_without_the_capability_for_a_raw_socket_is_a_warning_with_the_way_out() {
+        let mut findings = good();
+        findings.ways[0].outcome = Ok(steps(&[(
+            "rawsocket",
+            "CAP_NET_RAW is not among the effective capabilities of a node",
+        )]));
+        let report = assess(&findings);
+        let line = report.checks.iter().find(|c| c.id == "raw-socket").unwrap();
+        assert_eq!(line.status, Status::Warn);
+        assert!(
+            line.detail.contains("udp-checksum: false"),
+            "{}",
+            line.detail
+        );
+        assert!(
+            line.fix
+                .as_deref()
+                .is_some_and(|fix| fix.contains("net_raw")),
+            "{line:?}"
+        );
+        assert_eq!(status(&report, "models"), Status::Ok);
+        // and the machine that has it says so
+        assert_eq!(status(&assess(&good()), "raw-socket"), Status::Ok);
     }
 
     /// Canary: a model that the kernel refuses is named, and the others stay fine.

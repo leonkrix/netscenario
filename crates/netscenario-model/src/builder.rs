@@ -24,7 +24,8 @@ use std::collections::BTreeMap;
 use crate::error::Problem;
 use crate::scenario::{
     Backend, Change, Command, Direction, Event, FormatVersion, Impairments, Jitter,
-    JitterDistribution, Link, Loss, Reorder, Scenario, Topology, True, UdpCbr, Workload,
+    JitterDistribution, Link, Loss, Reorder, Scenario, Topology, True, UdpCbr, UdpChecksum,
+    Workload,
 };
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
@@ -329,15 +330,13 @@ impl ScenarioBuilder {
         let from = self.name_at(from, &format!("workloads[{index}].from"));
         let to = self.name_at(to, &format!("workloads[{index}].to"));
         if let (Some(id), Some(from), Some(to)) = (id, from, to) {
-            self.workloads.push(Workload::UdpCbr(UdpCbr {
+            self.workloads.push(Workload::UdpCbr(UdpCbr::new(
                 id,
                 from,
                 to,
                 rate,
                 packet_size,
-                start: None,
-                stop: None,
-            }));
+            )));
         }
         self
     }
@@ -383,6 +382,17 @@ impl ScenarioBuilder {
         if let Some(Workload::UdpCbr(workload)) = self.workloads.last_mut() {
             workload.start = Some(start);
             workload.stop = Some(stop);
+        }
+        self
+    }
+
+    /// Sends the packets of the last `udp-cbr` workload without the UDP checksum (`udp-checksum: false`), so that
+    /// a corrupted packet arrives and is counted (D-040). The packet size must then be at least
+    /// [`MIN_PACKET_SIZE_WITHOUT_CHECKSUM`](crate::MIN_PACKET_SIZE_WITHOUT_CHECKSUM).
+    #[must_use]
+    pub fn without_udp_checksum(mut self) -> Self {
+        if let Some(Workload::UdpCbr(workload)) = self.workloads.last_mut() {
+            workload.udp_checksum = UdpChecksum::Off;
         }
         self
     }

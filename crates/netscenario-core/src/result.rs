@@ -223,6 +223,14 @@ pub struct WorkloadResult {
     pub sender: SenderInfo,
     /// How many datagrams reached the receiver that were not packets of the agent.
     pub foreign_datagrams: u64,
+    /// How many datagrams reached the receiver damaged, in a workload with `udp-checksum: false`: the CRC-32 of
+    /// the packet did not match, or its header was not one. They are not in `received` and not in the delays,
+    /// and they are in `lost`, because a damaged packet is not an intact one; `lost` minus `corrupted` is what
+    /// never arrived. With the checksum on the kernel drops a damaged packet before the receiver sees it, so
+    /// this is always 0 there, and the packet is told apart from the others only per node, in `directions`
+    /// (`dropped_corrupted`).
+    #[serde(default)]
+    pub corrupted: u64,
     /// The file of per-packet records of the receiver (binary, see `docs/AGENT.md`), relative to the result.
     pub records_file: String,
     /// The JSON Lines file with one line for each packet, if it was asked for, relative to the result.
@@ -331,6 +339,7 @@ mod tests {
                     first_error: None,
                 },
                 foreign_datagrams: 0,
+                corrupted: 0,
                 records_file: "flow-0.records".to_owned(),
                 packets_file: None,
             }],
