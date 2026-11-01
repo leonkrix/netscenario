@@ -316,6 +316,23 @@ pub trait Backend {
         Ok(None)
     }
 
+    /// How many packets are in the queues of one direction of a link now: waiting for the rate, held back for the delay,
+    /// or on their way through any other stage (D-067). The run uses it after the workloads, to wait until the packets
+    /// that were sent have left the link, and not for a time it has to guess. A direction without a queue has none.
+    /// `None` if the backend cannot say, which is the default; the run then waits for a time worked out from the
+    /// delays of the scenario.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist or the queue cannot be read.
+    fn queue_backlog(
+        &mut self,
+        _link: LinkHandle,
+        _direction: Direction,
+    ) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
+
     /// What the node that receives in one direction of a link has counted (see [`NodeCounts`]). The run reads it
     /// before and after the workloads and accounts for every packet that was sent: lost in the queue,
     /// dropped by the node, or delivered (D-040). `None` if the backend cannot count, which is the default;

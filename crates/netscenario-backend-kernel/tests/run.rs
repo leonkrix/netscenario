@@ -796,3 +796,78 @@ fn two_workloads_in_a_lossy_direction_make_the_run_not_reproducible_and_the_queu
     assert_eq!(check.expected, sent);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A link with a rate holds the packets that are sent faster than it lets them go, and the run waits for them (D-067).
+/// 3 mbit of payload in packets of 1,000 bytes is 3.126 mbit of frames of 1,042 bytes; the link takes 2 mbit, so in 3 s
+/// it holds 3 x 1.126 = 3.38 mbit when the workload ends (324 packets, under the limit of 1,000), which takes 1.69 s
+/// to go. The default wait follows that, and no packet counts as lost. The wait that was set to 100 ms loses them,
+/// which is the defect that the default had.
+fn queue_scenario(link: &str) -> Scenario {
+    Scenario::from_yaml(
+        &format!(
+            "version: 0\nname: queue-test\nduration: 3s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n{link}workloads:\n  - {{ id: media, kind: udp-cbr, from: client, to: server, rate: 3mbit, packet-size: 1000b }}\n"
+        ),
+        "queue-test.yaml",
+    )
+    .unwrap()
+}
+
+#[test]
+fn the_default_wait_lasts_until_the_queue_of_a_rate_is_empty_and_no_packet_counts_as_lost() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    // One queue, and two queues (a rate with a jitter): the count of the root must include the one behind it
+    for (name, link) in [
+        ("one", "      forward: { delay: 20ms, rate: 2mbit }\n"),
+        (
+            "two",
+            "      forward: { delay: 20ms, jitter: { amount: 2ms }, rate: 2mbit }\n",
+        ),
+    ] {
+        let dir = work_dir(&format!("run-queue-{name}"));
+        let mut backend = backend(|_| {});
+        let result = run(&mut backend, &queue_scenario(link), &options(&dir, false)).unwrap();
+        let media = &result.workloads[0];
+        assert_eq!(media.stats.sent, 1125);
+        assert_eq!(
+            media.stats.lost, 0,
+            "{name}: packets that were in the queue counted as lost"
+        );
+        let settle = Duration::from_nanos(result.timing.settle_ns);
+        // At least the 1.69 s that the queue needs (a little less allowed for the packets it had sent already), and
+        // not much more: the grace of 0.3 s, the looks of 50 ms and what the machine adds
+        assert!(
+            settle >= Duration::from_millis(1600) && settle < Duration::from_millis(4500),
+            "{name}: waited {settle:?}"
+        );
+        assert!(result.notes.is_empty(), "{:?}", result.notes);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// Canary for the test above: with the wait set to 100 ms the same run loses the packets that are still in the queue,
+/// so the test above cannot pass by there being no queue.
+#[test]
+fn canary_a_short_set_wait_loses_the_packets_that_are_still_in_the_queue() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("run-queue-short");
+    let mut backend = backend(|_| {});
+    let mut options = options(&dir, false);
+    options.settle = Some(Duration::from_millis(100));
+    let result = run(
+        &mut backend,
+        &queue_scenario("      forward: { delay: 20ms, rate: 2mbit }\n"),
+        &options,
+    )
+    .unwrap();
+    // 324 packets were in the queue when the workload ended; the 100 ms let go 12 of them
+    assert!(
+        result.workloads[0].stats.lost > 250,
+        "{} lost",
+        result.workloads[0].stats.lost
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

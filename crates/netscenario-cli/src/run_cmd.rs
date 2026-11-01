@@ -28,7 +28,7 @@ that it creates is touched, and everything is removed afterwards, also after an 
   --out <dir>          where to write the result (default: netscenario-results/<name>-<time>)
   --seed <n>           use this seed instead of the one in the file (to repeat a run that drew its own)
   --settle <duration>  how long to wait after the last packet for the packets still in the network
-                       (for example 2s; default: one second and twice the longest delay)
+                       (for example 2s; default: until the queues of the links are empty, and 0.3 s more)
   --packets            also write one line of JSON for each packet of each workload
   --json               print result.json on standard output instead of the summary
 

@@ -236,7 +236,8 @@ pub struct AddressInfo {
 pub struct Timing {
     /// The length of the measured phase in the scenario, in nanoseconds.
     pub duration_ns: u64,
-    /// How long the run waited after the last packet was sent for the packets still in the network. A packet
+    /// How long the run waited after the last packet was sent for the packets still in the network. The wait that
+    /// was set, or, without one, the time the queues of the links needed to empty and 300 ms more (D-067). A packet
     /// that needs longer counts as lost.
     pub settle_ns: u64,
     /// If the run was interrupted while the workloads ran (D-066): how long after the start of the measured phase the

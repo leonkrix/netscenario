@@ -74,6 +74,11 @@ pub(crate) enum Request {
     },
     /// What the node at the receiving end of one direction has counted: the frames of the interface and the
     /// datagrams dropped for a full buffer.
+    /// How many packets are in the queues of a direction now (D-067).
+    QueueBacklog {
+        link: u32,
+        direction: Way,
+    },
     NodeCounts {
         link: u32,
         direction: Way,
@@ -190,6 +195,10 @@ mod tests {
             },
             Request::Teardown,
             Request::SetLink { link: 0, up: false },
+            Request::QueueBacklog {
+                link: 0,
+                direction: Way::Reverse,
+            },
             Request::Notes,
         ] {
             let text = serde_json::to_string(&request).unwrap();

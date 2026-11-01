@@ -57,9 +57,10 @@ pub struct RunOptions {
     /// The directory for the result and the files that belong to it. It is created if it does not exist, and
     /// the agents in the nodes write into it, so it must be a directory that they can write to.
     pub out_dir: PathBuf,
-    /// How long to wait after the last packet was sent for the packets still in the network. Without it:
-    /// one second and twice the longest delay of the scenario with four times its jitter. A packet that
-    /// needs longer counts as lost.
+    /// How long to wait after the last packet was sent for the packets still in the network. Without it the run
+    /// waits until the queues of the links are empty and then 300 ms for the receivers to read (D-067), at most two
+    /// minutes; a backend that cannot count the packets in its queues gets one second and twice the longest delay of
+    /// the scenario with four times its jitter. With it, that long: a packet that needs longer counts as lost.
     pub settle: Option<Duration>,
     /// Whether to write the JSON Lines file with one line for each packet of each workload.
     pub export_packets: bool,
@@ -965,19 +966,7 @@ fn measure(
     control.workloads_done();
 
     // The packets that are still in the network arrive before the receivers are told to stop
-    let settle = options
-        .settle
-        .unwrap_or_else(|| Duration::from_secs(1) + longest_hold(scenario) * 2);
-    control.emit(&RunEvent::Settling { wait: settle });
-    let settled = Instant::now() + settle;
-    loop {
-        control.checkpoint()?;
-        let left = settled.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            break;
-        }
-        std::thread::sleep(left.min(Duration::from_millis(100)));
-    }
+    let (settle, settle_note) = settle(backend, scenario, provisioned, options, control)?;
     // After the wait, every packet has passed its queue; the receivers still run and the network still stands
     let queue_checks = check_queues(backend, scenario, provisioned, &flows, &sent)?;
     let after = node_counts(backend, scenario, provisioned)?;
@@ -991,10 +980,116 @@ fn measure(
         queue_checks,
         directions,
         events,
-        notes: backend.notes(),
+        notes: backend.notes().into_iter().chain(settle_note).collect(),
         interrupted_ns,
         clock_reasons: plan.reasons,
     })
+}
+
+/// How long the run gives the receivers, after the queues are empty, to read the packets that the links let go.
+const DRAIN_GRACE: Duration = Duration::from_millis(300);
+
+/// How often the run looks at the queues while it waits for them to empty.
+const DRAIN_POLL: Duration = Duration::from_millis(50);
+
+/// The longest the run waits for the queues to empty when the wait is not set. A queue that takes longer is a queue of
+/// a rate so low or a limit so high that the packets in it are the point of the scenario: set the wait.
+const DRAIN_CEILING: Duration = Duration::from_secs(120);
+
+/// Waits for the packets that are still in the network, and returns how long it waited, and a sentence if the wait
+/// ended with packets in the queues (D-067).
+///
+/// With a wait that is set (`options.settle`) it is that long. Without one the run waits until the queues of the links
+/// are empty and then [`DRAIN_GRACE`], because a link with a rate holds the packets that are sent faster than it
+/// lets them go for as long as that takes, and a packet that is still in the queue when the receivers stop counts as
+/// lost although it is not. A backend that cannot count the packets in its queues gets the time that follows from the
+/// delays of the scenario: one second and twice the longest hold.
+fn settle(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+    options: &RunOptions,
+    control: &Control<'_>,
+) -> Result<(Duration, Option<String>), Error> {
+    settle_with(
+        backend,
+        scenario,
+        provisioned,
+        options,
+        control,
+        DRAIN_CEILING,
+    )
+}
+
+/// [`settle`] with the longest wait for the queues given, so that a test can reach it.
+fn settle_with(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+    options: &RunOptions,
+    control: &Control<'_>,
+    ceiling: Duration,
+) -> Result<(Duration, Option<String>), Error> {
+    let estimate = options
+        .settle
+        .unwrap_or_else(|| Duration::from_secs(1) + longest_hold(scenario) * 2);
+    control.emit(&RunEvent::Settling { wait: estimate });
+    let began = Instant::now();
+    let wait_until = |moment: Instant| -> Result<(), Error> {
+        loop {
+            control.checkpoint()?;
+            let left = moment.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Ok(());
+            }
+            std::thread::sleep(left.min(Duration::from_millis(100)));
+        }
+    };
+    if options.settle.is_some() {
+        wait_until(began + estimate)?;
+        return Ok((estimate, None));
+    }
+    let mut empty_since: Option<Instant> = None;
+    loop {
+        control.checkpoint()?;
+        let Some(backlog) = backlog(backend, scenario, provisioned)? else {
+            // The backend cannot say: the time that the delays give
+            wait_until(began + estimate)?;
+            return Ok((began.elapsed(), None));
+        };
+        if backlog == 0 {
+            let since = *empty_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= DRAIN_GRACE {
+                return Ok((began.elapsed(), None));
+            }
+        } else {
+            empty_since = None;
+            if began.elapsed() >= ceiling {
+                let note = format!(
+                    "the wait for the queues to empty ended after {:.0} s with {backlog} packets still in them; they count as lost. Set the wait (`--settle`) to a longer time if they are not lost",
+                    ceiling.as_secs_f64()
+                );
+                return Ok((began.elapsed(), Some(note)));
+            }
+        }
+        std::thread::sleep(DRAIN_POLL);
+    }
+}
+
+/// The packets in the queues of all directions of all links, or `None` if the backend cannot say for one of them.
+fn backlog(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+) -> Result<Option<u64>, Error> {
+    let mut total = 0_u64;
+    for way in ways(scenario, provisioned) {
+        let Some(packets) = backend.queue_backlog(way.handle, way.direction)? else {
+            return Ok(None);
+        };
+        total += packets;
+    }
+    Ok(Some(total))
 }
 
 /// Stops the receivers one after the other and reads what each of them recorded, with what its sender said.
@@ -1325,6 +1420,9 @@ mod tests {
         wire_packets: Option<u64>,
         /// The barriers the senders were started with, as (packet, id).
         barriers: Vec<(u64, u32)>,
+        /// How many packets the queue of the forward direction holds at each look after the workloads (D-067); then
+        /// it is `last` for ever. `None`: the fake cannot say.
+        backlog: Option<(VecDeque<u64>, u64)>,
     }
 
     struct Played {
@@ -1349,7 +1447,15 @@ mod tests {
                 damaged: 0,
                 wire_packets: None,
                 barriers: Vec::new(),
+                backlog: None,
             }
+        }
+
+        /// A fake whose forward queue holds `script` packets at the looks after the workloads, and `last` after that.
+        fn with_backlog(script: &[u64], last: u64) -> Self {
+            let mut fake = Self::new(None);
+            fake.backlog = Some((script.iter().copied().collect(), last));
+            fake
         }
 
         /// What the fake sender does: it asks for each of its barriers, and its summary says how long it waited.
@@ -1501,6 +1607,21 @@ mod tests {
             Ok(self.counts.map(|counts| match direction {
                 Direction::Forward => counts[0],
                 Direction::Reverse => counts[1],
+            }))
+        }
+
+        fn queue_backlog(
+            &mut self,
+            _: LinkHandle,
+            direction: Direction,
+        ) -> Result<Option<u64>, Error> {
+            let Some((script, last)) = &mut self.backlog else {
+                return Ok(None);
+            };
+            // The look is the one of the forward direction; the reverse has no queue
+            Ok(Some(match direction {
+                Direction::Forward => script.pop_front().unwrap_or(*last),
+                Direction::Reverse => 0,
             }))
         }
 
@@ -2114,6 +2235,75 @@ mod tests {
                 .any(|why| why.contains("barriers are switched off")),
             "{because:?}"
         );
+    }
+
+    /// Without a wait that is set, the run waits until the queues are empty and then for the receivers to read (D-067):
+    /// the fake queue holds 5, 3 and 1 packets at the first three looks and none after that, so the wait is the three
+    /// looks and the grace, far less than the second and more that the delays give. It does not stop at the first
+    /// empty look when a packet comes back (a queue that is empty for a moment).
+    #[test]
+    fn the_run_waits_until_the_queues_are_empty_and_then_for_the_grace() {
+        let mut backend = Fake::with_backlog(&[5, 3, 1, 0, 2], 0);
+        let mut options = options("settle-drain");
+        options.settle = None;
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        let waited = Duration::from_nanos(result.timing.settle_ns);
+        // Five looks of 50 ms with the last two apart, then 300 ms of empty queue
+        assert!(
+            waited >= Duration::from_millis(5 * 50 + 300 - 100),
+            "{waited:?}"
+        );
+        assert!(waited < Duration::from_millis(1000), "{waited:?}");
+        assert!(result.notes.is_empty(), "{:?}", result.notes);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Canaries: a backend that cannot count the packets in its queues gets the time that the delays give (one second
+    /// and twice the longest hold), and a wait that is set is that long whatever the queues say.
+    #[test]
+    fn a_backend_that_cannot_count_gets_the_time_of_the_delays_and_a_set_wait_is_kept() {
+        let mut backend = Fake::new(None);
+        let mut options = options("settle-estimate");
+        options.settle = None;
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        // The scenario has a delay of 20 ms: 1 s and twice 20 ms
+        assert_eq!(result.timing.settle_ns / 1_000_000, 1040);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+
+        let mut backend = Fake::with_backlog(&[], 7);
+        let mut options = self::options("settle-set");
+        options.settle = Some(Duration::from_millis(150));
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        assert_eq!(result.timing.settle_ns, 150_000_000);
+        assert_eq!(result.notes, Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// A queue that does not empty ends the wait at the ceiling, and the result says how many packets were left.
+    #[test]
+    fn a_queue_that_does_not_empty_ends_the_wait_at_the_ceiling_and_the_result_says_so() {
+        let mut backend = Fake::with_backlog(&[], 7);
+        let mut options = options("settle-ceiling");
+        options.settle = None;
+        let scenario = scenario();
+        let provisioned = provision(&mut backend, &scenario).unwrap();
+        let control = Control::new(&options);
+        let (waited, note) = settle_with(
+            &mut backend,
+            &scenario,
+            &provisioned,
+            &options,
+            &control,
+            Duration::from_millis(400),
+        )
+        .unwrap();
+        assert!(
+            waited >= Duration::from_millis(400) && waited < Duration::from_secs(2),
+            "{waited:?}"
+        );
+        let note = note.expect("a note");
+        assert!(note.contains("7 packets still in them"), "{note}");
+        let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 
     /// A cancel that keeps the result (D-066): the senders are told to stop, the run goes on through the settling and
