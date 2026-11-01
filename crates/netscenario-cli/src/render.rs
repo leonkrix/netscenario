@@ -72,12 +72,40 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
         workload_text(&mut text, workload);
     }
     directions_text(&mut text, result);
+    events_text(&mut text, result);
     let _ = writeln!(text, "\nresult: {}", out_dir.join("result.json").display());
     text
 }
 
 /// Where the packets of a direction went, for each direction in which the receiving node dropped some. A
 /// direction without such drops is not listed: the loss of the workload is the whole story there (D-040).
+/// What the run did to the links while it ran (the timeline): one line for each step, with how late it was.
+fn events_text(text: &mut String, result: &RunResult) {
+    if result.events.is_empty() {
+        return;
+    }
+    let _ = writeln!(text, "\ntimeline");
+    for event in &result.events {
+        let late = event.applied_ns.saturating_sub(event.scheduled_ns);
+        let _ = writeln!(
+            text,
+            "  at {}  link {} {}  {}  done {} late",
+            seconds(event.scheduled_ns),
+            event.link,
+            event.direction.as_deref().unwrap_or("both ways"),
+            event.kind,
+            ms(late)
+        );
+    }
+}
+
+/// Seconds with the decimals they need, from nanoseconds.
+fn seconds(ns: u64) -> String {
+    #[allow(clippy::cast_precision_loss)] // moments are far below 2^52 nanoseconds
+    let value = ns as f64 / 1e9;
+    format!("{value:.3} s")
+}
+
 fn directions_text(text: &mut String, result: &RunResult) {
     for tally in result
         .directions
@@ -414,6 +442,29 @@ result: out/result.json
         assert!(
             summary(&result, Path::new("out"))
                 .contains("sent 625  received 620  lost 5 (0.80 %)  reordered 337")
+        );
+    }
+
+    #[test]
+    fn the_steps_of_the_timeline_are_listed_with_how_late_they_were_and_only_when_there_are_some() {
+        let result = result();
+        assert!(!summary(&result, Path::new("out")).contains("timeline"));
+        let mut json = serde_json::to_value(&result).unwrap();
+        json["events"] = serde_json::json!([
+            {"event": 0, "kind": "set", "link": "access", "direction": "forward",
+             "scheduled_ns": 3_000_000_000_u64, "started_ns": 3_000_100_000_u64, "applied_ns": 3_001_900_000_u64},
+            {"event": 1, "kind": "down", "link": "access", "direction": null,
+             "scheduled_ns": 5_000_000_000_u64, "started_ns": 5_000_000_000_u64, "applied_ns": 5_000_400_000_u64}
+        ]);
+        let result = RunResult::from_json(&json.to_string()).unwrap();
+        let text = summary(&result, Path::new("out"));
+        assert!(
+            text.contains("at 3.000 s  link access forward  set  done 1.9 ms late"),
+            "{text}"
+        );
+        assert!(
+            text.contains("at 5.000 s  link access both ways  down  done 0.4 ms late"),
+            "{text}"
         );
     }
 

@@ -65,6 +65,47 @@ def test_the_observer_hears_the_phases_in_order() -> None:
     assert (first.nodes, first.links) == (2, 1)
 
 
+TIMELINE = """
+version: 0
+name: py-timeline
+duration: 2s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward: { delay: 10ms, rate: 4mbit }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }
+timeline:
+  - { at: 500ms, link: access, set: { forward: { delay: 30ms } } }
+"""
+
+
+def test_a_step_of_the_timeline_is_in_the_result_and_the_observer_hears_it(tmp_path: Path) -> None:
+    events: list[RunEvent] = []
+    run = ns.run(
+        ns.Scenario.from_yaml(TIMELINE),
+        out=tmp_path / "out",
+        settle=0.3,
+        observer=events.append,
+    )
+    (step,) = run.steps
+    assert (step.event, step.kind, step.link, step.direction) == (0, "set", "access", "forward")
+    assert step.scheduled == pytest.approx(0.5)
+    assert 0.0 <= step.lateness < 0.05, "never early, and 50 ms is room for a busy machine"
+    heard = [e for e in events if isinstance(e, ns.events.StepDone)]
+    assert [e.event for e in heard] == [0]
+    assert 0.0 <= heard[0].lateness < 0.05
+    names = [type(event).__name__ for event in events]
+    assert names.index("Started") < names.index("StepDone") < names.index("Settling")
+    # The delay of the packets went from 10 to 30 ms at half a second: both are in the run
+    media = run["media"]
+    assert media.delay is not None
+    assert media.delay.min >= 0.010
+    assert media.delay.max >= 0.030
+
+
 def test_the_same_seed_loses_the_same_packets(tmp_path: Path) -> None:
     lossy = scenario(link=ns.Impairments(loss="20%"), seed=42)
 

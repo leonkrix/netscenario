@@ -81,6 +81,7 @@ Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`,
 | `result.seed.value`, `.drawn`, `.loss_reproducible` | the seed, and whether the loss can be repeated |
 | `result.seed.queue_checks` | for each direction with loss, the packets its queue counted against the packets the workloads sent (`.link`, `.direction`, `.expected`, `.counted`, `.agrees`) |
 | `result.directions` | for each direction that carried a workload, where its packets went (`.link`, `.direction`, `.sent`, `.reached_node`, `.delivered`, `.lost_in_queue`, `.dropped_corrupted`, `.receive_buffer_drops`): lost in the queue, or dropped by the receiving node as damaged ([RESULTS.md](RESULTS.md)) |
+| `result.steps` | what the run did to the links, in order: `.event`, `.kind`, `.link`, `.direction`, `.scheduled`, `.started`, `.applied` in seconds, and `.lateness` (never negative); empty without a timeline |
 | `result.provenance` | netscenario version, time, backend and its details, kernel, processor |
 | `result.raw` | the decoded `result.json`, unchanged |
 
@@ -111,7 +112,7 @@ token = ns.CancelToken()
 result = ns.run(scenario, observer=show, cancel=token)   # token.cancel() from any thread stops it
 ```
 
-The events are `Provisioned`, `ReceiversReady`, `Started`, `Progress` (once a second), `Settling`, `Collecting`, `TearingDown` and `Finished` ([ARCHITECTURE.md](ARCHITECTURE.md), "Watching and stopping a run"). An exception in the observer stops the run and is raised.
+The events are `Provisioned`, `ReceiversReady`, `Started`, `Progress` (once a second), `Settling`, `Collecting`, `TearingDown` and `Finished`, and a `StepDone` (the event of the timeline and how late it was) for each step of a timeline, between `Started` and `Settling` ([ARCHITECTURE.md](ARCHITECTURE.md), "Watching and stopping a run"). An exception in the observer stops the run and is raised.
 
 `ns.run` blocks, but it gives up the GIL and looks for interrupts every 100 ms. **Ctrl-C** (`KeyboardInterrupt`) and `pytest-timeout` stop the run: the network is torn down first, then the interrupt is raised. A run cannot be left behind: everything runs in a PID namespace that the kernel ends when the run's supervisor dies (D-022).
 

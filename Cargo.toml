@@ -58,3 +58,14 @@ unimplemented = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
 module_name_repetitions = "allow"
+
+# The agent is the instrument of every measurement (D-008). In a test build it runs in the nodes beside the network
+# that it measures, and an unoptimised one is slow enough to matter: the receiver of a stream of 4,000 packets of
+# 1,200 bytes a second took half a core and the sender most of one, so on a shared runner the case of the fidelity
+# tests with the most work lost packets in the receiver and once ran past the watchdog of 30 seconds (D-061). The
+# agent and `rustix`, which makes its system calls, are therefore optimised in the development profile too.
+[profile.dev.package.netscenario-agent]
+opt-level = 3
+
+[profile.dev.package.rustix]
+opt-level = 3

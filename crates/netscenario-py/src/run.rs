@@ -97,6 +97,11 @@ fn event_to_python<'py>(
         RunEvent::Collecting => "collecting",
         RunEvent::TearingDown => "tearing_down",
         RunEvent::Finished => "finished",
+        RunEvent::StepDone { event, lateness } => {
+            fields.set_item("event", event)?;
+            fields.set_item("lateness", lateness.as_secs_f64())?;
+            "step_done"
+        }
         // An event of a later version of the core that this module does not know
         _ => "unknown",
     };

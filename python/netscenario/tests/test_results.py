@@ -185,6 +185,38 @@ def test_the_patterns_of_the_arrivals_are_in_seconds_and_a_result_without_them_m
     assert [(b.length, b.runs) for b in media.loss_runs.histogram] == [(1, 2), (2, 1)]
 
 
+def test_the_steps_of_the_timeline_are_read_in_seconds_and_none_means_no_timeline() -> None:
+    assert result().steps == ()
+    data = json.loads(json.dumps(RESULT))
+    data["events"] = [
+        {
+            "event": 0,
+            "kind": "set",
+            "link": "access",
+            "direction": "forward",
+            "scheduled_ns": 3_000_000_000,
+            "started_ns": 3_000_100_000,
+            "applied_ns": 3_001_900_000,
+        },
+        {
+            "event": 1,
+            "kind": "down",
+            "link": "access",
+            "direction": None,
+            "scheduled_ns": 5_000_000_000,
+            "started_ns": 4_999_999_000,
+            "applied_ns": 4_999_999_500,
+        },
+    ]
+    first, second = ns.Result.from_json(json.dumps(data), Path("/out")).steps
+    assert (first.kind, first.link, first.direction) == ("set", "access", "forward")
+    assert first.scheduled == pytest.approx(3.0)
+    assert first.lateness == pytest.approx(0.0019)
+    # A step is never early: a reading a little before its moment gives 0 and not a negative number
+    assert second.direction is None
+    assert second.lateness == 0.0
+
+
 def test_canary_a_file_that_is_not_a_result_or_of_another_version_is_refused() -> None:
     with pytest.raises(ValueError, match="not a netscenario result"):
         ns.Result.from_json('{"format": "something-else"}', Path())

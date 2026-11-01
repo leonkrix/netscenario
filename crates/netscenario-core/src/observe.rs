@@ -73,6 +73,15 @@ pub enum RunEvent {
     TearingDown,
     /// The run is done and its result is written. Not reported after an error or a cancel.
     Finished,
+    /// A step of the timeline was done: an impairment of a link changed. Reported while the workloads run, between
+    /// [`RunEvent::Started`] and [`RunEvent::Settling`]. It is the last variant so that the numbers of the others do not
+    /// change (`cargo-semver-checks` compares them even for a variant with fields).
+    StepDone {
+        /// The place of the event in `timeline`.
+        event: usize,
+        /// How late it was, from the moment the file gives to the moment the backend had done it.
+        lateness: Duration,
+    },
 }
 
 /// Someone who wants to know how a run is going.

@@ -20,6 +20,7 @@ use netscenario_model::{Impairments, Scenario, UdpCbr, Workload};
 use crate::backend::{
     Backend, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramHandle,
 };
+use crate::drive;
 use crate::error::Error;
 use crate::export::write_packets_marked;
 use crate::hash::sha256_hex;
@@ -27,10 +28,11 @@ use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
 use crate::provision::{Provisioned, impairments_of, provision};
 use crate::result::{
-    AcceptedRestriction, AddressInfo, DirectionTally, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
-    RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
+    AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, QueueCheck, RESULT_FORMAT,
+    RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
 };
 use crate::stats::analyse;
+use crate::timeline;
 
 /// The port of the first workload; the next uses the next port.
 const BASE_PORT: u16 = 5000;
@@ -128,7 +130,7 @@ struct Workloads {
 }
 
 /// What a run looks at between its steps: whether it was cancelled, who is watching, and the progress.
-struct Control<'a> {
+pub(crate) struct Control<'a> {
     cancel: &'a CancelToken,
     observer: Option<&'a dyn RunObserver>,
     workloads: RefCell<Option<Workloads>>,
@@ -143,7 +145,7 @@ impl<'a> Control<'a> {
         }
     }
 
-    fn emit(&self, event: &RunEvent) {
+    pub(crate) fn emit(&self, event: &RunEvent) {
         if let Some(observer) = self.observer {
             observer.event(event);
         }
@@ -151,7 +153,7 @@ impl<'a> Control<'a> {
 
     /// Called in every loop that waits and between the steps: stops the run if it was cancelled, and reports
     /// the progress of the workloads once a second.
-    fn checkpoint(&self) -> Result<(), Error> {
+    pub(crate) fn checkpoint(&self) -> Result<(), Error> {
         if self.cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
@@ -198,7 +200,7 @@ impl<'a> Control<'a> {
     }
 }
 
-fn failure(action: impl Into<String>, message: impl Into<String>) -> Error {
+pub(crate) fn failure(action: impl Into<String>, message: impl Into<String>) -> Error {
     Error::Run {
         action: action.into(),
         message: message.into(),
@@ -250,6 +252,7 @@ struct Measurement {
     settle: Duration,
     queue_checks: Vec<QueueCheck>,
     directions: Vec<DirectionTally>,
+    events: Vec<EventRecord>,
 }
 
 /// Runs `scenario` with `backend` and returns the result, which is also written to `result.json` in
@@ -290,6 +293,7 @@ pub fn run(
         settle,
         queue_checks,
         directions,
+        events,
     } = measured?;
     torn_down?;
 
@@ -352,6 +356,7 @@ pub fn run(
         },
         workloads,
         directions,
+        events,
     };
     let path = options.out_dir.join("result.json");
     std::fs::write(&path, result.to_json())
@@ -384,6 +389,12 @@ fn not_reproducible_because(
             .flatten()
             .any(|impairments| impairments.corrupt.is_some())
     });
+    if timeline::changes_what_is_drawn(scenario) {
+        reasons.push(
+            "the timeline changes what a queue draws random numbers for (the loss, an outage, the duplication, the corruption or the reordering), and the run applies a step by the clock: it lands before a different packet in every run, so the lost packets of one seed differ from there on (the barrier of the sender, which fixes this, is not built yet)"
+                .to_owned(),
+        );
+    }
     if corrupts {
         reasons.push(
             "the scenario corrupts packets: the seed fixes which packets are corrupted, but not where `netem` flips the bit, and a bit in the source address of the Ethernet header harms nothing, so a few corrupted packets arrive in one run and are dropped in another (the packets lost in the queue are the same)"
@@ -637,7 +648,7 @@ fn wait_for_end(
     }
 }
 
-fn event(line: &str, what: &str) -> Result<Event, Error> {
+pub(crate) fn event(line: &str, what: &str) -> Result<Event, Error> {
     serde_json::from_str(line).map_err(|error| {
         failure(
             what,
@@ -772,20 +783,25 @@ fn measure(
         .max()
         .unwrap_or(Duration::ZERO);
     control.workloads_started(begin_at, latest_end);
-    let deadline = Instant::now() + START_MARGIN + latest_end + END_MARGIN;
-    let mut sent = Vec::new();
-    for (program, what) in &senders {
-        let lines = wait_for_end(backend, *program, deadline, what, control)?;
-        match lines.last().map(|line| event(line, what)).transpose()? {
-            Some(Event::Sent(summary)) => sent.push(summary),
-            other => {
-                return Err(failure(
-                    what.clone(),
-                    format!("the sender should end with 'sent', it said {other:?}"),
-                ));
-            }
-        }
-    }
+    // The events are part of the scenario up to its end, also where every workload has stopped before
+    let run_for = latest_end.max(Duration::from(scenario.duration));
+    let deadline = Instant::now() + START_MARGIN + run_for + END_MARGIN;
+    let steps = timeline::steps(scenario);
+    let driven = drive::drive(
+        backend,
+        scenario,
+        provisioned,
+        &senders,
+        &steps,
+        drive::Begin {
+            at: begin_at,
+            ns: begin,
+        },
+        deadline,
+        control,
+    )?;
+    let sent = driven.sent;
+    let events = driven.events;
     control.workloads_done();
 
     // The packets that are still in the network arrive before the receivers are told to stop
@@ -814,6 +830,7 @@ fn measure(
         settle,
         queue_checks,
         directions,
+        events,
     })
 }
 
@@ -1215,6 +1232,26 @@ mod tests {
             _: Option<u64>,
         ) -> Result<(), Error> {
             self.calls.push("apply".to_owned());
+            Ok(())
+        }
+
+        fn change(
+            &mut self,
+            _: LinkHandle,
+            direction: Direction,
+            impairments: &Impairments,
+        ) -> Result<(), Error> {
+            if self.trouble == Some("change-fails") {
+                return Err(Error::Backend {
+                    backend: "fake".to_owned(),
+                    action: "change the impairments of a direction".to_owned(),
+                    message: "refused".to_owned(),
+                });
+            }
+            let rate = impairments
+                .rate
+                .map_or("no rate".to_owned(), |rate| rate.to_string());
+            self.calls.push(format!("change {direction:?} {rate}"));
             Ok(())
         }
 
@@ -1629,6 +1666,102 @@ mod tests {
 
     /// Canary: a datagram that the node dropped for a full buffer is not called corruption, and a frame that
     /// arrived and was not delivered is not called lost.
+    const WITH_TIMELINE: &str = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { rate: 4mbit }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\ntimeline:\n  - { at: 150ms, link: l, set: { forward: { rate: 1mbit } } }\n  - { at: 300ms, link: l, set: { both: { rate: null } } }\n";
+
+    /// The steps of the timeline are done in order at their moments, also after every sender has ended (the events
+    /// are part of the scenario up to its end), each is recorded with when it was due and when it was done, and the
+    /// observer is told. Nothing is done before its moment.
+    #[test]
+    fn the_steps_of_the_timeline_are_done_in_order_at_their_moments_and_recorded() {
+        let scenario = Scenario::from_yaml(WITH_TIMELINE, "t.yaml").unwrap();
+        let told = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observer = {
+            let told = Arc::clone(&told);
+            Arc::new(move |event: &RunEvent| {
+                if let RunEvent::StepDone { event, lateness } = event {
+                    told.lock().unwrap().push((*event, *lateness));
+                }
+            })
+        };
+        let mut backend = Fake::new(None);
+        let options = options("steps").with_observer(observer);
+        let result = run(&mut backend, &scenario, &options).unwrap();
+        let changes: Vec<&String> = backend
+            .calls
+            .iter()
+            .filter(|call| call.starts_with("change"))
+            .collect();
+        assert_eq!(
+            changes,
+            [
+                "change Forward 1mbit",
+                "change Forward no rate",
+                "change Reverse no rate"
+            ]
+        );
+        let events = &result.events;
+        assert_eq!(
+            events
+                .iter()
+                .map(|e| (e.event, e.kind.as_str(), e.direction.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                (0, "set", Some("forward")),
+                (1, "set", Some("forward")),
+                (1, "set", Some("reverse"))
+            ]
+        );
+        assert_eq!(
+            events.iter().map(|e| e.scheduled_ns).collect::<Vec<_>>(),
+            [150_000_000, 300_000_000, 300_000_000]
+        );
+        for event in events {
+            // Never early, and on a quiet machine a few milliseconds at most; the room is for a busy one
+            assert!(event.started_ns >= event.scheduled_ns, "{event:?}");
+            assert!(event.applied_ns >= event.started_ns, "{event:?}");
+            assert!(
+                event.applied_ns - event.scheduled_ns < 500_000_000,
+                "{event:?}"
+            );
+        }
+        assert_eq!(
+            told.lock()
+                .unwrap()
+                .iter()
+                .map(|(e, _)| *e)
+                .collect::<Vec<_>>(),
+            [0, 1, 1]
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// A step that the backend cannot do ends the run with the error of the backend: a run in which the link did
+    /// not change would measure something the scenario did not say.
+    #[test]
+    fn a_step_that_fails_ends_the_run_with_the_error_of_the_backend() {
+        let scenario = Scenario::from_yaml(WITH_TIMELINE, "t.yaml").unwrap();
+        let mut backend = Fake::new(Some("change-fails"));
+        let options = options("step-fails");
+        let error = run(&mut backend, &scenario, &options).unwrap_err();
+        assert!(
+            matches!(&error, Error::Backend { message, .. } if message == "refused"),
+            "{error}"
+        );
+        assert_eq!(backend.calls.last().map(String::as_str), Some("teardown"));
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Canary: a scenario without a timeline has no events and no step is asked of the backend.
+    #[test]
+    fn a_scenario_without_a_timeline_does_no_steps() {
+        let mut backend = Fake::new(None);
+        let options = options("no-steps");
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        assert_eq!(result.events.len(), 0);
+        assert!(backend.calls.iter().all(|call| !call.starts_with("change")));
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
     /// A stream without the checksum of UDP: both agents are told so, the damaged packets are counted in the
     /// result, they are in `lost` (an intact packet is what `received` counts), and they are among the datagrams
     /// that were delivered, so the node is not blamed for dropping them.

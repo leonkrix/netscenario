@@ -40,6 +40,7 @@ from netscenario.results import (
     SeedInfo,
     Sender,
     Throughput,
+    TimelineStep,
     Workload,
 )
 from netscenario.run import CancelToken, Check, DoctorReport, doctor, run
@@ -84,6 +85,7 @@ __all__ = [
     "SeedInfo",
     "Sender",
     "Throughput",
+    "TimelineStep",
     "Workload",
     "__version__",
     "doctor",

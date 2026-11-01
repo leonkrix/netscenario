@@ -36,17 +36,13 @@ const NEEDS_TC: &[Feature] = &[
     Feature::Duplication,
     Feature::Corruption,
     Feature::RateLimit,
+    Feature::ScheduledSteps,
 ];
 
 /// The features that the Kernel backend gets in later steps of release 0.2: the format knows them, the backend does
 /// not apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says
 /// `✔ 0.2` for them.
-const PLANNED: &[Feature] = &[
-    Feature::ScheduledSteps,
-    Feature::Outages,
-    Feature::LinkDownUp,
-    Feature::Program,
-];
+const PLANNED: &[Feature] = &[Feature::Outages, Feature::LinkDownUp, Feature::Program];
 
 /// What the Kernel backend reproduces on a machine with `environment`.
 #[must_use]
