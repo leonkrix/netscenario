@@ -106,6 +106,18 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
       "records_file": "flow-0.records",
       "packets_file": "packets-media.jsonl"
     }
+  ],
+  "directions": [
+    {
+      "link": "access",
+      "direction": "forward",
+      "sent": 625,
+      "reached_node": 622,
+      "delivered": 619,
+      "lost_in_queue": 3,
+      "dropped_corrupted": 3,
+      "receive_buffer_drops": 0
+    }
   ]
 }
 ```
@@ -126,6 +138,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `timing.duration_ns` | The `duration` of the scenario. |
 | `timing.settle_ns` | How long the run waited after the last packet was sent for the packets still in the network. A packet that needs longer counts as lost. Without a setting this is one second plus twice the longest hold of the scenario (the largest delay plus four times the largest jitter of any direction). |
 | `workloads` | One entry for each workload, in the order of the scenario. |
+| `directions` | Where the packets of each direction went, below. |
 
 ### `provenance`
 
@@ -145,7 +158,8 @@ The host name, the user name and file paths are **not** recorded: a result may b
 | --- | --- |
 | `value` | The seed from which the seeds of all random parts of the run were derived (the loss of each direction), or `null` if the backend cannot apply a seed. |
 | `drawn` | `true` if the scenario had no `seed` and the run drew one. Put `value` into the scenario as `seed` to repeat the run. |
-| `loss_reproducible` | Whether the same seed gives the same lost packets. `false` for a scenario with loss, duplication, corruption or reordering on a backend that cannot apply a seed (the Kernel backend with iproute2 older than 6.6.0), and `false` if a queue counted packets that the workloads did not send (`queue_checks`). **What `true` promises:** the same seed gives the same lost packets *if the packets enter the queue in the same order*. With one workload in a direction that order is its own schedule. With two workloads in one direction their packets can be microseconds apart, and which one reaches the queue first changes from run to run on a real kernel; the number of packets still agrees, so this release says `true` there, which is more than it can promise (release 0.2 says `false` and why; the Engine backend of release 0.4 has no such limit): such a run is a sample, not a repeatable experiment, and this field says so. |
+| `loss_reproducible` | Whether the same seed gives the same lost packets. `false` for a scenario with loss, duplication, corruption or reordering on a backend that cannot apply a seed (the Kernel backend with iproute2 older than 6.6.0), `false` if a queue counted packets that the workloads did not send (`queue_checks`), and `false` for a scenario with **corruption**: the seed fixes which packets are chosen for it, but `netem` takes the place of the flipped bit from the generator of the kernel, and a bit in the source address of the Ethernet header (6 bytes of the frame) harms nothing, so now and then a corrupted packet arrives in one run and is dropped in another. The packets lost in the queue are the same (`lost_in_queue` of `directions` repeats exactly); the packets lost in all differ by a few (measured: one packet in about every 8 runs, with 41 corrupted packets of 1,200 bytes). **What `true` promises:** the same seed gives the same lost packets *if the packets enter the queue in the same order*. With one workload in a direction that order is its own schedule. With two workloads in one direction their packets can be microseconds apart, and which one reaches the queue first changes from run to run on a real kernel; the number of packets still agrees, so this release says `true` there, which is more than it can promise (release 0.2 says `false` and why; the Engine backend of release 0.4 has no such limit): such a run is a sample, not a repeatable experiment, and this field says so. |
+| `not_reproducible_because` | One sentence for each reason `loss_reproducible` is `false`; empty otherwise. The command line prints them as warnings. |
 | `queue_checks` | For each direction with random loss (any model), duplication, corruption or reordering, **except one that duplicates**, one entry: the `link`, the `direction` (`forward` is from the first node of `between` to the second), the packets that the workloads `expected` to send into it (those the kernel took) and the packets the queue `counted`. The pattern of lost packets is a function of the seed **and of the number of packets that enter the queue**, so a run is repeatable only if the two agree (ENV-07, D-036). Empty if the backend cannot count, or the run has no seed. A direction with `duplicate` has no entry: the queue counts the copies that it makes as well, and the count cannot tell them from a packet that nobody asked for, so the number cannot be compared (D-054); `loss_reproducible` stays `true` there, on the same condition as for a single workload. |
 
 The seed of one direction is derived from the seed of the run, the index of the link and the direction (`netscenario_core::derive_seed`, SplitMix64). **The derivation is fixed**: a test pins its values, because a change would give old seeds new loss patterns. The timing of the machine is not seeded and not reproducible; `max_lateness_ns` says how much it mattered.
@@ -173,6 +187,22 @@ The seed of one direction is derived from the seed of the run, the index of the 
 | `sender.send_errors`, `sender.first_error` | Packets the kernel refused to take, and the first reason. |
 | `foreign_datagrams` | Datagrams that reached the receiver and were not packets of the agent. |
 | `records_file`, `packets_file` | The files of this workload, relative to `result.json`. `packets_file` is `null` unless the export was asked for. |
+
+### `directions` (D-040)
+
+A packet that never reaches the program can have been lost in the queue of the link or dropped by the node because a bit in it was flipped (`corrupt`). A program sees both as loss, and a test that is about corruption needs to know which. For each direction of a link that carried a workload there is one entry:
+
+| Field | Meaning |
+| --- | --- |
+| `link`, `direction` | The link, and `forward` (from the first node of `between` to the second) or `reverse`. |
+| `sent` | The packets the workloads put into the direction (those the kernel took). |
+| `reached_node` | The frames that arrived at the interface of the receiving node, counted by the interface (`/proc/net/dev`, read before and after the workloads). |
+| `delivered` | The datagrams that reached the sockets of the receivers: the packets of the agent and the others (`foreign_datagrams`). |
+| `lost_in_queue` | `sent - reached_node`: the packets that the queue of the link dropped (the loss, a queue that was full). `null` in a direction with `duplicate`, where the frames include the copies, and when more frames arrived than were sent. |
+| `dropped_corrupted` | `reached_node - delivered - receive_buffer_drops`: the frames that arrived and that the node dropped, because the bit that `netem` flipped made the checksum of IP or UDP wrong, or the address not the node's. |
+| `receive_buffer_drops` | The datagrams the node dropped because the receive buffer of a socket was full (`RcvbufErrors` of UDP). This is a fault of the receiver and not of the network, so it is kept apart from `dropped_corrupted`. |
+
+For a direction without `duplicate` and without a full buffer, `lost_in_queue + dropped_corrupted + delivered = sent`, to the packet; the fidelity cases check it ([FIDELITY.md](FIDELITY.md)). The counts are those of the interface and of the node, so they hold for all the workloads in a direction together. They are exact for the node and say nothing about which packet it was; the sequence numbers of the corrupted packets are a later step (D-040). The command line lists a direction only where the node dropped something. The array is empty if the backend cannot count, and for a scenario with a program of your own (`kind: command`), whose packets the agent does not count.
 
 **Percentiles are the nearest rank.** For `n` delays in ascending order, percentile `p` is the delay at rank `ceil(p * n / 100)` (the first delay is rank 1). It is always a delay that was measured, never an interpolation. With few packets the high percentiles are the largest delays (`p999_ns` equals `max_ns` for up to 1000 packets).
 

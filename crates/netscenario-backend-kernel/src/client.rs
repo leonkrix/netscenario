@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use netscenario_core::{
     Backend, BackendInfo, Capabilities, CapabilityError, Direction, Error, Feature, LinkHandle,
-    NodeHandle, Program, ProgramExit, ProgramHandle, ProgramState, Refusal,
+    NodeCounts, NodeHandle, Program, ProgramExit, ProgramHandle, ProgramState, Refusal,
 };
 use netscenario_model::{Impairments, Name, Scenario};
 
@@ -575,6 +575,28 @@ impl Backend for KernelBackend {
         };
         match self.exchange(action, &request)? {
             Response::Count { packets } => Ok(Some(packets)),
+            other => Err(Self::error(
+                action,
+                format!("the supervisor gave an answer that was not asked for: {other:?}"),
+            )),
+        }
+    }
+
+    fn node_counts(
+        &mut self,
+        link: LinkHandle,
+        direction: Direction,
+    ) -> Result<Option<NodeCounts>, Error> {
+        let action = "count the frames of a node";
+        let request = Request::NodeCounts {
+            link: link.0,
+            direction: Way::from(direction),
+        };
+        match self.exchange(action, &request)? {
+            Response::NodeCounts {
+                frames_received,
+                receive_buffer_drops,
+            } => Ok(Some(NodeCounts::new(frames_received, receive_buffer_drops))),
             other => Err(Self::error(
                 action,
                 format!("the supervisor gave an answer that was not asked for: {other:?}"),

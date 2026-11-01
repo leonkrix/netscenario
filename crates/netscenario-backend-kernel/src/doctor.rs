@@ -179,6 +179,8 @@ step reorder "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us reord
 "$2" qdisc del dev np0 root >/dev/null 2>&1
 step duplicate "$2" qdisc replace dev np0 root netem limit 1000 duplicate 20% seed 1
 "$2" qdisc del dev np0 root >/dev/null 2>&1
+step corrupt "$2" qdisc replace dev np0 root netem limit 1000 corrupt 10% seed 1
+"$2" qdisc del dev np0 root >/dev/null 2>&1
 # A duplicating netem next to another netem in one tree: some kernels refuse it (D-052). This is the tree that
 # the backend builds for a direction with a rate and a jitter or a reordering.
 step treeroot "$2" qdisc replace dev np0 root handle 1: netem limit 1000 duplicate 20% rate 1mbit
@@ -588,6 +590,7 @@ fn kernel_checks(findings: &Findings, tc: &Tool, checks: &mut Vec<Check>) {
         &after_veth("chain"),
         &after_veth("reorder"),
         &after_veth("duplicate"),
+        &after_veth("corrupt"),
         not_tested,
     ));
     checks.push(tree_check(
@@ -597,20 +600,22 @@ fn kernel_checks(findings: &Findings, tc: &Tool, checks: &mut Vec<Check>) {
     ));
 }
 
-/// The loss models in bursts, the reordering and the duplication: one qdisc each.
+/// The loss models in bursts, the reordering, the duplication and the corruption: one qdisc each.
 fn models_check(
     burst: &Outcome,
     chain: &Outcome,
     reorder: &Outcome,
     duplicate: &Outcome,
+    corrupt: &Outcome,
     not_tested: &str,
 ) -> Check {
-    let title = "burst loss, reordering, duplication";
+    let title = "burst loss, reordering, duplication, corruption";
     let steps = [
         ("the Gilbert-Elliott loss", burst),
         ("the four-state loss", chain),
         ("reordering", reorder),
         ("duplication", duplicate),
+        ("corruption", corrupt),
     ];
     if steps.iter().all(|(_, outcome)| outcome.is_none()) {
         return kernel("models", title, Status::Info, not_tested, None);
@@ -627,7 +632,7 @@ fn models_check(
             "models",
             title,
             Status::Ok,
-            "`tc` and the kernel accept the loss in bursts (two models), reordering and duplication",
+            "`tc` and the kernel accept the loss in bursts (two models), reordering, duplication and corruption",
             None,
         )
     } else {
@@ -835,6 +840,7 @@ mod tests {
             "chain",
             "reorder",
             "duplicate",
+            "corrupt",
             "treeroot",
             "tree",
         ]
@@ -895,13 +901,13 @@ mod tests {
     #[test]
     fn a_feature_the_backend_lacks_is_information_and_one_the_machine_lacks_is_a_warning() {
         let report = assess(&good());
-        assert_eq!(status(&report, "corruption"), Status::Info);
+        assert_eq!(status(&report, "scheduled-steps"), Status::Info);
         assert_eq!(status(&report, "burst-loss"), Status::Ok);
         let mut old = good();
         old.tools[1].printed = "tc utility, iproute2-5.15.0".to_owned();
         let report = assess(&old);
         assert_eq!(status(&report, "seeded-loss"), Status::Warn);
-        assert_eq!(status(&report, "corruption"), Status::Info);
+        assert_eq!(status(&report, "scheduled-steps"), Status::Info);
     }
 
     /// D-052: a kernel that refuses a duplicating `netem` next to another is a warning with the answer of the

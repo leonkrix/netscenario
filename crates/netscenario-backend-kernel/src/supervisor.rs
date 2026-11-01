@@ -123,6 +123,16 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                 });
                 continue;
             }
+            Request::NodeCounts { link, direction } => {
+                send(&match provisioner.node_counts(link, direction) {
+                    Ok((frames_received, receive_buffer_drops)) => Response::NodeCounts {
+                        frames_received,
+                        receive_buffer_drops,
+                    },
+                    Err(message) => Response::Error { message },
+                });
+                continue;
+            }
             Request::StartProgram {
                 node,
                 argv,

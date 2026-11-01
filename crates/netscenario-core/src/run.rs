@@ -17,7 +17,9 @@ use netscenario_agent::events::{Event, ReceiveSummary, SendSummary};
 use netscenario_agent::records;
 use netscenario_model::{Impairments, Scenario, UdpCbr, Workload};
 
-use crate::backend::{Backend, Direction, NodeHandle, Program, ProgramHandle};
+use crate::backend::{
+    Backend, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramHandle,
+};
 use crate::error::Error;
 use crate::export::write_packets;
 use crate::hash::sha256_hex;
@@ -25,8 +27,8 @@ use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
 use crate::provision::{Provisioned, impairments_of, provision};
 use crate::result::{
-    AcceptedRestriction, AddressInfo, QueueCheck, RESULT_FORMAT, RESULT_VERSION, RunResult,
-    ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
+    AcceptedRestriction, AddressInfo, DirectionTally, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
+    RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
 };
 use crate::stats::analyse;
 
@@ -218,6 +220,14 @@ struct Measured {
     records: records::File,
 }
 
+/// What the phases of a run found out besides the workloads.
+struct Measurement {
+    measured: Vec<Measured>,
+    settle: Duration,
+    queue_checks: Vec<QueueCheck>,
+    directions: Vec<DirectionTally>,
+}
+
 /// Runs `scenario` with `backend` and returns the result, which is also written to `result.json` in
 /// `options.out_dir`.
 ///
@@ -251,7 +261,12 @@ pub fn run(
     let measured = measure(backend, scenario, options, &provisioned, &control);
     control.emit(&RunEvent::TearingDown);
     let torn_down = backend.teardown();
-    let (measured, settle, queue_checks) = measured?;
+    let Measurement {
+        measured,
+        settle,
+        queue_checks,
+        directions,
+    } = measured?;
     torn_down?;
 
     let mut workloads = Vec::new();
@@ -271,6 +286,7 @@ pub fn run(
             options,
         )?);
     }
+    let reasons = not_reproducible_because(scenario, &provisioned, &queue_checks);
     let result = RunResult {
         format: RESULT_FORMAT.to_owned(),
         version: RESULT_VERSION,
@@ -285,11 +301,9 @@ pub fn run(
         seed: SeedInfo {
             value: provisioned.seed,
             drawn: provisioned.seed_drawn,
-            // The queues have counted the packets that drew a number for the loss; if one saw more or fewer than
-            // the workloads sent, the pattern of lost packets is not the one of this seed (ENV-07)
-            loss_reproducible: provisioned.loss_reproducible
-                && queue_checks.iter().all(QueueCheck::agrees),
+            loss_reproducible: reasons.is_empty(),
             queue_checks,
+            not_reproducible_because: reasons,
         },
         accepted_restrictions: provisioned
             .accepted
@@ -313,12 +327,46 @@ pub fn run(
             settle_ns: nanos(settle),
         },
         workloads,
+        directions,
     };
     let path = options.out_dir.join("result.json");
     std::fs::write(&path, result.to_json())
         .map_err(|error| failure("write the result", format!("{}: {error}", path.display())))?;
     control.emit(&RunEvent::Finished);
     Ok(result)
+}
+
+/// Why the same seed may not give the same lost packets in this run, one sentence for each reason. The queues have
+/// counted the packets that drew a number for the loss: if one saw more or fewer than the workloads sent, the
+/// pattern of lost packets is not the one of this seed (ENV-07).
+fn not_reproducible_because(
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+    queue_checks: &[QueueCheck],
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if !provisioned.loss_reproducible {
+        reasons.push("the backend cannot apply a seed (iproute2 6.6.0 or newer can)".to_owned());
+    }
+    for check in queue_checks.iter().filter(|check| !check.agrees()) {
+        reasons.push(format!(
+            "the queue of link '{}' ({}) counted {} packets and the workloads sent {}, so something else entered it and the lost packets are not those of the seed",
+            check.link, check.direction, check.counted, check.expected
+        ));
+    }
+    let corrupts = scenario.topology.links.iter().any(|link| {
+        [&link.forward, &link.reverse, &link.both]
+            .into_iter()
+            .flatten()
+            .any(|impairments| impairments.corrupt.is_some())
+    });
+    if corrupts {
+        reasons.push(
+            "the scenario corrupts packets: the seed fixes which packets are corrupted, but not where `netem` flips the bit, and a bit in the source address of the Ethernet header harms nothing, so a few corrupted packets arrive in one run and are dropped in another (the packets lost in the queue are the same)"
+                .to_owned(),
+        );
+    }
+    reasons
 }
 
 /// The result of one workload: its statistics, and the files that belong to it.
@@ -619,7 +667,7 @@ fn measure(
     options: &RunOptions,
     provisioned: &Provisioned,
     control: &Control<'_>,
-) -> Result<(Vec<Measured>, Duration, Vec<QueueCheck>), Error> {
+) -> Result<Measurement, Error> {
     control.checkpoint()?;
     if !options.agent.is_file() {
         return Err(failure(
@@ -637,6 +685,8 @@ fn measure(
         count: receivers.len(),
     });
     control.checkpoint()?;
+    // What the nodes had counted before the first packet; the nodes are new, but a run reads the difference
+    let before = node_counts(backend, scenario, provisioned)?;
     let begin_at = Instant::now() + START_MARGIN;
     let begin = monotonic_ns() + nanos(START_MARGIN);
     let senders = start_senders(backend, &flows, options, begin)?;
@@ -679,9 +729,28 @@ fn measure(
     }
     // After the wait, every packet has passed its queue; the receivers still run and the network still stands
     let queue_checks = check_queues(backend, scenario, provisioned, &flows, &sent)?;
+    let after = node_counts(backend, scenario, provisioned)?;
     control.emit(&RunEvent::Collecting);
+    let measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
+    let directions = tally_directions(scenario, provisioned, &flows, &measured, &before, &after);
+    Ok(Measurement {
+        measured,
+        settle,
+        queue_checks,
+        directions,
+    })
+}
+
+/// Stops the receivers one after the other and reads what each of them recorded, with what its sender said.
+fn stop_receivers(
+    backend: &mut dyn Backend,
+    receivers: &[ProgramHandle],
+    flows: &[Flow<'_>],
+    sent: Vec<SendSummary>,
+    control: &Control<'_>,
+) -> Result<Vec<Measured>, Error> {
     let mut measured = Vec::new();
-    for ((receiver, flow), sent) in receivers.iter().zip(&flows).zip(sent) {
+    for ((receiver, flow), sent) in receivers.iter().zip(flows).zip(sent) {
         control.checkpoint()?;
         let what = format!("stop the receiver of '{}'", flow.workload.id);
         backend.send_line(*receiver, "stop")?;
@@ -719,7 +788,125 @@ fn measure(
             records,
         });
     }
-    Ok((measured, settle, queue_checks))
+    Ok(measured)
+}
+
+/// One direction of a link of the scenario.
+struct Way<'a> {
+    /// The place of the link in the scenario.
+    index: usize,
+    name: &'a netscenario_model::Name,
+    handle: LinkHandle,
+    direction: Direction,
+    /// `forward` or `reverse`, as the result says it.
+    word: &'static str,
+    from: &'a netscenario_model::Name,
+    to: &'a netscenario_model::Name,
+}
+
+/// The directions of the links, in the order of the scenario: for each link the forward one, then the reverse.
+fn ways<'a>(scenario: &'a Scenario, provisioned: &'a Provisioned) -> impl Iterator<Item = Way<'a>> {
+    scenario
+        .topology
+        .links
+        .iter()
+        .zip(&provisioned.links)
+        .enumerate()
+        .flat_map(|(index, (link, (name, handle)))| {
+            [
+                (Direction::Forward, "forward", 0, 1),
+                (Direction::Reverse, "reverse", 1, 0),
+            ]
+            .map(move |(direction, word, from, to)| Way {
+                index,
+                name,
+                handle: *handle,
+                direction,
+                word,
+                from: &link.between[from],
+                to: &link.between[to],
+            })
+        })
+}
+
+/// What the receiving node of every direction has counted so far, in the order of [`ways`]. `None` for
+/// a direction whose backend cannot count, and for every direction in a scenario with a program of your own,
+/// whose packets the agent does not count (the tally of a direction would not add up).
+fn node_counts(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+) -> Result<Vec<Option<NodeCounts>>, Error> {
+    let has_program = scenario
+        .workloads
+        .iter()
+        .any(|workload| workload.as_udp_cbr().is_none());
+    ways(scenario, provisioned)
+        .map(|way| {
+            if has_program {
+                Ok(None)
+            } else {
+                backend.node_counts(way.handle, way.direction)
+            }
+        })
+        .collect()
+}
+
+/// Sets the packets that the workloads sent into each direction against what the receiving node counted and
+/// what its receivers got (D-040). A direction without a workload has no tally.
+fn tally_directions(
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+    flows: &[Flow<'_>],
+    measured: &[Measured],
+    before: &[Option<NodeCounts>],
+    after: &[Option<NodeCounts>],
+) -> Vec<DirectionTally> {
+    let mut tallies = Vec::new();
+    for (way, (before, after)) in ways(scenario, provisioned).zip(before.iter().zip(after)) {
+        let (Some(before), Some(after)) = (before, after) else {
+            continue;
+        };
+        let link = &scenario.topology.links[way.index];
+        let carried: Vec<&Measured> = flows
+            .iter()
+            .zip(measured)
+            .filter(|(flow, _)| flow.workload.from == *way.from && flow.workload.to == *way.to)
+            .map(|(_, measured)| measured)
+            .collect();
+        if carried.is_empty() {
+            continue;
+        }
+        let sent: u64 = carried.iter().map(|m| m.sent.packets).sum();
+        let delivered: u64 = carried
+            .iter()
+            .map(|m| m.received.packets + m.received.foreign)
+            .sum();
+        let reached_node = after.frames_received.saturating_sub(before.frames_received);
+        let receive_buffer_drops = after
+            .receive_buffer_drops
+            .saturating_sub(before.receive_buffer_drops);
+        // The frames of a duplicating direction include the copies, so what the queue dropped cannot be told
+        let duplicates = impairments_of(link, way.direction)
+            .is_some_and(|impairments| impairments.duplicate.is_some());
+        tallies.push(DirectionTally {
+            link: way.name.to_string(),
+            direction: way.word.to_owned(),
+            sent,
+            reached_node,
+            delivered,
+            lost_in_queue: if duplicates {
+                None
+            } else {
+                sent.checked_sub(reached_node)
+            },
+            dropped_corrupted: reached_node
+                .saturating_sub(delivered)
+                .saturating_sub(receive_buffer_drops),
+            receive_buffer_drops,
+        });
+    }
+    tallies
 }
 
 /// Asks the backend how many packets entered the queue of each direction with random loss, and sets it
@@ -737,42 +924,28 @@ fn check_queues(
     if provisioned.seed.is_none() {
         return Ok(checks);
     }
-    for (link, (name, handle)) in scenario.topology.links.iter().zip(&provisioned.links) {
-        for (direction, from, to, word) in [
-            (
-                Direction::Forward,
-                &link.between[0],
-                &link.between[1],
-                "forward",
-            ),
-            (
-                Direction::Reverse,
-                &link.between[1],
-                &link.between[0],
-                "reverse",
-            ),
-        ] {
-            // A duplicating direction is not checked: the queue counts the copies it makes as well, and the count
-            // cannot tell them from a packet that nobody asked for (D-054)
-            if impairments_of(link, direction).is_none_or(|impairments| {
-                !impairments.is_random() || impairments.duplicate.is_some()
-            }) {
-                continue;
-            }
-            let expected = flows
-                .iter()
-                .zip(sent)
-                .filter(|(flow, _)| flow.workload.from == *from && flow.workload.to == *to)
-                .map(|(_, summary)| summary.packets.saturating_sub(summary.errors))
-                .sum();
-            if let Some(counted) = backend.queue_packets(*handle, direction)? {
-                checks.push(QueueCheck {
-                    link: name.to_string(),
-                    direction: word.to_owned(),
-                    expected,
-                    counted,
-                });
-            }
+    for way in ways(scenario, provisioned) {
+        let link = &scenario.topology.links[way.index];
+        // A duplicating direction is not checked: the queue counts the copies it makes as well, and the count
+        // cannot tell them from a packet that nobody asked for (D-054)
+        if impairments_of(link, way.direction)
+            .is_none_or(|impairments| !impairments.is_random() || impairments.duplicate.is_some())
+        {
+            continue;
+        }
+        let expected = flows
+            .iter()
+            .zip(sent)
+            .filter(|(flow, _)| flow.workload.from == *way.from && flow.workload.to == *way.to)
+            .map(|(_, summary)| summary.packets)
+            .sum();
+        if let Some(counted) = backend.queue_packets(way.handle, way.direction)? {
+            checks.push(QueueCheck {
+                link: way.name.to_string(),
+                direction: way.word.to_owned(),
+                expected,
+                counted,
+            });
         }
     }
     Ok(checks)
@@ -805,6 +978,11 @@ mod tests {
         trouble: Option<&'static str>,
         /// What the queues of the forward and the reverse direction say they counted, if they can count.
         counts: Option<[u64; 2]>,
+        /// The frames that the receiving nodes of the forward and the reverse direction counted by the end,
+        /// and the datagrams the first of them dropped for a full buffer. A node counts nothing before the
+        /// first reading.
+        frames: Option<([u64; 2], u64)>,
+        readings: [u32; 2],
     }
 
     struct Played {
@@ -821,6 +999,15 @@ mod tests {
                 programs: Vec::new(),
                 trouble,
                 counts: None,
+                frames: None,
+                readings: [0; 2],
+            }
+        }
+
+        fn with_frames(frames: [u64; 2], buffer_drops: u64) -> Self {
+            Self {
+                frames: Some((frames, buffer_drops)),
+                ..Self::new(None)
             }
         }
 
@@ -887,6 +1074,23 @@ mod tests {
             }))
         }
 
+        fn node_counts(
+            &mut self,
+            _: LinkHandle,
+            direction: Direction,
+        ) -> Result<Option<NodeCounts>, Error> {
+            let way = usize::from(direction == Direction::Reverse);
+            let reading = self.readings[way];
+            self.readings[way] += 1;
+            Ok(self.frames.map(|(frames, buffer_drops)| {
+                if reading == 0 {
+                    NodeCounts::new(0, 0)
+                } else {
+                    NodeCounts::new(frames[way], if way == 0 { buffer_drops } else { 0 })
+                }
+            }))
+        }
+
         fn address(&self, link: LinkHandle, end: usize) -> Result<Ipv4Addr, Error> {
             Ok(Ipv4Addr::new(
                 10,
@@ -950,6 +1154,15 @@ mod tests {
                     stderr: "cannot reach 10.100.0.2:5000: network is unreachable".to_owned(),
                     stops_on_line: false,
                 },
+                "send" if self.trouble == Some("send-refused") => {
+                    // Two of ten sequence numbers were refused by the kernel: eight packets went into the link
+                    Played {
+                        lines: VecDeque::from([r#"{"event":"sent","flow":0,"packets":8,"first_send_ns":1000,"last_send_ns":900001000,"max_lateness_ns":1234,"errors":2,"first_error":"Network is unreachable"}"#.to_owned()]),
+                        exit: Some(ProgramExit::Code(0)),
+                        stderr: String::new(),
+                        stops_on_line: false,
+                    }
+                }
                 "send" => {
                     assert_eq!(argument(argv, "--rate"), "800000");
                     assert_eq!(argument(argv, "--size"), "1000");
@@ -1124,6 +1337,143 @@ mod tests {
             assert_eq!(differing, [wrong], "{counts:?}");
             let _ = std::fs::remove_dir_all(&options.out_dir);
         }
+    }
+
+    /// The result says why a run cannot be repeated exactly: a queue that counted a packet too many, and a
+    /// scenario with corruption, where the kernel takes the place of the flipped bit from its own generator.
+    #[test]
+    fn a_run_that_cannot_be_repeated_exactly_says_why() {
+        let mut backend = Fake::counting([11, 0]);
+        let options = options("reasons-queue");
+        let seed = run(&mut backend, &scenario(), &options).unwrap().seed;
+        assert!(!seed.loss_reproducible);
+        assert_eq!(seed.not_reproducible_because.len(), 1);
+        assert!(
+            seed.not_reproducible_because[0]
+                .contains("counted 11 packets and the workloads sent 10"),
+            "{:?}",
+            seed.not_reproducible_because
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+
+        let yaml = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { corrupt: 10% }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n";
+        let mut backend = Fake::new(None);
+        let options = self::options("reasons-corrupt");
+        let seed = run(
+            &mut backend,
+            &Scenario::from_yaml(yaml, "t.yaml").unwrap(),
+            &options,
+        )
+        .unwrap()
+        .seed;
+        assert!(!seed.loss_reproducible);
+        assert!(
+            seed.not_reproducible_because
+                .iter()
+                .any(|reason| reason.contains("corrupts packets")),
+            "{:?}",
+            seed.not_reproducible_because
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Canary: a run that can be repeated gives no reason, and a scenario without corruption gives none for it.
+    #[test]
+    fn a_run_that_can_be_repeated_gives_no_reason() {
+        let mut backend = Fake::counting([10, 0]);
+        let options = options("reasons-none");
+        let seed = run(&mut backend, &scenario(), &options).unwrap().seed;
+        assert!(seed.loss_reproducible);
+        assert_eq!(seed.not_reproducible_because.len(), 0);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// A packet that the kernel refused to take did not go into the queue, and is not in `packets` either, so the
+    /// queue is expected to have counted `packets` and no fewer (the check used to subtract the errors again).
+    #[test]
+    fn a_packet_that_the_kernel_refused_does_not_make_the_queue_check_disagree() {
+        let mut backend = Fake::new(Some("send-refused"));
+        backend.counts = Some([8, 0]);
+        let options = options("queues-refused");
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        assert_eq!(result.seed.queue_checks[0].expected, 8);
+        assert!(result.seed.loss_reproducible, "{:?}", result.seed);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// D-040: the packets that were sent are lost in the queue, dropped by the node, or delivered, and the
+    /// result says how many of each. The fake sent 10 and the receiver got 8; the node counted 9 frames.
+    #[test]
+    fn every_packet_is_accounted_for_as_lost_in_the_queue_dropped_by_the_node_or_delivered() {
+        let mut backend = Fake::with_frames([9, 0], 0);
+        let options = options("tally");
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        let [tally] = result.directions.as_slice() else {
+            panic!("{:?}", result.directions);
+        };
+        assert_eq!(
+            (tally.link.as_str(), tally.direction.as_str()),
+            ("l", "forward")
+        );
+        assert_eq!(
+            (
+                tally.sent,
+                tally.reached_node,
+                tally.delivered,
+                tally.lost_in_queue,
+                tally.dropped_corrupted,
+                tally.receive_buffer_drops
+            ),
+            (10, 9, 8, Some(1), 1, 0)
+        );
+        // lost_in_queue + dropped_corrupted + delivered = sent
+        assert_eq!(
+            tally.lost_in_queue.unwrap() + tally.dropped_corrupted + tally.delivered,
+            tally.sent
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Canary: a datagram that the node dropped for a full buffer is not called corruption, and a frame that
+    /// arrived and was not delivered is not called lost.
+    #[test]
+    fn a_full_receive_buffer_is_not_corruption() {
+        let mut backend = Fake::with_frames([9, 0], 1);
+        let options = options("tally-buffer");
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        let tally = &result.directions[0];
+        assert_eq!(
+            (
+                tally.dropped_corrupted,
+                tally.receive_buffer_drops,
+                tally.lost_in_queue
+            ),
+            (0, 1, Some(1))
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// The frames of a duplicating direction include the copies, so the packets the queue dropped cannot be
+    /// told; the node's own drops still can.
+    #[test]
+    fn a_duplicating_direction_has_no_count_of_the_packets_the_queue_dropped() {
+        let yaml = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: { duplicate: 20% }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n";
+        let scenario = Scenario::from_yaml(yaml, "t.yaml").unwrap();
+        let mut backend = Fake::with_frames([9, 0], 0);
+        let options = options("tally-duplicate");
+        let result = run(&mut backend, &scenario, &options).unwrap();
+        let tally = &result.directions[0];
+        assert_eq!((tally.lost_in_queue, tally.dropped_corrupted), (None, 1));
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    #[test]
+    fn a_backend_that_cannot_count_the_node_leaves_the_tally_out() {
+        let mut backend = Fake::new(None);
+        let options = options("tally-none");
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        assert_eq!(result.directions.len(), 0);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 
     #[test]

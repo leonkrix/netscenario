@@ -145,7 +145,8 @@ def describe(result: Result) -> str:
         seed = f"seed {result.seed.value}" + (" (drawn)" if result.seed.drawn else "")
     lines = [f"{result.scenario_name}: {result.provenance.backend} ({details}), {seed}"]
     if not result.seed.loss_reproducible:
-        lines.append("  warning: the loss of this run cannot be repeated (no seed in the backend)")
+        reasons = result.seed.not_reproducible_because or ("no reason given",)
+        lines.extend(f"  warning: the loss of this run cannot be repeated: {r}" for r in reasons)
     for workload in result:
         delay = "no packet arrived"
         if workload.delay is not None:

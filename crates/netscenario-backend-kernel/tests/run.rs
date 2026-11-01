@@ -251,6 +251,110 @@ fn the_same_seed_repeats_burst_loss_duplication_and_reordering() {
     );
 }
 
+/// The same seed chooses the same packets for the corruption and the loss, also in a direction of two queues, and
+/// the tally of the direction adds up to the last packet: lost in the queue, dropped by the node as damaged, or
+/// delivered (D-040). What is **not** the same from run to run is where `netem` flips the bit, because it takes that
+/// from the generator of the kernel and not from the seed: a bit in the source address of the Ethernet header harms
+/// nothing (6 of 1,242 bytes here), so a corrupted packet now and then arrives in one run and is dropped in another.
+/// So the packets lost in the queue are exactly the same, the packets lost in all are the same but for a few, and
+/// the result says that the run is not reproducible and why.
+#[test]
+fn the_same_seed_chooses_the_same_packets_to_corrupt_and_every_packet_is_accounted_for() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let link = "      forward: { delay: 10ms, jitter: { amount: 2ms }, loss: { model: random, p: 10% }, corrupt: 10%, rate: 10mbit }\n";
+    let drawn = |seed: u32, label: &str| {
+        let dir = work_dir(label);
+        let mut backend = backend(|_| {});
+        let result = run(
+            &mut backend,
+            &scenario(&format!("seed: {seed}\n"), link, MEDIA),
+            &options(&dir, true),
+        )
+        .unwrap();
+        let lost = lost_in(&dir, "media");
+        let _ = std::fs::remove_dir_all(dir);
+        (lost, result)
+    };
+    let (lost, result) = drawn(7, "run-corrupt-a");
+    let (lost_again, again) = drawn(7, "run-corrupt-b");
+    let (lost_other, other) = drawn(8, "run-corrupt-c");
+    let tally = |result: &RunResult| {
+        let [tally] = result.directions.as_slice() else {
+            panic!("expected one direction, got {}", result.directions.len());
+        };
+        tally.clone()
+    };
+    let (tally, tally_again, tally_other) = (tally(&result), tally(&again), tally(&other));
+    assert_eq!(tally.direction, "forward");
+    // The loss is seeded and in front of the corruption: the queue loses the same packets, and another seed others
+    assert_eq!(tally.lost_in_queue, tally_again.lost_in_queue);
+    assert_ne!(tally.lost_in_queue, tally_other.lost_in_queue);
+    assert_ne!(lost, lost_other);
+    // The lost packets are the same but for the corrupted ones whose bit fell where it harms nothing. 41 packets
+    // are corrupted, each harmless with a chance of about 0.5 %, so more than three differences in a pair of runs is
+    // far beyond chance (about 1 in 100,000).
+    let (a, b): (std::collections::BTreeSet<_>, std::collections::BTreeSet<_>) =
+        (lost.iter().collect(), lost_again.iter().collect());
+    let differing = a.symmetric_difference(&b).count();
+    assert!(
+        differing <= 3,
+        "{differing} packets differ: {lost:?} against {lost_again:?}"
+    );
+    assert!(
+        tally
+            .dropped_corrupted
+            .abs_diff(tally_again.dropped_corrupted)
+            <= 3,
+        "{} against {}",
+        tally.dropped_corrupted,
+        tally_again.dropped_corrupted
+    );
+    let in_queue = tally.lost_in_queue.expect("no duplication here");
+    assert!(
+        in_queue > 0 && tally.dropped_corrupted > 0,
+        "something of each: {} lost in the queue, {} dropped by the node",
+        in_queue,
+        tally.dropped_corrupted
+    );
+    for (tally, result) in [
+        (&tally, &result),
+        (&tally_again, &again),
+        (&tally_other, &other),
+    ] {
+        let in_queue = tally.lost_in_queue.expect("no duplication here");
+        assert_eq!(
+            in_queue + tally.dropped_corrupted + tally.delivered + tally.receive_buffer_drops,
+            tally.sent,
+            "the packets of the direction must add up"
+        );
+        // The program sees the sum of both as loss
+        assert_eq!(
+            result.workloads[0].stats.lost,
+            in_queue + tally.dropped_corrupted
+        );
+        // The queue saw exactly the packets of the workload: the only reason for the warning is the corruption
+        assert_eq!(
+            result.seed.queue_checks,
+            [netscenario_core::QueueCheck::new(
+                "access", "forward", tally.sent, tally.sent
+            )]
+        );
+        // The result does not promise what it cannot keep, and says why
+        assert!(!result.seed.loss_reproducible);
+        assert!(
+            result
+                .seed
+                .not_reproducible_because
+                .iter()
+                .any(|reason| reason.contains("corrupts packets")),
+            "{:?}",
+            result.seed.not_reproducible_because
+        );
+    }
+}
+
 /// The loss stays in front of the rate in a direction that is built from two qdiscs (a jitter and a rate), so
 /// the same seed still loses the same packets there (D-030).
 #[test]

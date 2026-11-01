@@ -34,6 +34,10 @@ pub struct RunResult {
     pub timing: Timing,
     /// One entry for each workload, in the order of the scenario.
     pub workloads: Vec<WorkloadResult>,
+    /// For each direction of a link that carried a workload: where its packets went (D-040). Empty if the
+    /// backend cannot count, or the scenario runs a program of your own, whose packets the agent does not count.
+    #[serde(default)]
+    pub directions: Vec<DirectionTally>,
 }
 
 /// Which scenario a result belongs to.
@@ -65,6 +69,11 @@ pub struct SeedInfo {
     /// count, or the run has no seed.
     #[serde(default)]
     pub queue_checks: Vec<QueueCheck>,
+    /// Why the run is not reproducible, one sentence for each reason; empty when `loss_reproducible` is `true`.
+    /// A backend that cannot apply a seed, a queue that counted a packet the workloads did not send, and a
+    /// scenario with corruption (where `netem` flips a bit is not seeded) are the reasons.
+    #[serde(default)]
+    pub not_reproducible_because: Vec<String>,
 }
 
 /// The packets of one direction of a link that drew a number for the random loss: counted by the queue, and
@@ -104,6 +113,37 @@ impl QueueCheck {
     pub fn agrees(&self) -> bool {
         self.expected == self.counted
     }
+}
+
+/// Where the packets of one direction of a link went: lost in the queue of the link, dropped by the receiving
+/// node because they arrived damaged, or delivered to the receiver (D-040). The three add up to what was sent,
+/// so a packet that vanished is accounted for and a corrupted packet is not mistaken for a lost one.
+///
+/// The counts are those of the interface and of the node, so they hold for all the workloads in the
+/// direction together.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DirectionTally {
+    /// The link.
+    pub link: String,
+    /// `forward` (from the first node of `between` to the second) or `reverse`.
+    pub direction: String,
+    /// The packets that the workloads put into the direction (those the kernel took).
+    pub sent: u64,
+    /// The frames that arrived at the interface of the receiving node, counted by the interface.
+    pub reached_node: u64,
+    /// The datagrams that reached the sockets of the receivers: the packets of the agent and the others.
+    pub delivered: u64,
+    /// The packets that the queue of the link dropped (the loss, a queue that was full): `sent` minus
+    /// `reached_node`. `None` where that cannot be told: in a direction that duplicates (the frames include the
+    /// copies), or when more frames arrived than were sent.
+    pub lost_in_queue: Option<u64>,
+    /// The frames that arrived and that the node dropped because a bit in them was flipped (a bad checksum,
+    /// an address that is not the node's): `reached_node` minus `delivered` minus `receive_buffer_drops`.
+    pub dropped_corrupted: u64,
+    /// The datagrams that the node dropped because the receive buffer of a socket was full. This is a fault of
+    /// the receiver and not of the network.
+    pub receive_buffer_drops: u64,
 }
 
 /// A restriction of the backend that the scenario accepted (`allow-limited`).
@@ -252,6 +292,7 @@ mod tests {
                 drawn: false,
                 loss_reproducible: true,
                 queue_checks: Vec::new(),
+                not_reproducible_because: Vec::new(),
             },
             accepted_restrictions: Vec::new(),
             addresses: Vec::new(),
@@ -292,6 +333,16 @@ mod tests {
                 foreign_datagrams: 0,
                 records_file: "flow-0.records".to_owned(),
                 packets_file: None,
+            }],
+            directions: vec![DirectionTally {
+                link: "l".to_owned(),
+                direction: "forward".to_owned(),
+                sent: 2,
+                reached_node: 1,
+                delivered: 1,
+                lost_in_queue: Some(1),
+                dropped_corrupted: 0,
+                receive_buffer_drops: 0,
             }],
         }
     }

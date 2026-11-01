@@ -21,7 +21,7 @@ It looks at the machine and prints one line per check, in four groups, and for e
 | Kernel and tc | `netem` | `tc` and the kernel accept delay, loss and rate | `FAIL` (module `sch_netem`; on Ubuntu cloud kernels `linux-modules-extra`) |
 | Kernel and tc | `tables` | `tc` finds the tables of the distributions (`normal.dist`). A `tc` that was built from source looks in `/usr/lib/tc`; `TC_LIB_DIR` points it elsewhere | `warn`: a jitter with `distribution normal` fails |
 | Kernel and tc | `seed` | iproute2 is 6.6.0 or newer **and** `tc` accepts a seed (ENV-07) | `warn`: a scenario with `seed` is refused, and one without is not reproducible |
-| Kernel and tc | `models` | `tc` and the kernel accept the Gilbert-Elliott and the four-state loss, reordering and duplication | `warn`: a scenario that uses a refused model is refused by the run |
+| Kernel and tc | `models` | `tc` and the kernel accept the Gilbert-Elliott and the four-state loss, reordering, duplication and corruption | `warn`: a scenario that uses a refused model is refused by the run |
 | Kernel and tc | `duplicate-tree` | the kernel accepts a duplicating `netem` next to another `netem` in one tree, which a direction with a rate and a jitter or a reordering needs (D-052) | `warn`: a direction with `duplicate`, a `rate` and a `jitter` or `reorder` is refused by the run, with the answer of the kernel; `info` if the first queue of the tree is refused already |
 | Features | one per row of [COVERAGE.md](COVERAGE.md) | What the backend declares for this machine (`Exact`, in part, or refused with the reason) | `warn` with the reason and the way out |
 
