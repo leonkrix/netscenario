@@ -18,7 +18,7 @@ mod provisioner;
 pub mod supervisor;
 mod tools;
 
-pub use capabilities::{Environment, capabilities};
+pub use capabilities::{Environment, Probed, capabilities, capabilities_probed};
 pub use client::{KernelBackend, KernelOptions, Mode};
 pub use command::Toolbox;
 pub use tools::{Tool, Version, parse_tc_version};

@@ -604,3 +604,66 @@ fn sigterm_stops_the_run_like_ctrl_c_with_the_code_143() {
     assert!(result.timing.interrupted_ns.is_some());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---- The gate of the doctor (D-068) ----
+
+/// A machine where `tc` finds no table for the normal distribution (here `TC_LIB_DIR` points nowhere, for the program
+/// only): a scenario with a normal jitter is refused before anything is built, with the line of the file and the way
+/// out, and not after the network is up with an error of `tc`. A uniform jitter still runs.
+#[test]
+fn a_normal_jitter_is_refused_before_the_network_is_built_where_tc_has_no_table() {
+    if !can_run("a_normal_jitter_is_refused_before_the_network_is_built_where_tc_has_no_table") {
+        return;
+    }
+    let dir = work_dir("no-tables");
+    let normal = SCENARIO.replace(
+        "forward: { delay: 20ms }",
+        "forward: { delay: 20ms, jitter: { amount: 5ms, distribution: normal } }",
+    );
+    let file = write_scenario(&dir, &normal);
+    let output = Command::new(env!("CARGO_BIN_EXE_netscenario"))
+        .args(["run", &file, "--out", dir.join("result").to_str().unwrap()])
+        .env("TC_LIB_DIR", dir.join("nowhere"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    for expected in [
+        "cannot reproduce",
+        "needs a table that `tc` cannot find",
+        "path: topology.links[0].forward.jitter.distribution",
+        "TC_LIB_DIR is set to",
+    ] {
+        assert!(stderr.contains(expected), "{expected}\n{stderr}");
+    }
+    // Nothing was built and no result was written
+    assert!(!dir.join("result").join("result.json").exists());
+
+    // Canary: the same machine runs a scenario with the uniform jitter
+    let uniform = SCENARIO.replace(
+        "forward: { delay: 20ms }",
+        "forward: { delay: 20ms, jitter: { amount: 5ms } }",
+    );
+    let file = write_scenario(&dir, &uniform);
+    let output = Command::new(env!("CARGO_BIN_EXE_netscenario"))
+        .args([
+            "run",
+            &file,
+            "--out",
+            dir.join("result").to_str().unwrap(),
+            "--settle",
+            "300ms",
+        ])
+        .env("TC_LIB_DIR", dir.join("nowhere"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

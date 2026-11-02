@@ -16,7 +16,7 @@ use netscenario_core::{
 };
 use netscenario_model::{Impairments, Name, Scenario};
 
-use crate::capabilities::{Environment, capabilities};
+use crate::capabilities::{Environment, Probed, capabilities_probed};
 use crate::command::{
     Toolbox, has_own_rights, namespace_flags, namespaces_work, run, uses_own_rights,
 };
@@ -150,6 +150,8 @@ pub struct KernelBackend {
     run_id: String,
     /// Whether the run uses the rights of this process (else a user namespace), decided once in `new`.
     own_rights: bool,
+    /// What the probe of `doctor` found out about the kernel, run once when the declaration is first asked for (D-068).
+    probed: std::sync::OnceLock<Probed>,
     session: Option<Session>,
 }
 
@@ -198,7 +200,19 @@ impl KernelBackend {
             environment,
             run_id,
             own_rights,
+            probed: std::sync::OnceLock::new(),
             session: None,
+        })
+    }
+
+    /// What the probe found out about the kernel and `tc` of this machine, in the way that the run takes: it is tried
+    /// once, in a throwaway namespace, the first time the declaration or a value is checked (it takes about 15 ms). If
+    /// it cannot be run, nothing is known and the declaration follows the version of `tc` alone.
+    fn probed(&self) -> &Probed {
+        self.probed.get_or_init(|| {
+            Probed::new(
+                crate::doctor::probe_for_run(&self.tools, self.own_rights).unwrap_or_default(),
+            )
         })
     }
 
@@ -430,7 +444,7 @@ impl KernelBackend {
         );
         refusals.extend(duplicate_tree_refusals(
             scenario,
-            || crate::doctor::duplicate_tree_refusal(&self.tools, self.own_rights),
+            || crate::doctor::duplicate_tree_answer(self.probed().steps()),
             &release,
         ));
     }
@@ -566,6 +580,77 @@ fn timeline_refusals(scenario: &Scenario) -> Vec<Refusal> {
     refusals
 }
 
+/// The places where `scenario` asks for a jitter with the distribution `normal`: in a link and in a step of the timeline.
+fn normal_jitter_paths(scenario: &Scenario) -> Vec<String> {
+    use netscenario_core::timeline::{Action, steps};
+    use netscenario_model::JitterDistribution;
+    let normal = |impairments: &Impairments| {
+        impairments
+            .jitter
+            .as_ref()
+            .is_some_and(|jitter| jitter.distribution == JitterDistribution::Normal)
+    };
+    let mut paths = Vec::new();
+    for (index, link) in scenario.topology.links.iter().enumerate() {
+        for (name, impairments) in [
+            ("forward", &link.forward),
+            ("reverse", &link.reverse),
+            ("both", &link.both),
+        ] {
+            if impairments.as_ref().is_some_and(normal) {
+                paths.push(format!(
+                    "topology.links[{index}].{name}.jitter.distribution"
+                ));
+            }
+        }
+    }
+    for step in steps(scenario) {
+        if let Action::Impair { impairments, .. } = &step.action
+            && normal(impairments)
+        {
+            let path = format!("timeline[{}].set", step.event);
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+/// The jitters with the distribution `normal` of `scenario`, refused if `ask` says that `tc` finds no table for it
+/// (the file `normal.dist`). `ask` is called at most once, and not at all if the scenario has no such jitter.
+/// `tc_lib_dir` is the value of `TC_LIB_DIR`, which the fix names if it is set (D-068).
+fn normal_table_refusals(
+    scenario: &Scenario,
+    ask: impl FnOnce() -> Option<String>,
+    tc_lib_dir: Option<&str>,
+) -> Vec<Refusal> {
+    let wanted = normal_jitter_paths(scenario);
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let Some(answer) = ask() else {
+        return Vec::new();
+    };
+    let fix = match tc_lib_dir {
+        Some(dir) => format!(
+            "TC_LIB_DIR is set to {dir}: put normal.dist there or point it to the directory that has it; or use the distribution `uniform`"
+        ),
+        None => "install the iproute2 package that has the tables (usually in /usr/lib/tc or /usr/lib/<arch>/tc), or set TC_LIB_DIR to the directory with normal.dist; or use the distribution `uniform`".to_owned(),
+    };
+    wanted
+        .into_iter()
+        .map(|path| Refusal {
+            feature: Feature::Jitter,
+            path,
+            reason: format!(
+                "a jitter with the distribution `normal` needs a table that `tc` cannot find on this machine: {answer}"
+            ),
+            fix: fix.clone(),
+        })
+        .collect()
+}
+
 /// The workloads of `scenario` that send without the checksum of UDP, refused if `ask` says that a node has no
 /// `CAP_NET_RAW`. `ask` is called at most once, and not at all if no workload needs the raw socket.
 fn raw_socket_refusals(scenario: &Scenario, ask: impl FnOnce() -> Option<String>) -> Vec<Refusal> {
@@ -605,7 +690,7 @@ impl Backend for KernelBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        capabilities(&self.environment)
+        capabilities_probed(&self.environment, self.probed())
     }
 
     fn check_values(&self, scenario: &Scenario) -> Result<(), CapabilityError> {
@@ -644,8 +729,13 @@ impl Backend for KernelBackend {
         self.check_duplicate_tree(scenario, &mut refusals);
         refusals.extend(timeline_refusals(scenario));
         refusals.extend(raw_socket_refusals(scenario, || {
-            crate::doctor::raw_socket_refusal(&self.tools, self.own_rights)
+            crate::doctor::raw_socket_answer(self.probed().steps())
         }));
+        refusals.extend(normal_table_refusals(
+            scenario,
+            || self.probed().refused("tables").map(str::to_owned),
+            std::env::var("TC_LIB_DIR").ok().as_deref(),
+        ));
         if refusals.is_empty() {
             Ok(())
         } else {
@@ -969,6 +1059,58 @@ mod tests {
 
     fn scenario_of(link: &str) -> Scenario {
         Scenario::from_yaml(&format!("{HEAD}{link}{WORKLOAD}"), "t.yaml").unwrap()
+    }
+
+    /// The jitter with the distribution `normal` is refused where `tc` finds no table (D-068): in a link and in a step,
+    /// with the answer, and the kernel is not asked for a scenario that has none.
+    #[test]
+    fn a_normal_jitter_is_refused_where_tc_finds_no_table_for_it() {
+        let normal =
+            "      forward: { delay: 20ms, jitter: { amount: 5ms, distribution: normal } }\n";
+        let refusals = normal_table_refusals(
+            &scenario_of(normal),
+            || Some("No such file or directory".to_owned()),
+            None,
+        );
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(
+            refusals[0].path,
+            "topology.links[0].forward.jitter.distribution"
+        );
+        assert!(refusals[0].reason.contains("No such file or directory"));
+        assert!(refusals[0].fix.contains("TC_LIB_DIR"));
+        // The directory the user set is named
+        let set = normal_table_refusals(
+            &scenario_of(normal),
+            || Some("x".to_owned()),
+            Some("/nowhere"),
+        );
+        assert!(
+            set[0].fix.contains("TC_LIB_DIR is set to /nowhere"),
+            "{}",
+            set[0].fix
+        );
+        // A step that leads to one is named by its place
+        let in_step = Scenario::from_yaml(
+            &format!(
+                "{HEAD}      forward: {{ delay: 20ms }}\n{WORKLOAD}timeline:\n  - {{ at: 2s, link: l, set: {{ forward: {{ jitter: {{ amount: 2ms, distribution: normal }} }} }} }}\n"
+            ),
+            "t.yaml",
+        )
+        .unwrap();
+        let refusals = normal_table_refusals(&in_step, || Some("gone".to_owned()), None);
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert_eq!(refusals[0].path, "timeline[0].set");
+        // Canaries: a uniform jitter, none, and a table that is there ask nothing or say nothing
+        let uniform = scenario_of("      forward: { delay: 20ms, jitter: { amount: 5ms } }\n");
+        assert_eq!(
+            normal_table_refusals(&uniform, || panic!("asked"), None),
+            Vec::new()
+        );
+        assert_eq!(
+            normal_table_refusals(&scenario_of(normal), || None, None),
+            Vec::new()
+        );
     }
 
     const REFUSED: &str = "Error: netem: cannot mix duplicating netems with other netems in tree.";
