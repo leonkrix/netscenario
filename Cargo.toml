@@ -25,7 +25,8 @@ netscenario-cli = { path = "crates/netscenario-cli", version = "0.1.0" }
 
 # Third-party dependencies are listed once here; a crate says `name.workspace = true`
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: a number that is written and read again is the same number to the last bit (the sets of runs compare them)
+serde_json = { version = "1", features = ["float_roundtrip"] }
 # The agent reads the clock and sets socket buffers through this safe interface, so no crate of ours needs `unsafe`
 rustix = { version = "1", default-features = false, features = ["std", "time", "net"] }
 # The command line stops a run in an orderly way on Ctrl-C (D-066). The handler of the signal is in this crate, so no crate of

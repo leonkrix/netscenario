@@ -505,13 +505,14 @@ impl RunResult {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
     use crate::stats::{FlowStats, Throughput};
 
-    fn example() -> RunResult {
+    /// A small result for tests of code that reads results.
+    pub(crate) fn example() -> RunResult {
         RunResult {
             format: RESULT_FORMAT.to_owned(),
             version: RESULT_VERSION,

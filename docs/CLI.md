@@ -35,6 +35,7 @@ Errors go to standard error, results to standard output; with `--json` standard 
 
 ```text
 netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--json]
+                       [--repetitions <n>] [--statistic mean|median] [--confidence <percent>]
                        [--bin <duration>] [--recovery-basis send|arrival] [--recovery-baseline <bins>]
                        [--recovery-window <bins>] [--recovery-fraction <percent>]
                        [--capture <link>[,<link>...]|all] [--packets]
@@ -54,7 +55,10 @@ What a run measures is in the scenario, in the section `measure` ([SCENARIO-FORM
 | `--recovery-fraction <percent>` | Replaces `measure.recovery.fraction`: the share of the baseline that has to be reached again, above 0 and at most 100 (`90` or `90%`). Default 90. |
 | `--capture <links>` | Replaces `measure.capture`: capture the interfaces of these links (ids separated by commas, or `all`) at both ends as `capture-<link>-<node>.pcap`, see [RESULTS.md](RESULTS.md#captures-prb-09-d-047-d-073). The list of the file is not added to but replaced. |
 | `--packets` | Switches `measure.packets` on: also write `packets-<id>.jsonl` with one line for each packet ([RESULTS.md](RESULTS.md)). |
-| `--json` | Print `result.json` on standard output instead of the summary. The file is written either way. |
+| `--repetitions <n>` | Run the scenario `n` times, one after the other, with seeds derived from the seed of the scenario (or of `--seed`); `n` is from 5 to 1,000. `--out` is then the directory of the set: `run-001`, `run-002`, ... hold the runs and `runset.json` holds the values of every run and an interval for each metric. The summary shows the headline metrics of each workload with their intervals. The set ends with the first failure and has no `runset.json` then. See [STATISTICS.md](STATISTICS.md). |
+| `--statistic mean\|median` | With `--repetitions`: what the interval is around. Default `mean`. |
+| `--confidence <percent>` | With `--repetitions`: the level of the interval, above 0 and below 100 (`95` or `95%`). Default 95. |
+| `--json` | Print `result.json` (with `--repetitions`: `runset.json`) on standard output instead of the summary. The file is written either way. |
 
 **Ctrl-C** (or SIGTERM) while the workloads run stops them, waits for the packets that are still in the network (the settle time), writes the result of the part that ran and exits with 130 (143). The summary says how long it ran, and `result.json` has `timing.interrupted_ns`. The steps of the timeline that were not due are not done, and the packets that were not sent are not lost: the result counts what the senders sent. **Ctrl-C a second time quits at once**; the network is removed all the same (D-022). The supervisor, the nodes and the agents are in a process group of their own, so the signal of the terminal reaches the program only and the run can stop in an orderly way (D-066).
 

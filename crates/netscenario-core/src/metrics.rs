@@ -295,10 +295,8 @@ mod tests {
         );
         let plain = metric(r#"  {"value": 3, "metric": "calls"}  "#);
         assert_eq!((plain.value, plain.unit), (3.0, None));
-        assert_eq!(
-            metric(r#"{"metric":"x","value":-1e3,"unit":null}"#).value,
-            -1000.0
-        );
+        // 1e3 is exact in a double, but the lint is about comparing doubles, so say how close is close enough
+        assert!((metric(r#"{"metric":"x","value":-1e3,"unit":null}"#).value + 1000.0).abs() < 1e-9);
     }
 
     #[test]

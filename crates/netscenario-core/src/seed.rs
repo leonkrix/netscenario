@@ -35,6 +35,27 @@ pub fn derive_stage_seed(direction_seed: u64, stage: u32) -> u64 {
     mix(mix(direction_seed) ^ mix(u64::from(stage).wrapping_add(0xd1b5_4a32_d192_ed03)))
 }
 
+/// The seed of repetition `index` (from 0) of a set of runs, from the seed of the set (ASR-02, D-074). Every repetition gets
+/// the seed of the scenario replaced by this one, so the repetitions draw unrelated loss patterns and the set can be repeated
+/// from its seed alone. Pinned like the others.
+#[must_use]
+pub fn derive_repetition_seed(set_seed: u64, index: u32) -> u64 {
+    mix(mix(set_seed) ^ mix(u64::from(index).wrapping_add(0xa24b_aed4_963e_e407)))
+}
+
+/// The seed of the bootstrap of one metric of a set of runs, from the seed of the set and the name of the metric
+/// (ASR-03, D-074). It depends on the name and not on the place of the metric in the list, so the interval of a metric does not
+/// change when another metric appears or goes. The name is hashed with FNV-1a (64 bit), which is fixed and published.
+#[must_use]
+pub fn derive_bootstrap_seed(set_seed: u64, metric: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in metric.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    mix(mix(set_seed) ^ mix(hash ^ 0x5851_f42d_4c95_7f2d))
+}
+
 /// A seed for a run whose scenario has none. It comes from the random keys that the standard library draws
 /// from the system for its hash tables, so two runs get different seeds, and the seed is recorded in the
 /// result so that the run can be repeated.
@@ -96,6 +117,44 @@ mod tests {
         );
         assert_eq!(derive_stage_seed(direction, 1), PINNED_STAGE);
     }
+
+    #[test]
+    fn repetitions_and_bootstraps_get_unrelated_pinned_seeds() {
+        let seeds: Vec<u64> = (0..5).map(|i| derive_repetition_seed(7, i)).collect();
+        for (i, a) in seeds.iter().enumerate() {
+            for b in &seeds[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+        assert_ne!(derive_repetition_seed(7, 0), derive_repetition_seed(8, 0));
+        // The seed of a repetition is not the seed of the set, and the seed of a link is not either
+        assert_ne!(derive_repetition_seed(7, 0), 7);
+        assert_ne!(
+            derive_repetition_seed(7, 0),
+            derive_seed(7, 0, Direction::Forward)
+        );
+        assert_ne!(
+            derive_bootstrap_seed(7, "media.loss_ratio"),
+            derive_bootstrap_seed(7, "media.delay.p99")
+        );
+        assert_eq!(derive_bootstrap_seed(7, "a"), derive_bootstrap_seed(7, "a"));
+        assert_eq!(
+            [
+                derive_repetition_seed(0, 0),
+                derive_repetition_seed(1234, 9),
+                derive_bootstrap_seed(0, ""),
+                derive_bootstrap_seed(1234, "media.delay.p99"),
+            ],
+            PINNED_SET
+        );
+    }
+
+    const PINNED_SET: [u64; 4] = [
+        15_400_537_398_795_842_965,
+        750_609_491_068_823_138,
+        871_037_530_182_556_995,
+        15_287_341_591_652_727_783,
+    ];
 
     const PINNED_STAGE: u64 = 5_600_420_206_902_464_567;
 

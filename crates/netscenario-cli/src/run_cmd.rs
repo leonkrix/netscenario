@@ -1,25 +1,29 @@
 //! `netscenario run`: run a scenario file and write its result.
 
+use std::cell::Cell;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::SystemTime;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
+use netscenario_core::bootstrap::Statistic;
 use netscenario_core::{
-    CancelToken, Error, RunEvent, RunObserver, RunOptions, agent_next_to, rfc3339_utc, run,
+    CancelToken, Error, Repetition, RunEvent, RunObserver, RunOptions, RunSetOptions, RunSetResult,
+    agent_next_to, rfc3339_utc, run, run_set,
 };
 use netscenario_model::{Duration, MeasureOverrides, Name, Probability, RecoveryBasis, Scenario};
 
 use crate::args::{Parsed, Spec};
 use crate::exit;
 use crate::interrupt::{Watch, code_of};
-use crate::render::summary;
+use crate::render::{set_summary, summary};
 use crate::validate::{Loaded, load};
 
 pub(crate) const RUN_HELP: &str = "\
 Usage: netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--json] [--packets]
+                       [--repetitions <n>] [--statistic mean|median] [--confidence <percent>]
                        [--bin <duration>] [--capture all|<link>,...] [--recovery-basis send|arrival]
                        [--recovery-baseline <bins>] [--recovery-window <bins>] [--recovery-fraction <percent>]
 
@@ -31,7 +35,16 @@ that it creates is touched, and everything is removed afterwards, also after an 
   --seed <n>           use this seed instead of the one in the file (to repeat a run that drew its own)
   --settle <duration>  how long to wait after the last packet for the packets still in the network
                        (for example 2s; default: until the queues of the links are empty, and 0.3 s more)
-  --json               print result.json on standard output instead of the summary
+  --json               print result.json (or runset.json, with --repetitions) on standard output instead of the summary
+
+Repetitions run the scenario several times, one after the other, and say how much each metric varies between the runs
+(see docs/STATISTICS.md). Run number i uses a seed derived from the seed of the scenario (or of --seed), so the runs draw
+unrelated loss patterns and the whole set can be repeated; each run is in a directory run-001, run-002, ... of --out, and
+runset.json holds the values of every run and an interval for each metric:
+
+  --repetitions <n>    run the scenario n times, from 5 to 1000 (fewer runs say too little for an interval)
+  --statistic <name>   what the interval is around: mean (default) or median
+  --confidence <p>     the level of the interval in percent, above 0 and below 100 (default 95)
 
 These options name keys of the section `measure` of the file and replace them for this run; the result says what
 was used (see docs/SCENARIO-FORMAT.md):
@@ -68,6 +81,9 @@ pub(crate) const RUN_SPEC: Spec = Spec {
         "recovery-baseline",
         "recovery-window",
         "recovery-fraction",
+        "repetitions",
+        "statistic",
+        "confidence",
     ],
     flags: &["packets", "json"],
 };
@@ -148,6 +164,39 @@ fn fraction_of(percent: f64) -> Option<Probability> {
         .contains(&micro)
         .then(|| Probability::from_micro_percent(micro as u32))
         .flatten()
+}
+
+/// What the command line asks for in repetitions, or nothing for a single run. `--statistic` and `--confidence` mean nothing
+/// without `--repetitions`, and saying so is better than ignoring them.
+fn set_options(parsed: &Parsed) -> Result<Option<RunSetOptions>, String> {
+    let Some(text) = parsed.value("repetitions") else {
+        for name in ["statistic", "confidence"] {
+            if parsed.value(name).is_some() {
+                return Err(format!("--{name} needs --repetitions"));
+            }
+        }
+        return Ok(None);
+    };
+    let repetitions: u32 = text
+        .parse()
+        .map_err(|_| "--repetitions needs a whole number, for example 10".to_owned())?;
+    let mut set = RunSetOptions::new(repetitions);
+    if let Some(word) = parsed.value("statistic") {
+        set.statistic =
+            Statistic::from_str(word).map_err(|message| format!("--statistic: {message}"))?;
+    }
+    if let Some(text) = parsed.value("confidence") {
+        let percent: f64 = text
+            .trim_end_matches('%')
+            .parse()
+            .map_err(|_| "--confidence needs a number of percent, for example 95".to_owned())?;
+        set.level = percent / 100.0;
+    }
+    set.check().map_err(|error| match error {
+        Error::Run { message, .. } => format!("--repetitions, --confidence: {message}"),
+        other => other.to_string(),
+    })?;
+    Ok(Some(set))
 }
 
 /// The directory for a result when none is given: the name of the scenario and the time, so that two runs do
@@ -341,6 +390,10 @@ pub(crate) fn run_command<S: AsRef<str>>(
     if let Err(message) = measure_overrides(&parsed, &[]) {
         return crate::usage_error(err, "run", &message, RUN_HELP);
     }
+    let set = match set_options(&parsed) {
+        Ok(set) => set,
+        Err(message) => return crate::usage_error(err, "run", &message, RUN_HELP),
+    };
     let loaded = match load(path) {
         Ok(loaded) => loaded,
         Err(message) => {
@@ -380,6 +433,16 @@ pub(crate) fn run_command<S: AsRef<str>>(
     let token = CancelToken::new();
     options = options.with_cancel(token.clone()).with_partial_on_cancel();
 
+    if let Some(set) = set {
+        let target = Repeating {
+            set: &set,
+            scenario: &scenario,
+            exe: &exe,
+            json: parsed.flag("json"),
+            out_dir: &out_dir,
+        };
+        return run_repetitions(&target, options, token, &loaded, out, err);
+    }
     let mut backend = match KernelBackend::new(KernelOptions::for_scenario(&exe, &scenario)) {
         Ok(backend) => backend,
         Err(error) => return report(&error, &loaded, err),
@@ -413,6 +476,132 @@ pub(crate) fn run_command<S: AsRef<str>>(
         out,
         err,
     )
+}
+
+/// What a set of runs is run with.
+struct Repeating<'a> {
+    set: &'a RunSetOptions,
+    scenario: &'a Scenario,
+    exe: &'a Path,
+    json: bool,
+    out_dir: &'a Path,
+}
+
+/// The progress line of a set: what the run says, behind the number of the repetition.
+struct SetProgress(Arc<Mutex<String>>);
+
+impl RunObserver for SetProgress {
+    fn event(&self, event: &RunEvent) {
+        if let Some(text) = describe(event) {
+            let prefix = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            ProgressLine::show(&format!("{prefix}{text}"));
+        }
+    }
+}
+
+/// Runs the scenario once for each repetition and prints the set (ASR-02, ASR-03).
+fn run_repetitions(
+    target: &Repeating<'_>,
+    mut options: RunOptions,
+    token: CancelToken,
+    loaded: &Loaded,
+    out: &mut impl Write,
+    err: &mut impl Write,
+) -> u8 {
+    let on_terminal = std::io::stderr().is_terminal();
+    let prefix = Arc::new(Mutex::new(String::new()));
+    if on_terminal {
+        options = options.with_observer(Arc::new(SetProgress(Arc::clone(&prefix))));
+        ProgressLine::show("building the network");
+    } else {
+        let _ = writeln!(
+            err,
+            "running {} {} times for {} each ...",
+            target.scenario.name, target.set.repetitions, target.scenario.duration
+        );
+    }
+    let watch = Watch::start(token, on_terminal);
+    // The place of the repetition that is running, for the message when one fails
+    let current = Cell::new(0_u32);
+    let outcome = run_set(
+        target.scenario,
+        &options,
+        target.set,
+        &mut |scenario, run_options| {
+            let mut backend =
+                KernelBackend::new(KernelOptions::for_scenario(target.exe, scenario))?;
+            run(&mut backend, scenario, run_options)
+        },
+        &mut |repetition: &Repetition| {
+            current.set(repetition.index + 1);
+            let label = format!(
+                "repetition {} of {}",
+                repetition.index + 1,
+                repetition.total
+            );
+            if on_terminal {
+                let mut prefix = prefix.lock().unwrap_or_else(PoisonError::into_inner);
+                *prefix = format!("{label}: ");
+                ProgressLine::show(&format!("{label}: building the network"));
+            } else {
+                let _ = writeln!(err, "{label} (seed {}) ...", repetition.seed);
+            }
+        },
+    );
+    if on_terminal {
+        ProgressLine::clear();
+    }
+    let signal = watch.as_ref().and_then(Watch::signal);
+    conclude_set(outcome, target, current.get(), signal, loaded, out, err)
+}
+
+/// Prints the set or the error of a set and returns the exit code that fits.
+fn conclude_set(
+    outcome: Result<RunSetResult, Error>,
+    target: &Repeating<'_>,
+    current: u32,
+    signal: Option<i32>,
+    loaded: &Loaded,
+    out: &mut impl Write,
+    err: &mut impl Write,
+) -> u8 {
+    match outcome {
+        Ok(set) => {
+            if target.json {
+                let _ = write!(out, "{}", set.to_json());
+            } else {
+                let _ = write!(out, "{}", set_summary(&set, target.out_dir));
+            }
+            exit::OK
+        }
+        Err(Error::Cancelled) => {
+            let _ = writeln!(
+                err,
+                "netscenario: interrupted during repetition {current} of {}: there is no set, because an interval from fewer runs than asked for would be a made-up number; the runs that finished are in {}",
+                target.set.repetitions,
+                target.out_dir.display()
+            );
+            ending_code(signal)
+        }
+        Err(error) => {
+            let code = report(&error, loaded, err);
+            if current > 1 {
+                let _ = writeln!(
+                    err,
+                    "  repetition {current} of {} failed; the {} runs before it are in {}",
+                    target.set.repetitions,
+                    current - 1,
+                    target.out_dir.display()
+                );
+            }
+            code
+        }
+    }
+}
+
+/// 128 and the number of the signal that interrupted, or that of SIGINT.
+fn ending_code(signal: Option<i32>) -> u8 {
+    signal.map_or(code_of(2), code_of)
 }
 
 /// How the run ended, as far as the printing and the exit code are concerned.
@@ -511,6 +700,72 @@ mod tests {
         .unwrap();
         assert_eq!(plain.fraction.unwrap().micro_percent(), 95_000_000);
         assert_eq!(plain.capture.unwrap().len(), 2);
+    }
+
+    /// Repetitions are read with their defaults and each option moves its own parameter.
+    #[test]
+    fn the_options_of_repetitions_are_read() {
+        assert_eq!(set_options(&parsed(&[])).unwrap(), None);
+        let plain = set_options(&parsed(&["--repetitions", "10"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(plain, RunSetOptions::new(10));
+        assert_eq!((plain.statistic, plain.level), (Statistic::Mean, 0.95));
+        let given = set_options(&parsed(&[
+            "--repetitions",
+            "20",
+            "--statistic",
+            "median",
+            "--confidence",
+            "90%",
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            (given.repetitions, given.statistic),
+            (20, Statistic::Median)
+        );
+        assert!((given.level - 0.9).abs() < 1e-12);
+    }
+
+    /// Canary: each wrong value is refused with the option named, and nothing is read as a default instead.
+    #[test]
+    fn wrong_options_of_repetitions_are_refused_with_the_option_named() {
+        for (args, expected) in [
+            (
+                &["--repetitions", "x"][..],
+                "--repetitions needs a whole number",
+            ),
+            (
+                &["--repetitions", "-1"][..],
+                "--repetitions needs a whole number",
+            ),
+            (&["--repetitions", "4"][..], "repetitions is 4"),
+            (&["--repetitions", "1001"][..], "repetitions is 1001"),
+            (
+                &["--repetitions", "5", "--confidence", "0"][..],
+                "level of an interval",
+            ),
+            (
+                &["--repetitions", "5", "--confidence", "nine"][..],
+                "--confidence needs a number",
+            ),
+            (
+                &["--repetitions", "5", "--statistic", "p99"][..],
+                "--statistic:",
+            ),
+            (
+                &["--statistic", "mean"][..],
+                "--statistic needs --repetitions",
+            ),
+            (
+                &["--confidence", "95"][..],
+                "--confidence needs --repetitions",
+            ),
+        ] {
+            let message = set_options(&parsed(args)).unwrap_err();
+            assert!(message.contains(expected), "{args:?}: {message}");
+        }
     }
 
     #[test]
