@@ -50,7 +50,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | TOP-04 | Dumbbell (shared bottleneck) | M | 0.3 | planned |
 | TOP-05 | Multipath and multi-homing (several links between nodes) | M | 0.3 | planned |
 | TOP-06 | Arbitrary graph with static routes | M | 0.3 | planned |
-| TOP-07 | Dynamic topology: links up and down (0.2), nodes joining and leaving (0.6) | M | 0.2 | planned |
+| TOP-07 | Dynamic topology: links up and down (0.2), nodes joining and leaving (0.6) | M | 0.2 | links up and down done (TML-02, D-064); nodes joining and leaving come with 0.6 |
 | TOP-08 | IPv4 (0.1) and IPv6 (0.3) | M | 0.1 | done for 0.1 (IPv4, `10.100.n.0/30`: `every_end_of_a_link_gets_its_address`, `tests/run.rs`); IPv6 comes with 0.3 |
 | TOP-09 | NAT and firewall nodes | C | 0.8 | idea |
 | TOP-10 | Shared segments, broadcast, multicast | C | 0.8 | idea |

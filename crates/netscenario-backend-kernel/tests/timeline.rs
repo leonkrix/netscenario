@@ -38,16 +38,35 @@ fn options(dir: &std::path::Path) -> RunOptions {
     options
 }
 
-/// How late a step may be, at most. A step by the clock is due at a moment and done by the `tc` that lives for the run:
-/// 0.03 ms on the development machine, a few ms on a busy one, and 2 to 4 ms when a `tc` process is started each
-/// time (S11, D-038, D-060, D-063). Noise only goes one way, so the lower bound is exact (a step by the clock is
-/// never done before its moment) and the upper bound is room for a shared runner: 50 ms is more than ten times what
-/// was measured with every processor busy.
-const LATEST: Duration = Duration::from_millis(50);
+/// The least that a step may be late (50 ms): on a quiet machine a step is done within a millisecond (0.03 ms for the
+/// change itself, D-063), and a shared runner stalls for a few milliseconds now and then, so 50 ms is more than ten
+/// times what was measured with every processor busy (S11).
+const LATEST_ON_A_QUIET_MACHINE: Duration = Duration::from_millis(50);
+
+/// How late the machine makes a thread that sleeps, now: the worst overshoot of 150 sleeps of a millisecond. A step
+/// is done by a thread of the run that wakes up for it, so it cannot be expected to be later than the machine makes
+/// any thread late, plus the work of the step (D-069).
+fn machine_noise() -> Duration {
+    let mut worst = Duration::ZERO;
+    for _ in 0..150 {
+        let began = std::time::Instant::now();
+        std::thread::sleep(Duration::from_millis(1));
+        worst = worst.max(began.elapsed().saturating_sub(Duration::from_millis(1)));
+    }
+    worst
+}
+
+/// How late a step may be, at most, in a run that begins now (D-069): 50 ms, or four times what the machine does to a
+/// sleeping thread plus 5 ms for the step, if that is more. Noise only goes one way, so the lower bound is exact (a step
+/// by the clock is never done before its moment); the upper bound follows the machine. Measured with 24 busy loops on
+/// 4 cores (6 runnable threads for each), where the fixed 50 ms was exceeded by a hair in 2 of 6 runs.
+fn latest() -> Duration {
+    LATEST_ON_A_QUIET_MACHINE.max(machine_noise() * 4 + Duration::from_millis(5))
+}
 
 /// The judgement of the lateness of the steps, in one place so that the canary below uses the same one. A step at a
 /// barrier is done when the sender has sent the packet before its moment, so it may begin up to `gap_ns` before it.
-fn lateness_problems(events: &[EventRecord], gap_ns: u64) -> Vec<String> {
+fn lateness_problems(events: &[EventRecord], gap_ns: u64, latest: Duration) -> Vec<String> {
     let mut problems = Vec::new();
     for event in events {
         let earliest = if event.packet.is_some() {
@@ -63,7 +82,7 @@ fn lateness_problems(events: &[EventRecord], gap_ns: u64) -> Vec<String> {
             ));
         }
         let late = Duration::from_nanos(event.applied_ns.saturating_sub(event.scheduled_ns));
-        if late > LATEST {
+        if late > latest {
             problems.push(format!("event {} was {late:?} late", event.event));
         }
         if event.applied_ns < event.started_ns {
@@ -87,6 +106,7 @@ fn a_rate_that_drops_in_the_course_of_the_run_is_in_the_throughput_and_the_resul
     }
     let dir = work_dir("timeline-rate");
     let mut backend = backend(|_| {});
+    let latest = latest();
     let result = run(
         &mut backend,
         &scenario(
@@ -132,7 +152,7 @@ fn a_rate_that_drops_in_the_course_of_the_run_is_in_the_throughput_and_the_resul
     // before 3 s, and the step is done before packet 1,125
     assert_eq!(step.packet, Some(1125));
     assert_eq!(
-        lateness_problems(&result.events, GAP_NS),
+        lateness_problems(&result.events, GAP_NS, latest),
         Vec::<String>::new()
     );
     // A rate is not drawn: the run says nothing against reproducing the lost packets
@@ -158,27 +178,51 @@ fn canary_a_step_that_is_late_or_early_fails_the_judgement() {
     };
     let none = Vec::<String>::new();
     assert_eq!(
-        lateness_problems(&[record(1_000_000, 1_000_500, 2_500_000)], GAP_NS),
+        lateness_problems(
+            &[record(1_000_000, 1_000_500, 2_500_000)],
+            GAP_NS,
+            LATEST_ON_A_QUIET_MACHINE
+        ),
         none
     );
     // A barrier step begins when the sender has sent the packet before: up to a gap early is right
     assert_eq!(
-        lateness_problems(&[barrier(10_000_000, 8_000_000, 9_000_000)], GAP_NS),
+        lateness_problems(
+            &[barrier(10_000_000, 8_000_000, 9_000_000)],
+            GAP_NS,
+            LATEST_ON_A_QUIET_MACHINE
+        ),
         none
     );
-    let late = lateness_problems(&[record(1_000_000, 1_000_500, 81_000_000)], GAP_NS);
+    let late = lateness_problems(
+        &[record(1_000_000, 1_000_500, 81_000_000)],
+        GAP_NS,
+        LATEST_ON_A_QUIET_MACHINE,
+    );
     assert!(late.iter().any(|p| p.contains("late")), "{late:?}");
-    let early = lateness_problems(&[record(5_000_000, 4_000_000, 6_000_000)], GAP_NS);
+    let early = lateness_problems(
+        &[record(5_000_000, 4_000_000, 6_000_000)],
+        GAP_NS,
+        LATEST_ON_A_QUIET_MACHINE,
+    );
     assert!(
         early.iter().any(|p| p.contains("before it may")),
         "{early:?}"
     );
-    let too_early = lateness_problems(&[barrier(10_000_000, 5_000_000, 6_000_000)], GAP_NS);
+    let too_early = lateness_problems(
+        &[barrier(10_000_000, 5_000_000, 6_000_000)],
+        GAP_NS,
+        LATEST_ON_A_QUIET_MACHINE,
+    );
     assert!(
         too_early.iter().any(|p| p.contains("before it may")),
         "{too_early:?}"
     );
-    let backwards = lateness_problems(&[record(5_000_000, 6_000_000, 5_500_000)], GAP_NS);
+    let backwards = lateness_problems(
+        &[record(5_000_000, 6_000_000, 5_500_000)],
+        GAP_NS,
+        LATEST_ON_A_QUIET_MACHINE,
+    );
     assert!(
         backwards.iter().any(|p| p.contains("ended before")),
         "{backwards:?}"
@@ -194,6 +238,7 @@ fn an_event_on_both_directions_is_two_steps_in_order() {
     }
     let dir = work_dir("timeline-both");
     let mut backend = backend(|_| {});
+    let latest = latest();
     let result = run(
         &mut backend,
         &scenario(
@@ -236,7 +281,7 @@ fn an_event_on_both_directions_is_two_steps_in_order() {
             .all(|w| w[0].applied_ns <= w[1].started_ns)
     );
     assert_eq!(
-        lateness_problems(&result.events, GAP_NS),
+        lateness_problems(&result.events, GAP_NS, latest),
         Vec::<String>::new()
     );
     // The delay of the packets went from 10 to 30 ms at one second: the median of the whole run is 30 ms
@@ -648,6 +693,7 @@ fn an_outage_is_a_window_in_which_nothing_arrives_not_even_what_was_on_its_way()
     }
     let dir = work_dir("timeline-outage");
     let mut backend = backend(|_| {});
+    let latest = latest();
     let result = run(
         &mut backend,
         &scenario(
@@ -706,7 +752,7 @@ fn an_outage_is_a_window_in_which_nothing_arrives_not_even_what_was_on_its_way()
         ]
     );
     assert_eq!(
-        lateness_problems(&result.events, GAP_NS),
+        lateness_problems(&result.events, GAP_NS, latest),
         Vec::<String>::new()
     );
     // The edges are placed by the clock, and the result says so
