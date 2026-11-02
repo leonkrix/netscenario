@@ -68,9 +68,25 @@ fn hold() -> ExitCode {
     }
 }
 
+/// Puts the signals that a program may be sent (`TERM` by default, and the others of `shutdown`) back to what a program
+/// expects. The supervisor is the first process of a pid namespace and may have been started with `SIGTERM` and `SIGINT`
+/// ignored (the `unshare` of util-linux 2.37, on Ubuntu 22.04, does). An ignored signal stays ignored across `exec`, so
+/// every program would ignore `TERM` and none could be stopped but with `KILL` (D-072). A handler, unlike "ignored", is
+/// reset to the default by `exec`; the flag that the handlers set is never read, because the supervisor ignored the
+/// signals before as well.
+fn restore_signals() {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2};
+    let unused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    for signal in [SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2] {
+        // A signal that cannot get a handler stays as it is; the test of the programs says if that matters
+        let _ = signal_hook::flag::register(signal, std::sync::Arc::clone(&unused));
+    }
+}
+
 // One arm for each request of the protocol: splitting it would only hide the list
 #[allow(clippy::too_many_lines)]
 fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
+    restore_signals();
     let tools = match Toolbox::locate() {
         Ok(tools) => tools,
         Err(missing) => {

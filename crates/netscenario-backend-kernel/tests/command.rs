@@ -476,3 +476,41 @@ fn a_cancel_while_a_program_runs_leaves_nothing_behind() {
     assert_nothing_left(backend.run_id(), "after the cancel");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A supervisor that was started with `SIGTERM` and `SIGINT` ignored (the `unshare` of util-linux 2.37 of Ubuntu 22.04 starts
+/// the first process of a pid namespace so) passes the ignoring to every program it starts, for an ignored signal stays
+/// ignored across `exec`, and `TERM` would not stop anything: every program would be `killed` after `within`. The supervisor
+/// puts its signals back to the default first (D-072). The wrapper below starts the real supervisor so.
+#[test]
+fn a_program_obeys_term_also_when_the_supervisor_was_started_with_it_ignored() {
+    if !ready() {
+        return;
+    }
+    let dir = work_dir("programs-ignored-term");
+    script(&dir, "app.sh", "echo ready\nsleep 60");
+    let wrapper = dir.join("supervisor.sh");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ntrap '' TERM INT\nexec {} \"$@\"\n",
+            support::supervisor_exe().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut backend = backend(|options| options.supervisor = wrapper.clone());
+    let result = run(
+        &mut backend,
+        &scenario(
+            "2s",
+            "",
+            "  - { id: app, kind: command, node: server, run: [\"./app.sh\"], ready: { stdout-line: ready, within: 5s }, shutdown: { signal: TERM, within: 2s } }\n",
+        ),
+        &options(&dir),
+    )
+    .unwrap();
+    assert_eq!(result.programs[0].ended, "stopped");
+    assert_eq!(result.programs[0].exit_signal, Some(15));
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
+}

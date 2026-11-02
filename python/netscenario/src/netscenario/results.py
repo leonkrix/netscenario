@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -715,7 +715,7 @@ class Result:
     """What the backend says about how it did the run besides the result, one sentence for each
     fact: for example that the changes of a link were made the slow way after the fast way stopped
     working. Empty if the run went as usual."""
-    programs: Mapping[str, Program] = MappingProxyType({})
+    programs: Mapping[str, Program] = field(default_factory=lambda: MappingProxyType({}))
     """The programs of your own (``kind: command``) by id, in the order of the scenario."""
 
     def __getitem__(self, workload_id: str) -> Workload:
