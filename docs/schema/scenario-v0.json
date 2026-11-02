@@ -86,6 +86,10 @@
           "$ref": "#/$defs/Name",
           "description": "The node it runs in."
         },
+        "on-exit": {
+          "$ref": "#/$defs/OnExit",
+          "description": "`continue` (default): the run goes on when the program ends by itself with an error. `fail`: the run is stopped\nwith an error."
+        },
         "ready": {
           "anyOf": [
             {
@@ -603,6 +607,46 @@
         }
       ]
     },
+    "Measure": {
+      "additionalProperties": false,
+      "description": "What is measured and kept besides the statistics of each workload.",
+      "properties": {
+        "capture": {
+          "description": "The links whose interfaces are captured, at both ends, as pcap files (PRB-09). A capture shows what the interface\ncarried after the queue, so a packet that the link dropped is in no file.",
+          "items": {
+            "$ref": "#/$defs/Name"
+          },
+          "type": "array"
+        },
+        "packets": {
+          "description": "Whether to write `packets-<id>.jsonl` with one line for each packet of each workload. Default `false`.",
+          "type": "boolean"
+        },
+        "recovery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecoverySettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The time to recover after each event of the timeline."
+        },
+        "series": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SeriesSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The series of each workload by time bin."
+        }
+      },
+      "type": "object"
+    },
     "Name": {
       "description": "A name of 1 to 32 characters: lower case letters, digits and '-', starting with a letter and not ending with '-'.",
       "examples": [
@@ -610,6 +654,21 @@
       ],
       "pattern": "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$",
       "type": "string"
+    },
+    "OnExit": {
+      "description": "What the run does when a program ends by itself before the end of the run, with an exit code other than 0 or by a\nsignal (D-072).",
+      "oneOf": [
+        {
+          "const": "continue",
+          "description": "The run goes on to its end and the result reports how the program ended. The default: a program that crashes\nunder a bad network is a finding, not a fault of the tool.",
+          "type": "string"
+        },
+        {
+          "const": "fail",
+          "description": "The run is stopped with an error that names the program, how it ended and the end of its standard error. The\nlogs and the files of the run stay.",
+          "type": "string"
+        }
+      ]
     },
     "OnOffKind": {
       "enum": [
@@ -717,6 +776,68 @@
       },
       "type": "object"
     },
+    "RecoveryBasis": {
+      "description": "The view the level of a bin is made from for the time to recover (see `docs/RESULTS.md`).",
+      "oneOf": [
+        {
+          "const": "send",
+          "description": "Of the packets sent in a bin, the share that arrived (in the bin or later).",
+          "type": "string"
+        },
+        {
+          "const": "arrival",
+          "description": "Of the packets sent in a bin, the share the receiver got in that bin (at most all of them).",
+          "type": "string"
+        }
+      ]
+    },
+    "RecoverySettings": {
+      "additionalProperties": false,
+      "description": "How the time to recover after an event is worked out. Every key has a default, so a section can name only what it changes.",
+      "properties": {
+        "baseline-bins": {
+          "description": "How many bins before the disturbance make the baseline level. Default 5.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecoveryBasis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The view the level of a bin is made from: `send` (default) or `arrival`."
+        },
+        "fraction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The share of the baseline that has to be reached again, above 0 % and at most 100 %. Default 90 %."
+        },
+        "window-bins": {
+          "description": "How many bins in a row have to be back at the level. Default 3.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "Reorder": {
       "additionalProperties": false,
       "description": "Reordering by holding packets back (`netem reorder P gap G`).\n\nWith a `delay`, a share of the packets is sent on at once and the others wait for the delay, so the ones\nthat wait arrive after later packets. Measured in D-048: `share` is the share sent on at once, and with\n`gap` it is `1 / (gap - 1 + 1 / share)`.",
@@ -738,6 +859,24 @@
       "required": [
         "share"
       ],
+      "type": "object"
+    },
+    "SeriesSettings": {
+      "additionalProperties": false,
+      "description": "The series of each workload by time bin.",
+      "properties": {
+        "bin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The width of a bin. Default `1s`. At least `1ms`, and the measured phase may have at most a million bins."
+        }
+      },
       "type": "object"
     },
     "Shutdown": {
@@ -1174,6 +1313,10 @@
     "duration": {
       "$ref": "#/$defs/Duration",
       "description": "The length of the measured phase, from the start of the workloads. Greater than zero."
+    },
+    "measure": {
+      "$ref": "#/$defs/Measure",
+      "description": "What is measured besides the statistics, and how the numbers are derived (D-073): the bins of the series, the\ntime to recover, the packets to capture. Absent if the defaults are wanted."
     },
     "name": {
       "$ref": "#/$defs/Name",

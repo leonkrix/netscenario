@@ -8,6 +8,8 @@ A run writes a directory (`--out`, or the `out_dir` of `RunOptions`) with these 
 | `flow-<n>.records` | The raw per-packet records of workload `n` (the order of `workloads` in the scenario, from 0), in the binary format of [AGENT.md](AGENT.md). One record for each packet that arrived. |
 | `flow-<n>.wire` | Only for a workload whose direction has `corrupt`: the packets that the receiving node saw on its interface, in the same binary format as `flow-<n>.records` (D-057). The damaged packets are the sequences in it that are not in the records. |
 | `series-<id>.jsonl` | The packets of workload `<id>` by time bin, sent and arrived side by side: one JSON line for each bin, described below (PRB-07, D-070). Always written. |
+| `program-<id>.stdout.log`, `program-<id>.stderr.log` | For a program of your own (`kind: command`): the first megabyte of its standard output and of its standard error ([PROGRAMS.md](PROGRAMS.md)). |
+| `metrics-<id>.jsonl` | For a program that reported metrics: one line `{"t_ns", "metric", "value", "unit"}` for each reading, `t_ns` in nanoseconds from the start of the measured phase (negative before it). |
 | `packets-<id>.jsonl` | Only if asked for (`export_packets`): one JSON line for each packet of workload `<id>`, described below. |
 
 The result is JSON, indented, with a line feed at the end. `format` is always `netscenario-result` and `version` is the version of this format (RPT-01, ENV-06): **0** until 1.0, which means that a field may change its meaning in a minor release and the changelog says so. A new field does not change the version. A program that reads results should refuse a `version` it does not know; `netscenario_core::RunResult::from_json` does.
@@ -147,6 +149,8 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `workloads` | One entry for each workload, in the order of the scenario. |
 | `directions` | Where the packets of each direction went, below. |
 | `events` | What the run did to the links while it ran (the timeline), below. Empty for a scenario without one. |
+| `programs` | One entry for each program of your own (`kind: command`), in the order of the scenario, below. Empty for a scenario without one. |
+| `captures` | One entry for each captured interface (`measure.capture`), two for each link, below. Empty for a scenario that captures nothing. |
 | `notes` | What the backend says about how it did the run, one sentence for each fact (D-063): for example that the changes of a link were made by a `tc` process each because the `tc` that lives for the run stopped working. Not errors. Empty if the run went as usual. |
 
 ### `provenance`
@@ -228,7 +232,7 @@ Real numbers of `scenarios/lte-like.yaml` (30 s, a normal jitter of 5 ms, 0.75 %
 
 `throughput` says what arrived in each second and nothing else. A test that asks "what did the workload get through in the five seconds after the link came back" or "how long until it was back at its rate" needs more: what was sent, what arrived and what was lost, in the same stretches of time, and the stretches placed where the steps of the timeline can be found. That is the series. It is in a file of its own so that `result.json` stays small, and the entry `series` of the workload says where it is.
 
-**The bins** are `bin_ns` wide (one second by default; `--bin` on the command line, `bin=` in Python, `RunOptions::bin` in the library; at least a millisecond, and the run may have at most a million of them) and are counted from the **start of the measured phase**, the moment from which `scheduled_ns` of `events` is counted. Bin 0 begins there, not at the first packet, so a step at 7.3 s is in bin 7 and a workload with a `start` has empty bins before it. The series runs to the last bin in which a packet was sent or arrived. The last bin is usually part of a bin and is not scaled.
+**The bins** are `bin_ns` wide (one second by default; the key `measure.series.bin` of the file, which `--bin` on the command line and `bin=` in Python replace for one run; at least a millisecond, and the run may have at most a million of them) and are counted from the **start of the measured phase**, the moment from which `scheduled_ns` of `events` is counted. Bin 0 begins there, not at the first packet, so a step at 7.3 s is in bin 7 and a workload with a `start` has empty bins before it. The series runs to the last bin in which a packet was sent or arrived. The last bin is usually part of a bin and is not scaled.
 
 **Two views of the same packets, in the same bins.** A packet has two moments, and a link that delays by 200 ms puts them in different bins:
 
@@ -253,14 +257,53 @@ One line of `series-media.jsonl` (the second line of the scene in D-070: a link 
 
 The entry says all of this, so a reader does not have to remember the defaults: `basis`, `from_ns`, `disturbance_ns`, `baseline`, `level`, `baseline_bins`, `window_bins`, `fraction`, `recovered_at_ns`, `time_ns`. `time_ns` is `null` with a `reason` if there is no baseline ("nothing was delivered in the bins before the disturbance") or the level was not reached before the run ended.
 
-**Which basis.** The two bases see different things, and the caller chooses (`--recovery-basis`, `recovery_basis=`, `RecoveryOptions::basis`):
+**Which basis.** The two bases see different things, and the scenario chooses (`measure.recovery.basis`, replaced by `--recovery-basis` or `recovery_basis=`):
 
 - `send` asks "of what the sender put in during this stretch, how much got through". It sees a loss in the bin in which it was caused, so for a link that comes back (`up`, the end of an outage) it is usually 0 s: the packets that were lost were sent before the event. It does not see a queue: a packet that waits two seconds is delivered.
 - `arrival` asks "of what the sender put in during this stretch, how much did the receiver get in it". It sees the silence of an outage and the slowness of a queue at the moment they happen, and it is the basis for "how long did the receiver wait". After a rate limit that has been lifted the packets that are already queued keep the spacing of the old rate (`netem` works out the moment a packet leaves when it enters the queue, D-070), so the receiver is back at its level when the old queue has gone, not when the rate is lifted.
 
 **Read the right event.** The baseline of a `set` is taken before the `set`. For a `set` that lifts a limit again that baseline is the degraded level, and the answer is 0 s. The recovery that says how long the workload took to come back from a drop is the one of the event that dropped it.
 
-The parameters are not part of the scenario: they are about how a result is read, so they belong to the run (`--bin 250ms`, `--recovery-basis arrival`, `--recovery-baseline 5`, `--recovery-window 3`, `--recovery-fraction 90` on the command line; the same words with underscores in Python). The same series can be read again with other parameters: the library has `netscenario_core::recovery::recoveries`, and `Workload.series.read()` gives the bins in Python.
+The parameters are part of the scenario, in the section `measure` ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#what-is-measured)), because what is measured belongs to the experiment as much as what runs, and the hash of the scenario tells whether two results were measured in the same way (D-073). `measure.series.bin` and `measure.recovery.{basis, baseline-bins, window-bins, fraction}` are the keys; `--bin 250ms`, `--recovery-basis arrival`, `--recovery-baseline 5`, `--recovery-window 3` and `--recovery-fraction 90` on the command line (the same words with underscores in Python) replace them for one run, and the result records the scenario as it ran. The same series can be read again with other parameters: the library has `netscenario_core::recovery::recoveries`, and `Workload.series.read()` gives the bins in Python.
+
+### `programs` (WRK-06, WRK-10, PRB-08; D-072)
+
+One entry for each `command` workload ([PROGRAMS.md](PROGRAMS.md)). Times are in nanoseconds from the start of the measured phase, the zero of `events`; a program is started before it, so `started_ns` is negative.
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `node` | As in the scenario. |
+| `run` | The program and its arguments as they were started, with `{node.addr}` replaced. |
+| `started_ns`, `ready_ns`, `ended_ns` | When the run started it, when it found it ready (the start, for a program without `ready`), and when it saw it end. |
+| `ended` | `on-its-own` (before the run asked it to stop), `stopped` (after the signal of `shutdown`, within the time) or `killed` (`KILL` was needed). |
+| `exit_code`, `exit_signal` | How it ended: the exit code, or the number of the signal (15 after `TERM`, 9 after `KILL`); the other is `null`. |
+| `stdout_file`, `stderr_file` | The files with the first megabyte of each stream, relative to `result.json`. |
+| `output` | `stdout_bytes`, `stderr_bytes` (all that was read), `stdout_dropped_bytes`, `stderr_dropped_bytes` (not in the files, past the first megabyte), and `long_lines` (lines of standard output longer than 64 KiB, which were cut). |
+| `lines_dropped` | `true` if more than 10,000 lines of standard output were written between two looks of the run and some were dropped; metrics in them are lost. |
+| `metrics` | A summary for each metric name: `name`, `unit`, `count`, `first`, `last`, `min`, `max`. |
+| `metrics_file`, `metric_readings` | The file with every reading (`null` if there was none), and how many valid readings there were in all. |
+| `bad_metric_lines`, `bad_metric_examples` | How many lines looked like metrics and were not valid, and the first five with the reason. |
+
+### Captures (PRB-09, D-047, D-073)
+
+`measure.capture` names links ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#what-is-measured)). For each, the run captures **both interfaces**, the one in each node, into `capture-<link>-<node>.pcap` (nanosecond timestamps, Ethernet frames, in both directions of the interface) and puts one entry in `captures`. The files are read by `tcpdump`, Wireshark and `scapy`. The capture is made by the agent in the node with a raw packet socket, so it needs no program on the machine; it starts before any program or workload and ends after the last of them, so it has the frames of the whole run, the programs that are started before the measured phase included.
+
+| Field | Meaning |
+| --- | --- |
+| `link`, `node`, `interface` | The link, the node whose interface it is, and the name of the interface in that node (`l<link>`, the same in both nodes). |
+| `file` | The pcap file, relative to `result.json`. |
+| `packets`, `bytes` | The frames in the file and their bytes (without the headers of the file). |
+| `first_ns`, `last_ns` | The times of the first and the last frame, in nanoseconds from the start of the measured phase (the zero of `events`); `null` for an empty capture. |
+| `realtime_minus_monotonic_ns` | The real-time clock minus the monotonic clock at the start. The timestamps **in the file** are on the real-time clock, like those of every capture; add this to the monotonic times of the result to compare them. |
+| `receive_buffer_bytes` | The buffer of the socket that was granted. A larger one needs rights that a user namespace has not; `net.core.rmem_max` limits it. |
+| `interface_frames` | The frames the interface counted (received and sent, from `/proc/net/dev`) while the capture ran, or `null` if they could not be read. |
+| `missing` | `interface_frames` minus the frames in the file: `0` for a whole capture, more when the buffer overflowed, `null` if the capture could not check itself. A capture that lost frames or could not check itself says so in the summary with a warning; it is never presented as whole. |
+
+**What a capture shows.** The tap sits after the queue of the interface, where `netem` works, so what is in the files is **what the network delivered**: a packet that the impairment dropped is in no file, at either end, a duplicate is in twice, and a corrupted frame is as damaged as it was delivered. What the program sent is in the records of the workloads (and, for your own program, in its own log). The same packet has the same bytes at both ends and its times differ by the delay of the link.
+
+**How complete.** The self-check compares with the counter of the interface, which counts every frame whether or not the capture got it, so a capture that overflowed says by how much. Up to 100,000 packets per second on an idle machine the measurements of D-047 lost nothing, and a stream of a test is a few hundred packets per second.
+
+**`tcpdump` in a user namespace.** Reading a file with `tcpdump` outside the nodes needs nothing special. Inside a user namespace it wants to change to the user `tcpdump` and fails; `-Z root` is the answer. On Ubuntu 22.04 (`tcpdump` 4.99.1) it cannot run in a user namespace at all, even to read a file; the file is the same and a newer `tcpdump` or Wireshark outside the namespace reads it.
 
 ### `events` (TML-01, D-060)
 

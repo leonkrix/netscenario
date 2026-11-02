@@ -21,17 +21,19 @@ use netscenario_model::{Generator, Impairments, Scenario, Workload};
 use crate::backend::{
     Backend, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramHandle,
 };
+use crate::captures::Captures;
 use crate::error::Error;
 use crate::export::write_packets_refused;
 use crate::hash::sha256_hex;
 use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
+use crate::programs::Programs;
 use crate::provision::{Provisioned, impairments_of, provision};
-use crate::recovery::{self, Recovery, RecoveryOptions};
+use crate::recovery::{self, Basis, Recovery, RecoveryOptions};
 use crate::result::{
-    AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, QueueCheck, RESULT_FORMAT,
-    RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing,
-    WorkloadResult,
+    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, ProgramResult,
+    QueueCheck, RESULT_FORMAT, RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo,
+    SeriesInfo, Timing, WorkloadResult,
 };
 use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
@@ -49,7 +51,7 @@ const MAX_LISTED_SEQUENCES: usize = 1000;
 const START_MARGIN: Duration = Duration::from_millis(500);
 
 /// How long a program may take to end after it should have, before the run gives up on it.
-const END_MARGIN: Duration = Duration::from_secs(30);
+pub(crate) const END_MARGIN: Duration = Duration::from_secs(30);
 
 /// The settings of a run.
 #[derive(Clone)]
@@ -65,8 +67,6 @@ pub struct RunOptions {
     /// minutes; a backend that cannot count the packets in its queues gets one second and twice the longest delay of
     /// the scenario with four times its jitter. With it, that long: a packet that needs longer counts as lost.
     pub settle: Option<Duration>,
-    /// Whether to write the JSON Lines file with one line for each packet of each workload.
-    pub export_packets: bool,
     /// The most address space an agent may use, in bytes (SAF-02). The default is 1 GiB.
     pub agent_memory_limit: u64,
     /// How long a receiver may take to say that it is ready.
@@ -87,12 +87,9 @@ pub struct RunOptions {
     /// `timing.interrupted_ns` set. A cancel before the workloads begin, or after they ended, is
     /// [`Error::Cancelled`] either way: there is nothing to keep, or the result is whole.
     pub partial_on_cancel: bool,
-    /// The width of a bin of the series of each workload (D-070). Default one second. A bin must last at least a
-    /// millisecond, and the measured phase may have at most a million of them.
-    pub bin: Duration,
-    /// How the time to recover after an event is worked out (D-070): the view, the bins of the baseline, the bins of a
-    /// window and the share of the baseline that has to be reached again.
-    pub recovery: RecoveryOptions,
+    /// The directory the programs of your own run in, and that a relative path of `ready: { file: ... }` is counted from
+    /// (D-041): the directory of the scenario file. Without it, the directory of the supervisor.
+    pub working_dir: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for RunOptions {
@@ -101,15 +98,13 @@ impl std::fmt::Debug for RunOptions {
             .field("agent", &self.agent)
             .field("out_dir", &self.out_dir)
             .field("settle", &self.settle)
-            .field("export_packets", &self.export_packets)
             .field("agent_memory_limit", &self.agent_memory_limit)
             .field("ready_timeout", &self.ready_timeout)
             .field("observer", &self.observer.as_ref().map(|_| "<observer>"))
             .field("cancel", &self.cancel)
             .field("barriers", &self.barriers)
             .field("partial_on_cancel", &self.partial_on_cancel)
-            .field("bin", &self.bin)
-            .field("recovery", &self.recovery)
+            .field("working_dir", &self.working_dir)
             .finish()
     }
 }
@@ -122,34 +117,14 @@ impl RunOptions {
             agent: agent.into(),
             out_dir: out_dir.into(),
             settle: None,
-            export_packets: false,
             agent_memory_limit: 1 << 30,
             ready_timeout: Duration::from_secs(10),
             observer: None,
             cancel: CancelToken::new(),
             barriers: true,
             partial_on_cancel: false,
-            bin: Duration::from_nanos(DEFAULT_BIN_NS),
-            recovery: RecoveryOptions::default(),
+            working_dir: None,
         }
-    }
-
-    /// Whether the options of the series make sense for a scenario that lasts `duration`.
-    fn check_series(&self, duration: Duration) -> Result<(), Error> {
-        let reject = |message: String| Err(failure("check the options of the series", message));
-        if self.bin < Duration::from_millis(1) {
-            return reject(format!(
-                "a bin of {:?} is shorter than a millisecond",
-                self.bin
-            ));
-        }
-        if duration.as_nanos() / self.bin.as_nanos() > 1_000_000 {
-            return reject(format!(
-                "a bin of {:?} makes more than a million bins for a run of {duration:?}",
-                self.bin
-            ));
-        }
-        self.recovery.check().or_else(reject)
     }
 
     /// The same options, with an observer.
@@ -244,15 +219,20 @@ impl<'a> Control<'a> {
             let mut workloads = self.workloads.borrow_mut();
             workloads.as_mut().and_then(|w| {
                 let now = Instant::now();
-                (now >= w.next_report).then(|| {
-                    while w.next_report <= now {
-                        w.next_report += PROGRESS_EVERY;
-                    }
-                    RunEvent::Progress {
-                        elapsed: now.saturating_duration_since(w.begin).min(w.total),
-                        total: w.total,
-                    }
-                })
+                (now >= w.next_report)
+                    .then(|| {
+                        while w.next_report <= now {
+                            w.next_report += PROGRESS_EVERY;
+                        }
+                        // The report of the whole is made once, when the workloads are done; a run that holds on for its programs
+                        // does not say it twice
+                        let elapsed = now.saturating_duration_since(w.begin);
+                        (elapsed < w.total).then_some(RunEvent::Progress {
+                            elapsed,
+                            total: w.total,
+                        })
+                    })
+                    .flatten()
             })
         };
         if let Some(event) = report {
@@ -347,6 +327,10 @@ struct Measurement {
     begin_ns: u64,
     /// Why the steps of the timeline may not give the same lost packets for the same seed (see [`barriers::plan`]).
     clock_reasons: Vec<String>,
+    /// What came of the programs of your own.
+    programs: Vec<ProgramResult>,
+    /// What came of the captures of the interfaces.
+    captures: Vec<CaptureResult>,
 }
 
 /// Runs `scenario` with `backend` and returns the result, which is also written to `result.json` in
@@ -365,7 +349,6 @@ pub fn run(
     options: &RunOptions,
 ) -> Result<RunResult, Error> {
     let started = SystemTime::now();
-    options.check_series(Duration::from(scenario.duration))?;
     let control = Control::new(options);
     // A run that was cancelled before it began builds nothing
     control.checkpoint()?;
@@ -393,6 +376,8 @@ pub fn run(
         interrupted_ns,
         begin_ns,
         clock_reasons,
+        programs,
+        captures,
     } = measured?;
     torn_down?;
 
@@ -446,6 +431,8 @@ pub fn run(
         directions,
         events,
         notes,
+        programs,
+        captures,
     };
     let path = options.out_dir.join("result.json");
     std::fs::write(&path, result.to_json())
@@ -457,6 +444,33 @@ pub fn run(
 /// Why the same seed may not give the same lost packets in this run, one sentence for each reason. The queues have
 /// counted the packets that drew a number for the loss: if one saw more or fewer than the workloads sent, the
 /// pattern of lost packets is not the one of this seed (ENV-07).
+/// A program of your own may send packets into the queue of a direction that draws random numbers. The run does not
+/// count or order them, so which packet draws which number, and so which packets are lost, can differ from run to run with
+/// the same seed (D-072), as it does with two workloads in one direction (D-065).
+fn programs_into_random_queues(scenario: &Scenario) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for command in scenario.workloads.iter().filter_map(Workload::as_command) {
+        for (index, link) in scenario.topology.links.iter().enumerate() {
+            for (direction, word, from) in [
+                (Direction::Forward, "forward", &link.between[0]),
+                (Direction::Reverse, "reverse", &link.between[1]),
+            ] {
+                if *from == command.node
+                    && timeline::states_of(scenario, index, direction)
+                        .iter()
+                        .any(Impairments::is_random)
+                {
+                    reasons.push(format!(
+                        "the program '{}' may send packets into link '{}' ({word}), whose queue draws random numbers: the run does not count or order them, so which packets are lost can differ from run to run with the same seed",
+                        command.id, link.id
+                    ));
+                }
+            }
+        }
+    }
+    reasons
+}
+
 fn not_reproducible_because(
     scenario: &Scenario,
     provisioned: &Provisioned,
@@ -503,6 +517,7 @@ fn not_reproducible_because(
     });
     reasons.extend(clock_reasons);
     reasons.extend(shared_directions(scenario));
+    reasons.extend(programs_into_random_queues(scenario));
     if corrupts {
         reasons.push(
             "the scenario corrupts packets: the seed fixes which packets are corrupted, but not where `netem` flips the bit, and a bit in the source address of the Ethernet header harms nothing, so a few corrupted packets arrive in one run and are dropped in another (the packets lost in the queue are the same)"
@@ -575,7 +590,7 @@ fn series_of(
     timeline: &Timeline<'_>,
     start: Duration,
 ) -> Result<(SeriesInfo, Vec<Recovery>), Error> {
-    let bin_ns = nanos(options.bin);
+    let bin_ns = nanos(series_bin(scenario));
     let bins = series::bins(
         &series::Input {
             schedule,
@@ -618,7 +633,7 @@ fn series_of(
                 .collect()
         })
         .unwrap_or_default();
-    let recoveries = recovery::recoveries(&concerning, &bins, bin_ns, &options.recovery);
+    let recoveries = recovery::recoveries(&concerning, &bins, bin_ns, &recovery_options(scenario));
     Ok((
         SeriesInfo {
             bin_ns,
@@ -674,7 +689,7 @@ fn workload_result(
         .stop
         .map_or_else(|| Duration::from(scenario.duration), Duration::from);
     let first_send = flow.sent.first_send_ns.unwrap_or(0);
-    let packets_file = if options.export_packets {
+    let packets_file = if scenario.measure.packets {
         let name = format!("packets-{}.jsonl", workload.id);
         let file = std::fs::File::create(options.out_dir.join(&name))
             .map_err(|error| failure("write the packets", format!("{name}: {error}")))?;
@@ -741,6 +756,39 @@ fn workload_result(
         series: Some(series),
         recoveries,
     })
+}
+
+/// The width of a bin of the series: the one in the scenario, or a second (D-070, D-073).
+fn series_bin(scenario: &Scenario) -> Duration {
+    scenario
+        .measure
+        .series
+        .as_ref()
+        .and_then(|series| series.bin)
+        .map_or(Duration::from_nanos(DEFAULT_BIN_NS), Duration::from)
+}
+
+/// The definition of the time to recover: the keys of the scenario, and the defaults for the others (D-070, D-073).
+fn recovery_options(scenario: &Scenario) -> RecoveryOptions {
+    let mut options = RecoveryOptions::default();
+    if let Some(settings) = &scenario.measure.recovery {
+        if let Some(basis) = settings.basis {
+            options.basis = match basis {
+                netscenario_model::RecoveryBasis::Send => Basis::Send,
+                netscenario_model::RecoveryBasis::Arrival => Basis::Arrival,
+            };
+        }
+        if let Some(bins) = settings.baseline_bins {
+            options.baseline_bins = bins;
+        }
+        if let Some(bins) = settings.window_bins {
+            options.window_bins = bins;
+        }
+        if let Some(fraction) = settings.fraction {
+            options.fraction = f64::from(fraction.micro_percent()) / 100_000_000.0;
+        }
+    }
+    options
 }
 
 fn nanos(duration: Duration) -> u64 {
@@ -859,7 +907,7 @@ fn plan<'a>(
 }
 
 /// Waits for the first line of a program, and fails if it ends or takes too long.
-fn wait_for_line(
+pub(crate) fn wait_for_line(
     backend: &mut dyn Backend,
     program: ProgramHandle,
     within: Duration,
@@ -892,7 +940,7 @@ fn wait_for_line(
 }
 
 /// Waits until a program has ended with the exit code 0 and returns what it printed.
-fn wait_for_end(
+pub(crate) fn wait_for_end(
     backend: &mut dyn Backend,
     program: ProgramHandle,
     deadline: Instant,
@@ -929,7 +977,7 @@ pub(crate) fn event(line: &str, what: &str) -> Result<Event, Error> {
     })
 }
 
-fn agent_program(options: &RunOptions, arguments: &[String]) -> Program {
+pub(crate) fn agent_program(options: &RunOptions, arguments: &[String]) -> Program {
     let mut argv = vec![options.agent.display().to_string()];
     argv.extend_from_slice(arguments);
     Program::new(argv).with_memory_limit(options.agent_memory_limit)
@@ -944,7 +992,7 @@ fn checksum_argument(workload: &Generator<'_>) -> Vec<String> {
     }
 }
 
-fn strings(parts: &[&str]) -> Vec<String> {
+pub(crate) fn strings(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|part| (*part).to_owned()).collect()
 }
 
@@ -1038,6 +1086,33 @@ fn measure(
     provisioned: &Provisioned,
     control: &Control<'_>,
 ) -> Result<Measurement, Error> {
+    let mut programs = Programs::default();
+    let mut captures = Captures::default();
+    let measured = measure_with(
+        backend,
+        scenario,
+        options,
+        provisioned,
+        control,
+        (&mut programs, &mut captures),
+    );
+    if measured.is_err() {
+        // The process groups of the programs are not ended by the teardown of the network: they are ended here
+        programs.kill_all(backend);
+        captures.kill_all(backend);
+    }
+    measured
+}
+
+/// Steps 5 to 7 with the programs of your own in `programs`.
+fn measure_with(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    options: &RunOptions,
+    provisioned: &Provisioned,
+    control: &Control<'_>,
+    (programs, captures): (&mut Programs, &mut Captures),
+) -> Result<Measurement, Error> {
     control.checkpoint()?;
     if !options.agent.is_file() {
         return Err(failure(
@@ -1050,6 +1125,10 @@ fn measure(
     }
     let flows = plan(scenario, provisioned, options)?;
 
+    // The captures first of all, so that no frame is missed; then the programs of your own, each when the one before is
+    // ready: a server has to be there before the packets
+    captures.start(backend, scenario, provisioned, options, control)?;
+    programs.start(backend, scenario, provisioned, options, control)?;
     let receivers = start_receivers(backend, &flows, options, control)?;
     control.emit(&RunEvent::ReceiversReady {
         count: receivers.len(),
@@ -1059,6 +1138,7 @@ fn measure(
     let before = node_counts(backend, scenario, provisioned)?;
     let begin_at = Instant::now() + START_MARGIN;
     let begin = monotonic_ns() + nanos(START_MARGIN);
+    programs.set_begin(begin);
     // The steps of the timeline, and which of them a sender waits for (D-038)
     let steps = timeline::steps(scenario);
     let sending: Vec<barriers::Sending<'_>> = flows
@@ -1090,11 +1170,12 @@ fn measure(
         &senders,
         &steps,
         &plan.bindings,
-        drive::Begin {
-            at: begin_at,
-            ns: begin,
-        },
+        drive::Begin { ns: begin },
         deadline,
+        drive::Watch {
+            programs,
+            hold_until: begin_at + Duration::from(scenario.duration),
+        },
         control,
     )?;
     let sent = driven.sent;
@@ -1104,8 +1185,16 @@ fn measure(
 
     // The packets that are still in the network arrive before the receivers are told to stop
     let (settle, settle_note) = settle(backend, scenario, provisioned, options, control)?;
+    // The programs end after the packets have, with their last words
+    programs.stop_all(backend)?;
+    captures.stop_all(backend, control)?;
     // After the wait, every packet has passed its queue; the receivers still run and the network still stands
-    let queue_checks = check_queues(backend, scenario, provisioned, &flows, &sent)?;
+    let queue_checks = if programs.is_empty() {
+        check_queues(backend, scenario, provisioned, &flows, &sent)?
+    } else {
+        // A program sends packets of its own into the queues; the run did not count them and cannot hold the queue to its own
+        Vec::new()
+    };
     let after = node_counts(backend, scenario, provisioned)?;
     control.emit(&RunEvent::Collecting);
     let mut measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
@@ -1121,6 +1210,8 @@ fn measure(
         interrupted_ns,
         begin_ns: begin,
         clock_reasons: plan.reasons,
+        programs: std::mem::take(programs).into_results(begin),
+        captures: std::mem::take(captures).into_results(begin),
     })
 }
 
@@ -1914,6 +2005,7 @@ mod tests {
                 exit: played.exit,
                 stderr: played.stderr.clone(),
                 truncated: false,
+                output: crate::backend::OutputStats::default(),
             })
         }
 
@@ -2449,9 +2541,11 @@ mod tests {
     #[test]
     fn the_series_is_in_a_file_of_its_own_and_adds_up_to_the_statistics() {
         let mut backend = Fake::new(None);
-        let mut options = options("series-file");
-        options.bin = Duration::from_millis(250);
-        let result = run(&mut backend, &scenario(), &options).unwrap();
+        let options = options("series-file");
+        let mut quarter = scenario();
+        quarter.measure.series = Some(netscenario_model::SeriesSettings::default());
+        quarter.measure.series.as_mut().unwrap().bin = Some("250ms".parse().unwrap());
+        let result = run(&mut backend, &quarter, &options).unwrap();
         let workload = &result.workloads[0];
         let info = workload.series.as_ref().expect("the series");
         assert_eq!(
@@ -2480,42 +2574,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 
-    /// Options of the series that make no sense end the run before anything is built, with the name of the option.
+    /// Settings of the section `measure` that make no sense end the run before anything is built, with the path of the key
+    /// (the model checks them, D-073).
     #[test]
-    fn options_of_the_series_that_make_no_sense_are_refused_before_the_run() {
-        let rejected = |change: &dyn Fn(&mut RunOptions), word: &str| {
+    fn measure_settings_that_make_no_sense_are_refused_before_the_run() {
+        let rejected = |change: &dyn Fn(&mut Scenario), word: &str| {
             let mut backend = Fake::new(None);
-            let mut options = options("series-refused");
-            change(&mut options);
-            let error = run(&mut backend, &scenario(), &options)
-                .unwrap_err()
-                .to_string();
+            let options = options("series-refused");
+            let mut bad = scenario();
+            change(&mut bad);
+            let error = run(&mut backend, &bad, &options).unwrap_err().to_string();
             assert!(error.contains(word), "{error}");
             assert!(backend.calls.is_empty(), "{:?}", backend.calls);
             let _ = std::fs::remove_dir_all(&options.out_dir);
         };
+        let bin = |scenario: &mut Scenario, text: &str| {
+            let mut series = netscenario_model::SeriesSettings::default();
+            series.bin = Some(text.parse().unwrap());
+            scenario.measure.series = Some(series);
+        };
+        rejected(&|s| bin(s, "500us"), "measure.series.bin");
         rejected(
-            &|o| o.bin = Duration::from_micros(500),
-            "shorter than a millisecond",
+            &|s| {
+                let mut recovery = netscenario_model::RecoverySettings::default();
+                recovery.window_bins = Some(0);
+                s.measure.recovery = Some(recovery);
+            },
+            "measure.recovery.window-bins",
         );
-        rejected(&|o| o.recovery.fraction = 1.5, "fraction");
-        rejected(&|o| o.recovery.window_bins = 0, "window");
-        // 1 s at 1 ms is 1,000 bins: fine; a bin that makes more than a million for the run is not possible with 1 ms
-        // and a duration of one second, so the limit is shown with the arithmetic of the check
-        let mut generous = RunOptions::new("agent", "out");
-        generous.bin = Duration::from_millis(1);
-        assert!(generous.check_series(Duration::from_secs(1000)).is_ok());
-        assert!(generous.check_series(Duration::from_secs(1001)).is_err());
+        rejected(
+            &|s| s.measure.capture = vec!["nowhere".parse().unwrap()],
+            "measure.capture[0]",
+        );
     }
 
     /// The time to recover is worked out for the steps that concern the workload: a step of the direction it sends in
     /// and a step of the whole link, not a step of the other direction; and the start of an outage has none.
     #[test]
     fn the_recoveries_are_of_the_steps_that_concern_the_workload() {
-        let yaml = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: { delay: 5ms }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\ntimeline:\n  - { at: 200ms, link: l, set: { forward: { delay: 10ms } } }\n  - { at: 300ms, link: l, set: { reverse: { delay: 10ms } } }\n  - { at: 500ms, link: l, outage: 100ms, direction: forward }\n";
+        let yaml = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: { delay: 5ms }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\ntimeline:\n  - { at: 200ms, link: l, set: { forward: { delay: 10ms } } }\n  - { at: 300ms, link: l, set: { reverse: { delay: 10ms } } }\n  - { at: 500ms, link: l, outage: 100ms, direction: forward }\nmeasure:\n  series: { bin: 100ms }\n";
         let mut backend = Fake::new(None);
-        let mut options = self::options("series-recoveries");
-        options.bin = Duration::from_millis(100);
+        let options = self::options("series-recoveries");
         let result = run(
             &mut backend,
             &Scenario::from_yaml(yaml, "t.yaml").unwrap(),
@@ -2775,10 +2874,10 @@ mod tests {
     /// export of every packet marks the two.
     #[test]
     fn the_damaged_packets_of_a_direction_that_corrupts_are_named_from_the_wire() {
-        let scenario = Scenario::from_yaml(CORRUPTING, "t.yaml").unwrap();
+        let mut scenario = Scenario::from_yaml(CORRUPTING, "t.yaml").unwrap();
+        scenario.measure.packets = true;
         let mut backend = Fake::new(None);
-        let mut options = options("named");
-        options.export_packets = true;
+        let options = options("named");
         let result = run(&mut backend, &scenario, &options).unwrap();
         let workload = &result.workloads[0];
         assert_eq!(workload.corrupted_named, Some(2));
@@ -2935,9 +3034,10 @@ mod tests {
     #[test]
     fn the_packets_can_be_exported_with_the_lost_ones_marked() {
         let mut backend = Fake::new(None);
-        let mut options = options("export");
-        options.export_packets = true;
-        let result = run(&mut backend, &scenario(), &options).unwrap();
+        let options = options("export");
+        let mut exported = scenario();
+        exported.measure.packets = true;
+        let result = run(&mut backend, &exported, &options).unwrap();
         assert_eq!(
             result.workloads[0].packets_file.as_deref(),
             Some("packets-w.jsonl")
@@ -3138,19 +3238,17 @@ mod tests {
             assert!((2.4..2.8).contains(&elapsed.as_secs_f64()), "{elapsed:?}");
             assert_eq!(total, Duration::from_secs(10));
         }
-        // A run that is long over is clamped to its length
+        // A run that is long over says nothing at a checkpoint: the report of the whole is made once, by `workloads_done`
         control.workloads_started(
             Instant::now().checked_sub(Duration::from_secs(60)).unwrap(),
             Duration::from_secs(10),
         );
+        let before = recorder.events.lock().unwrap().len();
         control.checkpoint().unwrap();
-        let last = recorder.events.lock().unwrap().last().cloned().unwrap();
+        let after = recorder.events.lock().unwrap().len();
         assert_eq!(
-            last,
-            RunEvent::Progress {
-                elapsed: Duration::from_secs(10),
-                total: Duration::from_secs(10)
-            }
+            before, after,
+            "a checkpoint says nothing of a run that is over"
         );
         control.workloads_done();
         control.workloads_done();
@@ -3159,8 +3257,8 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, RunEvent::Progress { elapsed, total } if elapsed == total))
             .count();
-        // the clamped one and the one of `workloads_done`, which says it once
-        assert_eq!(done, 2, "{events:?}");
+        // the one of `workloads_done`, which says it once however often it is called
+        assert_eq!(done, 1, "{events:?}");
     }
 
     #[test]

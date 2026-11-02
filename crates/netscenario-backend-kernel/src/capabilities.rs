@@ -44,10 +44,10 @@ const NEEDS_TC: &[Feature] = &[
     Feature::Outages,
 ];
 
-/// The features that the Kernel backend gets in later steps of release 0.2: the format knows them, the backend does
-/// not apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says
-/// `✔ 0.2` for them.
-const PLANNED: &[Feature] = &[Feature::Program];
+/// The features that the Kernel backend gets in later steps of a release: the format knows them, the backend does not
+/// apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says `✔` and the
+/// release for them. None at the moment (the programs of your own were the last, D-072).
+const PLANNED: &[Feature] = &[];
 
 /// What the probe of `doctor` found out about the kernel and `tc` of this machine (D-068): for each thing a scenario
 /// can need, whether it was accepted or what was answered. The version of `tc` says what it should know; the probe says
@@ -184,6 +184,8 @@ fn by_version(environment: &Environment) -> Capabilities {
         .with(Feature::Ipv4, Support::Exact)
         .with(Feature::UdpGenerators, Support::Exact)
         .with(Feature::TrafficPatterns, Support::Exact)
+        .with(Feature::Program, Support::Exact)
+        .with(Feature::PacketCapture, Support::Exact)
         .with(Feature::UdpWithoutChecksum, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));

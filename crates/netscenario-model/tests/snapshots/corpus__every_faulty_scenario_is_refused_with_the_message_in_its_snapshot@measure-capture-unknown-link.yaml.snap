@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/measure-capture-unknown-link.yaml
+---
+error: the link 'acess' does not exist
+  --> measure-capture-unknown-link.yaml:12:13
+   |
+11 | measure:
+12 |   capture: [acess]
+   |             ^^^^^
+   = path: measure.capture[0]
+   = help: did you mean 'access'? the links are: access

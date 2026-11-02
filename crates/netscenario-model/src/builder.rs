@@ -19,10 +19,9 @@
 //! # Ok::<(), Vec<netscenario_model::Problem>>(())
 //! ```
 
-use std::collections::BTreeMap;
-
 use crate::error::Problem;
 use crate::generators::{PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
+use crate::measure::Measure;
 use crate::scenario::{
     Backend, Change, Command, Direction, Event, FormatVersion, Impairments, Jitter,
     JitterDistribution, Link, Loss, Reorder, Scenario, Topology, True, UdpCbr, UdpChecksum,
@@ -210,6 +209,7 @@ pub struct ScenarioBuilder {
     links: Vec<Link>,
     workloads: Vec<Workload>,
     timeline: Vec<Event>,
+    measure: Measure,
     problems: Vec<Problem>,
 }
 
@@ -226,6 +226,7 @@ impl Scenario {
             links: Vec::new(),
             workloads: Vec::new(),
             timeline: Vec::new(),
+            measure: Measure::default(),
             problems: Vec::new(),
         };
         builder.name = builder.name_at(name, "name");
@@ -461,14 +462,11 @@ impl ScenarioBuilder {
         let id = self.name_at(id, &format!("workloads[{index}].id"));
         let node = self.name_at(node, &format!("workloads[{index}].node"));
         if let (Some(id), Some(node)) = (id, node) {
-            self.workloads.push(Workload::Command(Command {
+            self.workloads.push(Workload::Command(Command::new(
                 id,
                 node,
-                run: run.iter().map(|argument| (*argument).to_owned()).collect(),
-                env: BTreeMap::new(),
-                ready: None,
-                shutdown: None,
-            }));
+                run.iter().map(|argument| (*argument).to_owned()).collect(),
+            )));
         }
         self
     }
@@ -477,6 +475,13 @@ impl ScenarioBuilder {
     #[must_use]
     pub fn workload(mut self, workload: Workload) -> Self {
         self.workloads.push(workload);
+        self
+    }
+
+    /// Sets what is measured besides the statistics: the bins of the series, the time to recover, the links to capture.
+    #[must_use]
+    pub fn measure(mut self, measure: Measure) -> Self {
+        self.measure = measure;
         self
     }
 
@@ -556,6 +561,7 @@ impl ScenarioBuilder {
             },
             workloads: self.workloads,
             timeline: self.timeline,
+            measure: self.measure,
         };
         let problems = scenario.validate();
         if problems.is_empty() {

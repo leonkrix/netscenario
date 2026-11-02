@@ -6,8 +6,6 @@ topology:
   links:
     - id: access
       between: [client, server]
-      forward:
-        delay: 40ms
 workloads:
   - id: media
     kind: udp-cbr
@@ -15,4 +13,8 @@ workloads:
     to: server
     rate: 1mbit
     packet-size: 1200b
-probes: []
+  - id: app
+    kind: command
+    node: server
+    run: ["./server"]
+    on-exit: restart

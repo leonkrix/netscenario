@@ -12,6 +12,7 @@ categories.workspace = true
 
 [dependencies]
 rustix.workspace = true
+nix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

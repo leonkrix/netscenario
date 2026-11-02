@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 
 use netscenario_core::{
     Backend, BackendInfo, Capabilities, CapabilityError, Direction, Error, Feature, LinkHandle,
-    NodeCounts, NodeHandle, Program, ProgramExit, ProgramHandle, ProgramState, Refusal,
+    NodeCounts, NodeHandle, OutputStats, PortKind, Program, ProgramExit, ProgramHandle,
+    ProgramSignal, ProgramState, Refusal,
 };
 use netscenario_model::{Impairments, Name, Scenario};
 
@@ -917,6 +918,16 @@ impl Backend for KernelBackend {
         }
     }
 
+    fn interface_name(&self, link: LinkHandle, end: usize) -> Result<String, Error> {
+        if end > 1 {
+            return Err(Self::error(
+                "name an interface",
+                format!("a link has two ends, not {}", end + 1),
+            ));
+        }
+        Ok(crate::provisioner::interface_name(link.0))
+    }
+
     fn address(&self, link: LinkHandle, end: usize) -> Result<std::net::Ipv4Addr, Error> {
         if end > 1 {
             return Err(Self::error(
@@ -958,10 +969,16 @@ impl Backend for KernelBackend {
         program: &Program,
     ) -> Result<ProgramHandle, Error> {
         let action = "start a program";
+        let path = |path: &std::path::PathBuf| path.display().to_string();
         let request = Request::StartProgram {
             node: node.0,
             argv: program.argv.clone(),
             memory_limit: program.memory_limit,
+            env: program.env.clone(),
+            cwd: program.working_dir.as_ref().map(path),
+            own_group: program.own_group,
+            stdout_file: program.stdout_file.as_ref().map(path),
+            stderr_file: program.stderr_file.as_ref().map(path),
         };
         let id = self.call(action, &request)?;
         id.map(ProgramHandle)
@@ -984,6 +1001,7 @@ impl Backend for KernelBackend {
                 exit,
                 stderr,
                 truncated,
+                output,
             } => Ok(ProgramState {
                 lines,
                 exit: exit.map(|exit| match exit {
@@ -992,7 +1010,52 @@ impl Backend for KernelBackend {
                 }),
                 stderr,
                 truncated,
+                output: OutputStats {
+                    stdout_bytes: output.stdout_bytes,
+                    stdout_dropped_bytes: output.stdout_dropped_bytes,
+                    stderr_bytes: output.stderr_bytes,
+                    stderr_dropped_bytes: output.stderr_dropped_bytes,
+                    long_lines: output.long_lines,
+                },
             }),
+            other => Err(Self::error(
+                action,
+                format!("the supervisor gave an answer that was not asked for: {other:?}"),
+            )),
+        }
+    }
+
+    fn signal_program(
+        &mut self,
+        program: ProgramHandle,
+        signal: ProgramSignal,
+    ) -> Result<(), Error> {
+        let number = match signal {
+            ProgramSignal::Hup => 1,
+            ProgramSignal::Int => 2,
+            ProgramSignal::Quit => 3,
+            ProgramSignal::Kill => 9,
+            ProgramSignal::Usr1 => 10,
+            ProgramSignal::Usr2 => 12,
+            // `Term`, and a signal of a later version that this backend sends as the polite one
+            _ => 15,
+        };
+        let request = Request::Signal {
+            program: program.0,
+            signal: number,
+        };
+        self.call("signal a program", &request).map(|_| ())
+    }
+
+    fn port_bound(&mut self, node: NodeHandle, kind: PortKind, port: u16) -> Result<bool, Error> {
+        let action = "look at the sockets of a node";
+        let request = Request::PortBound {
+            node: node.0,
+            udp: kind == PortKind::Udp,
+            port,
+        };
+        match self.exchange(action, &request)? {
+            Response::Bool { value } => Ok(value),
             other => Err(Self::error(
                 action,
                 format!("the supervisor gave an answer that was not asked for: {other:?}"),

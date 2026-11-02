@@ -117,11 +117,11 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | planned |
 | WRK-04 | TCP bulk transfer | M | 0.3 | planned |
 | WRK-05 | Request and response (echo, latency) | M | 0.3 | planned |
-| WRK-06 | Your own program as a node, with the addresses in its environment | M | 0.2 | in progress (format done with D-051; the supervisor follows) |
+| WRK-06 | Your own program as a node, with the addresses in its environment | M | 0.2 | done (`kind: command` in the Kernel backend, tested in real namespaces with scripts, Python and a compiled program: [programs.rs](crates/netscenario-backend-kernel/tests/command.rs); [PROGRAMS.md](docs/PROGRAMS.md), [examples/echo-server](examples/echo-server), D-072) |
 | WRK-07 | A container as a node | S | 0.5 | planned |
 | WRK-08 | Replay of a pcap | C | 0.8 | idea |
 | WRK-09 | Models of real traffic (video, voice, game) | S | 0.7 | planned |
-| WRK-10 | Supervision: start order, readiness checks, orderly stop, captured logs, timeouts | M | 0.2 | in progress (readiness and stop are in the format, D-051; the supervisor follows) |
+| WRK-10 | Supervision: start order, readiness checks, orderly stop, captured logs, timeouts | M | 0.2 | done (order of the file, five ways of being ready with a limit, `TERM` then `KILL` to the process group, logs of the first megabyte with the dropped bytes counted, `on-exit`; D-072) |
 | WRK-11 | UDP without the checksum, so that a corrupted payload arrives and is counted (`udp-checksum: false`) | S | 0.2 | done (D-056: raw socket, wire format 2 with a CRC-32, `corrupted` in the result; `tests/fidelity.rs` cases 19 to 21 and `tests/agent.rs`) |
 
 ## Measurement (PRB)
@@ -135,8 +135,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PRB-05 | Throughput and goodput over time | M | 0.1 | done (payload per second; for UDP throughput and goodput are the same number; the series by time bin of PRB-07 adds sent, lost and the delays for each bin) |
 | PRB-06 | Burst statistics (length of loss runs) | S | 0.2 | done (`loss_runs` in the result: runs, longest, mean, histogram; D-058) |
 | PRB-07 | Time to recover after an event | M | 0.2 | done (a series by time bin for each workload in `series-<id>.jsonl`, sent and arrived side by side, and `recoveries` for each event of the timeline with explicit parameters; unit tests on series with known answers and canaries in `recovery.rs` and `series.rs`, a real run with a drop in the rate and an outage in [timeline.rs](crates/netscenario-backend-kernel/tests/timeline.rs); [RESULTS.md](docs/RESULTS.md), D-070) |
-| PRB-08 | Metrics from your program (JSON on stdout, exit code) | M | 0.2 | planned |
-| PRB-09 | Packet capture per link | M | 0.2 | planned (method measured, D-047) |
+| PRB-08 | Metrics from your program (JSON on stdout, exit code) | M | 0.2 | done (`{"metric", "value", "unit"}` lines with the time they were read, a summary and a file of readings, invalid lines counted and shown, the exit code and signal in the result; D-072) |
+| PRB-09 | Packet capture per link | M | 0.2 | done (`measure.capture`: both interfaces of a link as `capture-<link>-<node>.pcap`, nanosecond timestamps, checked against the counter of the interface; [capture.rs](crates/netscenario-backend-kernel/tests/capture.rs): read by `tcpdump`, lost packets absent and duplicates present, timestamps against the records, a capture cut short refused, a receive buffer that overflows reported; D-047, D-073) |
 | PRB-10 | Queue occupancy and drops from the kernel | S | 0.3 | planned |
 | PRB-11 | CPU and memory of the program under test | C | 0.8 | idea |
 | PRB-12 | Round trip time with percentiles (needs the echo of WRK-05) | M | 0.3 | planned |

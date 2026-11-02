@@ -32,10 +32,14 @@ fn scenario(head: &str, link: &str, workloads: &str) -> Scenario {
 const MEDIA: &str =
     "  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }\n";
 
-fn options(dir: &Path, packets: bool) -> RunOptions {
-    let mut options = RunOptions::new(agent_exe().unwrap(), dir);
-    options.export_packets = packets;
-    options
+fn options(dir: &Path) -> RunOptions {
+    RunOptions::new(agent_exe().unwrap(), dir)
+}
+
+/// The same scenario with the export of every packet switched on (`measure.packets`).
+fn exporting(mut scenario: Scenario) -> Scenario {
+    scenario.measure.packets = true;
+    scenario
 }
 
 fn lost_in(dir: &Path, workload: &str) -> Vec<u64> {
@@ -58,7 +62,7 @@ fn a_run_measures_the_link_and_writes_a_result() {
     let result = run(
         &mut backend,
         &scenario("", "      forward: { delay: 20ms }\n", MEDIA),
-        &options(&dir, false),
+        &options(&dir),
     )
     .unwrap();
 
@@ -153,8 +157,8 @@ fn the_same_seed_gives_the_same_lost_packets() {
         let mut backend = backend(|_| {});
         let result = run(
             &mut backend,
-            &scenario(&format!("seed: {seed}\n"), lossy, MEDIA),
-            &options(&dir, true),
+            &exporting(scenario(&format!("seed: {seed}\n"), lossy, MEDIA)),
+            &options(&dir),
         )
         .unwrap();
         let lost = lost_in(&dir, "media");
@@ -244,8 +248,8 @@ fn the_same_seed_repeats_burst_loss_duplication_and_reordering() {
         let mut backend = backend(|_| {});
         let result = run(
             &mut backend,
-            &scenario(&format!("seed: {seed}\n"), link, MEDIA),
-            &options(&dir, true),
+            &exporting(scenario(&format!("seed: {seed}\n"), link, MEDIA)),
+            &options(&dir),
         )
         .unwrap();
         let drawn = drawn_by(&dir, "media");
@@ -317,8 +321,8 @@ fn the_same_seed_chooses_the_same_packets_to_corrupt_and_every_packet_is_account
         let mut backend = backend(|_| {});
         let result = run(
             &mut backend,
-            &scenario(&format!("seed: {seed}\n"), link, MEDIA),
-            &options(&dir, true),
+            &exporting(scenario(&format!("seed: {seed}\n"), link, MEDIA)),
+            &options(&dir),
         )
         .unwrap();
         let lost = lost_in(&dir, "media");
@@ -422,8 +426,8 @@ fn the_same_seed_loses_the_same_packets_through_a_jitter_and_a_rate() {
         let mut backend = backend(|_| {});
         let result = run(
             &mut backend,
-            &scenario("seed: 5\n", link, MEDIA),
-            &options(&dir, true),
+            &exporting(scenario("seed: 5\n", link, MEDIA)),
+            &options(&dir),
         )
         .unwrap();
         let lost = lost_in(&dir, "media");
@@ -471,7 +475,7 @@ fn a_packet_that_no_workload_sent_makes_the_run_not_reproducible() {
     let result = run(
         &mut backend,
         &scenario("seed: 42\n", lossy, MEDIA),
-        &options(&dir, false),
+        &options(&dir),
     )
     .unwrap();
     assert!(!result.seed.loss_reproducible, "{:?}", result.seed);
@@ -592,7 +596,7 @@ fn workloads_run_together_and_a_window_limits_one_of_them() {
     let result = run(
         &mut backend,
         &scenario("", "      both: { delay: 5ms }\n", &workloads),
-        &options(&dir, false),
+        &options(&dir),
     )
     .unwrap();
     assert_eq!(result.workloads.len(), 2);
@@ -633,7 +637,7 @@ fn a_run_reports_its_phases_and_its_progress() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&events);
     let observer = move |event: &RunEvent| seen.lock().unwrap().push(event.clone());
-    let options = options(&dir, false).with_observer(Arc::new(observer));
+    let options = options(&dir).with_observer(Arc::new(observer));
     let mut backend = backend(|_| {});
     run(&mut backend, &scenario("", "", MEDIA), &options).unwrap();
 
@@ -706,7 +710,7 @@ fn a_run_can_be_cancelled_and_leaves_nothing() {
             cancel.cancel();
         }
     };
-    let options = options(&dir, false)
+    let options = options(&dir)
         .with_observer(Arc::new(observer))
         .with_cancel(token);
     let long = Scenario::from_yaml(
@@ -778,7 +782,7 @@ fn two_workloads_in_a_lossy_direction_make_the_run_not_reproducible_and_the_queu
             "      forward: { loss: { model: random, p: 20% } }\n",
             &workloads,
         ),
-        &options(&dir, false),
+        &options(&dir),
     )
     .unwrap();
     assert!(!result.seed.loss_reproducible);
@@ -827,7 +831,7 @@ fn the_default_wait_lasts_until_the_queue_of_a_rate_is_empty_and_no_packet_count
     ] {
         let dir = work_dir(&format!("run-queue-{name}"));
         let mut backend = backend(|_| {});
-        let result = run(&mut backend, &queue_scenario(link), &options(&dir, false)).unwrap();
+        let result = run(&mut backend, &queue_scenario(link), &options(&dir)).unwrap();
         let media = &result.workloads[0];
         assert_eq!(media.stats.sent, 1125);
         assert_eq!(
@@ -855,7 +859,7 @@ fn canary_a_short_set_wait_loses_the_packets_that_are_still_in_the_queue() {
     }
     let dir = work_dir("run-queue-short");
     let mut backend = backend(|_| {});
-    let mut options = options(&dir, false);
+    let mut options = options(&dir);
     options.settle = Some(Duration::from_millis(100));
     let result = run(
         &mut backend,

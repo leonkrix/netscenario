@@ -47,6 +47,127 @@ pub struct RunResult {
     /// run went as usual.
     #[serde(default)]
     pub notes: Vec<String>,
+    /// One entry for each program of your own (`kind: command`), in the order of the scenario (D-072). Empty for a
+    /// scenario without one.
+    #[serde(default)]
+    pub programs: Vec<ProgramResult>,
+    /// One entry for each captured interface (`measure.capture`), two for each link, in the order of the list and, for a
+    /// link, of `between` (PRB-09). Empty if nothing is captured.
+    #[serde(default)]
+    pub captures: Vec<CaptureResult>,
+}
+
+/// A capture of one interface (PRB-09, D-047, D-073). Times are in nanoseconds from the start of the measured phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct CaptureResult {
+    /// The link.
+    pub link: String,
+    /// The node whose interface it is.
+    pub node: String,
+    /// The name of the interface in the node.
+    pub interface: String,
+    /// The pcap file, relative to `result.json`.
+    pub file: String,
+    /// The frames in the file, both directions.
+    pub packets: u64,
+    /// The bytes of the frames (without the headers of the file).
+    pub bytes: u64,
+    /// The time of the first frame, if there is one.
+    pub first_ns: Option<i64>,
+    /// The time of the last frame.
+    pub last_ns: Option<i64>,
+    /// The real-time clock minus `CLOCK_MONOTONIC` at the start of the capture: the timestamps in the file are on the
+    /// real-time clock, and this turns one into a time of the records (`time - offset - start of the measured phase`).
+    pub realtime_minus_monotonic_ns: i64,
+    /// The size of the receive buffer of the capture that the kernel gave, in bytes (`net.core.rmem_max` decides).
+    pub receive_buffer_bytes: u64,
+    /// The frames the interface counted (received and sent) while the capture ran, if its counters could be read.
+    pub interface_frames: Option<u64>,
+    /// How many of those frames are not in the file. `Some(0)` is a whole capture, `None` that it could not check itself.
+    pub missing: Option<u64>,
+}
+
+/// What came of a program of your own (WRK-06, WRK-10, PRB-08; D-072). Times are in nanoseconds from the start of the
+/// measured phase, the zero of `events`; a program is started before it, so its start is negative.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ProgramResult {
+    /// The id in the scenario.
+    pub id: String,
+    /// The node it ran in.
+    pub node: String,
+    /// The program and its arguments, with `{node.addr}` replaced.
+    pub run: Vec<String>,
+    /// When the run started it.
+    pub started_ns: i64,
+    /// When the run found it ready: the start for a program with no `ready`, else the moment the condition held.
+    pub ready_ns: i64,
+    /// When it ended.
+    pub ended_ns: i64,
+    /// How it ended: `on-its-own` (before the run asked it to stop), `stopped` (after the signal of `shutdown`, within
+    /// the time) or `killed` (it was still there after the time, and `KILL` ended it).
+    pub ended: String,
+    /// The exit code, if it returned one.
+    pub exit_code: Option<i32>,
+    /// The signal that ended it, if one did.
+    pub exit_signal: Option<i32>,
+    /// The file with its standard output, relative to `result.json` (the first megabyte).
+    pub stdout_file: String,
+    /// The file with its standard error.
+    pub stderr_file: String,
+    /// How the output was read: bytes in all, bytes past the limit of the file, and lines longer than the limit of a
+    /// line (they were cut). Nothing that was dropped is hidden.
+    pub output: ProgramOutput,
+    /// Whether lines of standard output were dropped because the run could not read them fast enough (more than
+    /// 10,000 between two looks). Metrics in them are lost, and the result says so.
+    pub lines_dropped: bool,
+    /// The metrics the program reported, by name (PRB-08).
+    pub metrics: Vec<MetricSummary>,
+    /// All the readings, one line each, relative to `result.json`; `None` if there was none.
+    pub metrics_file: Option<String>,
+    /// How many valid readings in all.
+    pub metric_readings: u64,
+    /// How many lines looked like metrics and were not valid.
+    pub bad_metric_lines: u64,
+    /// The first of them, each with the reason.
+    pub bad_metric_examples: Vec<String>,
+}
+
+/// What was read from the output of a program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ProgramOutput {
+    /// Bytes of standard output.
+    pub stdout_bytes: u64,
+    /// Bytes of standard output that are not in its file.
+    pub stdout_dropped_bytes: u64,
+    /// Bytes of standard error.
+    pub stderr_bytes: u64,
+    /// Bytes of standard error that are not in its file.
+    pub stderr_dropped_bytes: u64,
+    /// Lines of standard output longer than the limit of a line, which were cut.
+    pub long_lines: u64,
+}
+
+/// What the readings of one metric came to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct MetricSummary {
+    /// The name.
+    pub name: String,
+    /// The unit, if a reading gave one.
+    pub unit: Option<String>,
+    /// How many readings.
+    pub count: u64,
+    /// The first value.
+    pub first: f64,
+    /// The last value.
+    pub last: f64,
+    /// The smallest.
+    pub min: f64,
+    /// The largest.
+    pub max: f64,
 }
 
 impl EventRecord {
@@ -471,6 +592,8 @@ mod tests {
             }],
             events: Vec::new(),
             notes: vec!["a note".to_owned()],
+            programs: Vec::new(),
+            captures: Vec::new(),
             directions: vec![DirectionTally {
                 link: "l".to_owned(),
                 direction: "forward".to_owned(),

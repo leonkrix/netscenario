@@ -54,14 +54,17 @@
 mod backend;
 mod barriers;
 mod capability;
+mod captures;
 mod drive;
 mod error;
 mod export;
 mod feature;
 mod hash;
 mod machine;
+pub mod metrics;
 mod observe;
 pub mod patterns;
+mod programs;
 mod provision;
 pub mod recovery;
 mod result;
@@ -73,8 +76,8 @@ pub mod timeline;
 mod traffic;
 
 pub use backend::{
-    Backend, BackendInfo, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramExit,
-    ProgramHandle, ProgramState,
+    Backend, BackendInfo, Direction, LINE_LIMIT, LOG_LIMIT, LinkHandle, NodeCounts, NodeHandle,
+    OutputStats, PortKind, Program, ProgramExit, ProgramHandle, ProgramSignal, ProgramState,
 };
 pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, check};
 pub use error::Error;
@@ -87,9 +90,9 @@ pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering}
 pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
 pub use recovery::{Basis, Recovery, RecoveryOptions};
 pub use result::{
-    AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, QueueCheck, RESULT_FORMAT,
-    RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing,
-    WorkloadResult,
+    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, MetricSummary,
+    ProgramOutput, ProgramResult, QueueCheck, RESULT_FORMAT, RESULT_VERSION, RunResult,
+    ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
 pub use seed::{derive_seed, derive_stage_seed, draw_seed};

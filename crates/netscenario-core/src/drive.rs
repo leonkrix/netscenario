@@ -32,11 +32,24 @@ use crate::result::EventRecord;
 use crate::run::{Control, event, failure};
 use crate::timeline::{Action, Step};
 
-/// When the workloads begin: on the clock the run waits with, and on `CLOCK_MONOTONIC` that the records use.
+/// When the workloads begin, on `CLOCK_MONOTONIC`, the clock of the records and of the senders.
+///
+/// A step is waited for on this clock and not on an `Instant` taken next to it: two reads one after the other differ by
+/// a few microseconds, more when the machine stalls between them, and a step then began before its moment on the clock
+/// of its own record (3 µs on Ubuntu 22.04 in the CI).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Begin {
-    pub(crate) at: Instant,
     pub(crate) ns: u64,
+}
+
+impl Begin {
+    /// How long until `after` nanoseconds from the beginning, on the clock of the records; zero if it has passed.
+    fn left_until(self, after: u64) -> Duration {
+        self.ns
+            .saturating_add(after)
+            .checked_sub(monotonic_ns())
+            .map_or(Duration::ZERO, Duration::from_nanos)
+    }
 }
 
 /// The step that a sender waits for: which sender, and before which of its packets.
@@ -61,12 +74,20 @@ pub(crate) struct Driven {
 /// news counts whole milliseconds, and a step must not be due a millisecond late because of that.
 const SLEEP_BELOW: Duration = Duration::from_millis(3);
 
-/// The longest the loop waits for news of a sender when nothing is due.
-const LONGEST_WAIT: Duration = Duration::from_millis(200);
+/// The longest the loop waits for news of a sender when nothing is due, and so the longest between two looks at the
+/// programs of your own (50 ms), which is the resolution of the time of a metric.
+const LONGEST_WAIT: Duration = Duration::from_millis(50);
 
 /// How long the loop waits for news of a sender while a barrier is still to come: a sender asks right after the packet
 /// before the barrier, and the packet waits for the answer, so the loop looks often.
 const BARRIER_WAIT: Duration = Duration::from_millis(1);
+
+/// What the loop also does while it goes (D-072): looks at the programs of your own, and does not end before `hold_until`,
+/// the end of the scenario, so that a program runs to the end also when no sender does.
+pub(crate) struct Watch<'a> {
+    pub(crate) programs: &'a mut crate::programs::Programs,
+    pub(crate) hold_until: Instant,
+}
 
 /// Waits for the senders to end and does the steps of the timeline: at the barriers where `bindings` has one, else by the
 /// clock.
@@ -87,8 +108,13 @@ pub(crate) fn drive(
     bindings: &[Option<Binding>],
     begin: Begin,
     deadline: Instant,
+    watch: Watch<'_>,
     control: &Control<'_>,
 ) -> Result<Driven, Error> {
+    let Watch {
+        programs,
+        hold_until,
+    } = watch;
     // The steps that are done by the clock, in order; the others are done when their sender asks
     let mut pending: VecDeque<(usize, &Step)> = steps
         .iter()
@@ -104,6 +130,7 @@ pub(crate) fn drive(
     let mut interrupted_ns: Option<u64> = None;
     loop {
         control.checkpoint()?;
+        programs.watch(backend)?;
         // A cancel that keeps the result (D-066): every sender is told to stop and no step is done any more. The
         // senders end at their next packet and say what they sent; the loop waits for that like for their end.
         if interrupted_ns.is_none() && control.take_interruption() {
@@ -120,8 +147,7 @@ pub(crate) fn drive(
         // The steps by the clock that are due, in order. A step that is a moment away is waited for to the
         // microsecond.
         while let Some((_, step)) = pending.front() {
-            let due = begin.at + Duration::from_nanos(step.at.as_nanos());
-            let left = due.saturating_duration_since(Instant::now());
+            let left = begin.left_until(step.at.as_nanos());
             if !left.is_zero() {
                 // While a sender may ask for a barrier the loop does not sleep: a sleep of up to 3 ms would hold the
                 // sender's packet back and let this step overtake the barrier that came before it. It waits for news
@@ -141,14 +167,12 @@ pub(crate) fn drive(
         let wait = if at_barriers > 0 {
             // A millisecond at a time, and not beyond the next step by the clock
             pending.front().map_or(BARRIER_WAIT, |(_, step)| {
-                let due = begin.at + Duration::from_nanos(step.at.as_nanos());
-                due.saturating_duration_since(Instant::now())
-                    .min(BARRIER_WAIT)
+                begin.left_until(step.at.as_nanos()).min(BARRIER_WAIT)
             })
         } else {
             pending.front().map_or(LONGEST_WAIT, |(_, step)| {
-                let due = begin.at + Duration::from_nanos(step.at.as_nanos());
-                due.saturating_duration_since(Instant::now())
+                begin
+                    .left_until(step.at.as_nanos())
                     .saturating_sub(SLEEP_BELOW)
                     .min(LONGEST_WAIT)
             })
@@ -218,7 +242,8 @@ pub(crate) fn drive(
                     ),
                 ));
             }
-            if pending.is_empty() {
+            // A cancel that keeps the result also ends the wait for the programs: they are stopped next
+            if pending.is_empty() && (Instant::now() >= hold_until || interrupted_ns.is_some()) {
                 break;
             }
         }
@@ -337,4 +362,25 @@ fn do_step(
         packet,
         held_ns: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_moment_is_counted_from_the_beginning_on_the_clock_of_the_records() {
+        let ns = monotonic_ns() + 2_000_000_000;
+        let begin = Begin { ns };
+        let left = begin.left_until(1_000_000_000);
+        assert!(left > Duration::from_millis(2_900), "{left:?}");
+        assert!(left <= Duration::from_secs(3), "{left:?}");
+        // Nothing is left for a moment that has passed, and a moment far away does not overflow
+        assert!(begin.left_until(0) > Duration::ZERO);
+        let past = Begin {
+            ns: monotonic_ns().saturating_sub(5_000_000_000),
+        };
+        assert_eq!(past.left_until(1_000_000_000), Duration::ZERO);
+        assert!(begin.left_until(u64::MAX) > Duration::ZERO);
+    }
 }

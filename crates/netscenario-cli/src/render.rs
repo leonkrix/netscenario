@@ -79,6 +79,8 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
     for workload in &result.workloads {
         workload_text(&mut text, workload);
     }
+    programs_text(&mut text, result);
+    captures_text(&mut text, result);
     directions_text(&mut text, result);
     events_text(&mut text, result);
     for note in &result.notes {
@@ -146,6 +148,154 @@ fn seconds(ns: u64) -> String {
     #[allow(clippy::cast_precision_loss)] // moments are far below 2^52 nanoseconds
     let value = ns as f64 / 1e9;
     format!("{value:.3} s")
+}
+
+/// A time that may be before the start of the measured phase.
+fn signed_seconds(ns: i64) -> String {
+    #[allow(clippy::cast_precision_loss)] // moments are far below 2^52 nanoseconds
+    let value = ns as f64 / 1e9;
+    format!("{value:.3} s")
+}
+
+/// A number from a program: whole if it is, else with the digits it needs (up to 6).
+fn number(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{value:.0}")
+    } else {
+        let text = format!("{value:.6}");
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    }
+}
+
+/// The programs of your own: how each ended, its output and its metrics (WRK-06, PRB-08). What went wrong is a
+/// warning on a line of its own: a program that ended by itself, output that was dropped, metric lines that were
+/// not valid.
+fn programs_text(text: &mut String, result: &RunResult) {
+    for program in &result.programs {
+        let how = match (program.exit_code, program.exit_signal) {
+            (Some(code), _) => format!("exit code {code}"),
+            (None, Some(signal)) => format!("signal {signal}"),
+            (None, None) => "no exit status".to_owned(),
+        };
+        let _ = writeln!(
+            text,
+            "\nprogram {}  in {}  {}",
+            program.id,
+            program.node,
+            program.run.join(" ")
+        );
+        let _ = writeln!(
+            text,
+            "  started {}, ready {}, ended {} ({}, {how})",
+            signed_seconds(program.started_ns),
+            signed_seconds(program.ready_ns),
+            signed_seconds(program.ended_ns),
+            program.ended
+        );
+        let _ = writeln!(
+            text,
+            "  output  {} bytes in {}, {} bytes of standard error in {}",
+            program.output.stdout_bytes,
+            program.stdout_file,
+            program.output.stderr_bytes,
+            program.stderr_file
+        );
+        for metric in &program.metrics {
+            let unit = metric
+                .unit
+                .as_deref()
+                .map_or_else(String::new, |unit| format!(" {unit}"));
+            let _ = writeln!(
+                text,
+                "  metric {}  {} readings, last {}{unit}, min {}, max {}",
+                metric.name,
+                metric.count,
+                number(metric.last),
+                number(metric.min),
+                number(metric.max)
+            );
+        }
+        // A program that ends by itself with 0 has finished its work; one that ends with an error has crashed
+        if program.ended == "on-its-own" && program.exit_code != Some(0) {
+            let _ = writeln!(
+                text,
+                "  warning: it ended by itself with an error, before the run asked it to stop"
+            );
+        }
+        if program.output.stdout_dropped_bytes > 0 || program.output.stderr_dropped_bytes > 0 {
+            let _ = writeln!(
+                text,
+                "  warning: the files hold the first megabyte; {} bytes of standard output and {} of standard error are not in them",
+                program.output.stdout_dropped_bytes, program.output.stderr_dropped_bytes
+            );
+        }
+        if program.output.long_lines > 0 {
+            let _ = writeln!(
+                text,
+                "  warning: {} lines of standard output were longer than 64 KiB and were cut",
+                program.output.long_lines
+            );
+        }
+        if program.lines_dropped {
+            let _ = writeln!(
+                text,
+                "  warning: lines of standard output were dropped before the run read them; metrics in them are lost"
+            );
+        }
+        if program.bad_metric_lines > 0 {
+            let _ = writeln!(
+                text,
+                "  warning: {} lines looked like metrics and were not valid, the first: {}",
+                program.bad_metric_lines,
+                program
+                    .bad_metric_examples
+                    .first()
+                    .map_or("", String::as_str)
+            );
+        }
+    }
+}
+
+/// The captures of the interfaces (PRB-09): where the file is, how many frames, and whether the capture is whole. A capture
+/// that lost frames, or could not check itself, is a warning on a line of its own.
+fn captures_text(text: &mut String, result: &RunResult) {
+    for capture in &result.captures {
+        let _ = writeln!(
+            text,
+            "\ncapture link {} in {}  {} frames, {} bytes, in {}",
+            capture.link, capture.node, capture.packets, capture.bytes, capture.file
+        );
+        if let (Some(first), Some(last)) = (capture.first_ns, capture.last_ns) {
+            let _ = writeln!(
+                text,
+                "  from {} to {} of the measured phase",
+                signed_seconds(first),
+                signed_seconds(last)
+            );
+        }
+        match (capture.missing, capture.interface_frames) {
+            (Some(0), Some(counted)) => {
+                let _ = writeln!(
+                    text,
+                    "  whole: the interface {} counted {counted} frames, as many as the file has",
+                    capture.interface
+                );
+            }
+            (Some(missing), Some(counted)) => {
+                let _ = writeln!(
+                    text,
+                    "  warning: {missing} frames are missing: the interface {} counted {counted} and the file has {} (the receive buffer of the capture was {} bytes; `net.core.rmem_max` limits it)",
+                    capture.interface, capture.packets, capture.receive_buffer_bytes
+                );
+            }
+            _ => {
+                let _ = writeln!(
+                    text,
+                    "  warning: the counters of the interface could not be read, so the capture could not check that it is whole"
+                );
+            }
+        }
+    }
 }
 
 fn directions_text(text: &mut String, result: &RunResult) {

@@ -31,6 +31,9 @@ rustix = { version = "1", default-features = false, features = ["std", "time", "
 # The command line stops a run in an orderly way on Ctrl-C (D-066). The handler of the signal is in this crate, so no crate of
 # ours needs `unsafe`
 signal-hook = "0.4"
+# The capture of the agent reads a packet socket with the timestamps of the kernel through this safe interface (D-047); `rustix`
+# has no way to bind a packet socket to an interface or to read the timestamps
+nix = { version = "0.30", default-features = false, features = ["socket", "net", "time", "uio"] }
 serde-saphyr = "2"
 # The parser that serde-saphyr uses; read directly to find the position of every value in the file
 granit-parser = "2"

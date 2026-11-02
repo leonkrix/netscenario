@@ -300,6 +300,29 @@ def test_the_marker_runs_the_scenario_and_gives_the_result(pytester: pytest.Pyte
 
 
 @pytest.mark.usefixtures("runnable")
+def test_the_capture_of_a_link_is_asked_for_by_the_marker_and_by_the_call(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makefile(".yaml", plug=SCENARIO)
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.netscenario("plug.yaml", settle=0.2, capture=["access"])
+        def test_marker(netscenario_result):
+            files = sorted(c.file.name for c in netscenario_result.captures)
+            assert files == ["capture-access-client.pcap", "capture-access-server.pcap"]
+            assert all(c.file.is_file() and c.complete for c in netscenario_result.captures)
+
+        def test_call(netscenario):
+            result = netscenario.run("plug.yaml", settle=0.2, capture=["access"])
+            assert len(result.captures) == 2
+        """
+    )
+    pytester.runpytest().assert_outcomes(passed=2)
+
+
+@pytest.mark.usefixtures("runnable")
 def test_the_marker_takes_the_options_of_the_series_and_refuses_the_others(
     pytester: pytest.Pytester,
 ) -> None:
