@@ -36,5 +36,6 @@ __pycache__/
 # Local working documents: instructions for the assistant and the working plan. They stay on the
 # machine of the maintainer and nothing in the repository may refer to them.
 /PLAN.md
+/PLAN-ARCHIVE.md
 /CLAUDE.md
 /.claude/

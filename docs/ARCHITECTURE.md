@@ -1,6 +1,6 @@
 # Architecture
 
-How netscenario is put together, and why. This is the design the code will follow; where it depends on an experiment, it says so. Decisions that were made are in [DECISIONS.md](DECISIONS.md).
+How netscenario is put together, and why. This is the design the code will follow; where it depends on an experiment, it says so. Decisions that were made are in [DECISIONS.md](DECISIONS.md), one file for each in [decisions/](decisions/).
 
 ## What it is not
 

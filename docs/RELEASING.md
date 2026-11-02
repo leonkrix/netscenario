@@ -1,6 +1,6 @@
 # Releasing
 
-A release is a tag. What a version promises is in [VERSIONING.md](VERSIONING.md); the reasons for the design are D-034 in [DECISIONS.md](DECISIONS.md). One version covers everything: the five crates on crates.io (`netscenario-model`, `-core`, `-backend-kernel`, `-agent`, `-cli`), the two Python packages on PyPI (`netscenario` as wheels for Linux x86_64 and aarch64, `pytest-netscenario`), and a GitHub release.
+A release is a tag. What a version promises is in [VERSIONING.md](VERSIONING.md); the reasons for the design are [D-034](decisions/D-034.md). One version covers everything: the five crates on crates.io (`netscenario-model`, `-core`, `-backend-kernel`, `-agent`, `-cli`), the two Python packages on PyPI (`netscenario` as wheels for Linux x86_64 and aarch64, `pytest-netscenario`), and a GitHub release.
 
 ## The short version
 
