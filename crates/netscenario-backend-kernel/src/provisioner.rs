@@ -25,6 +25,11 @@ const MAX_LINKS: usize = 200;
 
 /// The address of one end of a link: link `n` uses `10.100.n.0/30`, the first node `.1` and the second `.2`.
 /// The caller and the supervisor both compute it, so that the caller needs no question to the supervisor.
+pub(crate) fn interface_name(link: u32) -> String {
+    format!("l{link}")
+}
+
+/// The address of one end of a link: link `n` uses `10.100.n.0/30`, the first node `.1` and the second `.2`.
 pub(crate) fn link_address(link: u32, end: usize) -> std::net::Ipv4Addr {
     let third = u8::try_from(link).unwrap_or(u8::MAX);
     let host = if end == 0 { 1 } else { 2 };
@@ -247,7 +252,7 @@ impl Provisioner {
             ));
         }
         let outside = [format!("nsc{index}a"), format!("nsc{index}b")];
-        let inside = format!("l{index}");
+        let inside = interface_name(u32::try_from(index).unwrap_or(u32::MAX));
         let macs = [0, 1].map(|end| format!("02:4e:53:00:{index:02x}:{:02x}", end + 1));
         run(
             &self.tools.ip,

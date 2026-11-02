@@ -33,6 +33,7 @@ _MARKER_OPTIONS = frozenset(
         "seed",
         "settle",
         "packets",
+        "capture",
         "bin",
         "recovery_basis",
         "recovery_baseline",
@@ -68,7 +69,7 @@ def pytest_configure(config: pytest.Config) -> None:
     """Register the marker."""
     config.addinivalue_line(
         "markers",
-        "netscenario(scenario, *, seed=None, settle=None, packets=False, bin=None, "
+        "netscenario(scenario, *, seed=None, settle=None, packets=None, capture=None, bin=None, "
         "recovery_basis=None, recovery_baseline=None, recovery_window=None, "
         "recovery_fraction=None): run this scenario file for the test; the fixture "
         "netscenario_result gives the result",

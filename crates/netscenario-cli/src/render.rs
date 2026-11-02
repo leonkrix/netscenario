@@ -80,6 +80,7 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
         workload_text(&mut text, workload);
     }
     programs_text(&mut text, result);
+    captures_text(&mut text, result);
     directions_text(&mut text, result);
     events_text(&mut text, result);
     for note in &result.notes {
@@ -251,6 +252,48 @@ fn programs_text(text: &mut String, result: &RunResult) {
                     .first()
                     .map_or("", String::as_str)
             );
+        }
+    }
+}
+
+/// The captures of the interfaces (PRB-09): where the file is, how many frames, and whether the capture is whole. A capture
+/// that lost frames, or could not check itself, is a warning on a line of its own.
+fn captures_text(text: &mut String, result: &RunResult) {
+    for capture in &result.captures {
+        let _ = writeln!(
+            text,
+            "\ncapture link {} in {}  {} frames, {} bytes, in {}",
+            capture.link, capture.node, capture.packets, capture.bytes, capture.file
+        );
+        if let (Some(first), Some(last)) = (capture.first_ns, capture.last_ns) {
+            let _ = writeln!(
+                text,
+                "  from {} to {} of the measured phase",
+                signed_seconds(first),
+                signed_seconds(last)
+            );
+        }
+        match (capture.missing, capture.interface_frames) {
+            (Some(0), Some(counted)) => {
+                let _ = writeln!(
+                    text,
+                    "  whole: the interface {} counted {counted} frames, as many as the file has",
+                    capture.interface
+                );
+            }
+            (Some(missing), Some(counted)) => {
+                let _ = writeln!(
+                    text,
+                    "  warning: {missing} frames are missing: the interface {} counted {counted} and the file has {} (the receive buffer of the capture was {} bytes; `net.core.rmem_max` limits it)",
+                    capture.interface, capture.packets, capture.receive_buffer_bytes
+                );
+            }
+            _ => {
+                let _ = writeln!(
+                    text,
+                    "  warning: the counters of the interface could not be read, so the capture could not check that it is whole"
+                );
+            }
         }
     }
 }

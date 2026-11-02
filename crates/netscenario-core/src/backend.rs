@@ -473,6 +473,20 @@ pub trait Backend {
     /// [`Error::Backend`] if the link does not exist.
     fn address(&self, link: LinkHandle, end: usize) -> Result<Ipv4Addr, Error>;
 
+    /// The name of the interface of one end of a link inside its node, as a capture asks for it (PRB-09). `end` is 0 for the
+    /// first node of `between` and 1 for the second.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist, or the backend has no interfaces to name (the default).
+    fn interface_name(&self, _link: LinkHandle, _end: usize) -> Result<String, Error> {
+        Err(Error::Backend {
+            backend: "this".to_owned(),
+            action: "name an interface".to_owned(),
+            message: "the backend cannot do it".to_owned(),
+        })
+    }
+
     /// What the backend says about itself for the provenance of a result.
     fn describe(&self) -> BackendInfo;
 

@@ -7,7 +7,6 @@ use crate::source::{self, Kind, SourceIndex};
 /// Keys by the path of the mapping they stand in (indices as `[]`): key and the release.
 const RESERVED_KEYS: &[(&str, &str, &str)] = &[
     ("", "repetitions", "0.2"),
-    ("", "probes", "0.2"),
     ("", "allow-limited", "0.3"),
     ("", "expect", "0.3"),
     ("", "params", "0.3"),

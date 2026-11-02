@@ -918,6 +918,16 @@ impl Backend for KernelBackend {
         }
     }
 
+    fn interface_name(&self, link: LinkHandle, end: usize) -> Result<String, Error> {
+        if end > 1 {
+            return Err(Self::error(
+                "name an interface",
+                format!("a link has two ends, not {}", end + 1),
+            ));
+        }
+        Ok(crate::provisioner::interface_name(link.0))
+    }
+
     fn address(&self, link: LinkHandle, end: usize) -> Result<std::net::Ipv4Addr, Error> {
         if end > 1 {
             return Err(Self::error(

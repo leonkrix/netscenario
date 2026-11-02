@@ -78,3 +78,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-070](decisions/D-070.md) | The series of a workload is by time bin, in two views, in a file of its own, and the time to recover is defined once and says so in the result | Accepted 2026-11-02 |
 | [D-071](decisions/D-071.md) | Poisson, on/off and bursty traffic are three kinds, drawn from a seeded generator that is written out, and a schedule is walked and not looked up | Accepted 2026-11-02 |
 | [D-072](decisions/D-072.md) | A program of your own is started in order, waited for, watched, stopped as a group, and reported with its output and metrics | Accepted 2026-11-02 |
+| [D-073](decisions/D-073.md) | What is measured is in the scenario, an option of a run replaces a key, and a capture takes both ends of a link | Accepted 2026-11-02 |

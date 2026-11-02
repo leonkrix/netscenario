@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Self
@@ -484,6 +485,50 @@ class ScenarioBuilder:
         if not udp_checksum:
             workload["udp-checksum"] = False
         self._workloads.append(workload)
+        return self
+
+    def measure(
+        self,
+        *,
+        bin: str | None = None,
+        recovery_basis: Literal["send", "arrival"] | None = None,
+        recovery_baseline_bins: int | None = None,
+        recovery_window_bins: int | None = None,
+        recovery_fraction: str | None = None,
+        capture: Sequence[str] = (),
+        packets: bool = False,
+    ) -> Self:
+        """Say what is measured besides the statistics: the section ``measure`` of the file.
+
+        Args:
+            bin: The width of a bin of the series, for example ``"500ms"`` (default ``"1s"``).
+            recovery_basis: The view the time to recover is made from (default ``"send"``).
+            recovery_baseline_bins: Bins before the disturbance that make the baseline (default 5).
+            recovery_window_bins: Bins in a row that have to be back at the level (default 3).
+            recovery_fraction: The share of the baseline to reach again, for example ``"90%"``.
+            capture: The ids of the links whose interfaces are captured as pcap files, at both ends.
+            packets: Write one line of JSON for each packet of each workload.
+        """
+        measure: dict[str, Any] = {}
+        if bin is not None:
+            measure["series"] = {"bin": bin}
+        recovery = {
+            "basis": recovery_basis,
+            "baseline-bins": recovery_baseline_bins,
+            "window-bins": recovery_window_bins,
+            "fraction": recovery_fraction,
+        }
+        recovery = {key: value for key, value in recovery.items() if value is not None}
+        if recovery:
+            measure["recovery"] = recovery
+        if capture:
+            measure["capture"] = list(capture)
+        if packets:
+            measure["packets"] = True
+        if measure:
+            self._data["measure"] = measure
+        else:
+            self._data.pop("measure", None)
         return self
 
     def build(self) -> Scenario:

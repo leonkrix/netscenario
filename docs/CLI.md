@@ -34,22 +34,26 @@ Errors go to standard error, results to standard output; with `--json` standard 
 ## `run`
 
 ```text
-netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--bin <duration>] [--packets] [--json]
-                       [--recovery-basis send|arrival] [--recovery-baseline <bins>] [--recovery-window <bins>]
-                       [--recovery-fraction <percent>]
+netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--json]
+                       [--bin <duration>] [--recovery-basis send|arrival] [--recovery-baseline <bins>]
+                       [--recovery-window <bins>] [--recovery-fraction <percent>]
+                       [--capture <link>[,<link>...]|all] [--packets]
 ```
+
+What a run measures is in the scenario, in the section `measure` ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#what-is-measured)). The options from `--bin` to `--packets` have the name of a key and replace it for this run (the result records the scenario as it ran, with its hash); the others (`--out`, `--seed`, `--settle`, `--json`) say how this machine runs it and are not in the file.
 
 | Option | Meaning |
 | --- | --- |
 | `--out <dir>` | Where to write the result. Default: `netscenario-results/<name>-<UTC time>/` in the current directory, so two runs do not overwrite each other. The directory must be one that you can write to, because the agents in the nodes write the raw records into it. |
 | `--seed <n>` | Use this seed and not the one in the file. This is how a run that drew its own seed is repeated: the summary prints `repeat the run with --seed <n>`. |
 | `--settle <duration>` | How long to wait after the last packet for the packets still in the network, for example `2s`. Default: until the queues of the links are empty (a rate limit holds the packets that are sent faster than it lets them go), then 0.3 s for the receivers to read, at most two minutes; the result says how long it took (`timing.settle_ns`). With the option the wait is that long and a packet that needs longer counts as lost. |
-| `--bin <duration>` | The width of a bin of the series of each workload, for example `500ms`. Default `1s`; at least 1 ms, and the measured phase may have at most a million bins (a wrong value is a mistake of the command line, exit 2, before anything is built). Every run writes `series-<id>.jsonl`, the packets sent and arrived by bin ([RESULTS.md](RESULTS.md), D-070); the bin is also the resolution of the time to recover. |
-| `--recovery-basis send\|arrival` | The view the time to recover is made from (`recoveries` in the result, and a line for each in the summary): `send` (default) counts what got through of the packets sent in a bin, `arrival` what the receiver got in it. See [RESULTS.md](RESULTS.md) for which one answers which question. |
-| `--recovery-baseline <bins>` | How many bins before the disturbance make the baseline level. Default 5. |
-| `--recovery-window <bins>` | How many bins in a row have to be back at the level. Default 3. |
-| `--recovery-fraction <percent>` | The share of the baseline that has to be reached again, above 0 and at most 100 (`90` or `90%`). Default 90. |
-| `--packets` | Also write `packets-<id>.jsonl` with one line for each packet ([RESULTS.md](RESULTS.md)). |
+| `--bin <duration>` | Replaces `measure.series.bin`: the width of a bin of the series of each workload, for example `500ms`. Default `1s`; at least 1 ms, and the measured phase may have at most a million bins (a wrong value is a mistake of the command line, exit 2, before anything is built). Every run writes `series-<id>.jsonl`, the packets sent and arrived by bin ([RESULTS.md](RESULTS.md), D-070); the bin is also the resolution of the time to recover. |
+| `--recovery-basis send\|arrival` | Replaces `measure.recovery.basis`: the view the time to recover is made from (`recoveries` in the result, and a line for each in the summary): `send` (default) counts what got through of the packets sent in a bin, `arrival` what the receiver got in it. See [RESULTS.md](RESULTS.md) for which one answers which question. |
+| `--recovery-baseline <bins>` | Replaces `measure.recovery.baseline-bins`: how many bins before the disturbance make the baseline level. Default 5. |
+| `--recovery-window <bins>` | Replaces `measure.recovery.window-bins`: how many bins in a row have to be back at the level. Default 3. |
+| `--recovery-fraction <percent>` | Replaces `measure.recovery.fraction`: the share of the baseline that has to be reached again, above 0 and at most 100 (`90` or `90%`). Default 90. |
+| `--capture <links>` | Replaces `measure.capture`: capture the interfaces of these links (ids separated by commas, or `all`) at both ends as `capture-<link>-<node>.pcap`, see [RESULTS.md](RESULTS.md#captures-prb-09-d-047-d-073). The list of the file is not added to but replaced. |
+| `--packets` | Switches `measure.packets` on: also write `packets-<id>.jsonl` with one line for each packet ([RESULTS.md](RESULTS.md)). |
 | `--json` | Print `result.json` on standard output instead of the summary. The file is written either way. |
 
 **Ctrl-C** (or SIGTERM) while the workloads run stops them, waits for the packets that are still in the network (the settle time), writes the result of the part that ran and exits with 130 (143). The summary says how long it ran, and `result.json` has `timing.interrupted_ns`. The steps of the timeline that were not due are not done, and the packets that were not sent are not lost: the result counts what the senders sent. **Ctrl-C a second time quits at once**; the network is removed all the same (D-022). The supervisor, the nodes and the agents are in a process group of their own, so the signal of the terminal reaches the program only and the run can stop in an orderly way (D-066).

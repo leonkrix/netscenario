@@ -128,7 +128,7 @@ Mobility only changes the parameters of links over time (through the geometry-ba
 | A container as a node | ✔ 0.5 | ? | ✘ |
 | Per-packet records | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/run.rs)) | ✔ 0.4 | ~ 0.5 (what passes the proxy) |
 | One-way delay | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs)) | ✔ 0.4 | ~ 0.5 |
-| Packet capture | ✔ 0.2 | ✔ 0.4 | ✘ |
+| Packet capture | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/capture.rs): both ends of a link read by other tools, lost packets absent and duplicates present, timestamps monotonic and in agreement with the records, a capture cut short refused, a receive buffer that overflows reported against the counter of the interface) | ✔ 0.4 | ✘ |
 | Kernel queue statistics | ✔ 0.3 | · | · |
 
 One-way delay is exact because all nodes share one machine and one clock. For the Proxy the delay includes the time spent in the proxy itself, which the result states.

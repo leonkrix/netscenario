@@ -50,6 +50,9 @@ pub enum Feature {
     /// The workloads `udp-poisson`, `udp-onoff` and `udp-bursty`: the moments of the packets come from a seeded generator.
     /// Last in the list because it was added last.
     TrafficPatterns,
+    /// The capture of the interfaces of a link as pcap files (`measure.capture`, PRB-09). Last in the list because it was added
+    /// last.
+    PacketCapture,
 }
 
 impl Feature {
@@ -74,6 +77,7 @@ impl Feature {
         Feature::Program,
         Feature::SeededLoss,
         Feature::TrafficPatterns,
+        Feature::PacketCapture,
     ];
 
     /// A short stable name, for results and logs.
@@ -99,6 +103,7 @@ impl Feature {
             Feature::Program => "program",
             Feature::SeededLoss => "seeded-loss",
             Feature::TrafficPatterns => "traffic-patterns",
+            Feature::PacketCapture => "packet-capture",
         }
     }
 
@@ -125,6 +130,7 @@ impl Feature {
             Feature::Program => "Your program as a node",
             Feature::SeededLoss => "Same seed, same loss pattern",
             Feature::TrafficPatterns => "UDP traffic patterns (Poisson, on/off, bursts)",
+            Feature::PacketCapture => "Packet capture",
         }
     }
 }
@@ -238,6 +244,9 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
                 format!("workloads[{index}].udp-checksum"),
             );
         }
+    }
+    if !scenario.measure.capture.is_empty() {
+        need(Feature::PacketCapture, "measure.capture".to_owned());
     }
     if crate::timeline::draws_random_numbers(scenario) && scenario.seed.is_some() {
         need(Feature::SeededLoss, "seed".to_owned());

@@ -35,6 +35,45 @@ pub enum Event {
         /// The first packet that meets what the run does.
         packet: u64,
     },
+    /// The capture of an interface is open and counts from here (`capture`, D-073). After the other variants because it was
+    /// added last.
+    CaptureReady {
+        /// The number the run gave the capture.
+        flow: u32,
+        /// The interface.
+        interface: String,
+        /// The size of the receive buffer the kernel gave, in bytes.
+        receive_buffer_bytes: u64,
+    },
+    /// The capture is done.
+    Captured(CaptureSummary),
+}
+
+/// What a capture wrote and how it checked itself (D-047).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureSummary {
+    /// The number the run gave the capture.
+    pub flow: u32,
+    /// The interface.
+    pub interface: String,
+    /// The frames in the file.
+    pub packets: u64,
+    /// The bytes of those frames, without the headers of the file.
+    pub bytes: u64,
+    /// The time of the first frame, on the real-time clock, in nanoseconds since the Unix epoch.
+    pub first_time_ns: Option<u64>,
+    /// The time of the last frame.
+    pub last_time_ns: Option<u64>,
+    /// The real-time clock minus `CLOCK_MONOTONIC` when the capture began, in nanoseconds. A time of a frame minus this is a
+    /// time on the clock of the records of the agents.
+    pub realtime_minus_monotonic_ns: i64,
+    /// The size of the receive buffer that the kernel gave, in bytes.
+    pub receive_buffer_bytes: u64,
+    /// The frames the interface counted (received and sent) while the capture ran, if its counters could be read.
+    pub interface_frames: Option<u64>,
+    /// How many of those frames are not in the file: 0 for a capture that is whole, `None` if the counters could not be read
+    /// and the capture could not check itself.
+    pub missing: Option<u64>,
 }
 
 /// What the sender did.

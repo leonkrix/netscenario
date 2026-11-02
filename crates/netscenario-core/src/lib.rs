@@ -54,6 +54,7 @@
 mod backend;
 mod barriers;
 mod capability;
+mod captures;
 mod drive;
 mod error;
 mod export;
@@ -89,9 +90,9 @@ pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering}
 pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
 pub use recovery::{Basis, Recovery, RecoveryOptions};
 pub use result::{
-    AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, MetricSummary, ProgramOutput,
-    ProgramResult, QueueCheck, RESULT_FORMAT, RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo,
-    SenderInfo, SeriesInfo, Timing, WorkloadResult,
+    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, MetricSummary,
+    ProgramOutput, ProgramResult, QueueCheck, RESULT_FORMAT, RESULT_VERSION, RunResult,
+    ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
 pub use seed::{derive_seed, derive_stage_seed, draw_seed};

@@ -468,3 +468,46 @@ def test_a_program_that_ended_by_itself_with_an_error_is_a_crash() -> None:
     assert (programs["ok"].succeeded, programs["ok"].crashed) == (True, False)
     # No file of readings: no readings, and no error
     assert programs["quiet"].readings() == ()
+
+
+def _capture_entry() -> dict[str, Any]:
+    return {
+        "link": "access",
+        "node": "client",
+        "interface": "laccess",
+        "file": "capture-access-client.pcap",
+        "packets": 4767,
+        "bytes": 5_200_000,
+        "first_ns": 1_500_000,
+        "last_ns": 2_999_000_000,
+        "realtime_minus_monotonic_ns": 1_762_000_000_000_000_000,
+        "receive_buffer_bytes": 4_194_304,
+        "interface_frames": 4767,
+        "missing": 0,
+    }
+
+
+def test_a_capture_is_read_in_seconds_with_the_path_of_its_file(tmp_path: Path) -> None:
+    assert result().captures == ()
+    data = json.loads(json.dumps(RESULT))
+    data["captures"] = [_capture_entry()]
+    capture = ns.Result.from_json(json.dumps(data), tmp_path).captures[0]
+    assert (capture.link, capture.node, capture.interface) == ("access", "client", "laccess")
+    assert capture.file == tmp_path / "capture-access-client.pcap"
+    assert (capture.packets, capture.bytes) == (4767, 5_200_000)
+    assert (capture.first, capture.last) == (0.0015, 2.999)
+    assert capture.clock_offset == 1_762_000_000.0
+    assert (capture.receive_buffer, capture.interface_frames) == (4_194_304, 4767)
+    assert capture.complete
+
+
+def test_canary_a_capture_that_lost_frames_or_could_not_check_itself_is_not_complete() -> None:
+    data = json.loads(json.dumps(RESULT))
+    lost = _capture_entry() | {"missing": 12, "interface_frames": 4779}
+    unchecked = _capture_entry() | {"missing": None, "interface_frames": None}
+    empty = _capture_entry() | {"packets": 0, "bytes": 0, "first_ns": None, "last_ns": None}
+    data["captures"] = [lost, unchecked, empty]
+    lost_, unchecked_, empty_ = ns.Result.from_json(json.dumps(data), Path("/out")).captures
+    assert (lost_.missing, lost_.complete) == (12, False)
+    assert (unchecked_.missing, unchecked_.complete) == (None, False)
+    assert (empty_.first, empty_.last, empty_.complete) == (None, None, True)
