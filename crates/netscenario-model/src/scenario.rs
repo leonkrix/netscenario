@@ -10,6 +10,7 @@ use schemars::JsonSchema;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::generators::{Generator, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
 /// The version of the scenario format that this crate reads: the integer `0`.
@@ -572,18 +573,27 @@ impl ImpairmentsChange {
     }
 }
 
-/// A workload: something that runs in a node. Either a generator that sends traffic ([`UdpCbr`]), or the
-/// program that is being tested ([`Command`]).
+/// A workload: something that runs in a node. Either a generator that sends traffic ([`UdpCbr`],
+/// [`UdpPoisson`], [`UdpOnOff`], [`UdpBursty`]), or the program that is being tested ([`Command`]).
 ///
 /// It is read by hand (see `WorkloadFields`) for the reason that `Loss` is: the derived reader for a tagged
 /// enum reports an error in a value at the start of the mapping and not at the value.
+///
+/// More kinds come in later releases, so a `match` outside this crate needs a wildcard arm.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum Workload {
     /// UDP at a constant bit rate.
     UdpCbr(UdpCbr),
     /// A program of your own, started in a node.
     Command(Command),
+    /// UDP as a Poisson process. After `Command` because the kinds are listed in the order they were added.
+    UdpPoisson(UdpPoisson),
+    /// UDP in on and off phases.
+    UdpOnOff(UdpOnOff),
+    /// UDP in bursts.
+    UdpBursty(UdpBursty),
 }
 
 impl Workload {
@@ -593,6 +603,9 @@ impl Workload {
         match self {
             Self::UdpCbr(workload) => &workload.id,
             Self::Command(workload) => &workload.id,
+            Self::UdpPoisson(workload) => &workload.id,
+            Self::UdpOnOff(workload) => &workload.id,
+            Self::UdpBursty(workload) => &workload.id,
         }
     }
 
@@ -602,6 +615,21 @@ impl Workload {
         match self {
             Self::UdpCbr(_) => WorkloadKind::UdpCbr,
             Self::Command(_) => WorkloadKind::Command,
+            Self::UdpPoisson(_) => WorkloadKind::UdpPoisson,
+            Self::UdpOnOff(_) => WorkloadKind::UdpOnoff,
+            Self::UdpBursty(_) => WorkloadKind::UdpBursty,
+        }
+    }
+
+    /// The workload as a sender of UDP packets, whatever its pattern, or `None` for a program of your own.
+    #[must_use]
+    pub fn generator(&self) -> Option<Generator<'_>> {
+        match self {
+            Self::UdpCbr(workload) => Some(workload.into()),
+            Self::UdpPoisson(workload) => Some(workload.into()),
+            Self::UdpOnOff(workload) => Some(workload.into()),
+            Self::UdpBursty(workload) => Some(workload.into()),
+            Self::Command(_) => None,
         }
     }
 
@@ -610,7 +638,7 @@ impl Workload {
     pub fn as_udp_cbr(&self) -> Option<&UdpCbr> {
         match self {
             Self::UdpCbr(workload) => Some(workload),
-            Self::Command(_) => None,
+            _ => None,
         }
     }
 
@@ -619,7 +647,7 @@ impl Workload {
     pub fn as_command(&self) -> Option<&Command> {
         match self {
             Self::Command(workload) => Some(workload),
-            Self::UdpCbr(_) => None,
+            _ => None,
         }
     }
 }
@@ -627,11 +655,32 @@ impl Workload {
 /// The kind of a workload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum WorkloadKind {
     /// UDP at a constant bit rate.
     UdpCbr,
     /// A program of your own in a node.
     Command,
+    /// UDP as a Poisson process.
+    UdpPoisson,
+    /// UDP in on and off phases.
+    UdpOnoff,
+    /// UDP in bursts.
+    UdpBursty,
+}
+
+impl WorkloadKind {
+    /// The name of the kind as the file writes it: `udp-cbr`, `command`, `udp-poisson`, `udp-onoff`, `udp-bursty`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UdpCbr => "udp-cbr",
+            Self::Command => "command",
+            Self::UdpPoisson => "udp-poisson",
+            Self::UdpOnoff => "udp-onoff",
+            Self::UdpBursty => "udp-bursty",
+        }
+    }
 }
 
 /// Whether the packets of a [`UdpCbr`] carry a UDP checksum.
@@ -874,7 +923,7 @@ struct CommandFile<'a> {
     clippy::trivially_copy_pass_by_ref,
     reason = "the signature that `skip_serializing_if` calls"
 )]
-fn checksum_is_on(checksum: &UdpChecksum) -> bool {
+pub(crate) fn checksum_is_on(checksum: &UdpChecksum) -> bool {
     checksum.is_on()
 }
 
@@ -936,6 +985,9 @@ impl JsonSchema for Command {
 enum KindName {
     UdpCbr,
     Command,
+    UdpPoisson,
+    UdpOnoff,
+    UdpBursty,
 }
 
 /// Every key that a workload can have, for the reader: which of them belong to the kind is checked after.
@@ -956,57 +1008,98 @@ struct WorkloadFields {
     env: Option<BTreeMap<String, String>>,
     ready: Option<Ready>,
     shutdown: Option<Shutdown>,
+    on: Option<Duration>,
+    off: Option<Duration>,
+    distribution: Option<PhaseDistribution>,
+    burst_packets: Option<u32>,
+    gap: Option<Duration>,
+    pause: Option<Duration>,
+}
+
+/// The keys of a kind in the file: the ones that must be there, and the ones that may be.
+struct Keys {
+    name: &'static str,
+    required: &'static [&'static str],
+    optional: &'static [&'static str],
+}
+
+impl KindName {
+    fn keys(&self) -> Keys {
+        const WINDOW: [&str; 3] = ["start", "stop", "udp-checksum"];
+        match self {
+            Self::UdpCbr => Keys {
+                name: "udp-cbr",
+                required: &["from", "to", "rate", "packet-size"],
+                optional: &WINDOW,
+            },
+            Self::UdpPoisson => Keys {
+                name: "udp-poisson",
+                required: &["from", "to", "rate", "packet-size"],
+                optional: &WINDOW,
+            },
+            Self::UdpOnoff => Keys {
+                name: "udp-onoff",
+                required: &["from", "to", "rate", "packet-size", "on", "off"],
+                optional: &["distribution", "start", "stop", "udp-checksum"],
+            },
+            Self::UdpBursty => Keys {
+                name: "udp-bursty",
+                required: &["from", "to", "packet-size", "burst-packets", "gap", "pause"],
+                optional: &["distribution", "start", "stop", "udp-checksum"],
+            },
+            Self::Command => Keys {
+                name: "command",
+                required: &["node", "run"],
+                optional: &["env", "ready", "shutdown"],
+            },
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for Workload {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use de::Error;
         let fields = WorkloadFields::deserialize(deserializer)?;
-        // The keys of each kind, as (key, written): the first group is required, the second may be left out
-        let udp_cbr = [
+        let written = [
             ("from", fields.from.is_some()),
             ("to", fields.to.is_some()),
             ("rate", fields.rate.is_some()),
             ("packet-size", fields.packet_size.is_some()),
-        ];
-        let udp_cbr_optional = [
             ("start", fields.start.is_some()),
             ("stop", fields.stop.is_some()),
             ("udp-checksum", fields.udp_checksum.is_some()),
-        ];
-        let command = [
             ("node", fields.node.is_some()),
             ("run", fields.run.is_some()),
-        ];
-        let command_optional = [
             ("env", fields.env.is_some()),
             ("ready", fields.ready.is_some()),
             ("shutdown", fields.shutdown.is_some()),
+            ("on", fields.on.is_some()),
+            ("off", fields.off.is_some()),
+            ("distribution", fields.distribution.is_some()),
+            ("burst-packets", fields.burst_packets.is_some()),
+            ("gap", fields.gap.is_some()),
+            ("pause", fields.pause.is_some()),
         ];
-        let (name, others) = match fields.kind {
-            KindName::UdpCbr => (
-                "udp-cbr",
-                [command.as_slice(), command_optional.as_slice()].concat(),
-            ),
-            KindName::Command => (
-                "command",
-                [udp_cbr.as_slice(), udp_cbr_optional.as_slice()].concat(),
-            ),
-        };
+        let keys = fields.kind.keys();
         // A file is checked for both before it gets here, with the place of each key
-        if let Some((key, _)) = others.iter().find(|(_, written)| *written) {
+        if let Some((key, _)) = written.iter().find(|(key, written)| {
+            *written && !keys.required.contains(key) && !keys.optional.contains(key)
+        }) {
             return Err(Error::custom(format!(
-                "the key `{key}` is not used by the workload kind `{name}`"
+                "the key `{key}` is not used by the workload kind `{}`",
+                keys.name
             )));
         }
-        let required = match fields.kind {
-            KindName::UdpCbr => udp_cbr.as_slice(),
-            KindName::Command => command.as_slice(),
-        };
-        if let Some((key, _)) = required.iter().find(|(_, written)| !*written) {
+        if let Some(key) = keys.required.iter().find(|key| {
+            !written
+                .iter()
+                .any(|(name, written)| name == *key && *written)
+        }) {
             return Err(Error::missing_field(key));
         }
         let missing = || Error::missing_field("workload");
+        let distribution = fields.distribution.unwrap_or_default();
+        let checksum = fields.udp_checksum.unwrap_or_default();
         Ok(match fields.kind {
             KindName::UdpCbr => Self::UdpCbr(UdpCbr {
                 id: fields.id,
@@ -1016,7 +1109,43 @@ impl<'de> Deserialize<'de> for Workload {
                 packet_size: fields.packet_size.ok_or_else(missing)?,
                 start: fields.start,
                 stop: fields.stop,
-                udp_checksum: fields.udp_checksum.unwrap_or_default(),
+                udp_checksum: checksum,
+            }),
+            KindName::UdpPoisson => Self::UdpPoisson(UdpPoisson {
+                id: fields.id,
+                from: fields.from.ok_or_else(missing)?,
+                to: fields.to.ok_or_else(missing)?,
+                rate: fields.rate.ok_or_else(missing)?,
+                packet_size: fields.packet_size.ok_or_else(missing)?,
+                start: fields.start,
+                stop: fields.stop,
+                udp_checksum: checksum,
+            }),
+            KindName::UdpOnoff => Self::UdpOnOff(UdpOnOff {
+                id: fields.id,
+                from: fields.from.ok_or_else(missing)?,
+                to: fields.to.ok_or_else(missing)?,
+                rate: fields.rate.ok_or_else(missing)?,
+                packet_size: fields.packet_size.ok_or_else(missing)?,
+                on: fields.on.ok_or_else(missing)?,
+                off: fields.off.ok_or_else(missing)?,
+                distribution,
+                start: fields.start,
+                stop: fields.stop,
+                udp_checksum: checksum,
+            }),
+            KindName::UdpBursty => Self::UdpBursty(UdpBursty {
+                id: fields.id,
+                from: fields.from.ok_or_else(missing)?,
+                to: fields.to.ok_or_else(missing)?,
+                packet_size: fields.packet_size.ok_or_else(missing)?,
+                burst_packets: fields.burst_packets.ok_or_else(missing)?,
+                gap: fields.gap.ok_or_else(missing)?,
+                pause: fields.pause.ok_or_else(missing)?,
+                distribution,
+                start: fields.start,
+                stop: fields.stop,
+                udp_checksum: checksum,
             }),
             KindName::Command => Self::Command(Command {
                 id: fields.id,

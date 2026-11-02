@@ -3,10 +3,10 @@ source: crates/netscenario-model/tests/corpus.rs
 expression: error.render()
 input_file: scenarios/invalid/planned-workload-kind.yaml
 ---
-error: `kind: udp-poisson` is planned for release 0.3 (see FEATURES.md)
+error: `kind: tcp-bulk` is planned for release 0.3 (see FEATURES.md)
   --> planned-workload-kind.yaml:13:11
    |
 12 |   - id: media
-13 |     kind: udp-poisson
-   |           ^^^^^^^^^^^
+13 |     kind: tcp-bulk
+   |           ^^^^^^^^
    = path: workloads[0].kind

@@ -319,13 +319,163 @@ class ScenarioBuilder:
                 (``corrupted`` in the result) and is not dropped by the receiving kernel. The
                 payload must then be at least 20 bytes.
         """
-        workload: dict[str, Any] = {
-            "id": id,
-            "kind": "udp-cbr",
-            "from": source,
-            "to": destination,
+        return self._udp_workload(
+            "udp-cbr",
+            id,
+            source,
+            destination,
+            {"rate": rate, "packet-size": packet_size},
+            start,
+            stop,
+            udp_checksum,
+        )
+
+    def udp_poisson(
+        self,
+        id: str,
+        source: str,
+        destination: str,
+        *,
+        rate: str,
+        packet_size: str,
+        start: str | None = None,
+        stop: str | None = None,
+        udp_checksum: bool = True,
+    ) -> Self:
+        """Add a workload of UDP packets as a Poisson process.
+
+        The gaps between the packets are exponentially distributed, drawn from the seed of the
+        scenario (the same seed gives the same packets at the same moments).
+
+        Args:
+            id: The name of the workload; the metrics are named after it.
+            source: The node that sends.
+            destination: The node that receives.
+            rate: The mean rate of the payload, for example ``"800kbit"``.
+            packet_size: The payload of one packet, for example ``"400b"``.
+            start: When the workload starts (default ``"0s"``).
+            stop: When it stops (default: the end of the measured phase).
+            udp_checksum: See :meth:`udp_cbr`.
+        """
+        return self._udp_workload(
+            "udp-poisson",
+            id,
+            source,
+            destination,
+            {"rate": rate, "packet-size": packet_size},
+            start,
+            stop,
+            udp_checksum,
+        )
+
+    def udp_onoff(
+        self,
+        id: str,
+        source: str,
+        destination: str,
+        *,
+        rate: str,
+        packet_size: str,
+        on: str,
+        off: str,
+        distribution: str = "fixed",
+        start: str | None = None,
+        stop: str | None = None,
+        udp_checksum: bool = True,
+    ) -> Self:
+        """Add a workload that sends at a constant rate in on phases and nothing in off phases.
+
+        It starts with an on phase.
+
+        Args:
+            id: The name of the workload; the metrics are named after it.
+            source: The node that sends.
+            destination: The node that receives.
+            rate: The rate of the payload while on, for example ``"400kbit"``.
+            packet_size: The payload of one packet, for example ``"200b"``.
+            on: How long an on phase lasts, or its mean with ``distribution="exponential"``.
+            off: How long an off phase lasts, or its mean.
+            distribution: ``"fixed"`` (default): the phases last exactly ``on`` and ``off``.
+                ``"exponential"``: their lengths are drawn from the seed of the scenario.
+            start: When the workload starts (default ``"0s"``).
+            stop: When it stops (default: the end of the measured phase).
+            udp_checksum: See :meth:`udp_cbr`.
+        """
+        phases: dict[str, Any] = {
             "rate": rate,
             "packet-size": packet_size,
+            "on": on,
+            "off": off,
+        }
+        if distribution != "fixed":
+            phases["distribution"] = distribution
+        return self._udp_workload(
+            "udp-onoff", id, source, destination, phases, start, stop, udp_checksum
+        )
+
+    def udp_bursty(
+        self,
+        id: str,
+        source: str,
+        destination: str,
+        *,
+        packet_size: str,
+        burst_packets: int,
+        gap: str,
+        pause: str,
+        distribution: str = "fixed",
+        start: str | None = None,
+        stop: str | None = None,
+        udp_checksum: bool = True,
+    ) -> Self:
+        """Add a workload that sends bursts of packets with a pause between them.
+
+        The first burst starts when the workload does.
+
+        Args:
+            id: The name of the workload; the metrics are named after it.
+            source: The node that sends.
+            destination: The node that receives.
+            packet_size: The payload of one packet, for example ``"1200b"``.
+            burst_packets: The packets in a burst.
+            gap: The time between two packets of a burst, for example ``"200us"`` (at least 10 us).
+            pause: The time from the last packet of a burst to the first of the next, or its mean
+                with ``distribution="exponential"``.
+            distribution: ``"fixed"`` (default) or ``"exponential"`` (the pauses are drawn from the
+                seed of the scenario).
+            start: When the workload starts (default ``"0s"``).
+            stop: When it stops (default: the end of the measured phase).
+            udp_checksum: See :meth:`udp_cbr`.
+        """
+        keys: dict[str, Any] = {
+            "packet-size": packet_size,
+            "burst-packets": burst_packets,
+            "gap": gap,
+            "pause": pause,
+        }
+        if distribution != "fixed":
+            keys["distribution"] = distribution
+        return self._udp_workload(
+            "udp-bursty", id, source, destination, keys, start, stop, udp_checksum
+        )
+
+    def _udp_workload(
+        self,
+        kind: str,
+        id: str,
+        source: str,
+        destination: str,
+        keys: dict[str, Any],
+        start: str | None,
+        stop: str | None,
+        udp_checksum: bool,
+    ) -> Self:
+        workload: dict[str, Any] = {
+            "id": id,
+            "kind": kind,
+            "from": source,
+            "to": destination,
+            **keys,
         }
         if start is not None:
             workload["start"] = start

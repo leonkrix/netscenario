@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use crate::events::Event;
 use crate::receiver::{ReceiveConfig, Receiver};
-use crate::schedule::Stream;
+use crate::schedule::{Distribution, Schedule, Stream};
 use crate::sender::{Barrier, Barriers, SendConfig, run_with as send_with};
 use crate::tap::Tap;
 
@@ -37,7 +37,9 @@ pub const USAGE: u8 = 2;
 
 const USAGE_TEXT: &str = "\
 Usage:
-  netscenario-agent send --to <addr> --rate <bits/s> --size <bytes> --duration-ns <ns>
+  netscenario-agent send --to <addr> --size <bytes> --duration-ns <ns> [--rate <bits/s>]
+                         [--pattern cbr|poisson|onoff|bursty] [--seed <n>] [--distribution fixed|exponential]
+                         [--on-ns <ns> --off-ns <ns>] [--burst-packets <n> --gap-ns <ns> --pause-ns <ns>]
                          [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
                          [--barriers <packet>:<id>,...]
   netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
@@ -130,22 +132,9 @@ where
             let _ = write!(out, "{USAGE_TEXT}");
             return OK;
         }
-        "send" => Options::parse(
-            rest,
-            &[
-                "to",
-                "rate",
-                "size",
-                "duration-ns",
-                "flow",
-                "start-at-ns",
-                "udp-checksum",
-                "barriers",
-            ],
-            &[],
-        )
-        .map_err(Problem::Usage)
-        .and_then(|options| send_command(&options, stdin, out)),
+        "send" => Options::parse(rest, SEND_OPTIONS, &[])
+            .map_err(Problem::Usage)
+            .and_then(|options| send_command(&options, stdin, out)),
         "recv" => Options::parse(
             rest,
             &[
@@ -319,6 +308,87 @@ fn parse_barriers(text: &str) -> Result<Vec<Barrier>, String> {
     Ok(barriers)
 }
 
+/// The options of `send` that take a value.
+const SEND_OPTIONS: &[&str] = &[
+    "to",
+    "rate",
+    "size",
+    "duration-ns",
+    "pattern",
+    "seed",
+    "distribution",
+    "on-ns",
+    "off-ns",
+    "burst-packets",
+    "gap-ns",
+    "pause-ns",
+    "flow",
+    "start-at-ns",
+    "udp-checksum",
+    "barriers",
+];
+
+/// The schedule that the words after `send` describe, as the agent reads them. The run uses this to check that the words
+/// it writes say what it means.
+///
+/// # Errors
+///
+/// Text that names the option that is wrong or missing.
+pub fn schedule_from_words(words: &[String]) -> Result<Schedule, String> {
+    schedule_of(&Options::parse(words, SEND_OPTIONS, &[])?)
+}
+
+/// The schedule that the options of `send` describe: `--pattern` (constant bit rate by default) and what that pattern needs.
+fn schedule_of(options: &Options) -> Result<Schedule, String> {
+    let pattern: String = options
+        .optional("pattern")?
+        .unwrap_or_else(|| "cbr".to_owned());
+    let packet_size: u64 = options.required("size")?;
+    let seed: u64 = options.optional("seed")?.unwrap_or(0);
+    let distribution = match options.optional::<String>("distribution")?.as_deref() {
+        None | Some("fixed") => Distribution::Fixed,
+        Some("exponential") => Distribution::Exponential,
+        Some(other) => {
+            return Err(format!(
+                "--distribution is fixed or exponential, not '{other}'"
+            ));
+        }
+    };
+    let stream = || -> Result<Stream, String> {
+        Ok(Stream {
+            bits_per_second: options.required("rate")?,
+            packet_size,
+        })
+    };
+    Ok(match pattern.as_str() {
+        "cbr" => Schedule::Cbr(stream()?),
+        "poisson" => Schedule::Poisson {
+            stream: stream()?,
+            seed,
+        },
+        "onoff" => Schedule::OnOff {
+            stream: stream()?,
+            on_ns: options.required("on-ns")?,
+            off_ns: options.required("off-ns")?,
+            distribution,
+            seed,
+        },
+        "bursty" => Schedule::Bursty {
+            packet_size,
+            packets: options.required("burst-packets")?,
+            gap_ns: options.required("gap-ns")?,
+            pause_ns: options.required("pause-ns")?,
+            distribution,
+            seed,
+        },
+        other => {
+            return Err(format!(
+                "--pattern is cbr, poisson, onoff or bursty, not '{other}'"
+            ));
+        }
+    })
+}
+
 fn send_command(
     options: &Options,
     stdin: impl BufRead + Send + 'static,
@@ -332,10 +402,7 @@ fn send_command(
     let config = SendConfig {
         target: options.required::<SocketAddr>("to")?,
         flow: options.optional("flow")?.unwrap_or(0),
-        stream: Stream {
-            bits_per_second: options.required("rate")?,
-            packet_size: options.required("size")?,
-        },
+        schedule: schedule_of(options)?,
         duration_ns: options.required("duration-ns")?,
         start_at_ns: options.optional("start-at-ns")?,
         udp_checksum: options.optional("udp-checksum")?.unwrap_or_default(),
@@ -438,6 +505,149 @@ fn open_tap(config: &ReceiveConfig, path: &str) -> Result<(Tap, std::fs::File), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn schedule(args: &[&str]) -> Result<Schedule, String> {
+        let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+        let options = Options::parse(
+            &args,
+            &[
+                "rate",
+                "size",
+                "pattern",
+                "seed",
+                "distribution",
+                "on-ns",
+                "off-ns",
+                "burst-packets",
+                "gap-ns",
+                "pause-ns",
+            ],
+            &[],
+        )?;
+        schedule_of(&options)
+    }
+
+    #[test]
+    fn the_pattern_options_describe_the_four_schedules() {
+        let cbr = Stream {
+            bits_per_second: 1_000_000,
+            packet_size: 125,
+        };
+        assert_eq!(
+            schedule(&["--rate", "1000000", "--size", "125"]).unwrap(),
+            Schedule::Cbr(cbr)
+        );
+        assert_eq!(
+            schedule(&[
+                "--pattern",
+                "poisson",
+                "--rate",
+                "1000000",
+                "--size",
+                "125",
+                "--seed",
+                "9"
+            ])
+            .unwrap(),
+            Schedule::Poisson {
+                stream: cbr,
+                seed: 9
+            }
+        );
+        assert_eq!(
+            schedule(&[
+                "--pattern",
+                "onoff",
+                "--rate",
+                "1000000",
+                "--size",
+                "125",
+                "--on-ns",
+                "5",
+                "--off-ns",
+                "7",
+                "--distribution",
+                "exponential",
+                "--seed",
+                "3",
+            ])
+            .unwrap(),
+            Schedule::OnOff {
+                stream: cbr,
+                on_ns: 5,
+                off_ns: 7,
+                distribution: Distribution::Exponential,
+                seed: 3
+            }
+        );
+        assert_eq!(
+            schedule(&[
+                "--pattern",
+                "bursty",
+                "--size",
+                "125",
+                "--burst-packets",
+                "4",
+                "--gap-ns",
+                "100",
+                "--pause-ns",
+                "900",
+            ])
+            .unwrap(),
+            Schedule::Bursty {
+                packet_size: 125,
+                packets: 4,
+                gap_ns: 100,
+                pause_ns: 900,
+                distribution: Distribution::Fixed,
+                seed: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_pattern_that_lacks_what_it_needs_or_is_unknown_is_refused_with_the_name() {
+        for (args, expected) in [
+            (&["--size", "125"][..], "--rate is required"),
+            (
+                &[
+                    "--pattern",
+                    "onoff",
+                    "--rate",
+                    "1",
+                    "--size",
+                    "125",
+                    "--on-ns",
+                    "5",
+                ][..],
+                "--off-ns is required",
+            ),
+            (
+                &[
+                    "--pattern",
+                    "bursty",
+                    "--size",
+                    "125",
+                    "--gap-ns",
+                    "1",
+                    "--pause-ns",
+                    "1",
+                ][..],
+                "--burst-packets is required",
+            ),
+            (
+                &["--pattern", "wave", "--rate", "1", "--size", "125"][..],
+                "--pattern is cbr, poisson, onoff or bursty, not 'wave'",
+            ),
+            (
+                &["--distribution", "normal", "--rate", "1", "--size", "125"][..],
+                "--distribution is fixed or exponential, not 'normal'",
+            ),
+        ] {
+            let error = schedule(args).unwrap_err();
+            assert!(error.contains(expected), "{args:?}: {error}");
+        }
+    }
 
     fn call(args: &[&str]) -> (u8, String, String) {
         let (mut out, mut err) = (Vec::new(), Vec::new());

@@ -300,6 +300,29 @@ def test_the_marker_runs_the_scenario_and_gives_the_result(pytester: pytest.Pyte
 
 
 @pytest.mark.usefixtures("runnable")
+def test_the_marker_takes_the_options_of_the_series_and_refuses_the_others(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makefile(".yaml", plug=SCENARIO)
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.netscenario("plug.yaml", settle=0.2, bin=0.5, recovery_basis="arrival")
+        def test_it(netscenario_result):
+            assert netscenario_result["media"].series.bin == 0.5
+
+        @pytest.mark.netscenario("plug.yaml", out="x")
+        def test_refused(netscenario_result):
+            pass
+        """
+    )
+    outcome = pytester.runpytest()
+    outcome.assert_outcomes(passed=1, errors=1)
+    outcome.stdout.fnmatch_lines(["*does not know out*"])
+
+
+@pytest.mark.usefixtures("runnable")
 def test_two_runs_of_a_test_go_into_two_directories(pytester: pytest.Pytester) -> None:
     pytester.makefile(".yaml", plug=SCENARIO)
     pytester.makepyfile(

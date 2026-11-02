@@ -28,6 +28,19 @@ _DOCTOR: pytest.StashKey[ns.DoctorReport] = pytest.StashKey()
 """What ``doctor`` said about this machine, asked once per session."""
 
 _MODES = ("auto", "skip", "fail")
+_MARKER_OPTIONS = frozenset(
+    {
+        "seed",
+        "settle",
+        "packets",
+        "bin",
+        "recovery_basis",
+        "recovery_baseline",
+        "recovery_window",
+        "recovery_fraction",
+    }
+)
+"""The options of ``Runner.run`` that a marker can give (not the observer, token or directory)."""
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -55,8 +68,10 @@ def pytest_configure(config: pytest.Config) -> None:
     """Register the marker."""
     config.addinivalue_line(
         "markers",
-        "netscenario(scenario, *, seed=None, settle=None, packets=False): run this scenario file "
-        "for the test; the fixture netscenario_result gives the result",
+        "netscenario(scenario, *, seed=None, settle=None, packets=False, bin=None, "
+        "recovery_basis=None, recovery_baseline=None, recovery_window=None, "
+        "recovery_fraction=None): run this scenario file for the test; the fixture "
+        "netscenario_result gives the result",
     )
 
 
@@ -141,19 +156,14 @@ def netscenario_result(request: pytest.FixtureRequest, netscenario: Runner) -> n
             '@pytest.mark.netscenario("scenario.yaml", seed=42)',
             pytrace=False,
         )
-    unknown = set(marker.kwargs) - {"seed", "settle", "packets"}
+    unknown = set(marker.kwargs) - _MARKER_OPTIONS
     if unknown:
         pytest.fail(
             f"the marker netscenario does not know {', '.join(sorted(unknown))}; "
-            "it takes seed, settle and packets",
+            f"it takes {', '.join(sorted(_MARKER_OPTIONS))}",
             pytrace=False,
         )
-    return netscenario.run(
-        marker.args[0],
-        seed=marker.kwargs.get("seed"),
-        settle=marker.kwargs.get("settle"),
-        packets=bool(marker.kwargs.get("packets", False)),
-    )
+    return netscenario.run(marker.args[0], **marker.kwargs)
 
 
 @pytest.hookimpl(wrapper=True)

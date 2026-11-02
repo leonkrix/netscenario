@@ -44,10 +44,11 @@ fn what_the_sender_sent_is_what_the_receiver_recorded() {
     let sent = run(&SendConfig {
         target,
         flow: 4,
-        stream: Stream {
+        schedule: Stream {
             bits_per_second: 1_000_000,
             packet_size: 1000,
-        },
+        }
+        .into(),
         duration_ns: 800_000_000,
         start_at_ns: None,
         udp_checksum: UdpChecksum::On,
@@ -207,10 +208,11 @@ fn a_sender_starts_at_the_moment_it_is_given() {
     let sent = run(&SendConfig {
         target,
         flow: 0,
-        stream: Stream {
+        schedule: Stream {
             bits_per_second: 800_000,
             packet_size: 100,
-        },
+        }
+        .into(),
         duration_ns: 10_000_000,
         start_at_ns: Some(start),
         udp_checksum: UdpChecksum::On,

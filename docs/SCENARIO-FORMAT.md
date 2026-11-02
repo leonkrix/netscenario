@@ -202,14 +202,14 @@ workloads:
     stop: 30s
 ```
 
-A workload has a `kind`. `udp-cbr` (WRK-01) is UDP at a constant bit rate, sent by the agent in `from`, received by the agent in `to`. `command` (WRK-06, release 0.2) is a program of your own that runs in a node, see [A program of your own](#a-program-of-your-own). The keys of one kind are refused in the other (`rate` in a `command`), each at its own line.
+A workload has a `kind`. `udp-cbr` (WRK-01) is UDP at a constant bit rate, sent by the agent in `from`, received by the agent in `to`. `udp-poisson`, `udp-onoff` and `udp-bursty` (WRK-02) send UDP packets in the same way at moments that are drawn from the seed or follow a pattern, see [Traffic patterns](#traffic-patterns). `command` (WRK-06, release 0.2) is a program of your own that runs in a node, see [A program of your own](#a-program-of-your-own). The keys of one kind are refused in the other (`rate` in a `command`), each at its own line.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `id` | yes | A Name, unique among workloads. Metrics are named after it (`media.delay.p99`). |
-| `kind` | yes | `udp-cbr` or `command`. |
+| `kind` | yes | `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty` or `command`. |
 | `from`, `to` | yes | Two different nodes from `nodes`. |
-| `rate` | yes | A Rate. **The rate of the payload**: the number of payload bits per second. The packets per second follow from it and `packet-size`. |
+| `rate` | yes (not for `udp-bursty`) | A Rate. **The rate of the payload**: the number of payload bits per second. The packets per second follow from it and `packet-size`. For `udp-poisson` it is the mean rate, for `udp-onoff` the rate while on. |
 | `packet-size` | yes | A Size: the payload of one packet. From the size of the header of the agent (16 bytes, 20 with `udp-checksum: false`) to 1472 bytes, the largest payload that fits the MTU of 1500 without fragmentation (fragmentation arrives with release 0.3). |
 | `start` | no | A Duration, default `0s`. Relative to the start of the measured phase. |
 | `stop` | no | A Duration, default `duration`. Must be greater than `start` and not greater than `duration`. |
@@ -217,7 +217,28 @@ A workload has a `kind`. `udp-cbr` (WRK-01) is UDP at a constant bit rate, sent 
 
 Packets per second are at most **100,000** per workload. A higher rate is an error that says so: the agent was measured up to that rate (spike S8) and the format does not promise more than has been measured.
 
-Every `udp-cbr` workload produces a record per packet (sequence number, send time, receive time, PRB-01) and the metrics of PRB-02, PRB-03 and PRB-05: packets sent, received and lost, delivered ratio, one-way delay (mean, percentiles, maximum) and throughput and goodput over time, and PRB-07: the same packets by time bin, sent and arrived side by side (`series-<id>.jsonl`), and the time to recover after each event of the timeline. The metric names and the result format are defined in `docs/RESULTS.md`, which arrives with the result format (RPT-01). The assertions of release 0.1 are written in test code (ASR-01), not in the file.
+Every workload that sends UDP produces a record per packet (sequence number, send time, receive time, PRB-01) and the metrics of PRB-02, PRB-03 and PRB-05: packets sent, received and lost, delivered ratio, one-way delay (mean, percentiles, maximum) and throughput and goodput over time, and PRB-07: the same packets by time bin, sent and arrived side by side (`series-<id>.jsonl`), and the time to recover after each event of the timeline. The metric names and the result format are defined in `docs/RESULTS.md`, which arrives with the result format (RPT-01). The assertions of release 0.1 are written in test code (ASR-01), not in the file.
+
+### Traffic patterns
+
+Three more kinds send UDP packets of one size, from `from` to `to`, like `udp-cbr` (`id`, `from`, `to`, `packet-size`, `start`, `stop` and `udp-checksum` mean the same) and differ in **when the packets leave**. The moments are drawn from a seeded generator whose algorithm is written down ([AGENT.md](AGENT.md)), so **the same `seed` gives the same packets at the same moments** in every run, and a step of the timeline lands before the same packet (D-071). A scenario without a `seed` gets a drawn one, as for the loss, and the result records it. Each workload draws from a sequence of its own.
+
+```yaml
+workloads:
+  - { id: requests, kind: udp-poisson, from: client, to: server, rate: 800kbit, packet-size: 400b }
+  - { id: sensor, kind: udp-onoff, from: client, to: server, rate: 400kbit, packet-size: 200b, on: 500ms, off: 1500ms, distribution: exponential }
+  - { id: video, kind: udp-bursty, from: server, to: client, packet-size: 1200b, burst-packets: 10, gap: 200us, pause: 100ms }
+```
+
+| Kind | Keys of its own | What it sends |
+| --- | --- | --- |
+| `udp-poisson` | `rate` | A Poisson process: the gaps between packets are exponentially distributed with the mean `packet-size / rate`, so `rate` is the mean rate. The first packet leaves after the first gap. |
+| `udp-onoff` | `rate`, `on`, `off`, `distribution` | An **on phase** in which packets leave at the constant `rate` (a packet at the start of the phase, then one every `packet-size / rate` while they fall inside it), then an **off phase** with none, and so on, starting with an on phase. The mean rate is `rate × on / (on + off)`. |
+| `udp-bursty` | `burst-packets`, `gap`, `pause`, `distribution` | Bursts of `burst-packets` packets, `gap` apart, then a `pause` from the last packet of the burst to the first of the next. The first burst starts at the start. The mean rate is `burst-packets × packet-size × 8` over `(burst-packets - 1) × gap + pause`. |
+
+`on`, `off` and `pause` are Durations above zero. `distribution` is `fixed` (the default: every phase lasts exactly the time given, nothing is drawn, and the pattern is one you can work out by hand) or `exponential` (the lengths are drawn, with the time given as their mean: a Markov source). `burst-packets` is from 1 to 100,000. The packets of a burst are at most 100,000 a second like everything else, so a `gap` is at least 10 us (with one packet in a burst it is not used). A Poisson source can send a few packets closer together than that now and then; they leave a little late, and `sender.max_lateness_ns` in the result says by how much.
+
+The result has the **mean** rate of the payload in `rate_bits_per_second` for these kinds (the rate of the scenario for `udp-poisson`), and the command line says `on average`. The series ([RESULTS.md](RESULTS.md)) shows the pattern in time: a bin in an off phase is empty, a burst is a bin that holds ten packets.
 
 ## A program of your own
 
@@ -274,7 +295,7 @@ These keys are not part of version 0 in release 0.1. A scenario that uses one is
 | `model` (in a link) | 0.2 and 0.3 | Link models: steps, trace, Markov, periodic. |
 | `queue` (in a direction) | 0.3 | Queue limit and discipline. |
 | `address` (node, link) | later | Fixed addresses. |
-| `kind` other than `udp-cbr` and `command` | 0.3 and later | `tcp-bulk`, `request-response`, `udp-poisson` and more. |
+| `kind` other than `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty` and `command` | 0.3 and later | `tcp-bulk`, `request-response`, `trace-replay` and more. |
 
 ## Errors
 

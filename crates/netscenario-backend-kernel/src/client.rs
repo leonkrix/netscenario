@@ -660,8 +660,8 @@ fn raw_socket_refusals(scenario: &Scenario, ask: impl FnOnce() -> Option<String>
         .enumerate()
         .filter(|(_, workload)| {
             workload
-                .as_udp_cbr()
-                .is_some_and(|workload| !workload.udp_checksum.is_on())
+                .generator()
+                .is_some_and(|generator| !generator.udp_checksum.is_on())
         })
         .map(|(index, _)| format!("workloads[{index}].udp-checksum"))
         .collect();

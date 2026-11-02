@@ -59,6 +59,8 @@ scenario = (
 )
 ```
 
+`udp_poisson`, `udp_onoff` and `udp_bursty` add the other kinds of traffic (`rate`, `on`, `off`, `burst_packets`, `gap`, `pause` and `distribution` are the keys of the file, [SCENARIO-FORMAT.md](SCENARIO-FORMAT.md)); the packets are drawn from the seed of the scenario, so the same seed gives the same ones.
+
 Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`, `"1%"`): a bare number is refused, because `40` could be 40 seconds or 40 milliseconds. The built scenario above is equal to the one in `scenarios/lte-like.yaml` (a test compares them). `scenario.needs()` lists the features a backend has to reproduce; `scenario.with_seed(7)` gives a copy; `scenario.data` is the canonical form as a plain `dict`.
 
 ## Results

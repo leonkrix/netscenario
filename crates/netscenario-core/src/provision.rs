@@ -3,7 +3,7 @@
 
 use std::net::Ipv4Addr;
 
-use netscenario_model::{Impairments, Link, Name, Problem, Scenario};
+use netscenario_model::{Impairments, Link, Name, Problem, Scenario, Workload};
 
 use crate::backend::{Backend, Direction, LinkHandle, NodeHandle};
 use crate::capability::{Accepted, Support, check};
@@ -66,15 +66,24 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
     let accepted = check(scenario, &backend.capabilities(), false)?;
     backend.check_values(scenario)?;
     let can_seed = backend.capabilities().support(Feature::SeededLoss) == Support::Exact;
+    // The moments of the packets of a Poisson source (and of the others with drawn phases) come from the seed too, whatever
+    // the backend can apply (WRK-02, D-071): the agent is ours
+    let random_traffic = scenario
+        .workloads
+        .iter()
+        .filter_map(Workload::generator)
+        .any(|generator| generator.pattern.is_random());
     let (seed, seed_drawn) = match scenario.seed {
         Some(seed) => (Some(seed), false),
-        None if can_seed => (Some(draw_seed()), true),
+        None if can_seed || random_traffic => (Some(draw_seed()), true),
         None => (None, false),
     };
+    // The seed of the queues: none where it was drawn only for the traffic and the backend cannot apply one
+    let queue_seed = if seed_drawn && !can_seed { None } else { seed };
     // A scenario whose result depends on random numbers (loss of any model, duplication, corruption,
     // reordering): the same seed gives the same lost packets only if the backend can apply one
     let has_random = timeline::draws_random_numbers(scenario);
-    match build(backend, scenario, seed) {
+    match build(backend, scenario, queue_seed) {
         Ok((nodes, links, addresses)) => Ok(Provisioned {
             nodes,
             links,
@@ -82,7 +91,7 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
             accepted,
             seed,
             seed_drawn,
-            loss_reproducible: !has_random || seed.is_some(),
+            loss_reproducible: !has_random || queue_seed.is_some(),
         }),
         Err(error) => {
             // The first error is the one to report; a failure of the teardown is the backend's to log
@@ -533,5 +542,40 @@ mod tests {
         backend.cannot_seed = true;
         let done = provision(&mut backend, &scenario("      both: { delay: 5ms }\n")).unwrap();
         assert!(done.loss_reproducible);
+    }
+
+    /// The moments of a Poisson source come from the seed of the run (D-071), and the agent is ours, so the run has a seed for
+    /// them also where the backend cannot apply one to the queues; the queues are then built without it and the loss is
+    /// not reproducible, as it was.
+    #[test]
+    fn a_random_source_draws_a_seed_also_where_the_queues_cannot_use_it() {
+        let poisson = |link: &str| {
+            Scenario::from_yaml(
+                &format!("version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n{link}workloads:\n  - {{ id: w, kind: udp-poisson, from: a, to: b, rate: 1mbit, packet-size: 1200b }}\n"),
+                "t.yaml",
+            )
+            .expect("valid")
+        };
+        let mut backend = Fake::new();
+        backend.cannot_seed = true;
+        let done = provision(&mut backend, &poisson("      both: { delay: 5ms }\n")).unwrap();
+        assert!(done.seed.is_some() && done.seed_drawn);
+        assert!(done.loss_reproducible, "there is no loss");
+        let mut backend = Fake::new();
+        backend.cannot_seed = true;
+        let lossy = poisson("      both: { loss: { model: random, p: 1% } }\n");
+        let done = provision(&mut backend, &lossy).unwrap();
+        assert!(done.seed.is_some() && done.seed_drawn);
+        assert!(!done.loss_reproducible, "the queues were not seeded");
+        assert!(
+            !backend.calls.iter().any(|c| c.contains("seed")),
+            "{:?}",
+            backend.calls
+        );
+        // Canary: a constant bit rate draws nothing, so it still runs without a seed on this backend
+        let mut backend = Fake::new();
+        backend.cannot_seed = true;
+        let done = provision(&mut backend, &scenario("      both: { delay: 5ms }\n")).unwrap();
+        assert_eq!(done.seed, None);
     }
 }

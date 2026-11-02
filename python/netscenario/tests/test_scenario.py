@@ -96,6 +96,54 @@ def test_a_stream_without_the_checksum_is_written_as_a_boolean_and_checked_by_th
         )
 
 
+def test_the_traffic_patterns_built_in_code_are_the_scenario_of_the_file(repository: Path) -> None:
+    loaded = ns.Scenario.load(repository / "scenarios" / "traffic-patterns.yaml")
+    built = (
+        ns.Scenario.builder("traffic-patterns", duration="20s", seed=7)
+        .nodes("client", "server")
+        .link("access", "client", "server", both=ns.Impairments(delay="20ms"))
+        .udp_poisson("requests", "client", "server", rate="800kbit", packet_size="400b")
+        .udp_onoff(
+            "sensor",
+            "client",
+            "server",
+            rate="400kbit",
+            packet_size="200b",
+            on="500ms",
+            off="1500ms",
+            distribution="exponential",
+        )
+        .udp_bursty(
+            "video",
+            "server",
+            "client",
+            packet_size="1200b",
+            burst_packets=10,
+            gap="200us",
+            pause="100ms",
+            distribution="exponential",
+        )
+        .build()
+    )
+    assert built.data == loaded.data
+    assert "traffic-patterns" in built.needs()
+    # Canary: a constant bit rate of the same scenario does not need the patterns
+    plain = ns.Scenario.from_yaml(MINIMAL)
+    assert "traffic-patterns" not in plain.needs()
+
+
+def test_a_burst_that_is_too_fast_is_refused_by_the_core_with_a_path() -> None:
+    builder = (
+        ns.Scenario.builder("t", duration="1s")
+        .nodes("a", "b")
+        .link("l", "a", "b")
+        .udp_bursty("w", "a", "b", packet_size="1000b", burst_packets=4, gap="1us", pause="10ms")
+    )
+    with pytest.raises(ns.ScenarioError) as raised:
+        builder.build()
+    assert [problem.path for problem in raised.value.problems] == ["workloads[0].gap"]
+
+
 def test_the_data_is_a_copy() -> None:
     scenario = ns.Scenario.from_yaml(MINIMAL)
     scenario.data["name"] = "changed"

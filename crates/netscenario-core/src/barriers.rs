@@ -9,7 +9,9 @@
 //! repeat, if the step changes what the queue draws random numbers for. (A direction that two workloads send into has
 //! a reason of its own for the whole run, in `run.rs`.)
 
-use netscenario_agent::schedule::Stream;
+use std::cell::OnceCell;
+
+use netscenario_agent::schedule::Schedule;
 use netscenario_model::{Name, Scenario};
 
 use crate::backend::Direction;
@@ -20,7 +22,7 @@ use crate::timeline::{Action, Step, steps_that_change_what_is_drawn};
 pub(crate) struct Sending<'a> {
     pub(crate) from: &'a Name,
     pub(crate) to: &'a Name,
-    pub(crate) stream: Stream,
+    pub(crate) schedule: Schedule,
     /// When it starts and how long it sends, in nanoseconds from the start of the measured phase.
     pub(crate) start_ns: u64,
     pub(crate) duration_ns: u64,
@@ -42,6 +44,26 @@ pub(crate) fn plan(
     enabled: bool,
 ) -> Plan {
     let drawn = steps_that_change_what_is_drawn(scenario);
+    // For each sender, how many of its packets leave before each moment that a step or the end of the workload names:
+    // one walk of its schedule, made when a step is first bound to it
+    let counts: Vec<OnceCell<Vec<(u64, u64)>>> = sending.iter().map(|_| OnceCell::new()).collect();
+    let before = |sender: usize, since_start: u64| -> u64 {
+        let table = counts[sender].get_or_init(|| {
+            let one = &sending[sender];
+            let mut moments: Vec<u64> = steps
+                .iter()
+                .map(|step| step.at.as_nanos().saturating_sub(one.start_ns))
+                .chain([one.duration_ns])
+                .collect();
+            moments.sort_unstable();
+            moments.dedup();
+            let found = one.schedule.packets_before_each(&moments);
+            moments.into_iter().zip(found).collect()
+        });
+        table
+            .binary_search_by_key(&since_start, |(moment, _)| *moment)
+            .map_or(0, |at| table[at].1)
+    };
     let mut reasons: Vec<String> = Vec::new();
     let mut bindings = Vec::with_capacity(steps.len());
     for (place, step) in steps.iter().enumerate() {
@@ -92,8 +114,13 @@ pub(crate) fn plan(
             continue;
         };
         let first = &sending[sender];
-        let packet = packet_at(first, step.at.as_nanos());
-        if packet >= first.stream.packets_in(first.duration_ns) {
+        let since_start = step.at.as_nanos().saturating_sub(first.start_ns);
+        let packet = if since_start == 0 {
+            0
+        } else {
+            before(sender, since_start)
+        };
+        if packet >= before(sender, first.duration_ns) {
             // After the last packet: nothing of the workload meets the step, so the clock does it as well as a barrier
             bindings.push(None);
         } else if enabled {
@@ -113,24 +140,26 @@ pub(crate) fn plan(
 
 /// The number of the first packet of `sending` at or after the moment `at` (nanoseconds from the start of the measured
 /// phase): the packets that leave before it are those whose moment, counted from the start of the workload, is less.
+#[cfg(test)]
 fn packet_at(sending: &Sending<'_>, at: u64) -> u64 {
     let since_start = at.saturating_sub(sending.start_ns);
     if since_start == 0 {
         0
     } else {
-        sending.stream.packets_in(since_start)
+        sending.schedule.packets_in(since_start)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use netscenario_agent::schedule::Stream;
 
-    fn stream(bits_per_second: u64, packet_size: u64) -> Stream {
-        Stream {
+    fn stream(bits_per_second: u64, packet_size: u64) -> Schedule {
+        Schedule::Cbr(Stream {
             bits_per_second,
             packet_size,
-        }
+        })
     }
 
     /// 800 kbit with 1000 byte packets is 100 packets a second, a packet every 10 ms. The first packet at or after
@@ -141,7 +170,7 @@ mod tests {
         let sending = Sending {
             from: &name,
             to: &name,
-            stream: stream(800_000, 1000),
+            schedule: stream(800_000, 1000),
             start_ns: 0,
             duration_ns: 5_000_000_000,
         };
@@ -158,5 +187,64 @@ mod tests {
         assert_eq!(packet_at(&late, 500_000_000), 0);
         assert_eq!(packet_at(&late, 2_000_000_000), 0);
         assert_eq!(packet_at(&late, 2_500_000_000), 50);
+    }
+
+    /// A step is bound to the packet that the drawn schedule has at its moment: the walk gives the same number as counting
+    /// the moments, for a Poisson workload that starts late, and a step after the last packet is left to the clock.
+    #[test]
+    fn a_step_is_bound_to_the_packet_of_a_drawn_schedule() {
+        use netscenario_model::Scenario;
+
+        let scenario = Scenario::from_yaml(
+            "version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { delay: 5ms }\nworkloads:\n  - { id: w, kind: udp-poisson, from: a, to: b, rate: 1mbit, packet-size: 125b, start: 1s, stop: 6s }\ntimeline:\n  - { at: 3s, link: l, set: { forward: { delay: 9ms } } }\n  - { at: 500ms, link: l, set: { forward: { delay: 8ms } } }\n  - { at: 8s, link: l, set: { forward: { delay: 7ms } } }\n",
+            "t.yaml",
+        )
+        .unwrap();
+        let schedule = Schedule::Poisson {
+            stream: Stream {
+                bits_per_second: 1_000_000,
+                packet_size: 125,
+            },
+            seed: 77,
+        };
+        let a = Name::new("a").unwrap();
+        let b = Name::new("b").unwrap();
+        let sending = [Sending {
+            from: &a,
+            to: &b,
+            schedule,
+            start_ns: 1_000_000_000,
+            duration_ns: 5_000_000_000,
+        }];
+        let steps = crate::timeline::steps(&scenario);
+        let planned = plan(&scenario, &sending, &steps, true);
+        let counted = |moment: u64| {
+            schedule
+                .offsets(5_000_000_000)
+                .filter(|offset| *offset < moment)
+                .count() as u64
+        };
+        // The steps are in the order of their moments. The one at 0.5 s is before the workload, so it meets the first packet;
+        // the one at 3 s is 2 s into it; the one at 8 s is after the last packet of the workload (it stops at 6 s)
+        let steps_in_order: Vec<(u64, Option<u64>)> = steps
+            .iter()
+            .zip(&planned.bindings)
+            .map(|(step, binding)| (step.at.as_nanos(), binding.map(|b| b.packet)))
+            .collect();
+        assert_eq!(
+            steps_in_order,
+            [
+                (500_000_000, Some(0)),
+                (3_000_000_000, Some(counted(2_000_000_000))),
+                (8_000_000_000, None),
+            ]
+        );
+        // Canary: the packet is not the one of a constant bit rate of the same mean
+        let cbr = Stream {
+            bits_per_second: 1_000_000,
+            packet_size: 125,
+        }
+        .packets_in(2_000_000_000);
+        assert_ne!(counted(2_000_000_000), cbr);
     }
 }

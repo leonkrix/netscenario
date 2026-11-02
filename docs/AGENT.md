@@ -47,7 +47,9 @@ A file that ends inside a record is an error when it is read, not a shorter file
 ## The command line
 
 ```text
-netscenario-agent send --to <addr> --rate <bits/s> --size <bytes> --duration-ns <ns>
+netscenario-agent send --to <addr> --size <bytes> --duration-ns <ns> [--rate <bits/s>]
+                       [--pattern cbr|poisson|onoff|bursty] [--seed <n>] [--distribution fixed|exponential]
+                       [--on-ns <ns> --off-ns <ns>] [--burst-packets <n> --gap-ns <ns> --pause-ns <ns>]
                        [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
 netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
                        [--udp-checksum <on|off>] [--wire-out <file>]
@@ -87,11 +89,30 @@ The sender never waits for ever. The end of its standard input answers every bar
 
 Packet `n` leaves at `start + n × size × 8 / rate`, computed in integers from `n` and not by adding an interval, so an interval that is not a whole number of nanoseconds (3 mbit with 1000 byte packets: 2.666… ms) does not drift. The sender sleeps until shortly before the moment and spins for the last 150 microseconds, because a sleep wakes up tens of microseconds late. **A sending agent therefore uses one core fully while it runs.** `max_lateness_ns` in the summary is the largest amount by which a packet left after its moment: it tells how much of a gap in a result comes from the machine and not from the network.
 
+## The schedules of Poisson, on/off and bursty traffic (WRK-02, D-071)
+
+`--pattern` picks the moments at which the packets leave; `cbr` is the default and needs `--rate`. The others need what the table says; the numbers are nanoseconds and bits per second.
+
+| `--pattern` | Needs | The moments |
+| --- | --- | --- |
+| `cbr` | `--rate` | Packet `n` at `n × size × 8 / rate`. |
+| `poisson` | `--rate`, `--seed` | Packet `n` at the floor of `S_n`, where `S_n` is the sum of `n + 1` exponential gaps with the mean `size × 8 × 10^9 / rate` ns, each drawn from the generator. |
+| `onoff` | `--rate`, `--on-ns`, `--off-ns`, `--seed` (if drawn) | Phase `k` of the on phases starts at the floor of `P_k`, where `P_0 = 0` and `P_{k+1} = P_k + on_k + off_k`. In it packet `i` leaves at `floor(P_k) + i × size × 8 × 10^9 / rate` (integer division) while that is less than `on_k`. |
+| `bursty` | `--burst-packets`, `--gap-ns`, `--pause-ns`, `--seed` (if drawn) | Burst `k` starts at the floor of `B_k`, where `B_0 = 0` and `B_{k+1} = B_k + (n - 1) × gap + pause_k`. Packet `i` of it leaves at `floor(B_k) + i × gap`. |
+
+`--distribution fixed` (the default) uses `--on-ns`, `--off-ns` and `--pause-ns` as they are; with `exponential` each length is drawn from an exponential distribution with that mean. The order of the draws is part of the definition: for `onoff`, `on_0`, then `off_0`, `on_1`, `off_1` and so on; for `bursty`, `pause_0`, `pause_1` and so on; for `poisson`, one gap per packet. A moment is the floor of a sum that is kept as a double, so that rounding does not pile up. A moment at or after `--duration-ns` ends the stream.
+
+**The generator** is written out in `netscenario_agent::rng` and is not a dependency whose output could change with a version: SplitMix64 (Steele, Lea and Flood) turns the 64 bit seed into the four words of the state of xoshiro256++ 1.0 (Blackman and Vigna); a uniform number in `(0, 1]` is `((x >> 11) + 1) × 2^-53`; an exponential number with the mean `m` is `-ln(u) × m`. The logarithm is computed in the program from the exponent and the mantissa of the double with a series of additions, multiplications and divisions (`ln` of the standard library may differ in the last bit between systems, and these operations may not), so every machine draws the same numbers. The seed of workload `n` of a run with the seed `s` is the first output of a SplitMix64 started at `first ^ (n × 0xD1B54A32D192ED03)`, where `first` is the first output of a SplitMix64 started at `s` (`n` counts the workloads that send UDP, from 0; `rng::derive_seed`).
+
+The first outputs are pinned, from an implementation in Python that shares nothing with the Rust code: SplitMix64 from 0 gives `0xE220A8397B1DCDAF`, `0x6E789E6AA1B965F4`, `0x06C45D188009454F`, `0xF88BB8A8724C81EC`; xoshiro256++ from the state `1, 2, 3, 4` gives 41943041, 58720359, 3588806011781223, 3591011842654386 (the reference outputs of its authors); from the seed 42 it gives 15021278609987233951, 5881210131331364753, 18149643915985481100; and `derive_seed(1, 0)` is 6791897765849424158. A Poisson sender of 1 mbit with 125 byte packets started with `--seed 42` sends its first packets at 205420, 1348545, 1364782, 1719836, 1951132 and 2481993 ns. Tests hold all of these, and a change that moves one of them changes every result that was made from a seed, so it needs a decision of its own.
+
+A sender walks its schedule once, in order, and keeps no table of it. The run walks it again after the fact (the series, the packet that a step of the timeline waits for), in one pass for all the steps; it gets the same moments because the walk is a function of the schedule and the seed. The packets are numbered in the order of their moments, and a schedule that cannot make a packet (an on phase of zero, a burst of no packets, a burst with no time to the next) makes none and is refused by the sender.
+
 ## Not in this version
 
 - **Static binary.** D-008 spoke of a static (musl) binary. In the Kernel backend the nodes share the file system of the host and need none; the static build belongs to the release (REL-01) and to backends where the node has its own file system.
 - Hardware or kernel timestamps (`SO_TIMESTAMPNS`): the receive time is taken in user space after the read. At the measured rates the error is a few microseconds (S8).
-- Poisson, on/off and bursty traffic (WRK-02), TCP (WRK-04), request and response (WRK-05).
+- TCP (WRK-04), request and response (WRK-05).
 
 ## How a run starts the agent
 

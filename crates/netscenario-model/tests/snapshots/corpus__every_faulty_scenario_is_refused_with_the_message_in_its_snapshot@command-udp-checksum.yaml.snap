@@ -10,4 +10,4 @@ error: the key `udp-checksum` is not used by the workload kind `command`
 20 |     udp-checksum: false
    |     ^^^^^^^^^^^^
    = path: workloads[1].udp-checksum
-   = help: the workload kind `command` has `node`, `run`, `env`, `ready`, `shutdown`; `udp-checksum` belongs to udp-cbr
+   = help: the workload kind `command` has `node`, `run`, `env`, `ready`, `shutdown`; `udp-checksum` belongs to udp-cbr, udp-poisson, udp-onoff and udp-bursty

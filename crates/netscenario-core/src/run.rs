@@ -15,8 +15,8 @@ use std::time::{Duration, Instant, SystemTime};
 use netscenario_agent::clock::monotonic_ns;
 use netscenario_agent::events::{Event, ReceiveSummary, SendSummary};
 use netscenario_agent::records;
-use netscenario_agent::schedule::Stream;
-use netscenario_model::{Impairments, Scenario, UdpCbr, Workload};
+use netscenario_agent::schedule::Schedule;
+use netscenario_model::{Generator, Impairments, Scenario, Workload};
 
 use crate::backend::{
     Backend, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramHandle,
@@ -36,7 +36,7 @@ use crate::result::{
 use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
 use crate::timeline;
-use crate::{barriers, drive};
+use crate::{barriers, drive, traffic};
 
 /// The port of the first workload; the next uses the next port.
 const BASE_PORT: u16 = 5000;
@@ -295,7 +295,9 @@ pub(crate) fn failure(action: impl Into<String>, message: impl Into<String>) -> 
 /// What one workload needs to be started.
 struct Flow<'a> {
     index: usize,
-    workload: &'a UdpCbr,
+    workload: Generator<'a>,
+    /// When its packets leave.
+    schedule: Schedule,
     from_node: NodeHandle,
     to_node: NodeHandle,
     to_address: String,
@@ -534,8 +536,8 @@ fn shared_directions(scenario: &Scenario) -> Vec<String> {
             let senders: Vec<String> = scenario
                 .workloads
                 .iter()
-                .filter_map(Workload::as_udp_cbr)
-                .filter(|workload| workload.from == *from && workload.to == *to)
+                .filter_map(Workload::generator)
+                .filter(|workload| workload.from == from && workload.to == to)
                 .map(|workload| format!("'{}'", workload.id))
                 .collect();
             if senders.len() > 1
@@ -565,7 +567,8 @@ struct Timeline<'a> {
 /// The series of a workload by time bin, written to `series-<id>.jsonl`, and the time to recover after each step of the
 /// timeline that concerns it (D-070).
 fn series_of(
-    workload: &UdpCbr,
+    workload: &Generator<'_>,
+    schedule: Schedule,
     flow: &Measured,
     scenario: &Scenario,
     options: &RunOptions,
@@ -575,10 +578,7 @@ fn series_of(
     let bin_ns = nanos(options.bin);
     let bins = series::bins(
         &series::Input {
-            stream: Stream {
-                bits_per_second: workload.rate.bits_per_second(),
-                packet_size: workload.packet_size.bytes(),
-            },
+            schedule,
             start_ns: nanos(start),
             origin_ns: timeline.begin_ns,
             slots: flow.sent.packets + flow.sent.errors,
@@ -594,9 +594,9 @@ fn series_of(
         .map_err(|error| failure("write the series", format!("{name}: {error}")))?;
     // The steps that act on the direction this workload sends in
     let direction = scenario.topology.links.iter().find_map(|link| {
-        if link.between[0] == workload.from && link.between[1] == workload.to {
+        if link.between[0] == *workload.from && link.between[1] == *workload.to {
             Some((link.id.to_string(), "forward"))
-        } else if link.between[1] == workload.from && link.between[0] == workload.to {
+        } else if link.between[1] == *workload.from && link.between[0] == *workload.to {
             Some((link.id.to_string(), "reverse"))
         } else {
             None
@@ -640,13 +640,15 @@ fn workload_results(
     scenario
         .workloads
         .iter()
-        .filter_map(Workload::as_udp_cbr)
+        .filter_map(Workload::generator)
         .zip(measured)
         .enumerate()
         .map(|(index, (workload, flow))| {
+            let schedule =
+                traffic::schedule_of(&workload, provisioned.seed.unwrap_or_default(), index)?;
             workload_result(
                 index,
-                workload,
+                (&workload, schedule),
                 flow,
                 scenario,
                 provisioned,
@@ -660,7 +662,7 @@ fn workload_results(
 /// The result of one workload: its statistics, and the files that belong to it.
 fn workload_result(
     index: usize,
-    workload: &UdpCbr,
+    (workload, schedule): (&Generator<'_>, Schedule),
     flow: &Measured,
     scenario: &Scenario,
     provisioned: &Provisioned,
@@ -693,16 +695,17 @@ fn workload_result(
     } else {
         None
     };
-    let (series, recoveries) = series_of(workload, flow, scenario, options, timeline, start)?;
+    let (series, recoveries) =
+        series_of(workload, schedule, flow, scenario, options, timeline, start)?;
     let (from_address, to_address) = addresses_of(provisioned, workload);
     Ok(WorkloadResult {
         id: workload.id.to_string(),
-        kind: "udp-cbr".to_owned(),
+        kind: workload.kind.as_str().to_owned(),
         from: workload.from.to_string(),
         to: workload.to.to_string(),
         from_address,
         to_address: format!("{to_address}:{}", port(index)),
-        rate_bits_per_second: workload.rate.bits_per_second(),
+        rate_bits_per_second: schedule.mean_bits_per_second(),
         packet_size_bytes: workload.packet_size.bytes(),
         start_ns: nanos(start),
         duration_ns: nanos(stop.saturating_sub(start)),
@@ -758,17 +761,21 @@ fn wire_name(index: usize) -> String {
 
 /// Whether the direction that `workload` sends through corrupts packets, so that the receiver reads the wire to name
 /// the damaged ones.
-fn corrupts_on_the_way(scenario: &Scenario, provisioned: &Provisioned, workload: &UdpCbr) -> bool {
+fn corrupts_on_the_way(
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+    workload: &Generator<'_>,
+) -> bool {
     ways(scenario, provisioned).any(|way| {
-        way.from == &workload.from
-            && way.to == &workload.to
+        way.from == workload.from
+            && way.to == workload.to
             && impairments_of(&scenario.topology.links[way.index], way.direction)
                 .is_some_and(|impairments| impairments.corrupt.is_some())
     })
 }
 
 /// The address of the sending node and of the receiving node of a workload.
-fn addresses_of(provisioned: &Provisioned, workload: &UdpCbr) -> (String, String) {
+fn addresses_of(provisioned: &Provisioned, workload: &Generator<'_>) -> (String, String) {
     let address = |node: &netscenario_model::Name| {
         provisioned
             .addresses
@@ -777,7 +784,7 @@ fn addresses_of(provisioned: &Provisioned, workload: &UdpCbr) -> (String, String
             .map(|a| a.address.to_string())
             .unwrap_or_default()
     };
-    (address(&workload.from), address(&workload.to))
+    (address(workload.from), address(workload.to))
 }
 
 /// The longest time a packet can be held back by the links of the scenario: the delay and four times the
@@ -822,22 +829,27 @@ fn plan<'a>(
     scenario
         .workloads
         .iter()
-        .filter_map(Workload::as_udp_cbr)
+        .filter_map(Workload::generator)
         .enumerate()
         .map(|(index, workload)| {
             let start = workload.start.map_or(Duration::ZERO, Duration::from);
             let stop = workload
                 .stop
                 .map_or_else(|| Duration::from(scenario.duration), Duration::from);
-            let (_, to_address) = addresses_of(provisioned, workload);
+            let (_, to_address) = addresses_of(provisioned, &workload);
             Ok(Flow {
                 index,
+                schedule: traffic::schedule_of(
+                    &workload,
+                    provisioned.seed.unwrap_or_default(),
+                    index,
+                )?,
                 workload,
-                from_node: node(&workload.from)?,
-                to_node: node(&workload.to)?,
+                from_node: node(workload.from)?,
+                to_node: node(workload.to)?,
                 to_address: format!("{to_address}:{}", port(index)),
                 records_file: options.out_dir.join(records_name(index)),
-                wire_file: corrupts_on_the_way(scenario, provisioned, workload)
+                wire_file: corrupts_on_the_way(scenario, provisioned, &workload)
                     .then(|| options.out_dir.join(wire_name(index))),
                 start,
                 duration: stop.saturating_sub(start),
@@ -924,7 +936,7 @@ fn agent_program(options: &RunOptions, arguments: &[String]) -> Program {
 }
 
 /// `--udp-checksum off` for a workload that sends without the checksum of UDP, nothing for one that does not.
-fn checksum_argument(workload: &UdpCbr) -> Vec<String> {
+fn checksum_argument(workload: &Generator<'_>) -> Vec<String> {
     if workload.udp_checksum.is_on() {
         Vec::new()
     } else {
@@ -953,7 +965,7 @@ fn start_receivers(
             "--out",
             &flow.records_file.display().to_string(),
         ]));
-        arguments.extend(checksum_argument(flow.workload));
+        arguments.extend(checksum_argument(&flow.workload));
         if let Some(wire) = &flow.wire_file {
             arguments.extend(strings(&["--wire-out", &wire.display().to_string()]));
         }
@@ -988,17 +1000,15 @@ fn start_senders(
     let mut senders = Vec::new();
     for (index, flow) in flows.iter().enumerate() {
         let what = format!("start the sender of '{}'", flow.workload.id);
-        let mut arguments = strings(&["send", "--to", &flow.to_address, "--rate"]);
-        arguments.push(flow.workload.rate.bits_per_second().to_string());
-        arguments.push("--size".to_owned());
-        arguments.push(flow.workload.packet_size.bytes().to_string());
+        let mut arguments = strings(&["send", "--to", &flow.to_address]);
+        arguments.extend(traffic::arguments(&flow.schedule));
         arguments.push("--duration-ns".to_owned());
         arguments.push(nanos(flow.duration).to_string());
         arguments.push("--flow".to_owned());
         arguments.push(flow.index.to_string());
         arguments.push("--start-at-ns".to_owned());
         arguments.push((begin + nanos(flow.start)).to_string());
-        arguments.extend(checksum_argument(flow.workload));
+        arguments.extend(checksum_argument(&flow.workload));
         // The steps this sender waits for: before which packet, and under which number the run answers
         let barriers: Vec<String> = bindings
             .iter()
@@ -1054,12 +1064,9 @@ fn measure(
     let sending: Vec<barriers::Sending<'_>> = flows
         .iter()
         .map(|flow| barriers::Sending {
-            from: &flow.workload.from,
-            to: &flow.workload.to,
-            stream: Stream {
-                bits_per_second: flow.workload.rate.bits_per_second(),
-                packet_size: flow.workload.packet_size.bytes(),
-            },
+            from: flow.workload.from,
+            to: flow.workload.to,
+            schedule: flow.schedule,
             start_ns: nanos(flow.start),
             duration_ns: nanos(flow.duration),
         })
@@ -1327,7 +1334,7 @@ fn refuse_names_after_buffer_drops(
             continue;
         }
         let overflowed = ways(scenario, provisioned)
-            .filter(|way| way.from == &flow.workload.from && way.to == &flow.workload.to)
+            .filter(|way| way.from == flow.workload.from && way.to == flow.workload.to)
             .any(|way| {
                 directions.iter().any(|tally| {
                     tally.link == way.name.as_str()
@@ -1393,7 +1400,7 @@ fn node_counts(
     let has_program = scenario
         .workloads
         .iter()
-        .any(|workload| workload.as_udp_cbr().is_none());
+        .any(|workload| workload.generator().is_none());
     ways(scenario, provisioned)
         .map(|way| {
             if has_program {
@@ -1424,7 +1431,7 @@ fn tally_directions(
         let carried: Vec<&Measured> = flows
             .iter()
             .zip(measured)
-            .filter(|(flow, _)| flow.workload.from == *way.from && flow.workload.to == *way.to)
+            .filter(|(flow, _)| flow.workload.from == way.from && flow.workload.to == way.to)
             .map(|(_, measured)| measured)
             .collect();
         if carried.is_empty() {
@@ -1495,7 +1502,7 @@ fn check_queues(
         let expected = flows
             .iter()
             .zip(sent)
-            .filter(|(flow, _)| flow.workload.from == *way.from && flow.workload.to == *way.to)
+            .filter(|(flow, _)| flow.workload.from == way.from && flow.workload.to == way.to)
             .map(|(_, summary)| summary.packets)
             .sum();
         if let Some(counted) = backend.queue_packets(way.handle, way.direction)? {

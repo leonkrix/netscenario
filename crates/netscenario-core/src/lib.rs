@@ -70,6 +70,7 @@ mod seed;
 pub mod series;
 pub mod stats;
 pub mod timeline;
+mod traffic;
 
 pub use backend::{
     Backend, BackendInfo, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramExit,

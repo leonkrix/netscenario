@@ -40,7 +40,7 @@ A run can be interrupted: Ctrl-C and `pytest-timeout` stop it, the network is to
 
 ## The marker `netscenario` and the fixture `netscenario_result`
 
-`@pytest.mark.netscenario("file.yaml", seed=None, settle=None, packets=False)` names a scenario file for the test, and `netscenario_result` runs it and gives the result. The marker takes exactly one argument and the three options; anything else is an error of the test with a message that says what is wrong.
+`@pytest.mark.netscenario("file.yaml", seed=None, settle=None, packets=False)` names a scenario file for the test, and `netscenario_result` runs it and gives the result. The marker takes exactly one argument and the options `seed`, `settle`, `packets`, `bin` and `recovery_basis`, `recovery_baseline`, `recovery_window` and `recovery_fraction` (the series and the time to recover, [RESULTS.md](RESULTS.md)); anything else is an error of the test with a message that says what is wrong.
 
 ## A machine that cannot run scenarios
 
