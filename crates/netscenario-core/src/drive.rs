@@ -61,12 +61,20 @@ pub(crate) struct Driven {
 /// news counts whole milliseconds, and a step must not be due a millisecond late because of that.
 const SLEEP_BELOW: Duration = Duration::from_millis(3);
 
-/// The longest the loop waits for news of a sender when nothing is due.
-const LONGEST_WAIT: Duration = Duration::from_millis(200);
+/// The longest the loop waits for news of a sender when nothing is due, and so the longest between two looks at the
+/// programs of your own (50 ms), which is the resolution of the time of a metric.
+const LONGEST_WAIT: Duration = Duration::from_millis(50);
 
 /// How long the loop waits for news of a sender while a barrier is still to come: a sender asks right after the packet
 /// before the barrier, and the packet waits for the answer, so the loop looks often.
 const BARRIER_WAIT: Duration = Duration::from_millis(1);
+
+/// What the loop also does while it goes (D-072): looks at the programs of your own, and does not end before `hold_until`,
+/// the end of the scenario, so that a program runs to the end also when no sender does.
+pub(crate) struct Watch<'a> {
+    pub(crate) programs: &'a mut crate::programs::Programs,
+    pub(crate) hold_until: Instant,
+}
 
 /// Waits for the senders to end and does the steps of the timeline: at the barriers where `bindings` has one, else by the
 /// clock.
@@ -87,8 +95,13 @@ pub(crate) fn drive(
     bindings: &[Option<Binding>],
     begin: Begin,
     deadline: Instant,
+    watch: Watch<'_>,
     control: &Control<'_>,
 ) -> Result<Driven, Error> {
+    let Watch {
+        programs,
+        hold_until,
+    } = watch;
     // The steps that are done by the clock, in order; the others are done when their sender asks
     let mut pending: VecDeque<(usize, &Step)> = steps
         .iter()
@@ -104,6 +117,7 @@ pub(crate) fn drive(
     let mut interrupted_ns: Option<u64> = None;
     loop {
         control.checkpoint()?;
+        programs.watch(backend)?;
         // A cancel that keeps the result (D-066): every sender is told to stop and no step is done any more. The
         // senders end at their next packet and say what they sent; the loop waits for that like for their end.
         if interrupted_ns.is_none() && control.take_interruption() {
@@ -218,7 +232,8 @@ pub(crate) fn drive(
                     ),
                 ));
             }
-            if pending.is_empty() {
+            // A cancel that keeps the result also ends the wait for the programs: they are stopped next
+            if pending.is_empty() && (Instant::now() >= hold_until || interrupted_ns.is_some()) {
                 break;
             }
         }

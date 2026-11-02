@@ -8,6 +8,8 @@ A run writes a directory (`--out`, or the `out_dir` of `RunOptions`) with these 
 | `flow-<n>.records` | The raw per-packet records of workload `n` (the order of `workloads` in the scenario, from 0), in the binary format of [AGENT.md](AGENT.md). One record for each packet that arrived. |
 | `flow-<n>.wire` | Only for a workload whose direction has `corrupt`: the packets that the receiving node saw on its interface, in the same binary format as `flow-<n>.records` (D-057). The damaged packets are the sequences in it that are not in the records. |
 | `series-<id>.jsonl` | The packets of workload `<id>` by time bin, sent and arrived side by side: one JSON line for each bin, described below (PRB-07, D-070). Always written. |
+| `program-<id>.stdout.log`, `program-<id>.stderr.log` | For a program of your own (`kind: command`): the first megabyte of its standard output and of its standard error ([PROGRAMS.md](PROGRAMS.md)). |
+| `metrics-<id>.jsonl` | For a program that reported metrics: one line `{"t_ns", "metric", "value", "unit"}` for each reading, `t_ns` in nanoseconds from the start of the measured phase (negative before it). |
 | `packets-<id>.jsonl` | Only if asked for (`export_packets`): one JSON line for each packet of workload `<id>`, described below. |
 
 The result is JSON, indented, with a line feed at the end. `format` is always `netscenario-result` and `version` is the version of this format (RPT-01, ENV-06): **0** until 1.0, which means that a field may change its meaning in a minor release and the changelog says so. A new field does not change the version. A program that reads results should refuse a `version` it does not know; `netscenario_core::RunResult::from_json` does.
@@ -147,6 +149,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `workloads` | One entry for each workload, in the order of the scenario. |
 | `directions` | Where the packets of each direction went, below. |
 | `events` | What the run did to the links while it ran (the timeline), below. Empty for a scenario without one. |
+| `programs` | One entry for each program of your own (`kind: command`), in the order of the scenario, below. Empty for a scenario without one. |
 | `notes` | What the backend says about how it did the run, one sentence for each fact (D-063): for example that the changes of a link were made by a `tc` process each because the `tc` that lives for the run stopped working. Not errors. Empty if the run went as usual. |
 
 ### `provenance`
@@ -261,6 +264,24 @@ The entry says all of this, so a reader does not have to remember the defaults: 
 **Read the right event.** The baseline of a `set` is taken before the `set`. For a `set` that lifts a limit again that baseline is the degraded level, and the answer is 0 s. The recovery that says how long the workload took to come back from a drop is the one of the event that dropped it.
 
 The parameters are not part of the scenario: they are about how a result is read, so they belong to the run (`--bin 250ms`, `--recovery-basis arrival`, `--recovery-baseline 5`, `--recovery-window 3`, `--recovery-fraction 90` on the command line; the same words with underscores in Python). The same series can be read again with other parameters: the library has `netscenario_core::recovery::recoveries`, and `Workload.series.read()` gives the bins in Python.
+
+### `programs` (WRK-06, WRK-10, PRB-08; D-072)
+
+One entry for each `command` workload ([PROGRAMS.md](PROGRAMS.md)). Times are in nanoseconds from the start of the measured phase, the zero of `events`; a program is started before it, so `started_ns` is negative.
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `node` | As in the scenario. |
+| `run` | The program and its arguments as they were started, with `{node.addr}` replaced. |
+| `started_ns`, `ready_ns`, `ended_ns` | When the run started it, when it found it ready (the start, for a program without `ready`), and when it saw it end. |
+| `ended` | `on-its-own` (before the run asked it to stop), `stopped` (after the signal of `shutdown`, within the time) or `killed` (`KILL` was needed). |
+| `exit_code`, `exit_signal` | How it ended: the exit code, or the number of the signal (15 after `TERM`, 9 after `KILL`); the other is `null`. |
+| `stdout_file`, `stderr_file` | The files with the first megabyte of each stream, relative to `result.json`. |
+| `output` | `stdout_bytes`, `stderr_bytes` (all that was read), `stdout_dropped_bytes`, `stderr_dropped_bytes` (not in the files, past the first megabyte), and `long_lines` (lines of standard output longer than 64 KiB, which were cut). |
+| `lines_dropped` | `true` if more than 10,000 lines of standard output were written between two looks of the run and some were dropped; metrics in them are lost. |
+| `metrics` | A summary for each metric name: `name`, `unit`, `count`, `first`, `last`, `min`, `max`. |
+| `metrics_file`, `metric_readings` | The file with every reading (`null` if there was none), and how many valid readings there were in all. |
+| `bad_metric_lines`, `bad_metric_examples` | How many lines looked like metrics and were not valid, and the first five with the reason. |
 
 ### `events` (TML-01, D-060)
 

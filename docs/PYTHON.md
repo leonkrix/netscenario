@@ -81,6 +81,7 @@ Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`,
 | `w.throughput.bits_per_second` | payload bit/s in each second, counted from the first packet sent |
 | `w.series` | where the packets by time bin are (`.bin` in seconds, `.bins`, `.file`) or `None` in a result of an older run; `.read()` reads the file into a tuple of `Bin` (`.index`, `.start` in seconds, `.by_send` with `.sent`, `.received`, `.lost`, `.delivered_ratio`, `.delay`, and `.by_arrival` with `.received`, `.bits`, `.delay`, and `.bits_per_second(series.bin)`). Both views use the same bins, counted from the start of the measured phase, the zero of `result.steps` ([RESULTS.md](RESULTS.md)). Each call reads the file again |
 | `w.recoveries` | how long the workload took to be back at its level after each event that concerns it, in the order of the events: `.event`, `.kind`, `.link`, `.direction`, `.basis`, `.start`, `.disturbance`, `.baseline`, `.level`, `.time` in seconds or `None` with `.reason`, `.recovered_at`, and `.recovered`. The resolution is one bin |
+| `result.programs["app"]` | a program of your own (`kind: command`): `.how_it_ended` (`on-its-own`, `stopped` or `killed`), `.exit_code`, `.exit_signal`, `.succeeded`, `.crashed`, `.started`, `.ready`, `.ended` (seconds from the start of the measured phase, negative before it), `.stdout_file`, `.stderr_file`, `.output` (bytes read and dropped), `.metrics` (by name: `.unit`, `.count`, `.first`, `.last`, `.min`, `.max`), `.readings()` (every reading as `(seconds, name, value)`), `.bad_metric_lines` ([PROGRAMS.md](PROGRAMS.md)) |
 | `w.sender.max_lateness` | seconds; large against the gap between packets means the machine shaped the stream |
 | `result.seed.value`, `.drawn`, `.loss_reproducible` | the seed, and whether the loss can be repeated |
 | `result.seed.queue_checks` | for each direction with loss, the packets its queue counted against the packets the workloads sent (`.link`, `.direction`, `.expected`, `.counted`, `.agrees`) |
@@ -90,7 +91,7 @@ Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`,
 | `result.provenance` | netscenario version, time, backend and its details, kernel, processor |
 | `result.raw` | the decoded `result.json`, unchanged |
 
-The series and the time to recover are shaped by the arguments of `ns.run`: `bin` (the width of a bin in seconds, 1 by default), `recovery_basis` (`"send"`, the default, or `"arrival"`), `recovery_baseline` (5 bins), `recovery_window` (3 bins) and `recovery_fraction` (0.9, a share from above 0 to 1). A value that makes no sense is a `ValueError` before anything is built.
+The series and the time to recover are shaped by the arguments of `ns.run`: `bin` (the width of a bin in seconds, 1 by default), `recovery_basis` (`"send"`, the default, or `"arrival"`), `recovery_baseline` (5 bins), `recovery_window` (3 bins) and `recovery_fraction` (0.9, a share from above 0 to 1). A value that makes no sense is a `ValueError` before anything is built. `working_dir` is the directory the programs of your own run in (default: the directory of the scenario file, or the current one).
 
 ```python
 result = ns.run(scenario, bin=0.5, recovery_basis="arrival")

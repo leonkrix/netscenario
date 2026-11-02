@@ -7,9 +7,9 @@
 use netscenario_model::{
     Backend, Change, Command, Direction, Duration, Edit, Event, FormatVersion, Impairments,
     ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, MAX_PACKET_SIZE,
-    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM, Name, Probability,
-    Rate, Ready, Reorder, Scenario, Shutdown, Signal, Size, Topology, UdpCbr, UdpChecksum,
-    Workload,
+    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM, Name, OnExit,
+    Probability, Rate, Ready, Reorder, Scenario, Shutdown, Signal, Size, Topology, UdpCbr,
+    UdpChecksum, Workload,
 };
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -233,22 +233,28 @@ fn command(way: u8, port: u16, within: u64) -> Workload {
             ..Ready::default()
         }),
     };
-    Workload::Command(Command {
-        id: Name::new("app").unwrap(),
-        node: Name::new("b").unwrap(),
-        run: vec![
+    let mut command = Command::new(
+        Name::new("app").unwrap(),
+        Name::new("b").unwrap(),
+        vec![
             "./server".to_owned(),
             "--listen".to_owned(),
             "{b.addr}:4433".to_owned(),
             "--peer={a.addr}".to_owned(),
         ],
-        env: std::iter::once(("PEER".to_owned(), "{a.addr}".to_owned())).collect(),
-        ready,
-        shutdown: Some(Shutdown {
-            signal: Some(Signal::Int),
-            within: Some(within),
-        }),
-    })
+    );
+    command.env = std::iter::once(("PEER".to_owned(), "{a.addr}".to_owned())).collect();
+    command.ready = ready;
+    command.shutdown = Some(Shutdown {
+        signal: Some(Signal::Int),
+        within: Some(within),
+    });
+    command.on_exit = if within.as_nanos().is_multiple_of(2) {
+        OnExit::Fail
+    } else {
+        OnExit::Continue
+    };
+    Workload::Command(command)
 }
 
 fn valid_scenario() -> impl Strategy<Value = Scenario> {

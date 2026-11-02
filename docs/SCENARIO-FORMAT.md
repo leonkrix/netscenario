@@ -264,6 +264,7 @@ A `command` is the only way for a scenario to run code, and it always says so in
 | `run` | yes | A list of texts: the program, then its arguments. At least one, at most 256 entries, 4096 bytes each, no NUL character. |
 | `env` | no | A mapping of variables. Names are letters, digits and `_`, not starting with a digit, and not starting with `NETSCENARIO_` (those are set by the tool: the addresses of the nodes, the directory of the run). At most 64 variables. |
 | `ready` | no | How the run learns that the program can be used; before that the senders do not start. Without it the program is ready when it has been started. See below. |
+| `on-exit` | no | `continue` (default) or `fail`: what the run does when the program ends by itself, before the end of the run, with an exit code other than 0 or by a signal. `continue`: the run goes on and the result reports how it ended. `fail`: the run stops with an error that names the program ([PROGRAMS.md](PROGRAMS.md)). |
 | `shutdown` | no | `signal`: `TERM` (default), `INT`, `HUP`, `QUIT`, `USR1` or `USR2`; `within`: a Duration, default `5s`. The signal goes to the process group of the program, so its children get it too, and `KILL` follows when anything is still there after `within`. |
 
 **Placeholders.** In `run` and in the values of `env`, `{node.addr}` is the address of a node (`{server.addr}`). It is checked when the file is read: the node must exist (with a hint), and any other text in braces is refused. A brace that is meant as a brace is written twice: `{{` and `}}`.
@@ -280,7 +281,7 @@ A `command` is the only way for a scenario to run code, and it always says so in
 
 A port is read from outside, so the program needs no help and a UDP port (which cannot be probed by connecting) works. Probing by connecting was left out for that reason.
 
-**What the Kernel backend does with it.** It starts programs from release 0.2 on; until then it refuses a scenario with a `command` and names the feature ([COVERAGE.md](COVERAGE.md)). Running a scenario file that you did not write is running its programs: read the `command` entries first ([SECURITY.md](../SECURITY.md)).
+**What the Kernel backend does with it:** [PROGRAMS.md](PROGRAMS.md) says what runs, in which order, as whom, with which variables (`NETSCENARIO_*`), how the output and the metrics (`{"metric": ..., "value": ...}` lines) are read, and what the result has. Running a scenario file that you did not write is running its programs: read the `command` entries first ([SECURITY.md](../SECURITY.md)).
 
 ## Keys that are reserved
 

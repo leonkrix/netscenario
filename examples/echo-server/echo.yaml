@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=../../docs/schema/scenario-v0.json
+# Your own program in a node: a UDP echo server on one side, a client on the other, over a link with 30 ms of delay each
+# way and 5 % loss each way. `command` runs code, so it is written in the file where everybody can see it (SECURITY.md).
+# The server is started first and the client when the server has a UDP socket open on port 4433; each program reports
+# what it measured as lines of JSON on its standard output (`{"metric": ..., "value": ...}`), and the result has them.
+version: 0
+name: echo-over-a-bad-link
+seed: 21
+duration: 6s
+topology:
+  nodes: [client, server]
+  links:
+    - id: wan
+      between: [client, server]
+      both:
+        delay: 30ms
+        loss: { model: random, p: 5% }
+workloads:
+  - id: server
+    kind: command
+    node: server
+    run: ["python3", "echo_server.py", "{server.addr}", "4433"]
+    ready: { udp-port: 4433, within: 5s }
+    shutdown: { signal: TERM, within: 2s }
+  - id: client
+    kind: command
+    node: client
+    run: ["python3", "echo_client.py", "{server.addr}", "4433", "200"]

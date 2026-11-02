@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use netscenario_model::{Impairments, Name, Scenario};
@@ -42,7 +43,27 @@ pub struct Program {
     /// The most address space the program may use, in bytes (SAF-02). Without it the program is not limited.
     /// A program that needs more fails to allocate and ends; it does not take the machine down with it.
     pub memory_limit: Option<u64>,
+    /// Variables to add to the environment of the program, which otherwise gets that of the backend (D-072).
+    pub env: Vec<(String, String)>,
+    /// The directory the program runs in. Without it, the directory of the backend.
+    pub working_dir: Option<PathBuf>,
+    /// Whether the program is the leader of a process group of its own, so that [`Backend::signal_program`] reaches
+    /// its children too (D-041). The agent is not; a program of your own is.
+    pub own_group: bool,
+    /// Where the backend writes what the program wrote to its standard output, as it comes. The first
+    /// [`LOG_LIMIT`] bytes are kept; the rest is read and counted ([`OutputStats`]).
+    pub stdout_file: Option<PathBuf>,
+    /// The same for standard error.
+    pub stderr_file: Option<PathBuf>,
 }
+
+/// How much of the standard output and of the standard error of a program is written to its files: the first megabyte.
+/// What the program writes after that is read, so that it is never blocked, and counted (D-072).
+pub const LOG_LIMIT: u64 = 1024 * 1024;
+
+/// The longest line of standard output that the backend hands out and writes: the rest of a longer line is dropped
+/// and the line is counted in [`OutputStats::long_lines`] (D-072).
+pub const LINE_LIMIT: usize = 64 * 1024;
 
 impl Program {
     /// A program without a memory limit.
@@ -51,7 +72,41 @@ impl Program {
         Self {
             argv,
             memory_limit: None,
+            env: Vec::new(),
+            working_dir: None,
+            own_group: false,
+            stdout_file: None,
+            stderr_file: None,
         }
+    }
+
+    /// The same program with more variables in its environment.
+    #[must_use]
+    pub fn with_env(mut self, env: Vec<(String, String)>) -> Self {
+        self.env = env;
+        self
+    }
+
+    /// The same program in another directory.
+    #[must_use]
+    pub fn with_working_dir(mut self, directory: PathBuf) -> Self {
+        self.working_dir = Some(directory);
+        self
+    }
+
+    /// The same program as the leader of a process group of its own.
+    #[must_use]
+    pub fn in_own_group(mut self) -> Self {
+        self.own_group = true;
+        self
+    }
+
+    /// The same program with its output written to files.
+    #[must_use]
+    pub fn with_log_files(mut self, stdout: PathBuf, stderr: PathBuf) -> Self {
+        self.stdout_file = Some(stdout);
+        self.stderr_file = Some(stderr);
+        self
     }
 
     /// The same program with a limit on its address space.
@@ -88,6 +143,64 @@ impl fmt::Display for ProgramExit {
     }
 }
 
+/// A signal for the process group of a program (D-041). `Kill` is what follows when the others did not end it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ProgramSignal {
+    /// `SIGTERM`.
+    Term,
+    /// `SIGINT`.
+    Int,
+    /// `SIGHUP`.
+    Hup,
+    /// `SIGQUIT`.
+    Quit,
+    /// `SIGUSR1`.
+    Usr1,
+    /// `SIGUSR2`.
+    Usr2,
+    /// `SIGKILL`.
+    Kill,
+}
+
+impl From<netscenario_model::Signal> for ProgramSignal {
+    fn from(signal: netscenario_model::Signal) -> Self {
+        use netscenario_model::Signal;
+        match signal {
+            Signal::Term => Self::Term,
+            Signal::Int => Self::Int,
+            Signal::Hup => Self::Hup,
+            Signal::Quit => Self::Quit,
+            Signal::Usr1 => Self::Usr1,
+            Signal::Usr2 => Self::Usr2,
+        }
+    }
+}
+
+/// Where a program's transport protocol is looked at when the run asks whether a port is taken (D-072).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PortKind {
+    /// A UDP socket that is bound.
+    Udp,
+    /// A TCP socket that listens.
+    Tcp,
+}
+
+/// What the backend read from the output of a program so far, all of it since the start (D-072).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OutputStats {
+    /// Bytes read from standard output.
+    pub stdout_bytes: u64,
+    /// Bytes of standard output that are not in its file (past the limit) or not in the lines (past the line limit).
+    pub stdout_dropped_bytes: u64,
+    /// Bytes read from standard error.
+    pub stderr_bytes: u64,
+    /// Bytes of standard error that are not in its file.
+    pub stderr_dropped_bytes: u64,
+    /// Lines of standard output that were longer than [`LINE_LIMIT`].
+    pub long_lines: u64,
+}
+
 /// What a program has done since the last time it was asked about.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProgramState {
@@ -100,6 +213,8 @@ pub struct ProgramState {
     pub stderr: String,
     /// Whether lines were dropped because the program wrote more than the backend keeps (10,000 lines).
     pub truncated: bool,
+    /// What was read and what was dropped, since the start.
+    pub output: OutputStats,
 }
 
 /// What a backend says about itself for the provenance of a result (ENV-02): its name and the facts about the
@@ -372,6 +487,45 @@ pub trait Backend {
         program: ProgramHandle,
         wait: Duration,
     ) -> Result<ProgramState, Error>;
+
+    /// Sends `signal` to the process group of a program that was started with [`Program::own_group`]. A program that
+    /// has ended is not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the program does not exist in this run, was not started in a group of its own, or the
+    /// backend cannot signal programs (the default).
+    fn signal_program(
+        &mut self,
+        _program: ProgramHandle,
+        _signal: ProgramSignal,
+    ) -> Result<(), Error> {
+        Err(Error::Backend {
+            backend: "this".to_owned(),
+            action: "signal a program".to_owned(),
+            message: "the backend cannot do it".to_owned(),
+        })
+    }
+
+    /// Whether a socket of `kind` is bound to `port` in `node`, to any address or to its own: how the run learns that a
+    /// program of your own is ready (D-041, S14). It reads the sockets of the node and needs no help from the program.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the node does not exist or its sockets cannot be read, or the backend cannot do it
+    /// (the default).
+    fn port_bound(
+        &mut self,
+        _node: NodeHandle,
+        _kind: PortKind,
+        _port: u16,
+    ) -> Result<bool, Error> {
+        Err(Error::Backend {
+            backend: "this".to_owned(),
+            action: "look at the ports of a node".to_owned(),
+            message: "the backend cannot do it".to_owned(),
+        })
+    }
 
     /// Writes a line to the standard input of a program. The receiver of the agent stops when it reads
     /// `stop`. A program that has ended is not an error.

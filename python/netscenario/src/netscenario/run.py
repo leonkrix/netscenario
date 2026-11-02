@@ -37,6 +37,7 @@ def run(
     recovery_baseline: int | None = None,
     recovery_window: int | None = None,
     recovery_fraction: float | None = None,
+    working_dir: str | os.PathLike[str] | None = None,
 ) -> Result:
     """Run a scenario in network namespaces and return the result.
 
@@ -69,6 +70,9 @@ def run(
         recovery_window: How many bins in a row have to be back at the level. Default 3.
         recovery_fraction: The share of the baseline that has to be reached again, above 0 and at
             most 1. Default 0.9.
+        working_dir: The directory the programs of your own (``kind: command``) run in, and that a
+            relative ``ready: { file: ... }`` is counted from. Default: the directory of the
+            scenario file, or the current directory for a scenario that was not read from a file.
 
     Returns:
         The :class:`Result`.
@@ -111,8 +115,17 @@ def run(
         recovery_baseline=recovery_baseline,
         recovery_window=recovery_window,
         recovery_fraction=recovery_fraction,
+        working_dir=str(_working_dir(loaded, working_dir)),
     )
     return Result.from_json(text, directory)
+
+
+def _working_dir(scenario: Scenario, given: str | os.PathLike[str] | None) -> Path:
+    """The directory of the programs: the one asked for, the scenario file's, or this one."""
+    if given is not None:
+        return Path(given).resolve()
+    source = Path(scenario.source_name)
+    return source.resolve().parent if source.is_file() else Path.cwd()
 
 
 @dataclass(frozen=True)

@@ -26,12 +26,13 @@ use crate::export::write_packets_refused;
 use crate::hash::sha256_hex;
 use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
+use crate::programs::Programs;
 use crate::provision::{Provisioned, impairments_of, provision};
 use crate::recovery::{self, Recovery, RecoveryOptions};
 use crate::result::{
-    AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, QueueCheck, RESULT_FORMAT,
-    RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing,
-    WorkloadResult,
+    AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, ProgramResult, QueueCheck,
+    RESULT_FORMAT, RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo,
+    Timing, WorkloadResult,
 };
 use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
@@ -93,6 +94,9 @@ pub struct RunOptions {
     /// How the time to recover after an event is worked out (D-070): the view, the bins of the baseline, the bins of a
     /// window and the share of the baseline that has to be reached again.
     pub recovery: RecoveryOptions,
+    /// The directory the programs of your own run in, and that a relative path of `ready: { file: ... }` is counted from
+    /// (D-041): the directory of the scenario file. Without it, the directory of the supervisor.
+    pub working_dir: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for RunOptions {
@@ -110,6 +114,7 @@ impl std::fmt::Debug for RunOptions {
             .field("partial_on_cancel", &self.partial_on_cancel)
             .field("bin", &self.bin)
             .field("recovery", &self.recovery)
+            .field("working_dir", &self.working_dir)
             .finish()
     }
 }
@@ -131,6 +136,7 @@ impl RunOptions {
             partial_on_cancel: false,
             bin: Duration::from_nanos(DEFAULT_BIN_NS),
             recovery: RecoveryOptions::default(),
+            working_dir: None,
         }
     }
 
@@ -244,15 +250,20 @@ impl<'a> Control<'a> {
             let mut workloads = self.workloads.borrow_mut();
             workloads.as_mut().and_then(|w| {
                 let now = Instant::now();
-                (now >= w.next_report).then(|| {
-                    while w.next_report <= now {
-                        w.next_report += PROGRESS_EVERY;
-                    }
-                    RunEvent::Progress {
-                        elapsed: now.saturating_duration_since(w.begin).min(w.total),
-                        total: w.total,
-                    }
-                })
+                (now >= w.next_report)
+                    .then(|| {
+                        while w.next_report <= now {
+                            w.next_report += PROGRESS_EVERY;
+                        }
+                        // The report of the whole is made once, when the workloads are done; a run that holds on for its programs
+                        // does not say it twice
+                        let elapsed = now.saturating_duration_since(w.begin);
+                        (elapsed < w.total).then_some(RunEvent::Progress {
+                            elapsed,
+                            total: w.total,
+                        })
+                    })
+                    .flatten()
             })
         };
         if let Some(event) = report {
@@ -347,6 +358,8 @@ struct Measurement {
     begin_ns: u64,
     /// Why the steps of the timeline may not give the same lost packets for the same seed (see [`barriers::plan`]).
     clock_reasons: Vec<String>,
+    /// What came of the programs of your own.
+    programs: Vec<ProgramResult>,
 }
 
 /// Runs `scenario` with `backend` and returns the result, which is also written to `result.json` in
@@ -393,6 +406,7 @@ pub fn run(
         interrupted_ns,
         begin_ns,
         clock_reasons,
+        programs,
     } = measured?;
     torn_down?;
 
@@ -446,6 +460,7 @@ pub fn run(
         directions,
         events,
         notes,
+        programs,
     };
     let path = options.out_dir.join("result.json");
     std::fs::write(&path, result.to_json())
@@ -457,6 +472,33 @@ pub fn run(
 /// Why the same seed may not give the same lost packets in this run, one sentence for each reason. The queues have
 /// counted the packets that drew a number for the loss: if one saw more or fewer than the workloads sent, the
 /// pattern of lost packets is not the one of this seed (ENV-07).
+/// A program of your own may send packets into the queue of a direction that draws random numbers. The run does not
+/// count or order them, so which packet draws which number, and so which packets are lost, can differ from run to run with
+/// the same seed (D-072), as it does with two workloads in one direction (D-065).
+fn programs_into_random_queues(scenario: &Scenario) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for command in scenario.workloads.iter().filter_map(Workload::as_command) {
+        for (index, link) in scenario.topology.links.iter().enumerate() {
+            for (direction, word, from) in [
+                (Direction::Forward, "forward", &link.between[0]),
+                (Direction::Reverse, "reverse", &link.between[1]),
+            ] {
+                if *from == command.node
+                    && timeline::states_of(scenario, index, direction)
+                        .iter()
+                        .any(Impairments::is_random)
+                {
+                    reasons.push(format!(
+                        "the program '{}' may send packets into link '{}' ({word}), whose queue draws random numbers: the run does not count or order them, so which packets are lost can differ from run to run with the same seed",
+                        command.id, link.id
+                    ));
+                }
+            }
+        }
+    }
+    reasons
+}
+
 fn not_reproducible_because(
     scenario: &Scenario,
     provisioned: &Provisioned,
@@ -503,6 +545,7 @@ fn not_reproducible_because(
     });
     reasons.extend(clock_reasons);
     reasons.extend(shared_directions(scenario));
+    reasons.extend(programs_into_random_queues(scenario));
     if corrupts {
         reasons.push(
             "the scenario corrupts packets: the seed fixes which packets are corrupted, but not where `netem` flips the bit, and a bit in the source address of the Ethernet header harms nothing, so a few corrupted packets arrive in one run and are dropped in another (the packets lost in the queue are the same)"
@@ -1038,6 +1081,31 @@ fn measure(
     provisioned: &Provisioned,
     control: &Control<'_>,
 ) -> Result<Measurement, Error> {
+    let mut programs = Programs::default();
+    let measured = measure_with(
+        backend,
+        scenario,
+        options,
+        provisioned,
+        control,
+        &mut programs,
+    );
+    if measured.is_err() {
+        // The process groups of the programs are not ended by the teardown of the network: they are ended here
+        programs.kill_all(backend);
+    }
+    measured
+}
+
+/// Steps 5 to 7 with the programs of your own in `programs`.
+fn measure_with(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    options: &RunOptions,
+    provisioned: &Provisioned,
+    control: &Control<'_>,
+    programs: &mut Programs,
+) -> Result<Measurement, Error> {
     control.checkpoint()?;
     if !options.agent.is_file() {
         return Err(failure(
@@ -1050,6 +1118,8 @@ fn measure(
     }
     let flows = plan(scenario, provisioned, options)?;
 
+    // The programs of your own first, each when the one before is ready: a server has to be there before the packets
+    programs.start(backend, scenario, provisioned, options, control)?;
     let receivers = start_receivers(backend, &flows, options, control)?;
     control.emit(&RunEvent::ReceiversReady {
         count: receivers.len(),
@@ -1059,6 +1129,7 @@ fn measure(
     let before = node_counts(backend, scenario, provisioned)?;
     let begin_at = Instant::now() + START_MARGIN;
     let begin = monotonic_ns() + nanos(START_MARGIN);
+    programs.set_begin(begin);
     // The steps of the timeline, and which of them a sender waits for (D-038)
     let steps = timeline::steps(scenario);
     let sending: Vec<barriers::Sending<'_>> = flows
@@ -1095,6 +1166,10 @@ fn measure(
             ns: begin,
         },
         deadline,
+        drive::Watch {
+            programs,
+            hold_until: begin_at + Duration::from(scenario.duration),
+        },
         control,
     )?;
     let sent = driven.sent;
@@ -1104,8 +1179,15 @@ fn measure(
 
     // The packets that are still in the network arrive before the receivers are told to stop
     let (settle, settle_note) = settle(backend, scenario, provisioned, options, control)?;
+    // The programs end after the packets have, with their last words
+    programs.stop_all(backend)?;
     // After the wait, every packet has passed its queue; the receivers still run and the network still stands
-    let queue_checks = check_queues(backend, scenario, provisioned, &flows, &sent)?;
+    let queue_checks = if programs.is_empty() {
+        check_queues(backend, scenario, provisioned, &flows, &sent)?
+    } else {
+        // A program sends packets of its own into the queues; the run did not count them and cannot hold the queue to its own
+        Vec::new()
+    };
     let after = node_counts(backend, scenario, provisioned)?;
     control.emit(&RunEvent::Collecting);
     let mut measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
@@ -1121,6 +1203,7 @@ fn measure(
         interrupted_ns,
         begin_ns: begin,
         clock_reasons: plan.reasons,
+        programs: std::mem::take(programs).into_results(begin),
     })
 }
 
@@ -1914,6 +1997,7 @@ mod tests {
                 exit: played.exit,
                 stderr: played.stderr.clone(),
                 truncated: false,
+                output: crate::backend::OutputStats::default(),
             })
         }
 
@@ -3138,19 +3222,17 @@ mod tests {
             assert!((2.4..2.8).contains(&elapsed.as_secs_f64()), "{elapsed:?}");
             assert_eq!(total, Duration::from_secs(10));
         }
-        // A run that is long over is clamped to its length
+        // A run that is long over says nothing at a checkpoint: the report of the whole is made once, by `workloads_done`
         control.workloads_started(
             Instant::now().checked_sub(Duration::from_secs(60)).unwrap(),
             Duration::from_secs(10),
         );
+        let before = recorder.events.lock().unwrap().len();
         control.checkpoint().unwrap();
-        let last = recorder.events.lock().unwrap().last().cloned().unwrap();
+        let after = recorder.events.lock().unwrap().len();
         assert_eq!(
-            last,
-            RunEvent::Progress {
-                elapsed: Duration::from_secs(10),
-                total: Duration::from_secs(10)
-            }
+            before, after,
+            "a checkpoint says nothing of a run that is over"
         );
         control.workloads_done();
         control.workloads_done();
@@ -3159,8 +3241,8 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, RunEvent::Progress { elapsed, total } if elapsed == total))
             .count();
-        // the clamped one and the one of `workloads_done`, which says it once
-        assert_eq!(done, 2, "{events:?}");
+        // the one of `workloads_done`, which says it once however often it is called
+        assert_eq!(done, 1, "{events:?}");
     }
 
     #[test]

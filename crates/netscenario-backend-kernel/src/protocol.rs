@@ -89,6 +89,29 @@ pub(crate) enum Request {
         /// The most address space the program may use, in bytes.
         #[serde(default)]
         memory_limit: Option<u64>,
+        /// Variables added to the environment, the directory, a process group of its own, and the files that get its
+        /// output (D-072). An older caller leaves them out.
+        #[serde(default)]
+        env: Vec<(String, String)>,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        own_group: bool,
+        #[serde(default)]
+        stdout_file: Option<String>,
+        #[serde(default)]
+        stderr_file: Option<String>,
+    },
+    /// Sends a signal (its number) to the process group of a program that has one.
+    Signal {
+        program: u32,
+        signal: i32,
+    },
+    /// Whether a socket is bound (`udp`) or listens (`tcp`) on a port in a node (D-041).
+    PortBound {
+        node: u32,
+        udp: bool,
+        port: u16,
     },
     /// Waits up to `wait_ms` for a line or the end of a program and returns what is new.
     Poll {
@@ -128,7 +151,21 @@ pub(crate) enum Response {
         exit: Option<Exit>,
         stderr: String,
         truncated: bool,
+        #[serde(default)]
+        output: OutputCounts,
     },
+    /// The answer to `PortBound`.
+    Bool { value: bool },
+}
+
+/// What was read from a program and what was dropped (`netscenario_core::OutputStats` on the wire).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub(crate) struct OutputCounts {
+    pub(crate) stdout_bytes: u64,
+    pub(crate) stdout_dropped_bytes: u64,
+    pub(crate) stderr_bytes: u64,
+    pub(crate) stderr_dropped_bytes: u64,
+    pub(crate) long_lines: u64,
 }
 
 /// How a program ended: its exit code, or the signal that ended it.
@@ -184,6 +221,20 @@ mod tests {
                 node: 1,
                 argv: vec!["ping".to_owned(), "-c1".to_owned()],
                 memory_limit: Some(1 << 30),
+                env: vec![("A".to_owned(), "1".to_owned())],
+                cwd: Some("/tmp".to_owned()),
+                own_group: true,
+                stdout_file: Some("/tmp/out.log".to_owned()),
+                stderr_file: None,
+            },
+            Request::Signal {
+                program: 2,
+                signal: 15,
+            },
+            Request::PortBound {
+                node: 1,
+                udp: true,
+                port: 4433,
             },
             Request::Poll {
                 program: 0,
@@ -217,7 +268,15 @@ mod tests {
                 exit: Some(Exit::Signal(9)),
                 stderr: "boom\n".to_owned(),
                 truncated: false,
+                output: OutputCounts {
+                    stdout_bytes: 5,
+                    stdout_dropped_bytes: 1,
+                    stderr_bytes: 5,
+                    stderr_dropped_bytes: 0,
+                    long_lines: 2,
+                },
             },
+            Response::Bool { value: true },
             Response::Error {
                 message: "no \"good\"\n".to_owned(),
             },
@@ -237,7 +296,12 @@ mod tests {
             Request::StartProgram {
                 node: 0,
                 argv: vec!["true".to_owned()],
-                memory_limit: None
+                memory_limit: None,
+                env: Vec::new(),
+                cwd: None,
+                own_group: false,
+                stdout_file: None,
+                stderr_file: None,
             }
         );
     }

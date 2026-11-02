@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -396,3 +397,74 @@ def test_the_recoveries_are_read_in_seconds_and_a_missing_time_says_why() -> Non
     assert (found.baseline, found.level, found.window_bins) == (1.0, 0.9, 3)
     assert (missing.time, missing.recovered_at, missing.recovered) == (None, None, False)
     assert missing.reason == "never reached"
+
+
+def _program() -> dict[str, Any]:
+    return {
+        "id": "app",
+        "node": "server",
+        "run": ["./app.sh", "10.100.0.2"],
+        "started_ns": -500_000_000,
+        "ready_ns": -400_000_000,
+        "ended_ns": 3_300_000_000,
+        "ended": "stopped",
+        "exit_code": None,
+        "exit_signal": 15,
+        "stdout_file": "program-app.stdout.log",
+        "stderr_file": "program-app.stderr.log",
+        "output": {
+            "stdout_bytes": 343,
+            "stdout_dropped_bytes": 0,
+            "stderr_bytes": 5,
+            "stderr_dropped_bytes": 0,
+            "long_lines": 0,
+        },
+        "lines_dropped": False,
+        "metrics": [
+            {"name": "tick", "unit": None, "count": 5, "first": 1, "last": 5, "min": 1, "max": 5},
+            {"name": "up", "unit": "bool", "count": 1, "first": 1, "last": 1, "min": 1, "max": 1},
+        ],
+        "metrics_file": "metrics-app.jsonl",
+        "metric_readings": 6,
+        "bad_metric_lines": 1,
+        "bad_metric_examples": ["`value` must be a number: {}"],
+    }
+
+
+def test_a_program_is_read_in_seconds_with_its_metrics_and_files(tmp_path: Path) -> None:
+    assert result().programs == {}
+    data = json.loads(json.dumps(RESULT))
+    data["programs"] = [_program()]
+    (tmp_path / "metrics-app.jsonl").write_text(
+        '{"t_ns":-500000000,"metric":"up","value":1.0,"unit":"bool"}\n'
+        '{"t_ns":1500000,"metric":"tick","value":2.0}\n',
+        encoding="utf-8",
+    )
+    read = ns.Result.from_json(json.dumps(data), tmp_path)
+    program = read.programs["app"]
+    assert (program.node, program.run) == ("server", ("./app.sh", "10.100.0.2"))
+    assert (program.started, program.ready, program.ended) == (-0.5, -0.4, 3.3)
+    assert (program.how_it_ended, program.exit_code, program.exit_signal) == ("stopped", None, 15)
+    assert program.stdout_file == tmp_path / "program-app.stdout.log"
+    assert (program.output.stdout_bytes, program.output.long_lines) == (343, 0)
+    assert program.metrics["up"].unit == "bool"
+    assert (program.metrics["tick"].count, program.metrics["tick"].last) == (5, 5.0)
+    assert program.bad_metric_lines == 1
+    assert "must be a number" in program.bad_metric_examples[0]
+    assert program.readings() == ((-0.5, "up", 1.0), (0.0015, "tick", 2.0))
+    # Stopped by the run: neither a success nor a crash
+    assert (program.succeeded, program.crashed) == (False, False)
+
+
+def test_a_program_that_ended_by_itself_with_an_error_is_a_crash() -> None:
+    data = json.loads(json.dumps(RESULT))
+    crashed = _program() | {"ended": "on-its-own", "exit_code": 3, "exit_signal": None}
+    fine = _program() | {"id": "ok", "ended": "on-its-own", "exit_code": 0, "exit_signal": None}
+    quiet = _program()
+    quiet.update(id="quiet", metrics=[], metrics_file=None)
+    data["programs"] = [crashed, fine, quiet]
+    programs = ns.Result.from_json(json.dumps(data), Path("/out")).programs
+    assert (programs["app"].crashed, programs["app"].succeeded) == (True, False)
+    assert (programs["ok"].succeeded, programs["ok"].crashed) == (True, False)
+    # No file of readings: no readings, and no error
+    assert programs["quiet"].readings() == ()

@@ -1,7 +1,7 @@
 //! `netscenario run`: run a scenario file and write its result.
 
 use std::io::{IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -103,6 +103,17 @@ fn series_options(parsed: &Parsed) -> Result<(std::time::Duration, RecoveryOptio
 
 /// The directory for a result when none is given: the name of the scenario and the time, so that two runs do
 /// not overwrite each other.
+/// The directory of the scenario file, as an absolute path: where the programs of your own run (D-041).
+fn scenario_directory(path: &str) -> Option<PathBuf> {
+    let directory = Path::new(path).parent()?;
+    let directory = if directory.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        directory
+    };
+    std::fs::canonicalize(directory).ok()
+}
+
 fn default_out(name: &str) -> PathBuf {
     let seconds = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -293,6 +304,8 @@ pub(crate) fn run_command<S: AsRef<str>>(
     options.export_packets = parsed.flag("packets");
     options.bin = bin;
     options.recovery = recovery;
+    // The programs of your own run where the scenario file is (D-041)
+    options.working_dir = scenario_directory(path);
     // Ctrl-C stops the workloads and keeps what was recorded (D-066)
     let token = CancelToken::new();
     options = options.with_cancel(token.clone()).with_partial_on_cancel();

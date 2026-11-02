@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crate::command::Toolbox;
 use crate::protocol::{Request, Response};
-use crate::provisioner::{Failpoints, Provisioner, disable_ipv6};
+use crate::provisioner::{Failpoints, ProgramSpec, Provisioner, disable_ipv6};
 
 /// The environment variable that names a failpoint of the crash tests (see `provisioner::Failpoints`).
 pub const FAIL_AT: &str = "NETSCENARIO_FAIL_AT";
@@ -167,9 +167,35 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                 node,
                 argv,
                 memory_limit,
+                env,
+                cwd,
+                own_group,
+                stdout_file,
+                stderr_file,
             } => provisioner
-                .start_program(node, &argv, memory_limit)
+                .start_program(
+                    node,
+                    ProgramSpec {
+                        argv,
+                        memory_limit,
+                        env,
+                        cwd,
+                        own_group,
+                        stdout_file,
+                        stderr_file,
+                    },
+                )
                 .map(Some),
+            Request::Signal { program, signal } => {
+                provisioner.signal(program, signal).map(|()| None)
+            }
+            Request::PortBound { node, udp, port } => {
+                send(&match provisioner.port_bound(node, udp, port) {
+                    Ok(value) => Response::Bool { value },
+                    Err(message) => Response::Error { message },
+                });
+                continue;
+            }
             Request::Poll { program, wait_ms } => {
                 send(
                     &match provisioner.poll(program, Duration::from_millis(wait_ms)) {
@@ -178,6 +204,7 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                             exit: report.exit,
                             stderr: report.stderr,
                             truncated: report.truncated,
+                            output: report.output,
                         },
                         Err(message) => Response::Error { message },
                     },

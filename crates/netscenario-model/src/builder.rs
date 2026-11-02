@@ -19,8 +19,6 @@
 //! # Ok::<(), Vec<netscenario_model::Problem>>(())
 //! ```
 
-use std::collections::BTreeMap;
-
 use crate::error::Problem;
 use crate::generators::{PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
 use crate::scenario::{
@@ -461,14 +459,11 @@ impl ScenarioBuilder {
         let id = self.name_at(id, &format!("workloads[{index}].id"));
         let node = self.name_at(node, &format!("workloads[{index}].node"));
         if let (Some(id), Some(node)) = (id, node) {
-            self.workloads.push(Workload::Command(Command {
+            self.workloads.push(Workload::Command(Command::new(
                 id,
                 node,
-                run: run.iter().map(|argument| (*argument).to_owned()).collect(),
-                env: BTreeMap::new(),
-                ready: None,
-                shutdown: None,
-            }));
+                run.iter().map(|argument| (*argument).to_owned()).collect(),
+            )));
         }
         self
     }

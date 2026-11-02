@@ -13,6 +13,7 @@ mod client;
 mod command;
 pub mod doctor;
 mod netem;
+mod programs;
 mod protocol;
 mod provisioner;
 pub mod supervisor;

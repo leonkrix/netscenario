@@ -550,6 +550,7 @@ dependencies = [
  "netscenario-agent",
  "netscenario-core",
  "netscenario-model",
+ "rustix",
  "serde",
  "serde_json",
 ]
