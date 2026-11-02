@@ -764,9 +764,38 @@ impl UdpCbr {
     }
 }
 
+/// What the run does when a program ends by itself before the end of the run, with an exit code other than 0 or by a
+/// signal (D-072).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum OnExit {
+    /// The run goes on to its end and the result reports how the program ended. The default: a program that crashes
+    /// under a bad network is a finding, not a fault of the tool.
+    #[default]
+    Continue,
+    /// The run is stopped with an error that names the program, how it ended and the end of its standard error. The
+    /// logs and the files of the run stay.
+    Fail,
+}
+
+impl OnExit {
+    /// For `skip_serializing_if`, which passes a reference.
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "the signature that `skip_serializing_if` calls"
+    )]
+    fn is_continue(&self) -> bool {
+        *self == Self::Continue
+    }
+}
+
 /// A workload that is a program of your own. It runs in the namespace of its node, as the invoking user, in
 /// the directory of the scenario file (D-041), and it is the only way for a scenario to run code.
+///
+/// New keys are added to this type in later releases, so it cannot be built with a struct expression outside this
+/// crate: use [`Command::new`] or read a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Command {
     /// The name of the workload.
     pub id: Name,
@@ -781,6 +810,25 @@ pub struct Command {
     pub ready: Option<Ready>,
     /// How the program is stopped. Without it: `TERM`, then `KILL` after 5 seconds.
     pub shutdown: Option<Shutdown>,
+    /// What the run does when the program ends by itself with an error before the end. Default: it goes on.
+    pub on_exit: OnExit,
+}
+
+impl Command {
+    /// A program that is ready when it is started, with no environment of its own, the default shutdown, and a run that
+    /// goes on when it ends.
+    #[must_use]
+    pub fn new(id: Name, node: Name, run: Vec<String>) -> Self {
+        Self {
+            id,
+            node,
+            run,
+            env: BTreeMap::new(),
+            ready: None,
+            shutdown: None,
+            on_exit: OnExit::Continue,
+        }
+    }
 }
 
 /// How the run learns that a program is ready: exactly one of the five ways. The first four need `within`,
@@ -916,6 +964,14 @@ struct CommandFile<'a> {
     /// How the program is stopped.
     #[serde(skip_serializing_if = "Option::is_none")]
     shutdown: &'a Option<Shutdown>,
+    /// `continue` (default): the run goes on when the program ends by itself with an error. `fail`: the run is stopped
+    /// with an error.
+    #[serde(
+        default,
+        rename = "on-exit",
+        skip_serializing_if = "OnExit::is_continue"
+    )]
+    on_exit: OnExit,
 }
 
 /// For `skip_serializing_if`, which passes a reference.
@@ -954,6 +1010,7 @@ impl Serialize for Command {
             env: (!self.env.is_empty()).then_some(&self.env),
             ready: &self.ready,
             shutdown: &self.shutdown,
+            on_exit: self.on_exit,
         }
         .serialize(serializer)
     }
@@ -1008,6 +1065,7 @@ struct WorkloadFields {
     env: Option<BTreeMap<String, String>>,
     ready: Option<Ready>,
     shutdown: Option<Shutdown>,
+    on_exit: Option<OnExit>,
     on: Option<Duration>,
     off: Option<Duration>,
     distribution: Option<PhaseDistribution>,
@@ -1050,7 +1108,7 @@ impl KindName {
             Self::Command => Keys {
                 name: "command",
                 required: &["node", "run"],
-                optional: &["env", "ready", "shutdown"],
+                optional: &["env", "ready", "shutdown", "on-exit"],
             },
         }
     }
@@ -1073,6 +1131,7 @@ impl<'de> Deserialize<'de> for Workload {
             ("env", fields.env.is_some()),
             ("ready", fields.ready.is_some()),
             ("shutdown", fields.shutdown.is_some()),
+            ("on-exit", fields.on_exit.is_some()),
             ("on", fields.on.is_some()),
             ("off", fields.off.is_some()),
             ("distribution", fields.distribution.is_some()),
@@ -1154,6 +1213,7 @@ impl<'de> Deserialize<'de> for Workload {
                 env: fields.env.unwrap_or_default(),
                 ready: fields.ready,
                 shutdown: fields.shutdown,
+                on_exit: fields.on_exit.unwrap_or_default(),
             }),
         })
     }

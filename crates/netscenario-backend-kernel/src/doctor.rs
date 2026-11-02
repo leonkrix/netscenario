@@ -956,18 +956,18 @@ mod tests {
         assert_eq!(status(&report, "way-user-namespace"), Status::Ok);
     }
 
-    /// A feature that the backend does not have yet is information on every machine, and one that this machine
-    /// lacks (here: `tc` is too old for the seed) is a warning.
+    /// A feature that this machine lacks (here: `tc` is too old for the seed) is a warning, and one that it has is
+    /// fine. (A feature that the backend does not have yet would be information on every machine; there is none now.)
     #[test]
-    fn a_feature_the_backend_lacks_is_information_and_one_the_machine_lacks_is_a_warning() {
+    fn a_feature_the_machine_lacks_is_a_warning_and_the_others_are_fine() {
         let report = assess(&good());
-        assert_eq!(status(&report, "program"), Status::Info);
+        assert_eq!(status(&report, "program"), Status::Ok);
         assert_eq!(status(&report, "burst-loss"), Status::Ok);
         let mut old = good();
         old.tools[1].printed = "tc utility, iproute2-5.15.0".to_owned();
         let report = assess(&old);
         assert_eq!(status(&report, "seeded-loss"), Status::Warn);
-        assert_eq!(status(&report, "program"), Status::Info);
+        assert_eq!(status(&report, "program"), Status::Ok);
     }
 
     /// The features follow the probe (D-068): a kernel that refuses reordering is a warning on the line of the feature,

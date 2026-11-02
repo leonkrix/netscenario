@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crate::command::Toolbox;
 use crate::protocol::{Request, Response};
-use crate::provisioner::{Failpoints, Provisioner, disable_ipv6};
+use crate::provisioner::{Failpoints, ProgramSpec, Provisioner, disable_ipv6};
 
 /// The environment variable that names a failpoint of the crash tests (see `provisioner::Failpoints`).
 pub const FAIL_AT: &str = "NETSCENARIO_FAIL_AT";
@@ -68,9 +68,25 @@ fn hold() -> ExitCode {
     }
 }
 
+/// Puts the signals that a program may be sent (`TERM` by default, and the others of `shutdown`) back to what a program
+/// expects. The supervisor is the first process of a pid namespace and may have been started with `SIGTERM` and `SIGINT`
+/// ignored (the `unshare` of util-linux 2.37, on Ubuntu 22.04, does). An ignored signal stays ignored across `exec`, so
+/// every program would ignore `TERM` and none could be stopped but with `KILL` (D-072). A handler, unlike "ignored", is
+/// reset to the default by `exec`; the flag that the handlers set is never read, because the supervisor ignored the
+/// signals before as well.
+fn restore_signals() {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2};
+    let unused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    for signal in [SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2] {
+        // A signal that cannot get a handler stays as it is; the test of the programs says if that matters
+        let _ = signal_hook::flag::register(signal, std::sync::Arc::clone(&unused));
+    }
+}
+
 // One arm for each request of the protocol: splitting it would only hide the list
 #[allow(clippy::too_many_lines)]
 fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
+    restore_signals();
     let tools = match Toolbox::locate() {
         Ok(tools) => tools,
         Err(missing) => {
@@ -167,9 +183,35 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                 node,
                 argv,
                 memory_limit,
+                env,
+                cwd,
+                own_group,
+                stdout_file,
+                stderr_file,
             } => provisioner
-                .start_program(node, &argv, memory_limit)
+                .start_program(
+                    node,
+                    ProgramSpec {
+                        argv,
+                        memory_limit,
+                        env,
+                        cwd,
+                        own_group,
+                        stdout_file,
+                        stderr_file,
+                    },
+                )
                 .map(Some),
+            Request::Signal { program, signal } => {
+                provisioner.signal(program, signal).map(|()| None)
+            }
+            Request::PortBound { node, udp, port } => {
+                send(&match provisioner.port_bound(node, udp, port) {
+                    Ok(value) => Response::Bool { value },
+                    Err(message) => Response::Error { message },
+                });
+                continue;
+            }
             Request::Poll { program, wait_ms } => {
                 send(
                     &match provisioner.poll(program, Duration::from_millis(wait_ms)) {
@@ -178,6 +220,7 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                             exit: report.exit,
                             stderr: report.stderr,
                             truncated: report.truncated,
+                            output: report.output,
                         },
                         Err(message) => Response::Error { message },
                     },

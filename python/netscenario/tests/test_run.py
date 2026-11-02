@@ -126,6 +126,38 @@ def test_a_bin_shorter_than_a_millisecond_is_refused_by_the_run(tmp_path: Path) 
         ns.run(scenario(), out=tmp_path / "out", bin=0.0001)
 
 
+def test_a_program_of_your_own_runs_in_the_directory_of_the_file_and_reports_its_metrics(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "app.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo \'{"metric":"answers","value":3,"unit":"1"}\'\n'
+        'echo "here $(pwd) $NETSCENARIO_NODE"\n'
+        "echo ready\n"
+        "sleep 30\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    path = tmp_path / "scene.yaml"
+    path.write_text(
+        "version: 0\nname: py-program\nduration: 1s\n"
+        "topology:\n  nodes: [client, server]\n  links:\n    - id: l\n"
+        "      between: [client, server]\n"
+        "workloads:\n  - id: app\n    kind: command\n    node: server\n"
+        '    run: ["./app.sh"]\n    ready: { stdout-line: ready, within: 5s }\n'
+        "    shutdown: { signal: TERM, within: 2s }\n",
+        encoding="utf-8",
+    )
+    run = ns.run(ns.Scenario.load(path), out=tmp_path / "out", settle=0.2)
+    program = run.programs["app"]
+    assert (program.how_it_ended, program.exit_signal) == ("stopped", 15)
+    assert program.metrics["answers"].last == 3.0
+    stdout = program.stdout_file.read_text(encoding="utf-8")
+    assert f"here {tmp_path.resolve()} server" in stdout
+    assert run.workloads == {}
+
+
 def test_a_step_of_the_timeline_is_in_the_result_and_the_observer_hears_it(tmp_path: Path) -> None:
     events: list[RunEvent] = []
     run = ns.run(

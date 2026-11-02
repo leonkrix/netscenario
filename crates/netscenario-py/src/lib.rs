@@ -60,7 +60,7 @@ fn doctor(py: Python<'_>) -> String {
 /// `netscenario` program and `agent` the `netscenario-agent` program. `observer` is called as `observer(kind,
 /// fields)` for each event of the run.
 #[pyfunction]
-#[pyo3(signature = (source, source_name, supervisor, agent, out_dir, seed=None, settle=None, packets=false, observer=None, cancel=None, bin=None, recovery_basis=None, recovery_baseline=None, recovery_window=None, recovery_fraction=None))]
+#[pyo3(signature = (source, source_name, supervisor, agent, out_dir, seed=None, settle=None, packets=false, observer=None, cancel=None, bin=None, recovery_basis=None, recovery_baseline=None, recovery_window=None, recovery_fraction=None, working_dir=None))]
 #[allow(clippy::too_many_arguments)] // the arguments of one call from Python, all of them by name
 fn run_scenario(
     py: Python<'_>,
@@ -79,6 +79,7 @@ fn run_scenario(
     recovery_baseline: Option<u32>,
     recovery_window: Option<u32>,
     recovery_fraction: Option<f64>,
+    working_dir: Option<String>,
 ) -> PyResult<String> {
     run::execute(
         py,
@@ -93,6 +94,7 @@ fn run_scenario(
             packets,
             observer,
             cancel: cancel.map(|token| token.token()),
+            working_dir,
             series: Series {
                 bin,
                 recovery_basis,

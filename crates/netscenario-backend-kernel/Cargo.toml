@@ -15,6 +15,10 @@ netscenario-core.workspace = true
 netscenario-model.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# The signal for the process group of a program: a safe call, no `unsafe` (D-025)
+rustix = { workspace = true, features = ["process"] }
+# Handlers for the signals a program may be sent, so that they are not ignored in the programs (below)
+signal-hook.workspace = true
 
 # The helper that a test starts as the supervisor of a run (D-022). An application starts its own binary
 # that calls `supervisor::main`.

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -450,6 +450,116 @@ class Workload:
 
 
 @dataclass(frozen=True)
+class Metric:
+    """What the readings of one metric of a program came to (its ``{"metric": ...}`` lines)."""
+
+    name: str
+    """The name the program gave."""
+    unit: str | None
+    """The unit of the first reading that had one."""
+    count: int
+    """How many readings."""
+    first: float
+    """The first value."""
+    last: float
+    """The last value."""
+    min: float
+    """The smallest."""
+    max: float
+    """The largest."""
+
+
+@dataclass(frozen=True)
+class ProgramOutput:
+    """How the output of a program was read. Nothing that was dropped is hidden."""
+
+    stdout_bytes: int
+    """Bytes of standard output."""
+    stdout_dropped_bytes: int
+    """Bytes of standard output past the first megabyte, which is all the file holds."""
+    stderr_bytes: int
+    """Bytes of standard error."""
+    stderr_dropped_bytes: int
+    """Bytes of standard error past the first megabyte."""
+    long_lines: int
+    """Lines of standard output longer than 64 KiB, which were cut."""
+
+
+@dataclass(frozen=True)
+class Program:
+    """What came of a program of your own (``kind: command``)."""
+
+    id: str
+    """The name in the scenario."""
+    node: str
+    """The node it ran in."""
+    run: tuple[str, ...]
+    """The program and its arguments, with ``{node.addr}`` replaced."""
+    started: float
+    """When the run started it, in seconds from the start of the measured phase (negative: before
+    it)."""
+    ready: float
+    """When the run found it ready (its start, for a program without ``ready``)."""
+    ended: float
+    """When it ended, in the same seconds."""
+    how_it_ended: str
+    """``"on-its-own"`` (before the run asked it to stop), ``"stopped"`` (after the signal of
+    ``shutdown``, within the time) or ``"killed"`` (``KILL`` was needed)."""
+    exit_code: int | None
+    """The exit code, if it returned one."""
+    exit_signal: int | None
+    """The signal that ended it, if one did."""
+    stdout_file: Path
+    """The first megabyte of its standard output."""
+    stderr_file: Path
+    """The first megabyte of its standard error."""
+    output: ProgramOutput
+    """How the output was read."""
+    lines_dropped: bool
+    """Whether lines of standard output were lost before the run read them (more than 10,000 between
+    two looks); metrics in them are lost too."""
+    metrics: Mapping[str, Metric]
+    """The metrics by name."""
+    metrics_file: Path | None
+    """Every reading as a line of JSON with the time (``t_ns``), or ``None`` if there was none."""
+    metric_readings: int
+    """How many valid readings in all."""
+    bad_metric_lines: int
+    """How many lines looked like metrics and were not valid."""
+    bad_metric_examples: tuple[str, ...]
+    """The first of them, each with the reason."""
+
+    @property
+    def succeeded(self) -> bool:
+        """Whether it ended with the exit code 0 (stopped by the run with its signal: ``False``)."""
+        return self.exit_code == 0
+
+    @property
+    def crashed(self) -> bool:
+        """Whether it ended by itself with an error.
+
+        That is an exit code other than 0, or a signal, before the run asked it to stop.
+        """
+        return self.how_it_ended == "on-its-own" and not self.succeeded
+
+    def readings(self) -> tuple[tuple[float, str, float], ...]:
+        """Every reading as ``(seconds from the start of the measured phase, name, value)``.
+
+        Reads ``metrics_file``; each call reads it again.
+        """
+        if self.metrics_file is None:
+            return ()
+        found: list[tuple[float, str, float]] = []
+        with self.metrics_file.open(encoding="utf-8") as lines:
+            for line in lines:
+                if line.strip():
+                    data = json.loads(line)
+                    at = data["t_ns"] / _NANOSECONDS
+                    found.append((at, data["metric"], float(data["value"])))
+        return tuple(found)
+
+
+@dataclass(frozen=True)
 class QueueCheck:
     """The packets of one direction of a link that drew a number for the random loss.
 
@@ -605,6 +715,8 @@ class Result:
     """What the backend says about how it did the run besides the result, one sentence for each
     fact: for example that the changes of a link were made the slow way after the fast way stopped
     working. Empty if the run went as usual."""
+    programs: Mapping[str, Program] = field(default_factory=lambda: MappingProxyType({}))
+    """The programs of your own (``kind: command``) by id, in the order of the scenario."""
 
     def __getitem__(self, workload_id: str) -> Workload:
         """The workload with this id."""
@@ -703,9 +815,55 @@ class Result:
                 for e in raw.get("events", ())
             ),
             notes=tuple(raw.get("notes", ())),
+            programs=MappingProxyType(
+                {p["id"]: _program(p, directory) for p in raw.get("programs", ())}
+            ),
             out_dir=directory,
             raw=MappingProxyType(raw),
         )
+
+
+def _program(data: dict[str, Any], directory: Path) -> Program:
+    output = data["output"]
+    return Program(
+        id=data["id"],
+        node=data["node"],
+        run=tuple(data["run"]),
+        started=data["started_ns"] / _NANOSECONDS,
+        ready=data["ready_ns"] / _NANOSECONDS,
+        ended=data["ended_ns"] / _NANOSECONDS,
+        how_it_ended=data["ended"],
+        exit_code=data["exit_code"],
+        exit_signal=data["exit_signal"],
+        stdout_file=directory / data["stdout_file"],
+        stderr_file=directory / data["stderr_file"],
+        output=ProgramOutput(
+            stdout_bytes=int(output["stdout_bytes"]),
+            stdout_dropped_bytes=int(output["stdout_dropped_bytes"]),
+            stderr_bytes=int(output["stderr_bytes"]),
+            stderr_dropped_bytes=int(output["stderr_dropped_bytes"]),
+            long_lines=int(output["long_lines"]),
+        ),
+        lines_dropped=bool(data["lines_dropped"]),
+        metrics=MappingProxyType(
+            {
+                m["name"]: Metric(
+                    name=m["name"],
+                    unit=m["unit"],
+                    count=int(m["count"]),
+                    first=float(m["first"]),
+                    last=float(m["last"]),
+                    min=float(m["min"]),
+                    max=float(m["max"]),
+                )
+                for m in data["metrics"]
+            }
+        ),
+        metrics_file=None if data["metrics_file"] is None else directory / data["metrics_file"],
+        metric_readings=int(data["metric_readings"]),
+        bad_metric_lines=int(data["bad_metric_lines"]),
+        bad_metric_examples=tuple(data["bad_metric_examples"]),
+    )
 
 
 def _reordering(data: dict[str, Any] | None) -> Reordering | None:

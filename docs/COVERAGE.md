@@ -124,7 +124,7 @@ Mobility only changes the parameters of links over time (through the geometry-ba
 | UDP without checksum | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs): a corrupted packet arrives and is counted, at three payload sizes) | ✔ 0.4 | ✘ |
 | TCP traffic generators | ✔ 0.3 | ✔ 0.4 | ~ 0.5 |
 | Request and response | ✔ 0.3 | ✔ 0.4 | ✔ 0.5 |
-| Your program as a node | ✔ 0.2 | ✔ 0.4 | ~ 0.5 (addresses are the proxy's) |
+| Your program as a node | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/command.rs): the environment, every way of being ready, a program that is late, ends first, ignores `TERM`, crashes or writes a lot) | ✔ 0.4 | ~ 0.5 (addresses are the proxy's) |
 | A container as a node | ✔ 0.5 | ? | ✘ |
 | Per-packet records | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/run.rs)) | ✔ 0.4 | ~ 0.5 (what passes the proxy) |
 | One-way delay | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs)) | ✔ 0.4 | ~ 0.5 |

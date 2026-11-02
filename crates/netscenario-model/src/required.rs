@@ -81,7 +81,7 @@ pub(crate) const TAGGED: &[Tagged] = &[
             (
                 "command",
                 &["id", "node", "run"],
-                &["env", "ready", "shutdown"],
+                &["env", "ready", "shutdown", "on-exit"],
             ),
             (
                 "udp-poisson",

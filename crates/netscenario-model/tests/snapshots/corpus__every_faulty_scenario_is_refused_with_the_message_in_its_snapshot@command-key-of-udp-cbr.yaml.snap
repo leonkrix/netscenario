@@ -10,4 +10,4 @@ error: the key `rate` is not used by the workload kind `command`
 20 |     rate: 1mbit
    |     ^^^^
    = path: workloads[1].rate
-   = help: the workload kind `command` has `node`, `run`, `env`, `ready`, `shutdown`; `rate` belongs to udp-cbr, udp-poisson and udp-onoff
+   = help: the workload kind `command` has `node`, `run`, `env`, `ready`, `shutdown`, `on-exit`; `rate` belongs to udp-cbr, udp-poisson and udp-onoff

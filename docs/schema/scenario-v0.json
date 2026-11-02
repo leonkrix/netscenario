@@ -86,6 +86,10 @@
           "$ref": "#/$defs/Name",
           "description": "The node it runs in."
         },
+        "on-exit": {
+          "$ref": "#/$defs/OnExit",
+          "description": "`continue` (default): the run goes on when the program ends by itself with an error. `fail`: the run is stopped\nwith an error."
+        },
         "ready": {
           "anyOf": [
             {
@@ -610,6 +614,21 @@
       ],
       "pattern": "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$",
       "type": "string"
+    },
+    "OnExit": {
+      "description": "What the run does when a program ends by itself before the end of the run, with an exit code other than 0 or by a\nsignal (D-072).",
+      "oneOf": [
+        {
+          "const": "continue",
+          "description": "The run goes on to its end and the result reports how the program ended. The default: a program that crashes\nunder a bad network is a finding, not a fault of the tool.",
+          "type": "string"
+        },
+        {
+          "const": "fail",
+          "description": "The run is stopped with an error that names the program, how it ended and the end of its standard error. The\nlogs and the files of the run stay.",
+          "type": "string"
+        }
+      ]
     },
     "OnOffKind": {
       "enum": [

@@ -47,8 +47,8 @@ pub use generators::{Generator, Pattern, PhaseDistribution, UdpBursty, UdpOnOff,
 pub use read::MAX_FILE_BYTES;
 pub use scenario::{
     Backend, Change, Command, Direction, Edit, Event, FormatVersion, Impairments,
-    ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, Ready, Reorder, Scenario, Shutdown,
-    Signal, Topology, True, UdpCbr, UdpChecksum, Workload, WorkloadKind,
+    ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, OnExit, Ready, Reorder, Scenario,
+    Shutdown, Signal, Topology, True, UdpCbr, UdpChecksum, Workload, WorkloadKind,
 };
 pub use schema::json_schema;
 pub use units::{Duration, Name, Probability, Rate, Size, ValueError};

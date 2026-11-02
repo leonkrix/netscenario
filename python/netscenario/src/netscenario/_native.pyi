@@ -44,5 +44,6 @@ def run_scenario(
     recovery_baseline: int | None = None,
     recovery_window: int | None = None,
     recovery_fraction: float | None = None,
+    working_dir: str | None = None,
 ) -> str:
     """Run a scenario; return the text of ``result.json``."""

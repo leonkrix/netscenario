@@ -174,6 +174,7 @@ pub(crate) struct Request {
     pub(crate) packets: bool,
     pub(crate) observer: Option<Py<PyAny>>,
     pub(crate) cancel: Option<CancelToken>,
+    pub(crate) working_dir: Option<String>,
     pub(crate) series: Series,
 }
 
@@ -242,6 +243,7 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
         packets,
         observer,
         cancel,
+        working_dir,
         series,
     } = request;
     let mut scenario =
@@ -257,6 +259,7 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
     options.export_packets = packets;
     options.settle = settle.map(Duration::from_secs_f64);
     series.apply(&mut options)?;
+    options.working_dir = working_dir.map(std::path::PathBuf::from);
     if let Some(callable) = observer {
         let (error_slot, cancel_on_error) = (Arc::clone(&callback_error), token.clone());
         let notify = move |event: &RunEvent| {

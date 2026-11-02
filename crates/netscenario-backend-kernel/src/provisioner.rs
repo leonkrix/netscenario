@@ -4,11 +4,12 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use netscenario_model::Impairments;
@@ -16,7 +17,8 @@ use netscenario_model::Impairments;
 use crate::batch::{ANSWER_WITHIN, Batch, Failure};
 use crate::command::{Toolbox, run};
 use crate::netem;
-use crate::protocol::Way;
+use crate::programs::{Output, read_stderr, read_stdout, socket_is_bound};
+use crate::protocol::{OutputCounts, Way};
 
 /// The most links a run can address.
 const MAX_LINKS: usize = 200;
@@ -76,44 +78,17 @@ struct Link {
     ends: [End; 2],
 }
 
-/// The most lines of standard output that the supervisor keeps for a program that nobody asks about.
-const MAX_LINES: usize = 10_000;
-
-/// The most bytes of standard error that are kept: the end of it.
-const STDERR_LIMIT: usize = 16 * 1024;
-
 /// How long a program that has ended may take to deliver the rest of its output, if a process that it started
 /// keeps the pipe open.
 const OUTPUT_GRACE: Duration = Duration::from_millis(500);
-
-/// What the threads that read a program's output collect.
-#[derive(Default)]
-struct Output {
-    state: Mutex<OutputState>,
-    news: Condvar,
-}
-
-#[derive(Default)]
-struct OutputState {
-    lines: Vec<String>,
-    kept: usize,
-    truncated: bool,
-    stdout_ended: bool,
-    stderr_ended: bool,
-    stderr: String,
-}
-
-impl Output {
-    fn lock(&self) -> std::sync::MutexGuard<'_, OutputState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
 
 /// A program in a node, with the threads that read its standard output and standard error.
 struct RunningProgram {
     child: Child,
     stdin: Option<ChildStdin>,
     output: Arc<Output>,
+    /// Whether it leads a process group of its own.
+    own_group: bool,
 }
 
 /// What a poll reports.
@@ -122,55 +97,18 @@ pub(crate) struct ProgramReport {
     pub(crate) exit: Option<crate::protocol::Exit>,
     pub(crate) stderr: String,
     pub(crate) truncated: bool,
+    pub(crate) output: OutputCounts,
 }
 
-fn read_stdout(pipe: impl Read, output: &Output) {
-    let mut reader = BufReader::new(pipe);
-    let mut bytes = Vec::new();
-    loop {
-        bytes.clear();
-        // A program may write what is not UTF-8: it is shown with replacement characters, not dropped
-        match reader.read_until(b'\n', &mut bytes) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {
-                let line = String::from_utf8_lossy(&bytes)
-                    .trim_end_matches(['\n', '\r'])
-                    .to_owned();
-                let mut state = output.lock();
-                if state.kept < MAX_LINES {
-                    state.lines.push(line);
-                    state.kept += 1;
-                } else {
-                    state.truncated = true;
-                }
-                output.news.notify_all();
-            }
-        }
-    }
-    output.lock().stdout_ended = true;
-    output.news.notify_all();
-}
-
-fn read_stderr(mut pipe: impl Read, output: &Output) {
-    let mut buffer = [0_u8; 1024];
-    while let Ok(n) = pipe.read(&mut buffer) {
-        if n == 0 {
-            break;
-        }
-        let mut state = output.lock();
-        state
-            .stderr
-            .push_str(&String::from_utf8_lossy(&buffer[..n]));
-        if state.stderr.len() > STDERR_LIMIT {
-            let cut = state.stderr.len() - STDERR_LIMIT;
-            let cut = (cut..state.stderr.len())
-                .find(|&i| state.stderr.is_char_boundary(i))
-                .unwrap_or(0);
-            state.stderr.drain(..cut);
-        }
-    }
-    output.lock().stderr_ended = true;
-    output.news.notify_all();
+/// What a program is started with (D-072).
+pub(crate) struct ProgramSpec {
+    pub(crate) argv: Vec<String>,
+    pub(crate) memory_limit: Option<u64>,
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) own_group: bool,
+    pub(crate) stdout_file: Option<String>,
+    pub(crate) stderr_file: Option<String>,
 }
 
 pub(crate) struct Provisioner {
@@ -663,12 +601,16 @@ impl Provisioner {
         ))
     }
 
-    pub(crate) fn start_program(
-        &mut self,
-        node: u32,
-        argv: &[String],
-        memory_limit: Option<u64>,
-    ) -> Result<u32, String> {
+    pub(crate) fn start_program(&mut self, node: u32, spec: ProgramSpec) -> Result<u32, String> {
+        let ProgramSpec {
+            argv,
+            memory_limit,
+            env,
+            cwd,
+            own_group,
+            stdout_file,
+            stderr_file,
+        } = spec;
         self.failpoints.hit("program:start");
         let node = self
             .nodes
@@ -677,10 +619,26 @@ impl Provisioner {
         let Some((program, arguments)) = argv.split_first() else {
             return Err("a program needs at least its name".to_owned());
         };
+        // The files are made before the program, so that a path that cannot be written is an error of the start
+        let create = |path: Option<String>| -> Result<Option<fs::File>, String> {
+            path.map(|path| {
+                fs::File::create(&path).map_err(|error| format!("cannot create {path}: {error}"))
+            })
+            .transpose()
+        };
+        let (stdout_log, stderr_log) = (create(stdout_file)?, create(stderr_file)?);
         let mut command = Command::new(&self.tools.nsenter);
         command
             .arg(format!("--net=/proc/{}/ns/net", node.pid))
             .arg("--");
+        command.envs(env);
+        if let Some(directory) = &cwd {
+            command.current_dir(directory);
+        }
+        if own_group {
+            // The program leads a process group of its own, so that a signal reaches its children too (D-041)
+            command.process_group(0);
+        }
         if let Some(bytes) = memory_limit {
             // `prlimit` sets the limit and then becomes the program: nothing stays between it and us
             command
@@ -704,13 +662,13 @@ impl Provisioner {
         let output = Arc::new(Output::default());
         if let Some(pipe) = child.stdout.take() {
             let output = Arc::clone(&output);
-            std::thread::spawn(move || read_stdout(pipe, &output));
+            std::thread::spawn(move || read_stdout(pipe, &output, stdout_log));
         } else {
             output.lock().stdout_ended = true;
         }
         if let Some(pipe) = child.stderr.take() {
             let output = Arc::clone(&output);
-            std::thread::spawn(move || read_stderr(pipe, &output));
+            std::thread::spawn(move || read_stderr(pipe, &output, stderr_log));
         } else {
             output.lock().stderr_ended = true;
         }
@@ -719,6 +677,7 @@ impl Provisioner {
             child,
             stdin,
             output,
+            own_group,
         });
         self.failpoints.hit("program:end");
         id(self.programs.len() - 1)
@@ -760,6 +719,13 @@ impl Provisioner {
                     }),
                     stderr: state.stderr.clone(),
                     truncated: state.truncated,
+                    output: OutputCounts {
+                        stdout_bytes: state.stats.stdout_bytes,
+                        stdout_dropped_bytes: state.stats.stdout_dropped_bytes,
+                        stderr_bytes: state.stats.stderr_bytes,
+                        stderr_dropped_bytes: state.stats.stderr_dropped_bytes,
+                        long_lines: state.stats.long_lines,
+                    },
                 });
             }
             // A line wakes this up at once; the end of the program is looked for every few milliseconds
@@ -771,6 +737,70 @@ impl Provisioner {
                     .wait_timeout(state, slice)
                     .unwrap_or_else(PoisonError::into_inner),
             );
+        }
+    }
+
+    /// Sends a signal to the process group of a program. A group that is gone is not an error.
+    pub(crate) fn signal(&mut self, program: u32, number: i32) -> Result<(), String> {
+        let running = self
+            .programs
+            .get(program as usize)
+            .ok_or_else(|| format!("the program {program} does not exist in this run"))?;
+        if !running.own_group {
+            return Err(format!(
+                "the program {program} was not started in a process group of its own"
+            ));
+        }
+        let signal = match number {
+            1 => rustix::process::Signal::HUP,
+            2 => rustix::process::Signal::INT,
+            3 => rustix::process::Signal::QUIT,
+            9 => rustix::process::Signal::KILL,
+            10 => rustix::process::Signal::USR1,
+            12 => rustix::process::Signal::USR2,
+            15 => rustix::process::Signal::TERM,
+            other => return Err(format!("the signal {other} is not one that a run sends")),
+        };
+        let group = i32::try_from(running.child.id())
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+            .ok_or_else(|| format!("the program {program} has no process id"))?;
+        match rustix::process::kill_process_group(group, signal) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+            Err(error) => Err(format!(
+                "cannot signal the group of the program {program}: {error}"
+            )),
+        }
+    }
+
+    /// Whether a socket is bound (UDP) or listens (TCP) on `port` in a node, read from the tables of its namespace.
+    pub(crate) fn port_bound(&self, node: u32, udp: bool, port: u16) -> Result<bool, String> {
+        let node = self
+            .nodes
+            .get(node as usize)
+            .ok_or_else(|| format!("the node {node} does not exist in this run"))?;
+        let (files, state) = if udp {
+            (["udp", "udp6"], "07")
+        } else {
+            (["tcp", "tcp6"], "0A")
+        };
+        let mut read_one = false;
+        for file in files {
+            // IPv6 may be switched off in the node: its table is then missing, which says nothing about IPv4
+            if let Ok(table) = fs::read_to_string(format!("/proc/{}/net/{file}", node.pid)) {
+                read_one = true;
+                if socket_is_bound(&table, port, state) {
+                    return Ok(true);
+                }
+            }
+        }
+        if read_one {
+            Ok(false)
+        } else {
+            Err(format!(
+                "cannot read the sockets of the node '{}' (/proc/{}/net)",
+                node.name, node.pid
+            ))
         }
     }
 
