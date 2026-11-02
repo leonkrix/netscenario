@@ -24,7 +24,7 @@ It looks at the machine and prints one line per check, in four groups, and for e
 | Kernel and tc | `models` | `tc` and the kernel accept the Gilbert-Elliott and the four-state loss, reordering, duplication and corruption | `warn`: a scenario that uses a refused model is refused by the run |
 | Kernel and tc | `duplicate-tree` | the kernel accepts a duplicating `netem` next to another `netem` in one tree, which a direction with a rate and a jitter or a reordering needs (D-052) | `warn`: a direction with `duplicate`, a `rate` and a `jitter` or `reorder` is refused by the run, with the answer of the kernel; `info` if the first queue of the tree is refused already |
 | Kernel and tc | `raw-socket` | a node has `CAP_NET_RAW` in its effective capabilities, which a stream without the checksum of UDP needs (its sender is a raw socket, D-056) and which the naming of damaged packets by sequence number needs (the receiver reads the interface with a packet socket, D-057). All of the capabilities in a user namespace; in a run with the rights of the process, what the process has | `warn`: a workload with `udp-checksum: false` is refused by the run, and the damaged packets of a link with `corrupt` are counted but not named; the fix names root, `setpriv --ambient-caps +net_raw`, `AmbientCapabilities=` and the user namespace |
-| Features | one per row of [COVERAGE.md](COVERAGE.md) | What the backend declares for this machine (`Exact`, in part, or refused with the reason) | `warn` with the reason and the way out |
+| Features | one per row of [COVERAGE.md](COVERAGE.md) | What the backend declares for this machine (`Exact`, in part, or refused with the reason): by the version of `tc` and by what the probe above found out, so a model that the kernel refuses is a `warn` on its own line, with the answer of the kernel (D-068) | `warn` with the reason and the way out |
 
 The steps after `veth` are not blamed on the kernel when no pair could be created, and nothing of the kernel is claimed when no way to get namespaces works.
 
@@ -43,9 +43,16 @@ The steps after `veth` are not blamed on the kernel when no pair could be create
 
 `status` is `ok`, `warn`, `fail` or `info`; `version` is the version of this form and changes when a field changes its meaning. `ok` is true when no check failed.
 
-### Known limit
+### The gate: a run follows the probe (D-068)
 
-The feature lines come from the declaration of the backend, which depends on the version of `tc` only. Missing tables for `distribution normal` show as the warning of `tables`; the declaration of "Jitter" stays `exact`, so a scenario with a normal jitter on such a machine is refused when the run applies it (the error names the table), not before. Making the declaration depend on a probe is open.
+The feature lines are the declaration of the backend, and a run uses the same one. The declaration follows the version of `tc` **and** a probe of the machine: the first time a run asks what the backend can do, it tries the probe once, in a throwaway namespace and in the way the run takes (about 15 ms), and what the kernel refuses is not declared, with its answer. So a scenario that needs it is refused before anything is built, with the line of the file, and not after the network is up with an error of `tc`.
+
+- Not `netem` at all, or no virtual Ethernet pair: everything that needs it is refused.
+- A model that the kernel refuses (the loss in bursts, reordering, duplication, corruption) or a seed that it does not accept: the feature is refused, and only that one.
+- A jitter with the distribution `normal`, where `tc` finds no table: refused at the jitter (in a link or in a step of the timeline), and the fix names `TC_LIB_DIR`. The declaration of "Jitter" stays `exact`, because the uniform jitter works.
+- A duplicating `netem` next to another one in a tree (D-052), and a stream without the checksum of UDP where a node has no `CAP_NET_RAW` (D-056): as before, from the same probe.
+
+If the probe cannot be run (no `sh`, no way to get namespaces) nothing is known, and the declaration follows the version of `tc` alone; the run then finds out for itself, as it did before.
 
 A run takes the way that `doctor` reports: its own rights if the process is root or has `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` in its ambient set and they work, else the user namespace (D-035, [PERMISSIONS.md](PERMISSIONS.md)). The result of a run says which one it used (`provenance.backend_details.rights`).
 

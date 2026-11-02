@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use netscenario_core::{Feature, Support};
 use serde::Serialize;
 
-use crate::capabilities::{Environment, capabilities};
+use crate::capabilities::{Environment, Probed, capabilities, capabilities_probed};
 use crate::command::{Toolbox, find, has_own_rights, namespace_flags, run, searched};
 use crate::tools::{Tool, Version, parse_tc_version};
 
@@ -636,21 +636,27 @@ fn raw_socket_check(outcome: &Outcome, not_tested: &str) -> Check {
     }
 }
 
-/// Whether a node of this machine has no `CAP_NET_RAW`, tried in a throwaway namespace with the same probe as
-/// `doctor`. `Some(answer)` if it has not; `None` if it has, or if the question cannot be answered (the probe cannot
-/// run): then the sender finds out for itself and its error names the capability.
-pub(crate) fn raw_socket_refusal(tools: &Toolbox, own_rights: bool) -> Option<String> {
+/// Whether a node of this machine has no `CAP_NET_RAW`, from the steps of the probe. `Some(answer)` if it has not;
+/// `None` if it has, or if the question cannot be answered (the probe could not run): then the sender finds out for
+/// itself and its error names the capability.
+pub(crate) fn raw_socket_answer(steps: &[Step]) -> Option<String> {
+    match steps.iter().find(|step| step.name == "rawsocket")?.result {
+        Err(ref error) => Some(answer_of(error).to_owned()),
+        Ok(()) => None,
+    }
+}
+
+/// Runs the probe for the way that a run takes (`own_rights`, or a user namespace), in a throwaway namespace. `None` if
+/// it cannot be run (no `sh`, or no way to get namespaces): then the backend declares what the version of `tc` says,
+/// and the run finds out for itself (D-068).
+pub(crate) fn probe_for_run(tools: &Toolbox, own_rights: bool) -> Option<Vec<Step>> {
     let sh = find("sh")?;
     let way = if own_rights {
         Way::OwnRights
     } else {
         Way::UserNamespace
     };
-    let steps = probe(way, &tools.unshare, &sh, &tools.ip, &tools.tc).ok()?;
-    match steps.iter().find(|step| step.name == "rawsocket")?.result {
-        Err(ref error) => Some(answer_of(error).to_owned()),
-        Ok(()) => None,
-    }
+    probe(way, &tools.unshare, &sh, &tools.ip, &tools.tc).ok()
 }
 
 /// The loss models in bursts, the reordering, the duplication and the corruption: one qdisc each.
@@ -734,18 +740,11 @@ fn tree_check(root: &Outcome, tree: &Outcome, not_tested: &str) -> Check {
     }
 }
 
-/// Whether this kernel refuses the tree of a duplicating `netem` with another one (D-052), tried on the machine
-/// in a throwaway namespace. `Some(answer)` is the answer of `tc`; `None` if the kernel accepts it, or if the
+/// Whether this kernel refuses the tree of a duplicating `netem` with another one (D-052), from the steps of the probe.
+/// `Some(answer)` is the answer of `tc`; `None` if the kernel accepts it, or if the
 /// question cannot be answered (the probe cannot run, or the first queue of the tree is refused already): then the run
 /// finds out for itself and reports what `tc` says.
-pub(crate) fn duplicate_tree_refusal(tools: &Toolbox, own_rights: bool) -> Option<String> {
-    let sh = find("sh")?;
-    let way = if own_rights {
-        Way::OwnRights
-    } else {
-        Way::UserNamespace
-    };
-    let steps = probe(way, &tools.unshare, &sh, &tools.ip, &tools.tc).ok()?;
+pub(crate) fn duplicate_tree_answer(steps: &[Step]) -> Option<String> {
     let result = |name: &str| {
         steps
             .iter()
@@ -759,8 +758,8 @@ pub(crate) fn duplicate_tree_refusal(tools: &Toolbox, own_rights: bool) -> Optio
 }
 
 /// The features, as the backend declares them for this machine.
-fn feature_checks(tc: Tool, checks: &mut Vec<Check>) {
-    let declared = capabilities(&Environment { tc });
+fn feature_checks(tc: Tool, probed: &Probed, checks: &mut Vec<Check>) {
+    let declared = capabilities_probed(&Environment { tc }, probed);
     let complete = capabilities(&Environment::complete());
     for feature in Feature::ALL {
         let (status, detail, fix) = match declared.support(*feature) {
@@ -797,7 +796,14 @@ pub fn assess(findings: &Findings) -> Report {
     let tc = tool_checks(findings, &mut checks);
     rights_checks(findings, &mut checks);
     kernel_checks(findings, &tc, &mut checks);
-    feature_checks(tc, &mut checks);
+    // The features as a run would declare them: by the version of `tc` and by what the probe of the first way that
+    // works found out (D-068)
+    let probed = findings
+        .ways
+        .iter()
+        .find_map(|way| way.outcome.as_ref().ok())
+        .map_or_else(Probed::default, |steps| Probed::new(steps.clone()));
+    feature_checks(tc, &probed, &mut checks);
     Report {
         version: 1,
         ok: checks.iter().all(|c| c.status != Status::Fail),
@@ -962,6 +968,28 @@ mod tests {
         let report = assess(&old);
         assert_eq!(status(&report, "seeded-loss"), Status::Warn);
         assert_eq!(status(&report, "program"), Status::Info);
+    }
+
+    /// The features follow the probe (D-068): a kernel that refuses reordering is a warning on the line of the feature,
+    /// with the answer of the kernel, and a good machine has no such line.
+    #[test]
+    fn a_feature_that_the_kernel_refuses_is_a_warning_with_its_answer() {
+        let mut findings = good();
+        assert_eq!(status(&assess(&findings), "reordering"), Status::Ok);
+        findings.ways[0].outcome = Ok(steps(&[("reorder", "Error: netem: reorder is refused.")]));
+        let report = assess(&findings);
+        assert_eq!(status(&report, "reordering"), Status::Warn);
+        assert!(
+            report
+                .check("reordering")
+                .unwrap()
+                .detail
+                .contains("reorder is refused"),
+            "{}",
+            report.render()
+        );
+        // The others are as they were
+        assert_eq!(status(&report, "duplication"), Status::Ok);
     }
 
     /// D-052: a kernel that refuses a duplicating `netem` next to another is a warning with the answer of the
