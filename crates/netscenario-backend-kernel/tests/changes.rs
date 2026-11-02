@@ -2,7 +2,7 @@
 //! queues are what a fresh queue in the target state is, and no setting of an earlier state is left over.
 //!
 //! `netem` keeps `corrupt`, `reorder`, `rate` and `slot` across a change that does not mention them, and the table
-//! of the distribution of a jitter (measured on the machine of the maintainer and in `docs/DECISIONS.md`). A
+//! of the distribution of a jitter (measured on the machine of the maintainer and in `docs/decisions/`). A
 //! test that goes from one state to the next only would find a leftover only for the pairs it tried, so this one
 //! goes from every state to every state, and compares the queues with a fresh set built for the target.
 

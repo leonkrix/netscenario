@@ -18,7 +18,7 @@ Every feature has a line in [FEATURES.md](FEATURES.md) with an identifier, a pri
 
 ## Decisions are written down
 
-A choice that is hard to undo (a file format, a dependency of the core, a public name) gets an entry in [docs/DECISIONS.md](docs/DECISIONS.md) with the reason and the alternatives. If you disagree with one, open an issue that refers to its number.
+A choice that is hard to undo (a file format, a dependency of the core, a public name) gets an entry with the reason and the alternatives: a new file `docs/decisions/D-NNN.md` with the next number, and a line in the table of [docs/DECISIONS.md](docs/DECISIONS.md). If you disagree with one, open an issue that refers to its number.
 
 ## Development
 
