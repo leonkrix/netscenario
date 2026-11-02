@@ -7,6 +7,7 @@ A run writes a directory (`--out`, or the `out_dir` of `RunOptions`) with these 
 | `result.json` | The result: provenance, seed, and the statistics of each workload. This page describes it. |
 | `flow-<n>.records` | The raw per-packet records of workload `n` (the order of `workloads` in the scenario, from 0), in the binary format of [AGENT.md](AGENT.md). One record for each packet that arrived. |
 | `flow-<n>.wire` | Only for a workload whose direction has `corrupt`: the packets that the receiving node saw on its interface, in the same binary format as `flow-<n>.records` (D-057). The damaged packets are the sequences in it that are not in the records. |
+| `series-<id>.jsonl` | The packets of workload `<id>` by time bin, sent and arrived side by side: one JSON line for each bin, described below (PRB-07, D-070). Always written. |
 | `packets-<id>.jsonl` | Only if asked for (`export_packets`): one JSON line for each packet of workload `<id>`, described below. |
 
 The result is JSON, indented, with a line feed at the end. `format` is always `netscenario-result` and `version` is the version of this format (RPT-01, ENV-06): **0** until 1.0, which means that a field may change its meaning in a minor release and the changelog says so. A new field does not change the version. A program that reads results should refuse a `version` it does not know; `netscenario_core::RunResult::from_json` does.
@@ -194,6 +195,8 @@ The seed of one direction is derived from the seed of the run, the index of the 
 | `unexpected` | Records with a sequence number the sender never used (or one that the kernel refused). Always 0 with a correct sender and receiver; a value above 0 is a bug to report. |
 | `delay` | The one-way delay of the packets that arrived (the first arrival of each), in nanoseconds: `min_ns`, `mean_ns` (rounded down), `p50_ns`, `p90_ns`, `p95_ns`, `p99_ns`, `p999_ns`, `max_ns`; `null` if no packet arrived. |
 | `throughput` | `bin_ns` (one second) and `bits_per_second`: the payload bits that arrived in each second, counted from the moment the first packet was sent. See below. |
+| `series` | Where the series by time bin is and how it is cut: `bin_ns` (one second unless `--bin` or `bin` says otherwise), `bins` (the number of lines) and `file` (`series-<id>.jsonl`, relative to `result.json`). Absent in a result of an older version. See "The series by time bin and the time to recover" below. |
+| `recoveries` | How long the workload took to be back at its level after each event of the timeline that concerns it: one entry for each `set`, `down`, `up` and end of an outage, in the order of the events (`[]` for a scenario without a timeline). See below. |
 | `sender.max_lateness_ns` | The most that a packet left after its moment. A value that is large against the interval between packets (4.8 ms in the example) means that the machine, not the network, shaped the stream. |
 | `sender.send_errors`, `sender.first_error` | Packets the kernel refused to take, and the first reason ("Network is unreachable" while a link is down). |
 | `sender.refused` | The sequence numbers of those packets as runs `[first, last]`, both included (D-064). A refused packet keeps its number, so it keeps its place in time; it was never sent, so it is not in `sent`, not in `lost`, and not a break in a run of lost packets. Empty if the kernel took every packet. |
@@ -220,6 +223,44 @@ Real numbers of `scenarios/lte-like.yaml` (30 s, a normal jitter of 5 ms, 0.75 %
 "jitter": { "last_ns": 5267369, "mean_ns": 5961500, "max_ns": 9546054 },
 "loss_runs": { "runs": 47, "longest": 1, "mean": 1.0, "histogram": [ { "length": 1, "runs": 47 } ] }
 ```
+
+### The series by time bin and the time to recover (PRB-07, D-070)
+
+`throughput` says what arrived in each second and nothing else. A test that asks "what did the workload get through in the five seconds after the link came back" or "how long until it was back at its rate" needs more: what was sent, what arrived and what was lost, in the same stretches of time, and the stretches placed where the steps of the timeline can be found. That is the series. It is in a file of its own so that `result.json` stays small, and the entry `series` of the workload says where it is.
+
+**The bins** are `bin_ns` wide (one second by default; `--bin` on the command line, `bin=` in Python, `RunOptions::bin` in the library; at least a millisecond, and the run may have at most a million of them) and are counted from the **start of the measured phase**, the moment from which `scheduled_ns` of `events` is counted. Bin 0 begins there, not at the first packet, so a step at 7.3 s is in bin 7 and a workload with a `start` has empty bins before it. The series runs to the last bin in which a packet was sent or arrived. The last bin is usually part of a bin and is not scaled.
+
+**Two views of the same packets, in the same bins.** A packet has two moments, and a link that delays by 200 ms puts them in different bins:
+
+- `by_send`: the packets are counted in the bin of their **slot**, the moment at which the sender is to send them (`start + n * interval`: the nominal moment, so a sender that is late does not move a packet into another bin). `sent` is how many slots lie in the bin, `received` how many of those packets arrived (in this bin or later), `lost` the rest, `delivered_ratio` is `received / sent` (`null` for a bin without packets), and `delay` is the delay of the packets that arrived. A packet that the kernel refused (`sender.refused`) is not sent and not lost, so it is in none of these. A loss belongs to the bin in which the packet was sent: when an outage swallows the delivery from 9 s to 11 s of a link with 50 ms of delay, the lost packets are in bins 8 (the last 50 ms), 9 and 10, and the silence at the receiver is in bins 9 and 10.
+- `by_arrival`: the packets are counted in the bin in which they **arrived** (the first arrival of each): `received`, the payload `bits`, and their `delay`. This is what a receiver saw. A queue that empties after a rate limit lets more packets arrive in a bin than the workload sent in it; the series shows that (`received` above the `sent` of the same bin), and the recovery below does not count the surplus twice.
+
+`delay` in a bin is `mean_ns` (rounded down), `p50_ns`, `p95_ns`, `p99_ns` and `max_ns`, nearest rank as everywhere, or `null` if no packet is in the view. Both views add up to the totals of the workload: the sum of `by_send.sent` is `sent`, the sums of `by_send.received` and of `by_arrival.received` are `received`, the sum of `by_send.lost` is `lost`, and the sum of `by_arrival.bits` is `received` times eight times the packet size. Duplicates and unexpected records are not in the series, as they are not in the statistics.
+
+One line of `series-media.jsonl` (the second line of the scene in D-070: a link of 4 mbit with 50 ms of delay whose rate has dropped to 1.2 mbit at 3 s, 250 packets a second; the sender gets all of them through, late, and the receiver sees fewer):
+
+```json
+{"workload":"media","bin":3,"start_ns":3000000000,"by_send":{"sent":250,"received":250,"lost":0,"delivered_ratio":1.0,"delay":{"mean_ns":423823662,"p50_ns":422344563,"p95_ns":755323163,"p99_ns":784792451,"max_ns":790683374}},"by_arrival":{"received":149,"bits":1192000,"delay":{"mean_ns":238085416,"p50_ns":236707070,"p95_ns":434136180,"p99_ns":451816660,"max_ns":454764157}}}
+```
+
+**The time to recover.** For each event of the timeline that concerns the workload (its link and direction, or a step of the whole link) `recoveries` has one entry that says how long the workload took to be back at its level. The start of an outage has none, its end has. The definition is a fixed one, so that a number means the same in every run:
+
+1. The **level** of a bin is the share of the packets sent in it that were delivered: on the basis `send` (the default) `by_send.received / by_send.sent`; on the basis `arrival` `by_arrival.received / by_send.sent`, with the arrivals of a bin capped at the packets sent in it, so that a burst from a queue does not make up for the bins before it. A bin in which nothing was sent has no level.
+2. The **disturbance** begins at the event itself for a `set` and a `down`, at the start of the outage for the end of an outage, and at the last `down` of the link before it for an `up`. The **baseline** is the median of the levels of the `baseline_bins` (5) bins before the bin that holds the start of the disturbance, leaving out those in which nothing was sent (a bin that holds the disturbance is not part of the baseline, because it is already disturbed in part). There is none, and so no time, if no bin of those sent anything or the median is 0.
+3. The **level to reach** is `fraction` (0.9) times the baseline.
+4. The workload has **recovered** at the beginning of the first window of `window_bins` (3) bins in a row, starting at the bin that holds the event or later, in which the summed deliveries over the summed sends reach the level. A window counts only if the workload sent something in each of its bins and all of its bins lie in the run, so the last, part-filled bins cannot decide it.
+5. The **time** is `recovered_at_ns - from_ns` (never negative), where `from_ns` is the moment of the event (the end of the outage for its recovery). The resolution is one bin: a time is a multiple of `bin_ns`, plus the part of a bin between the event and the next edge.
+
+The entry says all of this, so a reader does not have to remember the defaults: `basis`, `from_ns`, `disturbance_ns`, `baseline`, `level`, `baseline_bins`, `window_bins`, `fraction`, `recovered_at_ns`, `time_ns`. `time_ns` is `null` with a `reason` if there is no baseline ("nothing was delivered in the bins before the disturbance") or the level was not reached before the run ended.
+
+**Which basis.** The two bases see different things, and the caller chooses (`--recovery-basis`, `recovery_basis=`, `RecoveryOptions::basis`):
+
+- `send` asks "of what the sender put in during this stretch, how much got through". It sees a loss in the bin in which it was caused, so for a link that comes back (`up`, the end of an outage) it is usually 0 s: the packets that were lost were sent before the event. It does not see a queue: a packet that waits two seconds is delivered.
+- `arrival` asks "of what the sender put in during this stretch, how much did the receiver get in it". It sees the silence of an outage and the slowness of a queue at the moment they happen, and it is the basis for "how long did the receiver wait". After a rate limit that has been lifted the packets that are already queued keep the spacing of the old rate (`netem` works out the moment a packet leaves when it enters the queue, D-070), so the receiver is back at its level when the old queue has gone, not when the rate is lifted.
+
+**Read the right event.** The baseline of a `set` is taken before the `set`. For a `set` that lifts a limit again that baseline is the degraded level, and the answer is 0 s. The recovery that says how long the workload took to come back from a drop is the one of the event that dropped it.
+
+The parameters are not part of the scenario: they are about how a result is read, so they belong to the run (`--bin 250ms`, `--recovery-basis arrival`, `--recovery-baseline 5`, `--recovery-window 3`, `--recovery-fraction 90` on the command line; the same words with underscores in Python). The same series can be read again with other parameters: the library has `netscenario_core::recovery::recoveries`, and `Workload.series.read()` gives the bins in Python.
 
 ### `events` (TML-01, D-060)
 
@@ -256,7 +297,7 @@ For a direction without `duplicate` and without a full buffer, `lost_in_queue + 
 
 **Percentiles are the nearest rank.** For `n` delays in ascending order, percentile `p` is the delay at rank `ceil(p * n / 100)` (the first delay is rank 1). It is always a delay that was measured, never an interpolation. With few packets the high percentiles are the largest delays (`p999_ns` equals `max_ns` for up to 1000 packets).
 
-**The throughput series** counts a packet in the second in which it *arrived*, with the seconds counted from the first packet that was sent. A bin is not scaled: the last bin of a stream is usually partly filled, and the packets still in flight when the sender stops fall into a bin of their own (the bin of 76,800 bit/s in the example). Read the series as "what came through each second", not as a rate that must equal the offered rate in every bin. The offered rate is `rate_bits_per_second`. For UDP the throughput and the goodput are the same number, because the payload is counted.
+**The throughput series** counts a packet in the second in which it *arrived*, with the seconds counted from the first packet that was sent (the `by_arrival` view of the series counts them from the start of the measured phase, so that its bins line up with the steps of the timeline). A bin is not scaled: the last bin of a stream is usually partly filled, and the packets still in flight when the sender stops fall into a bin of their own (the bin of 76,800 bit/s in the example). Read the series as "what came through each second", not as a rate that must equal the offered rate in every bin. The offered rate is `rate_bits_per_second`. For UDP the throughput and the goodput are the same number, because the payload is counted.
 
 ## The per-packet export (`packets-<id>.jsonl`)
 

@@ -191,6 +191,145 @@ class TimelineStep:
 
 
 @dataclass(frozen=True)
+class BinDelay:
+    """The one-way delay of the packets of one bin in seconds (nearest rank, as :class:`Delay`)."""
+
+    mean: float
+    """The mean."""
+    p50: float
+    """The median."""
+    p95: float
+    """Percentile 95."""
+    p99: float
+    """Percentile 99."""
+    max: float
+    """The largest."""
+
+
+@dataclass(frozen=True)
+class BySend:
+    """The packets of a bin seen from the sender: counted in the bin of their slot."""
+
+    sent: int
+    """How many packets were sent in the bin. A packet the kernel refused is not counted."""
+    received: int
+    """How many of them arrived, in the bin or later."""
+    lost: int
+    """``sent - received``."""
+    delivered_ratio: float | None
+    """``received / sent``, or ``None`` if nothing was sent in the bin."""
+    delay: BinDelay | None
+    """The delay of those that arrived, or ``None`` if none did."""
+
+
+@dataclass(frozen=True)
+class ByArrival:
+    """The packets of a bin seen from the receiver: counted in the bin in which they arrived."""
+
+    received: int
+    """How many packets arrived in the bin (the first arrival of each)."""
+    bits: int
+    """The payload bits of them."""
+    delay: BinDelay | None
+    """The delay of those packets, or ``None`` if none arrived."""
+
+    def bits_per_second(self, bin: float) -> float:
+        """The payload rate in this bin, for a bin of ``bin`` seconds (``Series.bin``)."""
+        return self.bits / bin
+
+
+@dataclass(frozen=True)
+class Bin:
+    """One stretch of the run, seen from the sender and from the receiver.
+
+    The bins are counted from the start of the measured phase, the moment from which the times of
+    ``Result.events`` are counted, so a step of the timeline lies in a bin that can be named. The
+    last bin is usually only partly filled and is not scaled.
+    """
+
+    index: int
+    """The number of the bin, from 0."""
+    start: float
+    """Where the bin begins, in seconds from the start of the measured phase."""
+    by_send: BySend
+    """The packets whose slot lies in the bin."""
+    by_arrival: ByArrival
+    """The packets that arrived in the bin."""
+
+
+@dataclass(frozen=True)
+class Series:
+    """Where the series of a workload is and how it is cut (``series-<id>.jsonl``)."""
+
+    bin: float
+    """The width of a bin in seconds (``run(bin=...)``, one second by default)."""
+    bins: int
+    """How many bins the file has."""
+    file: Path
+    """The JSON Lines file, one line for each bin."""
+
+    def read(self) -> tuple[Bin, ...]:
+        """Read the bins from the file. Each call reads it again, so keep the result."""
+        bins: list[Bin] = []
+        with self.file.open(encoding="utf-8") as lines:
+            for line in lines:
+                if line.strip():
+                    bins.append(_bin(json.loads(line)))
+        return tuple(bins)
+
+
+@dataclass(frozen=True)
+class Recovery:
+    """How long a workload took to be back at its level after an event (``docs/RESULTS.md``).
+
+    The level of a bin is the share of the packets sent in it that arrived. The baseline is the
+    median level of the last bins that sent something before the disturbance; the workload has
+    recovered at the start of the first window of ``window_bins`` bins, beginning at the bin of the
+    event, whose level is at least ``fraction`` of the baseline. The resolution is one bin
+    (``Series.bin``).
+    """
+
+    event: int
+    """The place of the event in ``timeline`` of the scenario."""
+    kind: str
+    """``set``, ``outage-end``, ``down`` or ``up``."""
+    link: str
+    """The link."""
+    direction: str | None
+    """``forward`` or ``reverse``, or ``None`` for a step of the whole link."""
+    basis: str
+    """``send`` or ``arrival``: the view the level was made from."""
+    start: float
+    """The moment from which the time is counted, in seconds from the start of the measured
+    phase."""
+    disturbance: float
+    """When the disturbance began, in the same seconds. The baseline was taken before it."""
+    baseline: float | None
+    """The baseline level (0 to 1), or ``None`` if there was none."""
+    level: float | None
+    """The level that had to be reached again: ``fraction`` times the baseline."""
+    baseline_bins: int
+    """How many bins make the baseline."""
+    window_bins: int
+    """How many bins make a window."""
+    fraction: float
+    """The share of the baseline that had to be reached again."""
+    recovered_at: float | None
+    """Where the first window that reached the level begins, in seconds from the start of the
+    measured phase; ``None`` if the workload did not recover."""
+    time: float | None
+    """Seconds from ``start`` to ``recovered_at``, 0 if that is not later; ``None`` if the workload
+    did not recover (``reason`` says why)."""
+    reason: str | None
+    """Why there is no ``time``: no baseline, or the level was not reached before the run ended."""
+
+    @property
+    def recovered(self) -> bool:
+        """Whether the workload was back at its level before the run ended."""
+        return self.time is not None
+
+
+@dataclass(frozen=True)
 class Throughput:
     """The payload that arrived in each second, counted from the first packet that was sent."""
 
@@ -296,6 +435,12 @@ class Workload:
     ``lost``: ``lost - corrupted`` is what never arrived. Always 0 with the checksum on, where the
     kernel drops a damaged packet and the ``directions`` entry of the node counts it
     (``dropped_corrupted``)."""
+    series: Series | None = None
+    """The packets by time bin, sent and arrived side by side (``series.read()``), or ``None`` in a
+    result of an older run."""
+    recoveries: tuple[Recovery, ...] = ()
+    """How long the workload took to be back at its level after each event that concerns it, in the
+    order of the events."""
 
     @property
     def delivery_ratio(self) -> float:
@@ -608,7 +753,67 @@ def _loss_runs(data: dict[str, Any] | None) -> LossRuns:
     )
 
 
+def _bin_delay(data: dict[str, Any] | None) -> BinDelay | None:
+    if data is None:
+        return None
+    return BinDelay(
+        mean=_seconds(data["mean_ns"]),
+        p50=_seconds(data["p50_ns"]),
+        p95=_seconds(data["p95_ns"]),
+        p99=_seconds(data["p99_ns"]),
+        max=_seconds(data["max_ns"]),
+    )
+
+
+def _bin(line: dict[str, Any]) -> Bin:
+    by_send = line["by_send"]
+    by_arrival = line["by_arrival"]
+    return Bin(
+        index=int(line["bin"]),
+        start=_seconds(line["start_ns"]),
+        by_send=BySend(
+            sent=int(by_send["sent"]),
+            received=int(by_send["received"]),
+            lost=int(by_send["lost"]),
+            delivered_ratio=None
+            if by_send["delivered_ratio"] is None
+            else float(by_send["delivered_ratio"]),
+            delay=_bin_delay(by_send["delay"]),
+        ),
+        by_arrival=ByArrival(
+            received=int(by_arrival["received"]),
+            bits=int(by_arrival["bits"]),
+            delay=_bin_delay(by_arrival["delay"]),
+        ),
+    )
+
+
+def _optional_seconds(nanoseconds: int | None) -> float | None:
+    return None if nanoseconds is None else _seconds(nanoseconds)
+
+
+def _recovery(data: dict[str, Any]) -> Recovery:
+    return Recovery(
+        event=int(data["event"]),
+        kind=data["kind"],
+        link=data["link"],
+        direction=data["direction"],
+        basis=data["basis"],
+        start=_seconds(data["from_ns"]),
+        disturbance=_seconds(data["disturbance_ns"]),
+        baseline=None if data["baseline"] is None else float(data["baseline"]),
+        level=None if data["level"] is None else float(data["level"]),
+        baseline_bins=int(data["baseline_bins"]),
+        window_bins=int(data["window_bins"]),
+        fraction=float(data["fraction"]),
+        recovered_at=_optional_seconds(data["recovered_at_ns"]),
+        time=_optional_seconds(data["time_ns"]),
+        reason=data["reason"],
+    )
+
+
 def _workload(entry: dict[str, Any], directory: Path) -> Workload:
+    series = entry.get("series")
     delay = entry["delay"]
     throughput = entry["throughput"]
     sender = entry["sender"]
@@ -664,4 +869,12 @@ def _workload(entry: dict[str, Any], directory: Path) -> Workload:
         else int(entry["corrupted_named"]),
         corrupted_seq=tuple(int(n) for n in entry.get("corrupted_seq", ())),
         corrupted_seq_unavailable=entry.get("corrupted_seq_unavailable"),
+        series=None
+        if series is None
+        else Series(
+            bin=_seconds(series["bin_ns"]),
+            bins=int(series["bins"]),
+            file=directory / series["file"],
+        ),
+        recoveries=tuple(_recovery(r) for r in entry.get("recoveries", ())),
     )

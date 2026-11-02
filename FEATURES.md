@@ -132,9 +132,9 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PRB-02 | Loss and delivery ratio | M | 0.1 | done (`tests/run.rs`, canaries in `stats.rs`) |
 | PRB-03 | One-way delay with percentiles | M | 0.1 | done (one-way delay with nearest-rank percentiles, `stats.rs` and `tests/run.rs`); the round trip time is PRB-12 |
 | PRB-04 | Jitter (as in RFC 3550) and reordering metrics | S | 0.2 | done (`patterns.rs`: the extent and late time of RFC 4737 against all its worked examples, the RFC 3550 estimate against hand-worked series; modelled and measured in `tests/fidelity.rs`; [RESULTS.md](docs/RESULTS.md), D-058) |
-| PRB-05 | Throughput and goodput over time | M | 0.1 | done (payload per second; for UDP throughput and goodput are the same number) |
+| PRB-05 | Throughput and goodput over time | M | 0.1 | done (payload per second; for UDP throughput and goodput are the same number; the series by time bin of PRB-07 adds sent, lost and the delays for each bin) |
 | PRB-06 | Burst statistics (length of loss runs) | S | 0.2 | done (`loss_runs` in the result: runs, longest, mean, histogram; D-058) |
-| PRB-07 | Time to recover after an event | M | 0.2 | planned |
+| PRB-07 | Time to recover after an event | M | 0.2 | done (a series by time bin for each workload in `series-<id>.jsonl`, sent and arrived side by side, and `recoveries` for each event of the timeline with explicit parameters; unit tests on series with known answers and canaries in `recovery.rs` and `series.rs`, a real run with a drop in the rate and an outage in [timeline.rs](crates/netscenario-backend-kernel/tests/timeline.rs); [RESULTS.md](docs/RESULTS.md), D-070) |
 | PRB-08 | Metrics from your program (JSON on stdout, exit code) | M | 0.2 | planned |
 | PRB-09 | Packet capture per link | M | 0.2 | planned (method measured, D-047) |
 | PRB-10 | Queue occupancy and drops from the kernel | S | 0.3 | planned |

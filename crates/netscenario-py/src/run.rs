@@ -10,7 +10,9 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
-use netscenario_core::{CancelToken, Error, RunEvent, RunOptions, RunResult, run};
+use netscenario_core::{
+    Basis, CancelToken, Error, RecoveryOptions, RunEvent, RunOptions, RunResult, run,
+};
 use netscenario_model::Scenario;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -108,6 +110,58 @@ fn event_to_python<'py>(
     Ok((kind, fields))
 }
 
+/// The arguments of the call that shape the series of each workload and the time to recover; `None` is the default.
+pub(crate) struct Series {
+    /// The width of a bin, in seconds.
+    pub(crate) bin: Option<f64>,
+    pub(crate) recovery_basis: Option<String>,
+    pub(crate) recovery_baseline: Option<u32>,
+    pub(crate) recovery_window: Option<u32>,
+    /// The share of the baseline to reach again, from 0 to 1.
+    pub(crate) recovery_fraction: Option<f64>,
+}
+
+impl Series {
+    /// Puts the arguments into the options of the run.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` for an argument that makes no sense; the width of the bin against the length of the run is
+    /// checked by the run before anything is built.
+    fn apply(self, options: &mut RunOptions) -> PyResult<()> {
+        let invalid = |text: String| pyo3::exceptions::PyValueError::new_err(text);
+        if let Some(seconds) = self.bin {
+            if !(seconds.is_finite() && seconds > 0.0) {
+                return Err(invalid(format!(
+                    "bin is a number of seconds above zero, not {seconds}"
+                )));
+            }
+            options.bin = Duration::try_from_secs_f64(seconds)
+                .map_err(|_| invalid(format!("bin of {seconds} seconds is too long")))?;
+        }
+        let mut recovery = RecoveryOptions::default();
+        if let Some(word) = self.recovery_basis {
+            recovery.basis = Basis::from_word(&word).ok_or_else(|| {
+                invalid(format!(
+                    "recovery_basis is 'send' or 'arrival', not '{word}'"
+                ))
+            })?;
+        }
+        if let Some(bins) = self.recovery_baseline {
+            recovery.baseline_bins = bins;
+        }
+        if let Some(bins) = self.recovery_window {
+            recovery.window_bins = bins;
+        }
+        if let Some(fraction) = self.recovery_fraction {
+            recovery.fraction = fraction;
+        }
+        recovery.check().map_err(invalid)?;
+        options.recovery = recovery;
+        Ok(())
+    }
+}
+
 /// What the Python call asks for.
 pub(crate) struct Request {
     pub(crate) source: String,
@@ -120,6 +174,7 @@ pub(crate) struct Request {
     pub(crate) packets: bool,
     pub(crate) observer: Option<Py<PyAny>>,
     pub(crate) cancel: Option<CancelToken>,
+    pub(crate) series: Series,
 }
 
 /// Starts the run on a thread of its own. The outcome appears in the slot that is returned.
@@ -187,6 +242,7 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
         packets,
         observer,
         cancel,
+        series,
     } = request;
     let mut scenario =
         Scenario::from_yaml(&source, &source_name).map_err(|error| errors::scenario(py, &error))?;
@@ -200,6 +256,7 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
     let mut options = RunOptions::new(&agent, &out_dir).with_cancel(token.clone());
     options.export_packets = packets;
     options.settle = settle.map(Duration::from_secs_f64);
+    series.apply(&mut options)?;
     if let Some(callable) = observer {
         let (error_slot, cancel_on_error) = (Arc::clone(&callback_error), token.clone());
         let notify = move |event: &RunEvent| {

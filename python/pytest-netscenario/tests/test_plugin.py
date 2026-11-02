@@ -219,6 +219,21 @@ def test_a_scenario_file_is_run_in_the_temporary_directory_of_the_test(
 
 
 @pytest.mark.usefixtures("runnable")
+def test_the_options_of_the_series_reach_the_run(pytester: pytest.Pytester) -> None:
+    pytester.makefile(".yaml", plug=SCENARIO)
+    pytester.makepyfile(
+        """
+        def test_it(netscenario):
+            result = netscenario.run("plug.yaml", settle=0.2, bin=0.5)
+            series = result["media"].series
+            assert series is not None and series.bin == 0.5
+            assert sum(b.by_send.sent for b in series.read()) == result["media"].sent
+        """
+    )
+    pytester.runpytest().assert_outcomes(passed=1)
+
+
+@pytest.mark.usefixtures("runnable")
 def test_the_numbers_of_a_run_are_in_the_report_of_a_failing_test(
     pytester: pytest.Pytester,
 ) -> None:

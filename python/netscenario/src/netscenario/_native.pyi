@@ -39,5 +39,10 @@ def run_scenario(
     packets: bool = False,
     observer: Callable[[str, dict[str, float]], None] | None = None,
     cancel: CancelToken | None = None,
+    bin: float | None = None,
+    recovery_basis: str | None = None,
+    recovery_baseline: int | None = None,
+    recovery_window: int | None = None,
+    recovery_fraction: float | None = None,
 ) -> str:
     """Run a scenario; return the text of ``result.json``."""

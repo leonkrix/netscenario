@@ -27,10 +27,13 @@ use crate::hash::sha256_hex;
 use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
 use crate::provision::{Provisioned, impairments_of, provision};
+use crate::recovery::{self, Recovery, RecoveryOptions};
 use crate::result::{
     AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, QueueCheck, RESULT_FORMAT,
-    RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
+    RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing,
+    WorkloadResult,
 };
+use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
 use crate::timeline;
 use crate::{barriers, drive};
@@ -84,6 +87,12 @@ pub struct RunOptions {
     /// `timing.interrupted_ns` set. A cancel before the workloads begin, or after they ended, is
     /// [`Error::Cancelled`] either way: there is nothing to keep, or the result is whole.
     pub partial_on_cancel: bool,
+    /// The width of a bin of the series of each workload (D-070). Default one second. A bin must last at least a
+    /// millisecond, and the measured phase may have at most a million of them.
+    pub bin: Duration,
+    /// How the time to recover after an event is worked out (D-070): the view, the bins of the baseline, the bins of a
+    /// window and the share of the baseline that has to be reached again.
+    pub recovery: RecoveryOptions,
 }
 
 impl std::fmt::Debug for RunOptions {
@@ -99,6 +108,8 @@ impl std::fmt::Debug for RunOptions {
             .field("cancel", &self.cancel)
             .field("barriers", &self.barriers)
             .field("partial_on_cancel", &self.partial_on_cancel)
+            .field("bin", &self.bin)
+            .field("recovery", &self.recovery)
             .finish()
     }
 }
@@ -118,7 +129,27 @@ impl RunOptions {
             cancel: CancelToken::new(),
             barriers: true,
             partial_on_cancel: false,
+            bin: Duration::from_nanos(DEFAULT_BIN_NS),
+            recovery: RecoveryOptions::default(),
         }
+    }
+
+    /// Whether the options of the series make sense for a scenario that lasts `duration`.
+    fn check_series(&self, duration: Duration) -> Result<(), Error> {
+        let reject = |message: String| Err(failure("check the options of the series", message));
+        if self.bin < Duration::from_millis(1) {
+            return reject(format!(
+                "a bin of {:?} is shorter than a millisecond",
+                self.bin
+            ));
+        }
+        if duration.as_nanos() / self.bin.as_nanos() > 1_000_000 {
+            return reject(format!(
+                "a bin of {:?} makes more than a million bins for a run of {duration:?}",
+                self.bin
+            ));
+        }
+        self.recovery.check().or_else(reject)
     }
 
     /// The same options, with an observer.
@@ -310,6 +341,8 @@ struct Measurement {
     notes: Vec<String>,
     /// When the workloads were told to stop, if the run was interrupted (D-066).
     interrupted_ns: Option<u64>,
+    /// The start of the measured phase on the clock of the records.
+    begin_ns: u64,
     /// Why the steps of the timeline may not give the same lost packets for the same seed (see [`barriers::plan`]).
     clock_reasons: Vec<String>,
 }
@@ -330,6 +363,7 @@ pub fn run(
     options: &RunOptions,
 ) -> Result<RunResult, Error> {
     let started = SystemTime::now();
+    options.check_series(Duration::from(scenario.duration))?;
     let control = Control::new(options);
     // A run that was cancelled before it began builds nothing
     control.checkpoint()?;
@@ -355,27 +389,16 @@ pub fn run(
         events,
         notes,
         interrupted_ns,
+        begin_ns,
         clock_reasons,
     } = measured?;
     torn_down?;
 
-    let mut workloads = Vec::new();
-    for (index, (workload, flow)) in scenario
-        .workloads
-        .iter()
-        .filter_map(Workload::as_udp_cbr)
-        .zip(&measured)
-        .enumerate()
-    {
-        workloads.push(workload_result(
-            index,
-            workload,
-            flow,
-            scenario,
-            &provisioned,
-            options,
-        )?);
-    }
+    let timeline = Timeline {
+        begin_ns,
+        events: &events,
+    };
+    let workloads = workload_results(scenario, &measured, &provisioned, options, &timeline)?;
     let reasons = not_reproducible_because(scenario, &provisioned, &queue_checks, clock_reasons);
     let result = RunResult {
         format: RESULT_FORMAT.to_owned(),
@@ -531,6 +554,109 @@ fn shared_directions(scenario: &Scenario) -> Vec<String> {
     reasons
 }
 
+/// What the result of a workload needs to know of the timeline and the clock.
+struct Timeline<'a> {
+    /// The start of the measured phase on the clock of the records.
+    begin_ns: u64,
+    /// The steps that were done.
+    events: &'a [EventRecord],
+}
+
+/// The series of a workload by time bin, written to `series-<id>.jsonl`, and the time to recover after each step of the
+/// timeline that concerns it (D-070).
+fn series_of(
+    workload: &UdpCbr,
+    flow: &Measured,
+    scenario: &Scenario,
+    options: &RunOptions,
+    timeline: &Timeline<'_>,
+    start: Duration,
+) -> Result<(SeriesInfo, Vec<Recovery>), Error> {
+    let bin_ns = nanos(options.bin);
+    let bins = series::bins(
+        &series::Input {
+            stream: Stream {
+                bits_per_second: workload.rate.bits_per_second(),
+                packet_size: workload.packet_size.bytes(),
+            },
+            start_ns: nanos(start),
+            origin_ns: timeline.begin_ns,
+            slots: flow.sent.packets + flow.sent.errors,
+            refused: &flow.sent.refused,
+            records: &flow.records.records,
+        },
+        bin_ns,
+    );
+    let name = format!("series-{}.jsonl", workload.id);
+    let file = std::fs::File::create(options.out_dir.join(&name))
+        .map_err(|error| failure("write the series", format!("{name}: {error}")))?;
+    series::write_series(std::io::BufWriter::new(file), workload.id.as_str(), &bins)
+        .map_err(|error| failure("write the series", format!("{name}: {error}")))?;
+    // The steps that act on the direction this workload sends in
+    let direction = scenario.topology.links.iter().find_map(|link| {
+        if link.between[0] == workload.from && link.between[1] == workload.to {
+            Some((link.id.to_string(), "forward"))
+        } else if link.between[1] == workload.from && link.between[0] == workload.to {
+            Some((link.id.to_string(), "reverse"))
+        } else {
+            None
+        }
+    });
+    let concerning: Vec<EventRecord> = direction
+        .map(|(link, word)| {
+            timeline
+                .events
+                .iter()
+                .filter(|event| {
+                    event.link == link
+                        && event
+                            .direction
+                            .as_deref()
+                            .is_none_or(|direction| direction == word)
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let recoveries = recovery::recoveries(&concerning, &bins, bin_ns, &options.recovery);
+    Ok((
+        SeriesInfo {
+            bin_ns,
+            bins: bins.len() as u64,
+            file: name,
+        },
+        recoveries,
+    ))
+}
+
+/// The results of all the workloads, in the order of the scenario.
+fn workload_results(
+    scenario: &Scenario,
+    measured: &[Measured],
+    provisioned: &Provisioned,
+    options: &RunOptions,
+    timeline: &Timeline<'_>,
+) -> Result<Vec<WorkloadResult>, Error> {
+    scenario
+        .workloads
+        .iter()
+        .filter_map(Workload::as_udp_cbr)
+        .zip(measured)
+        .enumerate()
+        .map(|(index, (workload, flow))| {
+            workload_result(
+                index,
+                workload,
+                flow,
+                scenario,
+                provisioned,
+                options,
+                timeline,
+            )
+        })
+        .collect()
+}
+
 /// The result of one workload: its statistics, and the files that belong to it.
 fn workload_result(
     index: usize,
@@ -539,6 +665,7 @@ fn workload_result(
     scenario: &Scenario,
     provisioned: &Provisioned,
     options: &RunOptions,
+    timeline: &Timeline<'_>,
 ) -> Result<WorkloadResult, Error> {
     let start = workload.start.map_or(Duration::ZERO, Duration::from);
     let stop = workload
@@ -566,6 +693,7 @@ fn workload_result(
     } else {
         None
     };
+    let (series, recoveries) = series_of(workload, flow, scenario, options, timeline, start)?;
     let (from_address, to_address) = addresses_of(provisioned, workload);
     Ok(WorkloadResult {
         id: workload.id.to_string(),
@@ -607,6 +735,8 @@ fn workload_result(
         },
         records_file: records_name(index),
         packets_file,
+        series: Some(series),
+        recoveries,
     })
 }
 
@@ -982,6 +1112,7 @@ fn measure(
         events,
         notes: backend.notes().into_iter().chain(settle_note).collect(),
         interrupted_ns,
+        begin_ns: begin,
         clock_reasons: plan.reasons,
     })
 }
@@ -2303,6 +2434,98 @@ mod tests {
         );
         let note = note.expect("a note");
         assert!(note.contains("7 packets still in them"), "{note}");
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// The series of a workload is written to a file of its own, the result says where and how it is cut, and the
+    /// numbers add up to the statistics (D-070).
+    #[test]
+    fn the_series_is_in_a_file_of_its_own_and_adds_up_to_the_statistics() {
+        let mut backend = Fake::new(None);
+        let mut options = options("series-file");
+        options.bin = Duration::from_millis(250);
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        let workload = &result.workloads[0];
+        let info = workload.series.as_ref().expect("the series");
+        assert_eq!(
+            (info.bin_ns, info.file.as_str()),
+            (250_000_000, "series-w.jsonl")
+        );
+        let text = std::fs::read_to_string(options.out_dir.join(&info.file)).unwrap();
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len() as u64, info.bins);
+        assert!(lines.iter().all(|line| line["workload"] == "w"));
+        let sent: u64 = lines
+            .iter()
+            .map(|l| l["by_send"]["sent"].as_u64().unwrap())
+            .sum();
+        let received: u64 = lines
+            .iter()
+            .map(|l| l["by_send"]["received"].as_u64().unwrap())
+            .sum();
+        assert_eq!(
+            (sent, received),
+            (workload.stats.sent, workload.stats.received)
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Options of the series that make no sense end the run before anything is built, with the name of the option.
+    #[test]
+    fn options_of_the_series_that_make_no_sense_are_refused_before_the_run() {
+        let rejected = |change: &dyn Fn(&mut RunOptions), word: &str| {
+            let mut backend = Fake::new(None);
+            let mut options = options("series-refused");
+            change(&mut options);
+            let error = run(&mut backend, &scenario(), &options)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(word), "{error}");
+            assert!(backend.calls.is_empty(), "{:?}", backend.calls);
+            let _ = std::fs::remove_dir_all(&options.out_dir);
+        };
+        rejected(
+            &|o| o.bin = Duration::from_micros(500),
+            "shorter than a millisecond",
+        );
+        rejected(&|o| o.recovery.fraction = 1.5, "fraction");
+        rejected(&|o| o.recovery.window_bins = 0, "window");
+        // 1 s at 1 ms is 1,000 bins: fine; a bin that makes more than a million for the run is not possible with 1 ms
+        // and a duration of one second, so the limit is shown with the arithmetic of the check
+        let mut generous = RunOptions::new("agent", "out");
+        generous.bin = Duration::from_millis(1);
+        assert!(generous.check_series(Duration::from_secs(1000)).is_ok());
+        assert!(generous.check_series(Duration::from_secs(1001)).is_err());
+    }
+
+    /// The time to recover is worked out for the steps that concern the workload: a step of the direction it sends in
+    /// and a step of the whole link, not a step of the other direction; and the start of an outage has none.
+    #[test]
+    fn the_recoveries_are_of_the_steps_that_concern_the_workload() {
+        let yaml = "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: { delay: 5ms }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\ntimeline:\n  - { at: 200ms, link: l, set: { forward: { delay: 10ms } } }\n  - { at: 300ms, link: l, set: { reverse: { delay: 10ms } } }\n  - { at: 500ms, link: l, outage: 100ms, direction: forward }\n";
+        let mut backend = Fake::new(None);
+        let mut options = self::options("series-recoveries");
+        options.bin = Duration::from_millis(100);
+        let result = run(
+            &mut backend,
+            &Scenario::from_yaml(yaml, "t.yaml").unwrap(),
+            &options,
+        )
+        .unwrap();
+        let kinds: Vec<(usize, &str)> = result.workloads[0]
+            .recoveries
+            .iter()
+            .map(|r| (r.event, r.kind.as_str()))
+            .collect();
+        // The set of the forward direction (event 0) and the end of the outage (event 2); not the set of the reverse
+        assert_eq!(kinds, [(0, "set"), (2, "outage-end")]);
+        let end = &result.workloads[0].recoveries[1];
+        assert_eq!(end.disturbance_ns, 500_000_000);
+        assert_eq!(end.from_ns, 600_000_000);
+        assert_eq!((end.baseline_bins, end.window_bins), (5, 3));
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 

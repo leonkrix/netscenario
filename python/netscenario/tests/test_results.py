@@ -314,3 +314,85 @@ def test_the_tally_of_a_direction_adds_up_and_a_missing_one_is_empty() -> None:
     # A direction that duplicates cannot tell what the queue dropped
     duplicating = dict(tally, lost_in_queue=None)
     assert result(directions=[duplicating]).directions[0].lost_in_queue is None
+
+
+def _line(index: int, sent: int, received: int, arrived: int, bits: int) -> dict[str, object]:
+    delay = {"mean_ns": 25_000_000, "p50_ns": 24_000_000, "p95_ns": 30_000_000}
+    delay |= {"p99_ns": 31_000_000, "max_ns": 32_000_000}
+    return {
+        "workload": "media",
+        "bin": index,
+        "start_ns": index * 500_000_000,
+        "by_send": {
+            "sent": sent,
+            "received": received,
+            "lost": sent - received,
+            "delivered_ratio": None if sent == 0 else received / sent,
+            "delay": delay if received else None,
+        },
+        "by_arrival": {"received": arrived, "bits": bits, "delay": delay if arrived else None},
+    }
+
+
+def test_the_series_is_read_from_its_file_in_seconds_and_a_result_without_one_has_none(
+    tmp_path: Path,
+) -> None:
+    assert result()["media"].series is None
+    assert result()["media"].recoveries == ()
+    lines = [_line(0, 100, 100, 98, 98 * 9600), _line(1, 100, 0, 0, 0), _line(2, 0, 0, 2, 2 * 9600)]
+    (tmp_path / "series-media.jsonl").write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+    )
+    data = json.loads(json.dumps(RESULT))
+    data["workloads"][0]["series"] = {
+        "bin_ns": 500_000_000,
+        "bins": 3,
+        "file": "series-media.jsonl",
+    }
+    series = ns.Result.from_json(json.dumps(data), tmp_path)["media"].series
+    assert series is not None
+    assert (series.bin, series.bins, series.file) == (0.5, 3, tmp_path / "series-media.jsonl")
+    first, silent, last = series.read()
+    assert (first.index, first.start, silent.start) == (0, 0.0, 0.5)
+    assert (first.by_send.sent, first.by_send.received, first.by_send.lost) == (100, 100, 0)
+    assert first.by_send.delivered_ratio == 1.0
+    assert first.by_send.delay is not None
+    assert first.by_send.delay.p50 == pytest.approx(0.024)
+    assert first.by_arrival.received == 98
+    assert first.by_arrival.bits_per_second(series.bin) == pytest.approx(98 * 9600 / 0.5)
+    # A bin of lost packets has no delay, and a bin in which nothing was sent has no ratio
+    assert (silent.by_send.lost, silent.by_send.delay, silent.by_arrival.delay) == (100, None, None)
+    assert silent.by_send.delivered_ratio == 0.0
+    assert (last.by_send.sent, last.by_send.delivered_ratio) == (0, None)
+    assert last.by_arrival.received == 2
+
+
+def test_the_recoveries_are_read_in_seconds_and_a_missing_time_says_why() -> None:
+    base = {
+        "event": 1,
+        "kind": "outage-end",
+        "link": "access",
+        "direction": "forward",
+        "basis": "send",
+        "from_ns": 8_000_000_000,
+        "disturbance_ns": 5_000_000_000,
+        "baseline": 1.0,
+        "level": 0.9,
+        "baseline_bins": 5,
+        "window_bins": 3,
+        "fraction": 0.9,
+        "recovered_at_ns": 10_000_000_000,
+        "time_ns": 2_000_000_000,
+        "reason": None,
+    }
+    never = base | {"recovered_at_ns": None, "time_ns": None, "reason": "never reached"}
+    data = json.loads(json.dumps(RESULT))
+    data["workloads"][0]["recoveries"] = [base, never]
+    found, missing = ns.Result.from_json(json.dumps(data), Path("/out"))["media"].recoveries
+    assert (found.kind, found.direction, found.basis) == ("outage-end", "forward", "send")
+    assert (found.start, found.disturbance, found.recovered_at) == (8.0, 5.0, 10.0)
+    assert found.time == pytest.approx(2.0)
+    assert found.recovered
+    assert (found.baseline, found.level, found.window_bins) == (1.0, 0.9, 3)
+    assert (missing.time, missing.recovered_at, missing.recovered) == (None, None, False)
+    assert missing.reason == "never reached"

@@ -82,6 +82,50 @@ timeline:
 """
 
 
+def test_the_series_adds_up_to_the_totals_and_the_bin_is_the_one_asked_for(tmp_path: Path) -> None:
+    run = ns.run(
+        scenario(link=ns.Impairments(delay="20ms")), out=tmp_path / "out", settle=0.3, bin=0.5
+    )
+    media = run["media"]
+    assert media.series is not None
+    assert media.series.bin == pytest.approx(0.5)
+    bins = media.series.read()
+    assert len(bins) == media.series.bins
+    assert [b.start for b in bins] == [0.5 * i for i in range(len(bins))]
+    assert sum(b.by_send.sent for b in bins) == media.sent == 417
+    assert sum(b.by_send.received for b in bins) == media.received
+    assert sum(b.by_arrival.received for b in bins) == media.received
+    assert sum(b.by_arrival.bits for b in bins) == media.received * 1200 * 8
+    # Every packet arrives 20 ms after its slot: the packets of a bin that arrive later are few
+    assert all(b.by_send.lost == 0 for b in bins)
+    assert media.recoveries == (), "no event, nothing to recover from"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"bin": 0.0},
+        {"bin": -1.0},
+        {"bin": float("nan")},
+        {"recovery_basis": "both"},
+        {"recovery_baseline": 0},
+        {"recovery_window": 0},
+        {"recovery_fraction": 0.0},
+        {"recovery_fraction": 1.5},
+    ],
+)
+def test_canary_options_that_make_no_sense_are_refused_before_anything_is_built(
+    options: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match=r"bin|recovery"):
+        ns.run(scenario(), **options)  # type: ignore[arg-type]
+
+
+def test_a_bin_shorter_than_a_millisecond_is_refused_by_the_run(tmp_path: Path) -> None:
+    with pytest.raises(ns.RunError, match="shorter than a millisecond"):
+        ns.run(scenario(), out=tmp_path / "out", bin=0.0001)
+
+
 def test_a_step_of_the_timeline_is_in_the_result_and_the_observer_hears_it(tmp_path: Path) -> None:
     events: list[RunEvent] = []
     run = ns.run(

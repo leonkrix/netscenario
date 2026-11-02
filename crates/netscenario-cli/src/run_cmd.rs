@@ -8,7 +8,8 @@ use std::time::SystemTime;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
 use netscenario_core::{
-    CancelToken, Error, RunEvent, RunObserver, RunOptions, agent_next_to, rfc3339_utc, run,
+    Basis, CancelToken, Error, RecoveryOptions, RunEvent, RunObserver, RunOptions, agent_next_to,
+    rfc3339_utc, run,
 };
 use netscenario_model::Duration;
 
@@ -19,7 +20,9 @@ use crate::render::summary;
 use crate::validate::{Loaded, load};
 
 pub(crate) const RUN_HELP: &str = "\
-Usage: netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--packets] [--json]
+Usage: netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--bin <duration>] [--packets] [--json]
+                       [--recovery-basis send|arrival] [--recovery-baseline <bins>] [--recovery-window <bins>]
+                       [--recovery-fraction <percent>]
 
 Runs a scenario: builds the network in network namespaces, starts the agents in the nodes, lets the
 workloads run for the duration of the scenario, and writes the result. Nothing outside the namespaces
@@ -29,6 +32,12 @@ that it creates is touched, and everything is removed afterwards, also after an 
   --seed <n>           use this seed instead of the one in the file (to repeat a run that drew its own)
   --settle <duration>  how long to wait after the last packet for the packets still in the network
                        (for example 2s; default: until the queues of the links are empty, and 0.3 s more)
+  --bin <duration>     the width of a bin of the series of each workload (for example 500ms; default 1s). The
+                       series is written to series-<id>.jsonl; see docs/RESULTS.md
+  --recovery-basis     the view the time to recover is made from: send (default) or arrival
+  --recovery-baseline  how many bins before the disturbance make the baseline level (default 5)
+  --recovery-window    how many bins a window has; the level has to hold for that long (default 3)
+  --recovery-fraction  the share of the baseline that has to be reached again, in percent (default 90)
   --packets            also write one line of JSON for each packet of each workload
   --json               print result.json on standard output instead of the summary
 
@@ -45,9 +54,52 @@ the signal; with a result if the workloads had begun).
 ";
 
 pub(crate) const RUN_SPEC: Spec = Spec {
-    values: &["out", "seed", "settle"],
+    values: &[
+        "out",
+        "seed",
+        "settle",
+        "bin",
+        "recovery-basis",
+        "recovery-baseline",
+        "recovery-window",
+        "recovery-fraction",
+    ],
     flags: &["packets", "json"],
 };
+
+/// The width of a bin and the parameters of the recovery from the command line (D-070), or what is wrong with them.
+fn series_options(parsed: &Parsed) -> Result<(std::time::Duration, RecoveryOptions), String> {
+    let mut recovery = RecoveryOptions::default();
+    let bin = match parsed.value("bin").map(Duration::from_str).transpose() {
+        Ok(bin) => bin.map_or(std::time::Duration::from_secs(1), std::time::Duration::from),
+        Err(error) => return Err(format!("--bin: {error}")),
+    };
+    if let Some(word) = parsed.value("recovery-basis") {
+        recovery.basis = Basis::from_word(word)
+            .ok_or_else(|| format!("--recovery-basis is send or arrival, not '{word}'"))?;
+    }
+    let count = |name: &str| -> Result<Option<u32>, String> {
+        parsed
+            .value(name)
+            .map(str::parse::<u32>)
+            .transpose()
+            .map_err(|_| format!("--{name} needs a whole number of bins"))
+    };
+    if let Some(bins) = count("recovery-baseline")? {
+        recovery.baseline_bins = bins;
+    }
+    if let Some(bins) = count("recovery-window")? {
+        recovery.window_bins = bins;
+    }
+    if let Some(text) = parsed.value("recovery-fraction") {
+        let percent: f64 = text.trim_end_matches('%').parse().map_err(|_| {
+            "--recovery-fraction needs a number of percent, for example 90".to_owned()
+        })?;
+        recovery.fraction = percent / 100.0;
+    }
+    recovery.check()?;
+    Ok((bin, recovery))
+}
 
 /// The directory for a result when none is given: the name of the scenario and the time, so that two runs do
 /// not overwrite each other.
@@ -144,6 +196,35 @@ fn report(error: &Error, loaded: &Loaded, err: &mut impl Write) -> u8 {
     }
 }
 
+/// What the options with numbers say.
+struct Numbers {
+    seed: Option<u64>,
+    settle: Option<std::time::Duration>,
+    /// The width of a bin of the series.
+    bin: std::time::Duration,
+    recovery: RecoveryOptions,
+}
+
+/// Reads the seed, the settle time, and the bin and the recovery of the series.
+fn numbers(parsed: &Parsed) -> Result<Numbers, String> {
+    let Ok(seed) = parsed.value("seed").map(str::parse::<u64>).transpose() else {
+        return Err("--seed needs a whole number from 0 to 18446744073709551615".to_owned());
+    };
+    let settle = parsed
+        .value("settle")
+        .map(Duration::from_str)
+        .transpose()
+        .map_err(|error| format!("--settle: {error}"))?
+        .map(std::time::Duration::from);
+    let (bin, recovery) = series_options(parsed)?;
+    Ok(Numbers {
+        seed,
+        settle,
+        bin,
+        recovery,
+    })
+}
+
 pub(crate) fn run_command<S: AsRef<str>>(
     args: &[S],
     out: &mut impl Write,
@@ -161,19 +242,14 @@ pub(crate) fn run_command<S: AsRef<str>>(
         Ok(path) => path,
         Err(message) => return crate::usage_error(err, "run", &message, RUN_HELP),
     };
-    let Ok(seed) = parsed.value("seed").map(str::parse::<u64>).transpose() else {
-        return crate::usage_error(
-            err,
-            "run",
-            "--seed needs a whole number from 0 to 18446744073709551615",
-            RUN_HELP,
-        );
-    };
-    let settle = match parsed.value("settle").map(Duration::from_str).transpose() {
-        Ok(settle) => settle.map(std::time::Duration::from),
-        Err(error) => {
-            return crate::usage_error(err, "run", &format!("--settle: {error}"), RUN_HELP);
-        }
+    let Numbers {
+        seed,
+        settle,
+        bin,
+        recovery,
+    } = match numbers(&parsed) {
+        Ok(numbers) => numbers,
+        Err(message) => return crate::usage_error(err, "run", &message, RUN_HELP),
     };
     let loaded = match load(path) {
         Ok(loaded) => loaded,
@@ -215,6 +291,8 @@ pub(crate) fn run_command<S: AsRef<str>>(
     let mut options = RunOptions::new(agent, &out_dir);
     options.settle = settle;
     options.export_packets = parsed.flag("packets");
+    options.bin = bin;
+    options.recovery = recovery;
     // Ctrl-C stops the workloads and keeps what was recorded (D-066)
     let token = CancelToken::new();
     options = options.with_cancel(token.clone()).with_partial_on_cancel();
@@ -304,6 +382,42 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    fn parsed(args: &[&str]) -> Parsed {
+        let mut all = vec!["a.yaml"];
+        all.extend_from_slice(args);
+        Parsed::parse(&all, &RUN_SPEC).unwrap()
+    }
+
+    /// The defaults are those of the library, and every option moves its own parameter (D-070).
+    #[test]
+    fn the_options_of_the_series_and_the_recovery_are_read() {
+        let (bin, recovery) = series_options(&parsed(&[])).unwrap();
+        assert_eq!(bin, std::time::Duration::from_secs(1));
+        assert_eq!(recovery, RecoveryOptions::default());
+        let (bin, recovery) = series_options(&parsed(&[
+            "--bin",
+            "250ms",
+            "--recovery-basis",
+            "arrival",
+            "--recovery-baseline",
+            "8",
+            "--recovery-window",
+            "4",
+            "--recovery-fraction",
+            "95%",
+        ]))
+        .unwrap();
+        assert_eq!(bin, std::time::Duration::from_millis(250));
+        assert_eq!(
+            (recovery.basis, recovery.baseline_bins, recovery.window_bins),
+            (Basis::Arrival, 8, 4)
+        );
+        assert!((recovery.fraction - 0.95).abs() < 1e-12);
+        // Canary: a value without the percent sign is the same percent
+        let (_, plain) = series_options(&parsed(&["--recovery-fraction", "95"])).unwrap();
+        assert!((plain.fraction - 0.95).abs() < 1e-12);
+    }
 
     #[test]
     fn every_phase_of_a_run_has_a_line_and_the_end_has_none() {
