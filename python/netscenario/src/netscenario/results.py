@@ -369,7 +369,7 @@ class Workload:
     id: str
     """The name in the scenario."""
     kind: str
-    """The kind, ``"udp-cbr"``."""
+    """The kind: ``"udp-cbr"``, ``"udp-poisson"``, ``"udp-onoff"`` or ``"udp-bursty"``."""
     from_node: str
     """The sending node."""
     to_node: str
@@ -379,7 +379,8 @@ class Workload:
     to_address: str
     """The address and the port the packets went to."""
     rate: float
-    """The rate of the payload in the scenario, in bits per second."""
+    """The rate of the payload in bits per second: the one in the scenario for ``udp-cbr``, and the
+    mean rate for the other kinds (over the on and off phases, or the bursts and their pauses)."""
     packet_size: int
     """The payload of a packet in bytes."""
     start: float

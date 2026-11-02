@@ -284,7 +284,7 @@ pub struct SeriesInfo {
 pub struct WorkloadResult {
     /// The id in the scenario.
     pub id: String,
-    /// The kind, `udp-cbr`.
+    /// The kind: `udp-cbr`, `udp-poisson`, `udp-onoff` or `udp-bursty`.
     pub kind: String,
     /// The sending node.
     pub from: String,
@@ -294,7 +294,9 @@ pub struct WorkloadResult {
     pub from_address: String,
     /// The address the packets were sent to, and the port.
     pub to_address: String,
-    /// The rate of the payload in the scenario.
+    /// The rate of the payload that the schedule is meant to give: the rate of the scenario for `udp-cbr` and `udp-poisson`
+    /// (for the second it is the mean), and the mean over the phases or the bursts for `udp-onoff` and `udp-bursty`, rounded
+    /// down.
     pub rate_bits_per_second: u64,
     /// The payload of a packet in bytes.
     pub packet_size_bytes: u64,

@@ -15,6 +15,12 @@
         }
       ]
     },
+    "BurstyKind": {
+      "enum": [
+        "udp-bursty"
+      ],
+      "type": "string"
+    },
     "Change": {
       "additionalProperties": false,
       "description": "What `set` changes, for each direction. `both` changes the two directions.",
@@ -605,6 +611,33 @@
       "pattern": "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$",
       "type": "string"
     },
+    "OnOffKind": {
+      "enum": [
+        "udp-onoff"
+      ],
+      "type": "string"
+    },
+    "PhaseDistribution": {
+      "description": "Whether the lengths of the phases of an on/off source, and the pauses between bursts, are exactly what the file says\nor are drawn from an exponential distribution with that mean.",
+      "oneOf": [
+        {
+          "const": "fixed",
+          "description": "Every phase lasts exactly the time given. The default: the source is a pattern you can calculate by hand.",
+          "type": "string"
+        },
+        {
+          "const": "exponential",
+          "description": "The lengths are exponentially distributed with the time given as the mean (a Markov source).",
+          "type": "string"
+        }
+      ]
+    },
+    "PoissonKind": {
+      "enum": [
+        "udp-poisson"
+      ],
+      "type": "string"
+    },
     "Probability": {
       "description": "A probability from 0% to 100% with at most six digits after the point. Always with the percent sign.",
       "examples": [
@@ -808,6 +841,86 @@
       "const": true,
       "type": "boolean"
     },
+    "UdpBursty": {
+      "additionalProperties": false,
+      "properties": {
+        "burst-packets": {
+          "description": "The packets in a burst.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "distribution": {
+          "$ref": "#/$defs/PhaseDistribution",
+          "description": "`fixed` (default): every pause lasts exactly `pause`. `exponential`: the pauses are drawn."
+        },
+        "from": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that sends."
+        },
+        "gap": {
+          "$ref": "#/$defs/Duration",
+          "description": "The time between two packets of a burst."
+        },
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the workload. Metrics are named after it."
+        },
+        "kind": {
+          "$ref": "#/$defs/BurstyKind",
+          "description": "`udp-bursty`: bursts of UDP packets with a pause between them."
+        },
+        "packet-size": {
+          "$ref": "#/$defs/Size",
+          "description": "The payload of one packet."
+        },
+        "pause": {
+          "$ref": "#/$defs/Duration",
+          "description": "The time from the last packet of a burst to the first of the next (its mean with `distribution: exponential`)."
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload starts, from the start of the measured phase. Default `0s`."
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload stops. Default: the end of the measured phase."
+        },
+        "to": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that receives."
+        },
+        "udp-checksum": {
+          "$ref": "#/$defs/UdpChecksum",
+          "description": "`false`: the packets are sent without the UDP checksum and carry a CRC-32 (D-040). Default `true`."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "from",
+        "to",
+        "packet-size",
+        "burst-packets",
+        "gap",
+        "pause"
+      ],
+      "type": "object"
+    },
     "UdpCbr": {
       "additionalProperties": false,
       "properties": {
@@ -882,6 +995,148 @@
       "description": "Whether the packets of a [`UdpCbr`] carry a UDP checksum.\n\nWith the checksum on (the default) a receiver drops a packet whose bits were flipped on the way, as on a\nreal network. With it off the damaged packet arrives, and the result counts it as `corrupted` (D-040).\n\nIn a file it is a boolean, `udp-checksum: false`, and not the words `on` and `off`: YAML 1.1 reads those as\nbooleans (`PyYAML`, `yamllint` and some editors do), YAML 1.2 as text, and a file must mean one thing in both.",
       "type": "boolean"
     },
+    "UdpOnOff": {
+      "additionalProperties": false,
+      "properties": {
+        "distribution": {
+          "$ref": "#/$defs/PhaseDistribution",
+          "description": "`fixed` (default): the phases last exactly `on` and `off`. `exponential`: their lengths are drawn."
+        },
+        "from": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that sends."
+        },
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the workload. Metrics are named after it."
+        },
+        "kind": {
+          "$ref": "#/$defs/OnOffKind",
+          "description": "`udp-onoff`: UDP at a constant rate in on phases and silence in off phases."
+        },
+        "off": {
+          "$ref": "#/$defs/Duration",
+          "description": "How long an off phase lasts (its mean with `distribution: exponential`)."
+        },
+        "on": {
+          "$ref": "#/$defs/Duration",
+          "description": "How long an on phase lasts (its mean with `distribution: exponential`)."
+        },
+        "packet-size": {
+          "$ref": "#/$defs/Size",
+          "description": "The payload of one packet."
+        },
+        "rate": {
+          "$ref": "#/$defs/Rate",
+          "description": "The rate of the payload while the source is on."
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload starts, from the start of the measured phase. Default `0s`."
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload stops. Default: the end of the measured phase."
+        },
+        "to": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that receives."
+        },
+        "udp-checksum": {
+          "$ref": "#/$defs/UdpChecksum",
+          "description": "`false`: the packets are sent without the UDP checksum and carry a CRC-32 (D-040). Default `true`."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "from",
+        "to",
+        "rate",
+        "packet-size",
+        "on",
+        "off"
+      ],
+      "type": "object"
+    },
+    "UdpPoisson": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that sends."
+        },
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the workload. Metrics are named after it."
+        },
+        "kind": {
+          "$ref": "#/$defs/PoissonKind",
+          "description": "`udp-poisson`: UDP packets with exponentially distributed gaps."
+        },
+        "packet-size": {
+          "$ref": "#/$defs/Size",
+          "description": "The payload of one packet."
+        },
+        "rate": {
+          "$ref": "#/$defs/Rate",
+          "description": "The mean rate of the payload."
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload starts, from the start of the measured phase. Default `0s`."
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload stops. Default: the end of the measured phase."
+        },
+        "to": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that receives."
+        },
+        "udp-checksum": {
+          "$ref": "#/$defs/UdpChecksum",
+          "description": "`false`: the packets are sent without the UDP checksum and carry a CRC-32 (D-040). Default `true`."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "from",
+        "to",
+        "rate",
+        "packet-size"
+      ],
+      "type": "object"
+    },
     "Workload": {
       "anyOf": [
         {
@@ -891,9 +1146,21 @@
         {
           "$ref": "#/$defs/Command",
           "description": "A program of your own, started in a node."
+        },
+        {
+          "$ref": "#/$defs/UdpPoisson",
+          "description": "UDP as a Poisson process. After `Command` because the kinds are listed in the order they were added."
+        },
+        {
+          "$ref": "#/$defs/UdpOnOff",
+          "description": "UDP in on and off phases."
+        },
+        {
+          "$ref": "#/$defs/UdpBursty",
+          "description": "UDP in bursts."
         }
       ],
-      "description": "A workload: something that runs in a node. Either a generator that sends traffic ([`UdpCbr`]), or the\nprogram that is being tested ([`Command`]).\n\nIt is read by hand (see `WorkloadFields`) for the reason that `Loss` is: the derived reader for a tagged\nenum reports an error in a value at the start of the mapping and not at the value."
+      "description": "A workload: something that runs in a node. Either a generator that sends traffic ([`UdpCbr`],\n[`UdpPoisson`], [`UdpOnOff`], [`UdpBursty`]), or the program that is being tested ([`Command`]).\n\nIt is read by hand (see `WorkloadFields`) for the reason that `Loss` is: the derived reader for a tagged\nenum reports an error in a value at the start of the mapping and not at the value.\n\nMore kinds come in later releases, so a `match` outside this crate needs a wildcard arm."
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

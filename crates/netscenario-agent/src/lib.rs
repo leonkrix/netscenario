@@ -17,6 +17,7 @@ pub mod crc;
 pub mod events;
 pub mod receiver;
 pub mod records;
+pub mod rng;
 pub mod schedule;
 pub mod sender;
 pub mod tap;

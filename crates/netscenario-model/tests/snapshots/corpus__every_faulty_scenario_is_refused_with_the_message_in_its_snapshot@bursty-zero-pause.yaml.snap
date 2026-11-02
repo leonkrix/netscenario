@@ -1,0 +1,12 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/bursty-zero-pause.yaml
+---
+error: `pause` must be more than zero
+  --> bursty-zero-pause.yaml:10:113
+   |
+ 9 | workloads:
+10 |   - { id: b, kind: udp-bursty, from: client, to: server, packet-size: 1000b, burst-packets: 4, gap: 1ms, pause: 0s }
+   |                                                                                                                 ^^
+   = path: workloads[0].pause

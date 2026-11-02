@@ -1,4 +1,4 @@
-//! The sender: a constant bit rate stream of packets to one address (WRK-01).
+//! The sender: the packets of one workload to one address, at the moments of its schedule (WRK-01, WRK-02).
 
 use std::fmt;
 use std::io;
@@ -10,7 +10,7 @@ use rustix::net::{AddressFamily, SendFlags, SocketType, ipproto};
 
 use crate::clock::monotonic_ns;
 use crate::events::{BarrierDone, SendSummary};
-use crate::schedule::Stream;
+use crate::schedule::Schedule;
 use crate::wire::{HEADER_LEN, Header, UdpChecksum};
 
 /// The largest payload of an IPv4 UDP datagram. The scenario model allows far less (1472, the MTU).
@@ -23,8 +23,8 @@ pub struct SendConfig {
     pub target: SocketAddr,
     /// The workload, written to the summary.
     pub flow: u32,
-    /// The rate and the size of the packets.
-    pub stream: Stream,
+    /// When the packets leave and how large they are.
+    pub schedule: Schedule,
     /// How long the stream lasts, counted from its start, in nanoseconds.
     pub duration_ns: u64,
     /// The moment the first packet leaves, on `CLOCK_MONOTONIC`. Without it, now.
@@ -227,33 +227,38 @@ pub fn run_with(
     let SendConfig {
         target,
         flow,
-        stream,
+        schedule,
         duration_ns,
         start_at_ns,
         udp_checksum,
         barriers: planned,
     } = config;
-    if stream.bits_per_second == 0 {
-        return Err(SendError("the rate must be more than zero".to_owned()));
+    if !schedule.is_well_formed() {
+        return Err(SendError(
+            "the schedule makes no packets: the rate, the size, the on time or the burst must be more than zero".to_owned(),
+        ));
     }
     let header = u64::try_from(udp_checksum.header_len()).unwrap_or(16);
-    if !(header..=MAX_PAYLOAD).contains(&stream.packet_size) {
+    let packet_size = schedule.packet_size();
+    if !(header..=MAX_PAYLOAD).contains(&packet_size) {
         return Err(SendError(format!(
-            "the packet size {} is outside {header} to {MAX_PAYLOAD} bytes",
-            stream.packet_size
+            "the packet size {packet_size} is outside {header} to {MAX_PAYLOAD} bytes"
         )));
     }
-    let count = stream.packets_in(*duration_ns);
-    if count > u64::from(u32::MAX) + 1 {
-        return Err(SendError(format!(
-            "{count} packets do not fit the 32 bit sequence number of the wire format (at most {})",
-            u64::from(u32::MAX) + 1
-        )));
+    // A schedule that is not drawn is counted at once; a drawn one is cut off at the last number the wire format has
+    if let Schedule::Cbr(stream) = schedule {
+        let count = stream.packets_in(*duration_ns);
+        if count > u64::from(u32::MAX) + 1 {
+            return Err(SendError(format!(
+                "{count} packets do not fit the 32 bit sequence number of the wire format (at most {})",
+                u64::from(u32::MAX) + 1
+            )));
+        }
     }
     let outlet = Outlet::open(config)?;
     // The header of UDP (raw socket only) and the payload in one buffer, which is what is sent
     let offset = outlet.offset();
-    let size = usize::try_from(stream.packet_size).unwrap_or(HEADER_LEN);
+    let size = usize::try_from(packet_size).unwrap_or(HEADER_LEN);
     let mut datagram = vec![0_u8; offset + size];
     if matches!(outlet, Outlet::Raw(_)) {
         let length = u16::try_from(datagram.len()).unwrap_or(u16::MAX);
@@ -282,8 +287,9 @@ pub fn run_with(
     let mut asked: Vec<(Barrier, u64)> = Vec::new();
     let mut next_barrier = 0_usize;
     ask(planned, 0, 0, &mut asked, barriers);
-    for n in 0..count {
-        let due = start.saturating_add(stream.offset_ns(n));
+    for (index, leaves_at) in schedule.offsets(*duration_ns).enumerate() {
+        let n = index as u64;
+        let due = start.saturating_add(leaves_at);
         if !wait_until(due, &|| barriers.stopped()) {
             summary.stopped = true;
             break;
@@ -367,15 +373,17 @@ fn note_refused(summary: &mut SendSummary, n: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schedule::Stream;
 
     fn config(rate: u64, size: u64, duration_ns: u64) -> SendConfig {
         SendConfig {
             target: ([127, 0, 0, 1], 9).into(),
             flow: 0,
-            stream: Stream {
+            schedule: Stream {
                 bits_per_second: rate,
                 packet_size: size,
-            },
+            }
+            .into(),
             duration_ns,
             start_at_ns: None,
             udp_checksum: UdpChecksum::On,
@@ -473,6 +481,43 @@ mod tests {
             "{:?}",
             began.elapsed()
         );
+    }
+
+    /// A drawn schedule is sent as it is walked: the packets that left are exactly the moments of the schedule, and a
+    /// second sender with the same seed leaves the same number of packets (the moments are a function of the seed).
+    #[test]
+    fn a_poisson_stream_sends_the_packets_of_its_schedule() {
+        let schedule = Schedule::Poisson {
+            stream: Stream {
+                bits_per_second: 1_000_000,
+                packet_size: 125,
+            },
+            seed: 5,
+        };
+        let mut stream = config(1, 125, 300_000_000);
+        stream.schedule = schedule;
+        stream.target = ([127, 0, 0, 1], 9).into();
+        let summary = run_with(&stream, &mut NoBarriers).unwrap();
+        // Nothing listens, so the kernel may refuse some after a first answer of the peer; every slot is accounted for
+        let slots = summary.packets + summary.errors;
+        assert_eq!(slots, schedule.packets_in(300_000_000));
+        assert!(slots > 200, "{slots} packets of a mean of 300");
+    }
+
+    /// Canary: a schedule that makes no packet is refused with a message that names what to change, and does not walk.
+    #[test]
+    fn a_schedule_without_packets_is_refused() {
+        let mut stream = config(1, 125, 100_000_000);
+        stream.schedule = Schedule::Bursty {
+            packet_size: 125,
+            packets: 0,
+            gap_ns: 1000,
+            pause_ns: 1000,
+            distribution: crate::schedule::Distribution::Fixed,
+            seed: 0,
+        };
+        let error = run_with(&stream, &mut NoBarriers).unwrap_err();
+        assert!(error.to_string().contains("makes no packets"), "{error}");
     }
 
     /// Canary: without a stop the same stream goes on to its end, so the test above does not pass by the stream being

@@ -22,6 +22,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::Problem;
+use crate::generators::{PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
 use crate::scenario::{
     Backend, Change, Command, Direction, Event, FormatVersion, Impairments, Jitter,
     JitterDistribution, Link, Loss, Reorder, Scenario, Topology, True, UdpCbr, UdpChecksum,
@@ -342,6 +343,115 @@ impl ScenarioBuilder {
         self
     }
 
+    /// A workload that sends UDP packets as a Poisson process with the mean rate `rate` (`udp-poisson`).
+    #[must_use]
+    pub fn udp_poisson(
+        mut self,
+        id: &str,
+        from: &str,
+        to: &str,
+        rate: Rate,
+        packet_size: Size,
+    ) -> Self {
+        if let Some((id, from, to)) = self.workload_names(id, from, to) {
+            self.workloads.push(Workload::UdpPoisson(UdpPoisson::new(
+                id,
+                from,
+                to,
+                rate,
+                packet_size,
+            )));
+        }
+        self
+    }
+
+    /// A workload that sends at `rate` for `on`, then nothing for `off`, from the start (`udp-onoff`, exact phases;
+    /// [`ScenarioBuilder::drawn_phases`] makes them exponential).
+    #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the keys of the kind, all of them required"
+    )]
+    pub fn udp_onoff(
+        mut self,
+        id: &str,
+        from: &str,
+        to: &str,
+        rate: Rate,
+        packet_size: Size,
+        on: Duration,
+        off: Duration,
+    ) -> Self {
+        if let Some((id, from, to)) = self.workload_names(id, from, to) {
+            self.workloads.push(Workload::UdpOnOff(UdpOnOff::new(
+                id,
+                from,
+                to,
+                rate,
+                packet_size,
+                on,
+                off,
+            )));
+        }
+        self
+    }
+
+    /// A workload that sends bursts of `burst_packets` packets `gap` apart with a `pause` after each (`udp-bursty`,
+    /// exact pauses; [`ScenarioBuilder::drawn_phases`] makes them exponential).
+    #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the keys of the kind, all of them required"
+    )]
+    pub fn udp_bursty(
+        mut self,
+        id: &str,
+        from: &str,
+        to: &str,
+        packet_size: Size,
+        burst_packets: u32,
+        gap: Duration,
+        pause: Duration,
+    ) -> Self {
+        if let Some((id, from, to)) = self.workload_names(id, from, to) {
+            self.workloads.push(Workload::UdpBursty(UdpBursty::new(
+                id,
+                from,
+                to,
+                packet_size,
+                burst_packets,
+                gap,
+                pause,
+            )));
+        }
+        self
+    }
+
+    /// Makes the phases of the last `udp-onoff` workload, or the pauses of the last `udp-bursty` one, exponentially
+    /// distributed with the time that was given as their mean (`distribution: exponential`).
+    #[must_use]
+    pub fn drawn_phases(mut self) -> Self {
+        match self.workloads.last_mut() {
+            Some(Workload::UdpOnOff(workload)) => {
+                workload.distribution = PhaseDistribution::Exponential;
+            }
+            Some(Workload::UdpBursty(workload)) => {
+                workload.distribution = PhaseDistribution::Exponential;
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// The names of the two nodes and the workload, checked, or `None` with the problems noted.
+    fn workload_names(&mut self, id: &str, from: &str, to: &str) -> Option<(Name, Name, Name)> {
+        let index = self.workloads.len();
+        let id = self.name_at(id, &format!("workloads[{index}].id"));
+        let from = self.name_at(from, &format!("workloads[{index}].from"));
+        let to = self.name_at(to, &format!("workloads[{index}].to"));
+        Some((id?, from?, to?))
+    }
+
     /// A workload that starts a program of your own in `node`: `run` is the program and its arguments (no
     /// shell), and `{node.addr}` in them is the address of a node. Readiness, environment and shutdown can
     /// be set on the [`Command`] with [`ScenarioBuilder::workload`].
@@ -380,20 +490,39 @@ impl ScenarioBuilder {
     /// Sets when the last workload starts and stops, from the start of the measured phase.
     #[must_use]
     pub fn window(mut self, start: Duration, stop: Duration) -> Self {
-        if let Some(Workload::UdpCbr(workload)) = self.workloads.last_mut() {
-            workload.start = Some(start);
-            workload.stop = Some(stop);
+        match self.workloads.last_mut() {
+            Some(Workload::UdpCbr(workload)) => {
+                workload.start = Some(start);
+                workload.stop = Some(stop);
+            }
+            Some(Workload::UdpPoisson(workload)) => {
+                workload.start = Some(start);
+                workload.stop = Some(stop);
+            }
+            Some(Workload::UdpOnOff(workload)) => {
+                workload.start = Some(start);
+                workload.stop = Some(stop);
+            }
+            Some(Workload::UdpBursty(workload)) => {
+                workload.start = Some(start);
+                workload.stop = Some(stop);
+            }
+            _ => {}
         }
         self
     }
 
-    /// Sends the packets of the last `udp-cbr` workload without the UDP checksum (`udp-checksum: false`), so that
+    /// Sends the packets of the last UDP workload without the UDP checksum (`udp-checksum: false`), so that
     /// a corrupted packet arrives and is counted (D-040). The packet size must then be at least
     /// [`MIN_PACKET_SIZE_WITHOUT_CHECKSUM`](crate::MIN_PACKET_SIZE_WITHOUT_CHECKSUM).
     #[must_use]
     pub fn without_udp_checksum(mut self) -> Self {
-        if let Some(Workload::UdpCbr(workload)) = self.workloads.last_mut() {
-            workload.udp_checksum = UdpChecksum::Off;
+        match self.workloads.last_mut() {
+            Some(Workload::UdpCbr(workload)) => workload.udp_checksum = UdpChecksum::Off,
+            Some(Workload::UdpPoisson(workload)) => workload.udp_checksum = UdpChecksum::Off,
+            Some(Workload::UdpOnOff(workload)) => workload.udp_checksum = UdpChecksum::Off,
+            Some(Workload::UdpBursty(workload)) => workload.udp_checksum = UdpChecksum::Off,
+            _ => {}
         }
         self
     }

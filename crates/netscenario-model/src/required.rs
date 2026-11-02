@@ -83,6 +83,29 @@ pub(crate) const TAGGED: &[Tagged] = &[
                 &["id", "node", "run"],
                 &["env", "ready", "shutdown"],
             ),
+            (
+                "udp-poisson",
+                &["id", "from", "to", "rate", "packet-size"],
+                &["start", "stop", "udp-checksum"],
+            ),
+            (
+                "udp-onoff",
+                &["id", "from", "to", "rate", "packet-size", "on", "off"],
+                &["distribution", "start", "stop", "udp-checksum"],
+            ),
+            (
+                "udp-bursty",
+                &[
+                    "id",
+                    "from",
+                    "to",
+                    "packet-size",
+                    "burst-packets",
+                    "gap",
+                    "pause",
+                ],
+                &["distribution", "start", "stop", "udp-checksum"],
+            ),
         ],
     },
 ];
@@ -237,11 +260,20 @@ fn keys_of_another_variant(
                         .map(|key| format!("`{key}`"))
                         .collect::<Vec<_>>()
                         .join(", "),
-                    owners.join(" and ")
+                    list_of(&owners)
                 )),
             )
         })
         .collect()
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn list_of(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => (*only).to_owned(),
+        [first @ .., last] => format!("{} and {last}", first.join(", ")),
+    }
 }
 
 #[cfg(test)]

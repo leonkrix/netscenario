@@ -8,6 +8,7 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [lte-like.yaml](lte-like.yaml) | A mobile access link: delay with a normal jitter, loss, and a rate that differs per direction |
 | [satellite.yaml](satellite.yaml) | A geostationary hop with `both`, a window for the stream, and `backend: kernel` |
 | [lossy-both-ways.yaml](lossy-both-ways.yaml) | Loss in both directions and one stream each way |
+| [traffic-patterns.yaml](traffic-patterns.yaml) | The three traffic patterns of release 0.2 besides the constant bit rate: a Poisson process, an on/off source and bursts, with exponential phases and pauses drawn from the `seed` |
 | [bandwidth-drop-and-outage.yaml](bandwidth-drop-and-outage.yaml) | A timeline: a rate limit from a moment on, an outage of two seconds, the limit taken away with `null`; applied by the Kernel backend since release 0.2. `netscenario run` on it prints the time to recover after each event, and `series-media.jsonl` shows the quiet second of the outage and the queue that the limit builds (try `--bin 500ms --recovery-basis arrival`) |
 | [link-down-and-up.yaml](link-down-and-up.yaml) | A link that goes down for five seconds and comes up again: the sender is refused, nothing is lost that was not sent |
 | [program-under-test.yaml](program-under-test.yaml) | A program of your own in a node (`kind: command`) with a readiness check and a shutdown; started by the Kernel backend from release 0.2 |

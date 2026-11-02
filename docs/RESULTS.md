@@ -177,11 +177,11 @@ The seed of one direction is derived from the seed of the run, the index of the 
 
 | Field | Meaning |
 | --- | --- |
-| `id`, `kind` | As in the scenario (`udp-cbr`). |
+| `id`, `kind` | As in the scenario (`udp-cbr`, `udp-poisson`, `udp-onoff` or `udp-bursty`). |
 | `from`, `to` | The sending and the receiving node. |
 | `from_address` | The address of the sender. |
 | `to_address` | The address and the port the packets went to (port 5000 for the first workload, 5001 for the next). |
-| `rate_bits_per_second`, `packet_size_bytes` | From the scenario: the rate of the **payload** and the size of the payload of one packet. |
+| `rate_bits_per_second`, `packet_size_bytes` | The rate of the **payload** that the schedule is meant to give, and the size of the payload of one packet. The rate is the one in the scenario for `udp-cbr` and `udp-poisson` (for the second it is the mean), and the mean over the on and off phases (`udp-onoff`) or over a burst and its pause (`udp-bursty`), rounded down. |
 | `start_ns`, `duration_ns` | When the workload started (from the start of the measured phase) and how long it sent. |
 | `sent` | The packets the sender handed to the kernel. |
 | `received` | The different packets that arrived. |

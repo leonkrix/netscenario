@@ -113,7 +113,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | WRK-01 | UDP constant bit rate | M | 0.1 | done (`netscenario run`, tested in real namespaces; [AGENT.md](docs/AGENT.md)) |
-| WRK-02 | UDP Poisson, on/off and bursty | M | 0.2 | planned |
+| WRK-02 | UDP Poisson, on/off and bursty | M | 0.2 | done (`udp-poisson`, `udp-onoff`, `udp-bursty`; a seeded schedule from a generator written out in the agent, pinned against an independent implementation; unit tests of the distributions with derived bounds, [patterns.rs](crates/netscenario-backend-kernel/tests/patterns.rs) in real namespaces; [AGENT.md](docs/AGENT.md), [SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md), D-071) |
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | planned |
 | WRK-04 | TCP bulk transfer | M | 0.3 | planned |
 | WRK-05 | Request and response (echo, latency) | M | 0.3 | planned |

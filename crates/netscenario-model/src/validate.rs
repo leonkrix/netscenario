@@ -2,12 +2,13 @@
 //! exactly. Every problem names the path of the value in the scenario.
 
 use crate::error::Problem;
+use crate::generators::{Generator, Pattern};
 use crate::scenario::{
     Change, Direction, Event, Impairments, Jitter, JitterDistribution, Link, Loss, Scenario,
-    UdpCbr, Workload,
+    Workload,
 };
 use crate::suggest::closest;
-use crate::units::{Duration, Name, Probability};
+use crate::units::{Duration, Name, Probability, Rate};
 
 /// The packets per second that a workload may send: what the agent was measured to deliver (spike S8).
 pub const MAX_PACKETS_PER_SECOND: u64 = 100_000;
@@ -122,7 +123,7 @@ impl Scenario {
             problems.push(
                 Problem::new("a scenario needs at least one workload, found none")
                     .at_path("workloads")
-                    .with_help("add a workload of kind udp-cbr, or a command"),
+                    .with_help("add a workload of kind udp-cbr, udp-poisson, udp-onoff or udp-bursty, or a command"),
             );
         }
         for (index, workload) in self.workloads.iter().enumerate() {
@@ -140,19 +141,21 @@ impl Scenario {
                 );
             }
             match workload {
-                Workload::UdpCbr(workload) => {
-                    self.check_udp_cbr(workload, &base, nodes, nodes_ok, problems);
-                }
                 Workload::Command(command) => {
                     crate::command::check(command, &base, nodes, nodes_ok, problems);
+                }
+                other => {
+                    if let Some(generator) = other.generator() {
+                        self.check_generator(&generator, &base, nodes, nodes_ok, problems);
+                    }
                 }
             }
         }
     }
 
-    fn check_udp_cbr(
+    fn check_generator(
         &self,
-        workload: &UdpCbr,
+        workload: &Generator<'_>,
         base: &str,
         nodes: &[Name],
         nodes_ok: bool,
@@ -194,23 +197,82 @@ impl Scenario {
                         "use a payload of {MIN_PACKET_SIZE_WITHOUT_CHECKSUM} bytes or more, or leave `udp-checksum` out (the checksum of UDP is then on, and the smallest payload is {MIN_PACKET_SIZE} bytes)"
                     )),
                 );
-            } else if u128::from(workload.rate.bits_per_second())
-                > u128::from(MAX_PACKETS_PER_SECOND) * u128::from(size) * 8
-            {
-                let per_second =
-                    u128::from(workload.rate.bits_per_second()) / (u128::from(size) * 8);
-                problems.push(
-                    Problem::new(format!(
-                        "the rate {} with packets of {} is {per_second} packets per second; at most {MAX_PACKETS_PER_SECOND} are supported",
-                        workload.rate, workload.packet_size
-                    ))
-                    .at_path(format!("{base}.rate"))
-                    .with_help("use bigger packets or a lower rate: the agent was measured up to that many packets per second"),
-                );
             }
+            check_pattern(workload, size, base, problems);
             if !self.duration.is_zero() {
                 check_window(self.duration, workload.start, workload.stop, base, problems);
             }
+        }
+    }
+}
+
+/// The longest burst: far more than a link holds, and far below what the 32 bit sequence number of a packet allows.
+pub const MAX_BURST_PACKETS: u32 = 100_000;
+
+/// The rules of a pattern: the rate is one that the agent was measured at, and the times make a source that sends.
+fn check_pattern(workload: &Generator<'_>, size: u64, base: &str, problems: &mut Vec<Problem>) {
+    let too_fast = |rate: Rate| {
+        u128::from(rate.bits_per_second())
+            > u128::from(MAX_PACKETS_PER_SECOND) * u128::from(size) * 8
+    };
+    let rate_problem = |rate: Rate, problems: &mut Vec<Problem>| {
+        let per_second = u128::from(rate.bits_per_second()) / (u128::from(size) * 8);
+        problems.push(
+            Problem::new(format!(
+                "the rate {rate} with packets of {} is {per_second} packets per second; at most {MAX_PACKETS_PER_SECOND} are supported",
+                workload.packet_size
+            ))
+            .at_path(format!("{base}.rate"))
+            .with_help("use bigger packets or a lower rate: the agent was measured up to that many packets per second"),
+        );
+    };
+    let must_be_more_than_zero = |key: &str, time: Duration, problems: &mut Vec<Problem>| {
+        if time.is_zero() {
+            problems.push(
+                Problem::new(format!("`{key}` must be more than zero"))
+                    .at_path(format!("{base}.{key}")),
+            );
+        }
+    };
+    match workload.pattern {
+        Pattern::Cbr { rate } | Pattern::Poisson { rate } => {
+            if too_fast(rate) {
+                rate_problem(rate, problems);
+            }
+        }
+        Pattern::OnOff { rate, on, off, .. } => {
+            if too_fast(rate) {
+                rate_problem(rate, problems);
+            }
+            must_be_more_than_zero("on", on, problems);
+            must_be_more_than_zero("off", off, problems);
+        }
+        Pattern::Bursty {
+            packets,
+            gap,
+            pause,
+            ..
+        } => {
+            if !(1..=MAX_BURST_PACKETS).contains(&packets) {
+                problems.push(
+                    Problem::new(format!(
+                        "a burst of {packets} packets is outside 1 to {MAX_BURST_PACKETS} packets"
+                    ))
+                    .at_path(format!("{base}.burst-packets")),
+                );
+            }
+            // The packets of a burst are as many a second as the agent was measured at, at most
+            let shortest = Duration::from_nanos(1_000_000_000_u64.div_ceil(MAX_PACKETS_PER_SECOND));
+            if packets > 1 && gap < shortest {
+                problems.push(
+                    Problem::new(format!(
+                        "the gap {gap} between the packets of a burst is less than {shortest}, which is more than {MAX_PACKETS_PER_SECOND} packets per second"
+                    ))
+                    .at_path(format!("{base}.gap"))
+                    .with_help("the agent was measured up to that many packets per second"),
+                );
+            }
+            must_be_more_than_zero("pause", pause, problems);
         }
     }
 }

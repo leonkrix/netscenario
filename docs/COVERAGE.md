@@ -120,6 +120,7 @@ Mobility only changes the parameters of links over time (through the geometry-ba
 | Feature | Kernel | Engine | Proxy |
 | --- | --- | --- | --- |
 | UDP traffic generators | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/agent.rs)) | ✔ 0.4 | ✔ 0.5 |
+| UDP traffic patterns (Poisson, on/off, bursts) | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/patterns.rs): the packets of the seeded schedule at their moments, the same seed twice, a step before the packet the schedule names) | ✔ 0.4 | ✔ 0.5 |
 | UDP without checksum | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs): a corrupted packet arrives and is counted, at three payload sizes) | ✔ 0.4 | ✘ |
 | TCP traffic generators | ✔ 0.3 | ✔ 0.4 | ~ 0.5 |
 | Request and response | ✔ 0.3 | ✔ 0.4 | ✔ 0.5 |

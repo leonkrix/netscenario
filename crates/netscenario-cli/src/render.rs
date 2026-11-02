@@ -294,19 +294,22 @@ fn recoveries_text(text: &mut String, workload: &WorkloadResult) {
 
 fn workload_text(text: &mut String, workload: &WorkloadResult) {
     let stats = &workload.stats;
+    // The rate of a constant bit rate stream is the one in the scenario; of the others it is a mean, and the kind is said
+    let stated = rate(
+        #[allow(clippy::cast_precision_loss)] // rates are far below 2^52 bits per second
+        {
+            workload.rate_bits_per_second as f64
+        },
+    );
+    let shape = if workload.kind == "udp-cbr" {
+        stated
+    } else {
+        format!("{}, {stated} on average", workload.kind)
+    };
     let _ = writeln!(
         text,
-        "\nworkload {}  {} -> {}  {}, {} byte packets",
-        workload.id,
-        workload.from,
-        workload.to,
-        rate(
-            #[allow(clippy::cast_precision_loss)] // rates are far below 2^52 bits per second
-            {
-                workload.rate_bits_per_second as f64
-            }
-        ),
-        workload.packet_size_bytes
+        "\nworkload {}  {} -> {}  {shape}, {} byte packets",
+        workload.id, workload.from, workload.to, workload.packet_size_bytes
     );
     let reordered = if stats.reordered > 0 {
         format!("  reordered {}", stats.reordered)
@@ -431,6 +434,18 @@ workload media  client -> server  2 mbit/s, 1200 byte packets
 result: out/result.json
 "
         );
+    }
+
+    /// A source whose rate is a mean says so, and names its kind; a constant bit rate is as it was.
+    #[test]
+    fn a_pattern_other_than_a_constant_rate_is_named_with_its_mean_rate() {
+        let poisson = RESULT.replace("\"kind\": \"udp-cbr\"", "\"kind\": \"udp-poisson\"");
+        let text = summary(&RunResult::from_json(&poisson).unwrap(), Path::new("out"));
+        assert!(
+            text.contains("workload media  client -> server  udp-poisson, 2 mbit/s on average, 1200 byte packets"),
+            "{text}"
+        );
+        assert!(summary(&result(), Path::new("out")).contains("server  2 mbit/s, 1200 byte"));
     }
 
     /// Canary: a queue that counted other packets than the workloads sent is named, with the numbers.

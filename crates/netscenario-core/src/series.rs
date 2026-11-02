@@ -23,7 +23,7 @@
 use std::io::{self, Write};
 
 use netscenario_agent::records::Record;
-use netscenario_agent::schedule::Stream;
+use netscenario_agent::schedule::Schedule;
 use serde::{Deserialize, Serialize};
 
 use crate::stats::nearest_rank;
@@ -93,8 +93,8 @@ pub struct Bin {
 /// What the series is made from.
 #[derive(Debug, Clone, Copy)]
 pub struct Input<'a> {
-    /// The rate and the size of the packets of the workload.
-    pub stream: Stream,
+    /// When the packets of the workload leave and how large they are.
+    pub schedule: Schedule,
     /// When the workload begins, in nanoseconds from the start of the measured phase.
     pub start_ns: u64,
     /// The start of the measured phase on the clock of the records (`CLOCK_MONOTONIC`).
@@ -119,15 +119,24 @@ pub struct Input<'a> {
 pub fn bins(input: &Input<'_>, bin_ns: u64) -> Vec<Bin> {
     assert!(bin_ns > 0, "a bin has a width");
     let Input {
-        stream,
+        schedule,
         start_ns,
         origin_ns,
         slots,
         refused,
         records,
     } = *input;
+    // The bin of each slot, walked once in order: a drawn schedule has no formula for packet `n` (there are at most a million
+    // bins, so a bin fits in 32 bits)
+    let slot_bins: Vec<u32> = schedule
+        .offsets(u64::MAX)
+        .take(usize::try_from(slots).unwrap_or(usize::MAX))
+        .map(|offset| u32::try_from((start_ns + offset) / bin_ns).unwrap_or(u32::MAX))
+        .collect();
     let slot_bin = |n: u64| -> usize {
-        usize::try_from((start_ns + stream.offset_ns(n)) / bin_ns).unwrap_or(usize::MAX)
+        slot_bins
+            .get(usize::try_from(n).unwrap_or(usize::MAX))
+            .map_or(usize::MAX, |bin| *bin as usize)
     };
     let was_refused = |n: u64| {
         let place = refused.partition_point(|[_, last]| *last < n);
@@ -191,7 +200,7 @@ pub fn bins(input: &Input<'_>, bin_ns: u64) -> Vec<Bin> {
                 },
                 by_arrival: ByArrival {
                     received: arrived_here,
-                    bits: arrived_here * stream.packet_size * 8,
+                    bits: arrived_here * schedule.packet_size() * 8,
                     delay: summarize(arrival_delays.get_mut(index)),
                 },
             }
@@ -237,12 +246,13 @@ pub fn write_series(mut out: impl Write, workload: &str, bins: &[Bin]) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use netscenario_agent::schedule::Stream;
 
     /// 800 kbit with 1000-byte packets: 100 packets a second, a packet every 10 ms.
-    const STREAM: Stream = Stream {
+    const STREAM: Schedule = Schedule::Cbr(Stream {
         bits_per_second: 800_000,
         packet_size: 1000,
-    };
+    });
 
     /// An arrival of packet `n`, sent at its slot (10 ms apart, from `start` ms) and received `delay_ms` later.
     fn arrival(n: u64, start_ms: u64, delay_ms: u64) -> Record {
@@ -255,7 +265,7 @@ mod tests {
 
     fn input<'a>(slots: u64, refused: &'a [[u64; 2]], records: &'a [Record]) -> Input<'a> {
         Input {
-            stream: STREAM,
+            schedule: STREAM,
             start_ns: 0,
             origin_ns: 0,
             slots,
@@ -390,5 +400,55 @@ mod tests {
         assert_eq!(first["by_send"]["sent"], 50);
         assert_eq!(first["by_send"]["delivered_ratio"], 1.0);
         assert_eq!(first["by_arrival"]["bits"], 50 * 8000);
+    }
+
+    /// A drawn schedule is binned by the moments it walks, not by a formula: the packets sent in each bin are the moments
+    /// of the schedule in it, and the two views agree on every packet.
+    #[test]
+    fn the_bins_of_a_drawn_schedule_follow_its_moments() {
+        use netscenario_agent::schedule::Schedule;
+
+        let schedule = Schedule::Poisson {
+            stream: Stream {
+                bits_per_second: 800_000,
+                packet_size: 1000,
+            },
+            seed: 3,
+        };
+        let moments: Vec<u64> = schedule.offsets(2_000_000_000).collect();
+        let records: Vec<Record> = moments
+            .iter()
+            .enumerate()
+            .map(|(n, at)| Record {
+                sequence: n as u64,
+                send_ns: *at,
+                receive_ns: *at + 5_000_000,
+            })
+            .collect();
+        let found = bins(
+            &Input {
+                schedule,
+                start_ns: 0,
+                origin_ns: 0,
+                slots: moments.len() as u64,
+                refused: &[],
+                records: &records,
+            },
+            500_000_000,
+        );
+        let by_hand: Vec<u64> = (0..4)
+            .map(|bin| {
+                moments
+                    .iter()
+                    .filter(|at| **at / 500_000_000 == bin)
+                    .count() as u64
+            })
+            .collect();
+        let sent: Vec<u64> = found.iter().map(|bin| bin.by_send.sent).collect();
+        assert_eq!(sent[..4], by_hand[..]);
+        assert_eq!(sent.iter().sum::<u64>(), moments.len() as u64);
+        assert!(found.iter().all(|bin| bin.by_send.lost == 0));
+        // Canary: a constant bit rate with the same mean puts 50 packets in every bin, and the drawn ones differ
+        assert_ne!(by_hand, [50, 50, 50, 50]);
     }
 }

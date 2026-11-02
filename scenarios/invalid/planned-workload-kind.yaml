@@ -10,7 +10,7 @@ topology:
         delay: 40ms
 workloads:
   - id: media
-    kind: udp-poisson
+    kind: tcp-bulk
     from: client
     to: server
     rate: 1mbit

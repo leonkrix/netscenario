@@ -38,7 +38,7 @@ pub enum Feature {
     Outages,
     /// The interface of a link goes down and comes up (`timeline` with `down` and `up`).
     LinkDownUp,
-    /// The `udp-cbr` workload.
+    /// The workloads that send UDP packets: `udp-cbr`, and with `TrafficPatterns` the three others.
     UdpGenerators,
     /// A `udp-cbr` workload without the checksum of UDP (`udp-checksum: false`), so that a corrupted packet
     /// arrives and is counted.
@@ -47,6 +47,9 @@ pub enum Feature {
     Program,
     /// A `seed` is written in the file and the scenario has loss: the same seed must give the same lost packets.
     SeededLoss,
+    /// The workloads `udp-poisson`, `udp-onoff` and `udp-bursty`: the moments of the packets come from a seeded generator.
+    /// Last in the list because it was added last.
+    TrafficPatterns,
 }
 
 impl Feature {
@@ -70,6 +73,7 @@ impl Feature {
         Feature::UdpWithoutChecksum,
         Feature::Program,
         Feature::SeededLoss,
+        Feature::TrafficPatterns,
     ];
 
     /// A short stable name, for results and logs.
@@ -94,6 +98,7 @@ impl Feature {
             Feature::UdpWithoutChecksum => "udp-without-checksum",
             Feature::Program => "program",
             Feature::SeededLoss => "seeded-loss",
+            Feature::TrafficPatterns => "traffic-patterns",
         }
     }
 
@@ -119,6 +124,7 @@ impl Feature {
             Feature::UdpWithoutChecksum => "UDP without checksum",
             Feature::Program => "Your program as a node",
             Feature::SeededLoss => "Same seed, same loss pattern",
+            Feature::TrafficPatterns => "UDP traffic patterns (Poisson, on/off, bursts)",
         }
     }
 }
@@ -216,10 +222,16 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
         match workload.kind() {
             WorkloadKind::UdpCbr => need(Feature::UdpGenerators, format!("workloads[{index}]")),
             WorkloadKind::Command => need(Feature::Program, format!("workloads[{index}]")),
+            // A kind of a later version is not asked for here, and the model refuses it before this is reached
+            WorkloadKind::UdpPoisson | WorkloadKind::UdpOnoff | WorkloadKind::UdpBursty => {
+                need(Feature::UdpGenerators, format!("workloads[{index}]"));
+                need(Feature::TrafficPatterns, format!("workloads[{index}]"));
+            }
+            _ => {}
         }
         if workload
-            .as_udp_cbr()
-            .is_some_and(|workload| !workload.udp_checksum.is_on())
+            .generator()
+            .is_some_and(|generator| !generator.udp_checksum.is_on())
         {
             need(
                 Feature::UdpWithoutChecksum,
@@ -260,6 +272,55 @@ mod tests {
         assert_eq!(
             features(&s),
             [Feature::PointToPoint, Feature::Ipv4, Feature::UdpGenerators]
+        );
+    }
+
+    /// The three kinds of WRK-02 need the generators and, on top of them, the patterns; a constant bit rate does not need
+    /// the patterns, so a backend without them still runs the scenarios of release 0.1.
+    #[test]
+    fn the_traffic_patterns_need_their_feature_and_a_constant_bit_rate_does_not() {
+        let scenario = |workload: &str| {
+            Scenario::from_yaml(
+                &format!("version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\nworkloads:\n  - {workload}\n"),
+                "t.yaml",
+            )
+            .unwrap()
+        };
+        for (workload, patterns) in [
+            (
+                "{ id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }",
+                false,
+            ),
+            (
+                "{ id: w, kind: udp-poisson, from: a, to: b, rate: 1mbit, packet-size: 1200b }",
+                true,
+            ),
+            (
+                "{ id: w, kind: udp-onoff, from: a, to: b, rate: 1mbit, packet-size: 1200b, on: 1s, off: 1s }",
+                true,
+            ),
+            (
+                "{ id: w, kind: udp-bursty, from: a, to: b, packet-size: 1200b, burst-packets: 4, gap: 1ms, pause: 10ms }",
+                true,
+            ),
+        ] {
+            let found = features(&scenario(workload));
+            assert!(found.contains(&Feature::UdpGenerators), "{workload}");
+            assert_eq!(
+                found.contains(&Feature::TrafficPatterns),
+                patterns,
+                "{workload}"
+            );
+        }
+        // The checksum is asked for by the new kinds too
+        let found = requirements(&scenario(
+            "{ id: w, kind: udp-poisson, from: a, to: b, rate: 1mbit, packet-size: 1200b, udp-checksum: false }",
+        ));
+        assert!(
+            found
+                .iter()
+                .any(|r| r.feature == Feature::UdpWithoutChecksum
+                    && r.path == "workloads[0].udp-checksum")
         );
     }
 

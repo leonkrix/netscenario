@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Three kinds of traffic over one link besides the constant bit rate: a Poisson process (requests that arrive at
+# random), a source that is on for about half a second and off for about one and a half (exponential phases), and
+# bursts of ten packets every hundred milliseconds or so (exponential pauses). The same seed gives the same packets at
+# the same moments in every run, so a result can be repeated; the result says the mean rate of each.
+version: 0
+name: traffic-patterns
+seed: 7
+duration: 20s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      both:
+        delay: 20ms
+workloads:
+  - id: requests
+    kind: udp-poisson
+    from: client
+    to: server
+    rate: 800kbit
+    packet-size: 400b
+  - id: sensor
+    kind: udp-onoff
+    from: client
+    to: server
+    rate: 400kbit
+    packet-size: 200b
+    on: 500ms
+    off: 1500ms
+    distribution: exponential
+  - id: video
+    kind: udp-bursty
+    from: server
+    to: client
+    packet-size: 1200b
+    burst-packets: 10
+    gap: 200us
+    pause: 100ms
+    distribution: exponential
