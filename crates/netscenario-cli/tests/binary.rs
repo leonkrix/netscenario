@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use netscenario_core::RunResult;
+use netscenario_core::{RunResult, RunSetResult, derive_repetition_seed};
 
 fn netscenario(args: &[&str]) -> io::Result<Output> {
     Command::new(env!("CARGO_BIN_EXE_netscenario"))
@@ -169,6 +169,144 @@ fn run_writes_the_result_and_prints_the_summary() {
     // --packets wrote one line for each packet
     let packets = std::fs::read_to_string(out.join("packets-media.jsonl")).unwrap();
     assert_eq!(packets.lines().count(), 417);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A scenario whose loss is random, so that the runs of a set differ from each other and a seed matters.
+const LOSSY: &str = "version: 0
+name: cli-set
+duration: 1s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      both: { delay: 5ms, loss: { model: random, p: 10% } }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }
+";
+
+/// Runs the set of `LOSSY` with the seed 7 into `out` and reads `runset.json`.
+fn run_lossy_set(dir: &Path, out: &Path) -> (Output, Option<RunSetResult>) {
+    let file = write_scenario(dir, LOSSY);
+    let output = netscenario_in(
+        dir,
+        &[
+            "run",
+            &file,
+            "--out",
+            out.to_str().unwrap(),
+            "--seed",
+            "7",
+            "--repetitions",
+            "5",
+            "--settle",
+            "300ms",
+        ],
+    )
+    .unwrap();
+    let set = std::fs::read_to_string(out.join("runset.json"))
+        .ok()
+        .map(|text| RunSetResult::from_json(&text).unwrap());
+    (output, set)
+}
+
+/// ASR-02 and ASR-03 with the real program: every repetition has a directory and a seed derived from the seed of the set, the runs
+/// differ from each other, the same seed gives the same set, and the summary shows the intervals.
+///
+/// A run of 1 s at 2 mbit/s sends 208 packets at 10 % loss: the lost packets of a run are binomial with mean 20.8 and standard
+/// deviation 4.3, so five runs have the same count with a probability below 1e-5 (the chance that two runs of a set differ is
+/// what the check on distinct counts below relies on).
+#[test]
+fn a_set_of_repetitions_derives_its_seeds_and_repeats_from_the_seed() {
+    if !can_run("a_set_of_repetitions_derives_its_seeds_and_repeats_from_the_seed") {
+        return;
+    }
+    let dir = work_dir("set");
+    let (output, set) = run_lossy_set(&dir, &dir.join("first"));
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.contains("running cli-set 5 times for 1s each"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("repetition 5 of 5 (seed"), "{stderr}");
+    for expected in [
+        "netscenario run: cli-set, 5 repetitions",
+        "seed 7\n",
+        "interval of the mean: 95 %",
+        "media\n",
+        "loss_ratio",
+        "set: ",
+    ] {
+        assert!(stdout.contains(expected), "{expected}\n{stdout}");
+    }
+    let set = set.expect("runset.json");
+    assert_eq!(
+        (set.seed.value, set.seed.drawn, set.runs.len()),
+        (7, false, 5)
+    );
+    for (index, run) in set.runs.iter().enumerate() {
+        let index = u32::try_from(index).unwrap();
+        assert_eq!(run.seed, derive_repetition_seed(7, index));
+        assert_eq!(run.directory, format!("run-{:03}", index + 1));
+        let result = RunResult::from_json(
+            &std::fs::read_to_string(dir.join("first").join(&run.directory).join("result.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result.seed.value, Some(run.seed));
+    }
+    let lost = set.metric("media.lost").expect("media.lost");
+    let mut distinct = lost.values.clone();
+    distinct.sort_by(f64::total_cmp);
+    distinct.dedup();
+    assert!(
+        distinct.len() >= 2,
+        "the five runs lost the same: {:?}",
+        lost.values
+    );
+    assert!(lost.interval.low <= lost.mean && lost.mean <= lost.interval.high);
+    // The same seed gives the same set: the lost packets, run by run
+    let (again, second) = run_lossy_set(&dir, &dir.join("second"));
+    assert_eq!(again.status.code(), Some(0));
+    let second = second.expect("runset.json of the second set");
+    assert_eq!(second.metric("media.lost").unwrap().values, lost.values);
+    assert_eq!(
+        second.metric("media.loss_ratio").unwrap().interval,
+        set.metric("media.loss_ratio").unwrap().interval
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Too few repetitions is a wrong command line: exit code 2 and nothing runs, with or without namespaces.
+#[test]
+fn too_few_repetitions_are_refused_before_anything_runs() {
+    let dir = work_dir("set-few");
+    let file = write_scenario(&dir, SCENARIO);
+    let out = dir.join("result");
+    let output = netscenario_in(
+        &dir,
+        &[
+            "run",
+            &file,
+            "--out",
+            out.to_str().unwrap(),
+            "--repetitions",
+            "4",
+        ],
+    )
+    .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("repetitions is 4; it is from 5"),
+        "{stderr}"
+    );
+    assert!(!out.exists(), "nothing was run, so nothing was written");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -465,7 +603,7 @@ fn start_long_run(
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    std::thread::sleep(Duration::from_millis(2000));
+    std::thread::sleep(Duration::from_secs(2));
     (child, stderr)
 }
 

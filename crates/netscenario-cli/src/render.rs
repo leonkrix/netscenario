@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use netscenario_core::{RunResult, WorkloadResult};
+use netscenario_core::{MetricSet, RunResult, RunSetResult, WorkloadResult};
 
 /// Up to this many seconds the throughput of every second is listed; a longer run shows the average.
 const MAX_LISTED_SECONDS: usize = 6;
@@ -87,6 +87,141 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
         let _ = writeln!(text, "  note: {note}");
     }
     let _ = writeln!(text, "\nresult: {}", out_dir.join("result.json").display());
+    text
+}
+
+/// The metrics that the summary of a set shows for each workload, in this order, with how to write their numbers. The set
+/// has all the others in `runset.json`.
+const HEADLINE: [(&str, Unit); 5] = [
+    ("loss_ratio", Unit::Percent),
+    ("delay.p50", Unit::Milliseconds),
+    ("delay.p95", Unit::Milliseconds),
+    ("delay.p99", Unit::Milliseconds),
+    ("throughput.mean", Unit::Rate),
+];
+
+#[derive(Clone, Copy)]
+enum Unit {
+    Percent,
+    Milliseconds,
+    Rate,
+}
+
+impl Unit {
+    /// A value of the metric as text; the interval uses the same unit and writes it once.
+    fn number(self, value: f64) -> String {
+        match self {
+            Self::Percent => format!("{:.2}", value * 100.0),
+            Self::Milliseconds => format!("{:.3}", value * 1e3),
+            Self::Rate => rate(value),
+        }
+    }
+
+    /// The unit after the interval; the rate carries its own.
+    fn suffix(self) -> &'static str {
+        match self {
+            Self::Percent => " %",
+            Self::Milliseconds => " ms",
+            Self::Rate => "",
+        }
+    }
+}
+
+/// The text printed after a set of runs: what ran, the seed and how the intervals were made, and for each workload the
+/// headline metrics with the value in the middle, the interval and the spread between the runs.
+pub(crate) fn set_summary(set: &RunSetResult, out_dir: &Path) -> String {
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "netscenario run: {}, {} repetitions\n  backend {}",
+        set.scenario.name, set.repetitions, set.provenance.backend
+    );
+    if set.seed.drawn {
+        let _ = writeln!(
+            text,
+            "  seed {} (drawn; repeat the set with --seed {})",
+            set.seed.value, set.seed.value
+        );
+    } else {
+        let _ = writeln!(text, "  seed {}", set.seed.value);
+    }
+    let _ = writeln!(
+        text,
+        "  interval of the {}: {} %, {} draws ({} method)",
+        set.confidence.statistic.name(),
+        set.confidence.level * 100.0,
+        set.confidence.resamples,
+        match set.confidence.method {
+            netscenario_core::bootstrap::Method::Percentile => "percentile",
+            netscenario_core::bootstrap::Method::ExpandedPercentile => "expanded percentile",
+        }
+    );
+    let unreproducible = set.runs.iter().filter(|run| !run.loss_reproducible).count();
+    if unreproducible > 0 {
+        let _ = writeln!(
+            text,
+            "  warning: the loss of {unreproducible} of the runs is not reproducible from its seed (see result.json of the run)"
+        );
+    }
+    let mut ids: Vec<&str> = Vec::new();
+    for metric in &set.metrics {
+        let id = metric.name.split('.').next().unwrap_or_default();
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    for id in ids {
+        let rows: Vec<(&MetricSet, Unit)> = HEADLINE
+            .iter()
+            .filter_map(|(suffix, unit)| {
+                set.metric(&format!("{id}.{suffix}"))
+                    .map(|metric| (metric, *unit))
+            })
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        let _ = writeln!(text, "\n{id}");
+        for (metric, unit) in rows {
+            let label = metric
+                .name
+                .strip_prefix(&format!("{id}."))
+                .unwrap_or(&metric.name);
+            let interval = &metric.interval;
+            let _ = writeln!(
+                text,
+                "  {label:<16} {}{}  [{} to {}{}]  spread {}{}",
+                unit.number(interval.estimate),
+                unit.suffix(),
+                unit.number(interval.low),
+                unit.number(interval.high),
+                unit.suffix(),
+                unit.number(metric.stddev),
+                unit.suffix(),
+            );
+        }
+    }
+    if !set.partial.is_empty() {
+        let names: Vec<&str> = set
+            .partial
+            .iter()
+            .take(3)
+            .map(|p| p.name.as_str())
+            .collect();
+        let _ = writeln!(
+            text,
+            "\n  note: {} metrics are missing in some runs and have no interval ({}{})",
+            set.partial.len(),
+            names.join(", "),
+            if set.partial.len() > 3 { ", ..." } else { "" }
+        );
+    }
+    let _ = writeln!(
+        text,
+        "\n{} metrics in all; the values of every run and every interval are in the set\nset: {}",
+        set.metrics.len(),
+        out_dir.join("runset.json").display()
+    );
     text
 }
 
@@ -565,6 +700,70 @@ mod tests {
 
     fn result() -> RunResult {
         RunResult::from_json(RESULT).unwrap()
+    }
+
+    /// A set of five runs as `netscenario run --repetitions 5` writes it, reduced to the metrics the summary shows.
+    const SET: &str = r#"{
+      "format": "netscenario-runset", "version": 0,
+      "scenario": {"name": "lte-like-link", "hash": "sha256:00"},
+      "provenance": {"netscenario": "0.0.0", "started_at": "2026-11-02T12:00:00Z", "backend": "kernel",
+        "backend_details": {}, "kernel": null, "cpu_model": null, "cpus": 4},
+      "seed": {"value": 42, "drawn": true},
+      "repetitions": 5,
+      "confidence": {"statistic": "mean", "level": 0.95, "resamples": 10000, "method": "expanded-percentile"},
+      "runs": [
+        {"index": 0, "seed": 1, "directory": "run-001", "loss_reproducible": true},
+        {"index": 1, "seed": 2, "directory": "run-002", "loss_reproducible": false}
+      ],
+      "metrics": [
+        {"name": "media.delay.p99", "values": [0.05], "mean": 0.05, "median": 0.05, "min": 0.04, "max": 0.06, "stddev": 0.0071,
+         "interval": {"statistic": "mean", "estimate": 0.0453, "low": 0.0411, "high": 0.0502, "level": 0.95,
+                      "method": "expanded-percentile", "tail": 0.00095, "resamples": 10000, "runs": 5}},
+        {"name": "media.loss_ratio", "values": [0.02], "mean": 0.0231, "median": 0.02, "min": 0.01, "max": 0.03, "stddev": 0.0052,
+         "interval": {"statistic": "mean", "estimate": 0.0231, "low": 0.0180, "high": 0.0285, "level": 0.95,
+                      "method": "expanded-percentile", "tail": 0.00095, "resamples": 10000, "runs": 5}},
+        {"name": "media.sent", "values": [100.0], "mean": 100.0, "median": 100.0, "min": 100.0, "max": 100.0, "stddev": 0.0,
+         "interval": {"statistic": "mean", "estimate": 100.0, "low": 100.0, "high": 100.0, "level": 0.95,
+                      "method": "expanded-percentile", "tail": 0.00095, "resamples": 10000, "runs": 5}}
+      ],
+      "partial": [{"name": "media.delay.p50", "present_in": 4, "of": 5}]
+    }"#;
+
+    #[test]
+    fn the_summary_of_a_set_shows_the_headline_metrics_with_their_intervals() {
+        let set = RunSetResult::from_json(SET).unwrap();
+        let text = set_summary(&set, Path::new("out"));
+        for expected in [
+            "netscenario run: lte-like-link, 5 repetitions",
+            "seed 42 (drawn; repeat the set with --seed 42)",
+            "interval of the mean: 95 %, 10000 draws (expanded percentile method)",
+            "warning: the loss of 1 of the runs is not reproducible from its seed",
+            "\nmedia\n",
+            "  loss_ratio       2.31 %  [1.80 to 2.85 %]  spread 0.52 %",
+            "  delay.p99        45.300 ms  [41.100 to 50.200 ms]  spread 7.100 ms",
+            "note: 1 metrics are missing in some runs and have no interval (media.delay.p50)",
+            "3 metrics in all",
+            "set: out/runset.json",
+        ] {
+            assert!(text.contains(expected), "{expected:?} is not in\n{text}");
+        }
+        // The headline order is fixed, and a metric that is not a headline (the count of sent packets) is not listed
+        assert!(text.find("loss_ratio").unwrap() < text.find("delay.p99").unwrap());
+        assert!(!text.contains("sent "), "{text}");
+    }
+
+    /// A set of runs that all reproduce has no warning, and a seed from the file is not called drawn.
+    #[test]
+    fn a_set_without_trouble_has_no_warning() {
+        let text = SET
+            .replace(
+                "\"loss_reproducible\": false",
+                "\"loss_reproducible\": true",
+            )
+            .replace("\"drawn\": true", "\"drawn\": false");
+        let text = set_summary(&RunSetResult::from_json(&text).unwrap(), Path::new("out"));
+        assert!(!text.contains("warning"), "{text}");
+        assert!(text.contains("  seed 42\n"), "{text}");
     }
 
     #[test]

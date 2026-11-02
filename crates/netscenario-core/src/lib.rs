@@ -53,6 +53,7 @@
 
 mod backend;
 mod barriers;
+pub mod bootstrap;
 mod capability;
 mod captures;
 mod drive;
@@ -69,8 +70,10 @@ mod provision;
 pub mod recovery;
 mod result;
 mod run;
+mod runset;
 mod seed;
 pub mod series;
+mod special;
 pub mod stats;
 pub mod timeline;
 mod traffic;
@@ -95,4 +98,11 @@ pub use result::{
     ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
-pub use seed::{derive_seed, derive_stage_seed, draw_seed};
+pub use runset::{
+    Confidence, MAX_REPETITIONS, MetricSet, PartialMetric, RUNSET_FILE, RUNSET_FORMAT,
+    RUNSET_VERSION, Repetition, RepetitionInfo, RunSetOptions, RunSetResult, SetSeed, aggregate,
+    metric_values, run_set,
+};
+pub use seed::{
+    derive_bootstrap_seed, derive_repetition_seed, derive_seed, derive_stage_seed, draw_seed,
+};

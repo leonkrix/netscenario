@@ -146,8 +146,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | ASR-01 | Threshold assertions on metrics | M | 0.1 | done (plain `assert` on the numbers of the result in test code: [PYTEST.md](docs/PYTEST.md), [examples/python-test/](examples/python-test/); the `expect` section is ASR-07) |
-| ASR-02 | Repetitions with derived seeds | M | 0.2 | planned |
-| ASR-03 | Confidence intervals (bootstrap) | M | 0.2 | planned |
+| ASR-02 | Repetitions with derived seeds | M | 0.2 | in progress (library and command line: [STATISTICS.md](docs/STATISTICS.md), D-074; Python and the plugin follow) |
+| ASR-03 | Confidence intervals (bootstrap) | M | 0.2 | in progress (library and command line: [STATISTICS.md](docs/STATISTICS.md), D-074; Python and the plugin follow) |
 | ASR-04 | Baselines and regression detection (effect size, interval, "erratic" marking) | M | 0.7 | planned |
 | ASR-05 | Statistical comparison of two sets of runs (rank test) | S | 0.7 | planned |
 | ASR-06 | Policy for flaky runs: rerun and report it | S | 0.5 | planned |

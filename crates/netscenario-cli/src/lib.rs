@@ -287,6 +287,30 @@ mod tests {
                 "--capture: 'bad name'",
             ),
             (
+                &["run", "a.yaml", "--repetitions", "x"][..],
+                "--repetitions needs a whole number",
+            ),
+            (
+                &["run", "a.yaml", "--repetitions", "4"][..],
+                "repetitions is 4; it is from 5",
+            ),
+            (
+                &["run", "a.yaml", "--repetitions", "5", "--confidence", "100"][..],
+                "level of an interval",
+            ),
+            (
+                &["run", "a.yaml", "--repetitions", "5", "--statistic", "mode"][..],
+                "--statistic: the statistic is mean or median, not 'mode'",
+            ),
+            (
+                &["run", "a.yaml", "--statistic", "median"][..],
+                "--statistic needs --repetitions",
+            ),
+            (
+                &["run", "a.yaml", "--confidence", "90"][..],
+                "--confidence needs --repetitions",
+            ),
+            (
                 &["run", "a.yaml", "--recovery-baseline", "x"][..],
                 "--recovery-baseline needs a whole number of bins",
             ),

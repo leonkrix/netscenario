@@ -2483,7 +2483,7 @@ mod tests {
             waited >= Duration::from_millis(5 * 50 + 300 - 100),
             "{waited:?}"
         );
-        assert!(waited < Duration::from_millis(1000), "{waited:?}");
+        assert!(waited < Duration::from_secs(1), "{waited:?}");
         assert!(result.notes.is_empty(), "{:?}", result.notes);
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }
