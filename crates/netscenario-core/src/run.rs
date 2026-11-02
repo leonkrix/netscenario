@@ -1170,10 +1170,7 @@ fn measure_with(
         &senders,
         &steps,
         &plan.bindings,
-        drive::Begin {
-            at: begin_at,
-            ns: begin,
-        },
+        drive::Begin { ns: begin },
         deadline,
         drive::Watch {
             programs,
