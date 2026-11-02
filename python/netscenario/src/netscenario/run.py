@@ -47,7 +47,7 @@ def run(
         seed: Use this seed and not the one in the scenario. This is how a run that drew its own
             seed is repeated.
         settle: How long to wait after the last packet for the packets still in the network, in
-            seconds. Default: one second and twice the longest delay of the scenario.
+            seconds. Default: until the queues of the links are empty and 0.3 s more.
         packets: Also write one line of JSON for each packet of each workload
             (``Workload.packets_file``).
         observer: Called with a :class:`netscenario.events.RunEvent` for each event of the run, on

@@ -185,6 +185,8 @@ pub(crate) struct Provisioner {
     programs: Vec<RunningProgram>,
     /// The queues planned for the directions that change in the run (D-059), by link and direction.
     layouts: std::collections::HashMap<(u32, Way), netem::Layout>,
+    /// The directions that have queues, because `apply` built them. A direction that impairs nothing has none.
+    built: std::collections::HashSet<(u32, Way)>,
     /// The `tc -batch` that makes the changes of the node whose holder has this process id (D-063). `None`: there is
     /// none, because it could not be started or stopped working, and a process makes the changes of that node.
     batches: HashMap<u32, Option<Batch>>,
@@ -215,6 +217,7 @@ impl Provisioner {
             links: Vec::new(),
             programs: Vec::new(),
             layouts: std::collections::HashMap::new(),
+            built: std::collections::HashSet::new(),
             batches: HashMap::new(),
             notes: Vec::new(),
         })
@@ -590,6 +593,7 @@ impl Provisioner {
             let words: Vec<&str> = line.split(' ').collect();
             self.in_node(pid, &self.tools.tc, &words)?;
         }
+        self.built.insert((link_index, way));
         // A direction that changes in the run gets the `tc` that makes its changes before the workloads start, so
         // that its first change does not pay for the start of a process
         if planned {
@@ -618,6 +622,22 @@ impl Provisioner {
             &["-j", "-s", "qdisc", "show", "dev", end.interface.as_str()],
         )?;
         packets_entered(&shown)
+    }
+
+    /// How many packets are in the queues of a direction now: the `qlen` of the root queue of the interface of its
+    /// sender, which counts the packets that wait for the rate, are held back for the delay, and are in any queue
+    /// behind the root (measured, D-067). A direction without queues has none.
+    pub(crate) fn queue_backlog(&self, link: u32, way: Way) -> Result<u64, String> {
+        if !self.built.contains(&(link, way)) {
+            return Ok(0);
+        }
+        let (pid, interface) = self.interface_of(link, way)?;
+        let shown = self.in_node(
+            pid,
+            &self.tools.tc,
+            &["-j", "-s", "qdisc", "show", "dev", interface.as_str()],
+        )?;
+        backlog_of(&shown)
     }
 
     /// What the node at the receiving end of a direction has counted (D-040): the frames that arrived at the
@@ -814,6 +834,24 @@ impl Provisioner {
         command.extend_from_slice(arguments);
         run(&self.tools.nsenter, &command)
     }
+}
+
+/// The packets that the root queue holds, from the JSON of `tc -j -s qdisc show dev <interface>`: its `qlen`, which
+/// includes the packets in the queues behind it.
+fn backlog_of(json: &str) -> Result<u64, String> {
+    let qdiscs: serde_json::Value = serde_json::from_str(json)
+        .map_err(|error| format!("cannot read the statistics of the queue: {error}"))?;
+    qdiscs
+        .as_array()
+        .and_then(|qdiscs| {
+            qdiscs
+                .iter()
+                .find(|qdisc| qdisc.get("root").and_then(serde_json::Value::as_bool) == Some(true))
+        })
+        .ok_or_else(|| "the interface has no root queue".to_owned())?
+        .get("qlen")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "the statistics of the queue have no 'qlen'".to_owned())
 }
 
 /// The packets that entered the root queue, from the JSON of `tc -j -s qdisc show dev <interface>`: what it

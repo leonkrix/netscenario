@@ -786,6 +786,25 @@ impl Backend for KernelBackend {
         }
     }
 
+    fn queue_backlog(
+        &mut self,
+        link: LinkHandle,
+        direction: Direction,
+    ) -> Result<Option<u64>, Error> {
+        let action = "count the packets in a queue";
+        let request = Request::QueueBacklog {
+            link: link.0,
+            direction: Way::from(direction),
+        };
+        match self.exchange(action, &request)? {
+            Response::Count { packets } => Ok(Some(packets)),
+            other => Err(Self::error(
+                action,
+                format!("the supervisor gave an answer that was not asked for: {other:?}"),
+            )),
+        }
+    }
+
     fn node_counts(
         &mut self,
         link: LinkHandle,

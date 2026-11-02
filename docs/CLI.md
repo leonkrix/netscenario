@@ -41,7 +41,7 @@ netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--packe
 | --- | --- |
 | `--out <dir>` | Where to write the result. Default: `netscenario-results/<name>-<UTC time>/` in the current directory, so two runs do not overwrite each other. The directory must be one that you can write to, because the agents in the nodes write the raw records into it. |
 | `--seed <n>` | Use this seed and not the one in the file. This is how a run that drew its own seed is repeated: the summary prints `repeat the run with --seed <n>`. |
-| `--settle <duration>` | How long to wait after the last packet for the packets still in the network, for example `2s`. Default: one second and twice the longest delay of the scenario. A packet that needs longer counts as lost. Use it for a rate limit that builds a long queue. |
+| `--settle <duration>` | How long to wait after the last packet for the packets still in the network, for example `2s`. Default: until the queues of the links are empty (a rate limit holds the packets that are sent faster than it lets them go), then 0.3 s for the receivers to read, at most two minutes; the result says how long it took (`timing.settle_ns`). With the option the wait is that long and a packet that needs longer counts as lost. |
 | `--packets` | Also write `packets-<id>.jsonl` with one line for each packet ([RESULTS.md](RESULTS.md)). |
 | `--json` | Print `result.json` on standard output instead of the summary. The file is written either way. |
 

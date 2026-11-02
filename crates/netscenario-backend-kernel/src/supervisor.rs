@@ -146,6 +146,13 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
                 });
                 continue;
             }
+            Request::QueueBacklog { link, direction } => {
+                send(&match provisioner.queue_backlog(link, direction) {
+                    Ok(packets) => Response::Count { packets },
+                    Err(message) => Response::Error { message },
+                });
+                continue;
+            }
             Request::NodeCounts { link, direction } => {
                 send(&match provisioner.node_counts(link, direction) {
                     Ok((frames_received, receive_buffer_drops)) => Response::NodeCounts {
