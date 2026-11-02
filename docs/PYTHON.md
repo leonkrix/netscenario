@@ -77,6 +77,8 @@ Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`,
 | `w.loss_ratio`, `w.delivery_ratio` | 0 to 1 |
 | `w.delay.p50`, `.p95`, `.p99`, `.min`, `.mean`, `.max` | seconds; `None` if no packet arrived. Percentiles are the nearest rank, always a measured delay |
 | `w.throughput.bits_per_second` | payload bit/s in each second, counted from the first packet sent |
+| `w.series` | where the packets by time bin are (`.bin` in seconds, `.bins`, `.file`) or `None` in a result of an older run; `.read()` reads the file into a tuple of `Bin` (`.index`, `.start` in seconds, `.by_send` with `.sent`, `.received`, `.lost`, `.delivered_ratio`, `.delay`, and `.by_arrival` with `.received`, `.bits`, `.delay`, and `.bits_per_second(series.bin)`). Both views use the same bins, counted from the start of the measured phase, the zero of `result.steps` ([RESULTS.md](RESULTS.md)). Each call reads the file again |
+| `w.recoveries` | how long the workload took to be back at its level after each event that concerns it, in the order of the events: `.event`, `.kind`, `.link`, `.direction`, `.basis`, `.start`, `.disturbance`, `.baseline`, `.level`, `.time` in seconds or `None` with `.reason`, `.recovered_at`, and `.recovered`. The resolution is one bin |
 | `w.sender.max_lateness` | seconds; large against the gap between packets means the machine shaped the stream |
 | `result.seed.value`, `.drawn`, `.loss_reproducible` | the seed, and whether the loss can be repeated |
 | `result.seed.queue_checks` | for each direction with loss, the packets its queue counted against the packets the workloads sent (`.link`, `.direction`, `.expected`, `.counted`, `.agrees`) |
@@ -85,6 +87,16 @@ Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`,
 | `result.notes` | what the backend says about how it did the run, one sentence each (for example that a change was made the slow way); empty if the run went as usual |
 | `result.provenance` | netscenario version, time, backend and its details, kernel, processor |
 | `result.raw` | the decoded `result.json`, unchanged |
+
+The series and the time to recover are shaped by the arguments of `ns.run`: `bin` (the width of a bin in seconds, 1 by default), `recovery_basis` (`"send"`, the default, or `"arrival"`), `recovery_baseline` (5 bins), `recovery_window` (3 bins) and `recovery_fraction` (0.9, a share from above 0 to 1). A value that makes no sense is a `ValueError` before anything is built.
+
+```python
+result = ns.run(scenario, bin=0.5, recovery_basis="arrival")
+media = result["media"]
+(drop, *_) = [r for r in media.recoveries if r.kind == "set"]
+assert drop.time is not None and drop.time < 5.0, drop.reason   # the receiver was back within five seconds
+silent = [b.start for b in media.series.read() if b.by_arrival.received == 0]
+```
 
 A run without a `seed` draws one and records it; `ns.run(scenario, seed=result.seed.value)` repeats it.
 

@@ -32,6 +32,11 @@ def run(
     packets: bool = False,
     observer: Callable[[RunEvent], None] | None = None,
     cancel: _native.CancelToken | None = None,
+    bin: float | None = None,
+    recovery_basis: str | None = None,
+    recovery_baseline: int | None = None,
+    recovery_window: int | None = None,
+    recovery_fraction: float | None = None,
 ) -> Result:
     """Run a scenario in network namespaces and return the result.
 
@@ -53,6 +58,17 @@ def run(
         observer: Called with a :class:`netscenario.events.RunEvent` for each event of the run, on
             the thread that runs, between two steps. An exception in it stops the run and is raised.
         cancel: A :class:`CancelToken` that stops the run.
+        bin: The width of a bin of the series of each workload (``Workload.series``), in seconds.
+            Default 1 s. At least a millisecond, and the measured phase may have at most a million
+            bins. It is also the resolution of the time to recover.
+        recovery_basis: The view the level of a bin is made from for ``Workload.recoveries``:
+            ``"send"`` (default), the packets sent in the bin that arrived, or ``"arrival"``, the
+            packets that arrived in the bin over those sent in it. ``"arrival"`` sees the silence of
+            an ``outage`` at the receiver at the moment it happens.
+        recovery_baseline: How many bins before the disturbance make the baseline. Default 5.
+        recovery_window: How many bins in a row have to be back at the level. Default 3.
+        recovery_fraction: The share of the baseline that has to be reached again, above 0 and at
+            most 1. Default 0.9.
 
     Returns:
         The :class:`Result`.
@@ -65,6 +81,7 @@ def run(
         RunError: The run failed after it started.
         Cancelled: ``cancel`` was cancelled.
         KeyboardInterrupt: The run was interrupted.
+        ValueError: An option of the series or the recovery makes no sense.
     """
     loaded = scenario if isinstance(scenario, Scenario) else Scenario.load(scenario)
     try:
@@ -89,6 +106,11 @@ def run(
         packets=packets,
         observer=notify if observer is not None else None,
         cancel=cancel,
+        bin=bin,
+        recovery_basis=recovery_basis,
+        recovery_baseline=recovery_baseline,
+        recovery_window=recovery_window,
+        recovery_fraction=recovery_fraction,
     )
     return Result.from_json(text, directory)
 

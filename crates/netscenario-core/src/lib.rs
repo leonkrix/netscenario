@@ -63,9 +63,11 @@ mod machine;
 mod observe;
 pub mod patterns;
 mod provision;
+pub mod recovery;
 mod result;
 mod run;
 mod seed;
+pub mod series;
 pub mod stats;
 pub mod timeline;
 
@@ -82,9 +84,11 @@ pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
 pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering};
 pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
+pub use recovery::{Basis, Recovery, RecoveryOptions};
 pub use result::{
     AcceptedRestriction, AddressInfo, DirectionTally, EventRecord, QueueCheck, RESULT_FORMAT,
-    RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, Timing, WorkloadResult,
+    RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing,
+    WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
 pub use seed::{derive_seed, derive_stage_seed, draw_seed};

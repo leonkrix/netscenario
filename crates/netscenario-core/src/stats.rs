@@ -133,7 +133,7 @@ pub fn name_damaged_refused(
 }
 
 /// The delay at the nearest rank for `permille` (500 is the median, 999 is percentile 99.9) in `sorted`.
-fn nearest_rank(sorted: &[u64], permille: u64) -> u64 {
+pub(crate) fn nearest_rank(sorted: &[u64], permille: u64) -> u64 {
     let n = sorted.len() as u64;
     let rank = (permille * n).div_ceil(1000).max(1);
     sorted[usize::try_from(rank - 1).unwrap_or(0).min(sorted.len() - 1)]

@@ -256,6 +256,42 @@ fn damaged_names_text(text: &mut String, workload: &WorkloadResult) {
 }
 
 /// The part of the summary about one workload.
+/// The time to recover after each step of the timeline that concerns the workload (D-070).
+fn recoveries_text(text: &mut String, workload: &WorkloadResult) {
+    for recovery in &workload.recoveries {
+        let what = format!(
+            "  recovery after {} (event {}, link {}{}):",
+            recovery.kind,
+            recovery.event,
+            recovery.link,
+            recovery
+                .direction
+                .as_deref()
+                .map_or(String::new(), |direction| format!(" {direction}"))
+        );
+        match (recovery.time_ns, recovery.baseline, &recovery.reason) {
+            (Some(time), Some(baseline), _) => {
+                let _ = writeln!(
+                    text,
+                    "{what} {} (baseline {:.1} %, back to {:.1} % for {} bins, by {})",
+                    seconds(time),
+                    baseline * 100.0,
+                    recovery.fraction * 100.0,
+                    recovery.window_bins,
+                    recovery.basis.word()
+                );
+            }
+            (_, _, reason) => {
+                let _ = writeln!(
+                    text,
+                    "{what} no time: {}",
+                    reason.as_deref().unwrap_or("not recovered")
+                );
+            }
+        }
+    }
+}
+
 fn workload_text(text: &mut String, workload: &WorkloadResult) {
     let stats = &workload.stats;
     let _ = writeln!(
@@ -331,6 +367,7 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
             bins.len()
         );
     }
+    recoveries_text(text, workload);
     if workload.sender.send_errors > 0 {
         let _ = writeln!(
             text,
@@ -519,6 +556,38 @@ result: out/result.json
             text.contains(
                 "at 6.000 s  link access reverse  set  before packet 2250, which waited 0.002 ms"
             ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_time_to_recover_is_shown_for_each_event_and_the_reason_where_there_is_none() {
+        let mut result = result();
+        assert!(!summary(&result, Path::new("out")).contains("recovery after"));
+        let mut json = serde_json::to_value(&result).unwrap();
+        let base = serde_json::json!({
+            "event": 0, "kind": "outage-end", "link": "access", "direction": "forward", "basis": "send",
+            "from_ns": 13_000_000_000_u64, "disturbance_ns": 10_000_000_000_u64, "baseline": 1.0, "level": 0.9,
+            "baseline_bins": 5, "window_bins": 3, "fraction": 0.9, "recovered_at_ns": 15_000_000_000_u64,
+            "time_ns": 2_000_000_000_u64, "reason": null
+        });
+        let mut never = base.clone();
+        never["event"] = 1.into();
+        never["kind"] = "set".into();
+        never["direction"] = serde_json::Value::Null;
+        never["time_ns"] = serde_json::Value::Null;
+        never["recovered_at_ns"] = serde_json::Value::Null;
+        never["reason"] =
+            "the level 0.900 was not reached again for 3 bins before the run ended".into();
+        json["workloads"][0]["recoveries"] = serde_json::json!([base, never]);
+        result = RunResult::from_json(&json.to_string()).unwrap();
+        let text = summary(&result, Path::new("out"));
+        assert!(
+            text.contains("recovery after outage-end (event 0, link access forward): 2.000 s (baseline 100.0 %, back to 90.0 % for 3 bins, by send)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("recovery after set (event 1, link access): no time: the level 0.900 was not reached again"),
             "{text}"
         );
     }

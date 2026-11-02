@@ -265,6 +265,19 @@ pub struct SenderInfo {
     pub refused: Vec<[u64; 2]>,
 }
 
+/// Where the series of a workload is and how it is cut (D-070). The series itself is in a file of its own,
+/// `series-<id>.jsonl`, one line for each bin (see [`series`](crate::series)), so that this result stays small.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SeriesInfo {
+    /// The width of a bin, in nanoseconds.
+    pub bin_ns: u64,
+    /// How many bins (lines) the file has.
+    pub bins: u64,
+    /// The file, relative to the result.
+    pub file: String,
+}
+
 /// The result of one workload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -325,6 +338,13 @@ pub struct WorkloadResult {
     pub records_file: String,
     /// The JSON Lines file with one line for each packet, if it was asked for, relative to the result.
     pub packets_file: Option<String>,
+    /// The series by time bin: where the file is and how it is cut (D-070). `None` in a result of an older run.
+    #[serde(default)]
+    pub series: Option<SeriesInfo>,
+    /// The time to recover after each event of the timeline that concerns this workload (D-070); empty without a
+    /// timeline, and in a result of an older run.
+    #[serde(default)]
+    pub recoveries: Vec<crate::recovery::Recovery>,
 }
 
 impl RunResult {
@@ -440,6 +460,12 @@ mod tests {
                 corrupted_seq_unavailable: None,
                 records_file: "flow-0.records".to_owned(),
                 packets_file: None,
+                series: Some(SeriesInfo {
+                    bin_ns: 1_000_000_000,
+                    bins: 3,
+                    file: "series-media.jsonl".to_owned(),
+                }),
+                recoveries: Vec::new(),
             }],
             events: Vec::new(),
             notes: vec!["a note".to_owned()],

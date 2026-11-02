@@ -28,7 +28,7 @@ It gives a `Runner` for the test.
 
 | Call | What it does |
 | --- | --- |
-| `netscenario.run(scenario, ...)` | Runs a scenario and returns the `netscenario.Result`. `scenario` is a `Scenario` or the name of a file. The options are those of `netscenario.run`: `seed`, `settle`, `packets`, `observer`, `cancel`, and `out` for the directory. |
+| `netscenario.run(scenario, ...)` | Runs a scenario and returns the `netscenario.Result`. `scenario` is a `Scenario` or the name of a file. The options are those of `netscenario.run`: `seed`, `settle`, `packets`, `observer`, `cancel`, the options of the series and the time to recover (`bin`, `recovery_basis`, `recovery_baseline`, `recovery_window`, `recovery_fraction`), and `out` for the directory. |
 | `netscenario.load(name)` | Reads and checks a scenario file and returns the `Scenario`, without running it. This works on any machine. |
 | `netscenario.results` | The results of the runs of this test so far. |
 

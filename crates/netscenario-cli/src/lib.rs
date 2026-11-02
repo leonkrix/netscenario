@@ -269,6 +269,23 @@ mod tests {
                 "--seed needs a whole number",
             ),
             (&["run", "a.yaml", "--settle", "soon"][..], "--settle:"),
+            (&["run", "a.yaml", "--bin", "soon"][..], "--bin:"),
+            (
+                &["run", "a.yaml", "--recovery-basis", "sent"][..],
+                "--recovery-basis is send or arrival",
+            ),
+            (
+                &["run", "a.yaml", "--recovery-window", "0"][..],
+                "the window of the recovery needs at least one bin",
+            ),
+            (
+                &["run", "a.yaml", "--recovery-fraction", "150"][..],
+                "the fraction of the recovery is 1.5",
+            ),
+            (
+                &["run", "a.yaml", "--recovery-baseline", "x"][..],
+                "--recovery-baseline needs a whole number of bins",
+            ),
             (
                 &["run", "a.yaml", "--verbose"][..],
                 "unknown option '--verbose'",

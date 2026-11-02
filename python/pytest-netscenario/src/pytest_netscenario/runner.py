@@ -90,6 +90,11 @@ class Runner:
         observer: Callable[[RunEvent], None] | None = None,
         cancel: CancelToken | None = None,
         out: str | os.PathLike[str] | None = None,
+        bin: float | None = None,
+        recovery_basis: str | None = None,
+        recovery_baseline: int | None = None,
+        recovery_window: int | None = None,
+        recovery_fraction: float | None = None,
     ) -> Result:
         """Run a scenario and return its :class:`netscenario.Result`.
 
@@ -106,6 +111,11 @@ class Runner:
             cancel: A :class:`netscenario.CancelToken` that stops the run.
             out: The directory for the result. Default: a new one in the temporary directory of the
                 test.
+            bin: The width of a bin of the series, in seconds (see :func:`netscenario.run`).
+            recovery_basis: ``"send"`` or ``"arrival"``: the view of the time to recover.
+            recovery_baseline: How many bins make the baseline of the recovery.
+            recovery_window: How many bins in a row have to be back at the level.
+            recovery_fraction: The share of the baseline to reach again, above 0 to 1.
 
         Raises:
             Skipped: The machine cannot run scenarios (locally; on the CI that is a failure).
@@ -126,6 +136,11 @@ class Runner:
             packets=packets,
             observer=observer,
             cancel=cancel,
+            bin=bin,
+            recovery_basis=recovery_basis,
+            recovery_baseline=recovery_baseline,
+            recovery_window=recovery_window,
+            recovery_fraction=recovery_fraction,
         )
         self._results.append(result)
         self._record(result)

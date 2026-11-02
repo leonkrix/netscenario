@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use netscenario_agent::records;
+use netscenario_core::recovery::{self, Basis, RecoveryOptions};
+use netscenario_core::series;
 use netscenario_core::{
     Backend, CancelToken, Direction, Error, EventRecord, LinkHandle, NodeHandle, Program,
     ProgramHandle, RunEvent, RunOptions, run,
@@ -1001,4 +1003,220 @@ fn the_same_seed_loses_the_same_packets_outside_the_edges_of_an_outage() {
         (kept / wanted - 0.8).abs() < 0.05,
         "{kept} of {wanted} packets outside the window"
     );
+}
+
+/// The drop in the rate: what the second before it, in it and after it look like in both views.
+fn the_drop_is_in_the_bins(bins: &[series::Bin]) {
+    // Before the drop all the packets come through, 2 mbit of payload (two packets are room for the edges)
+    for bin in &bins[1..3] {
+        assert!(
+            bin.by_arrival.bits.abs_diff(2_000_000) <= 16_000,
+            "bin {}: {} bits",
+            bin.bin,
+            bin.by_arrival.bits
+        );
+    }
+    let delay = |bin: &series::Bin| bin.by_send.delay.clone().expect("packets arrived");
+    let before = delay(&bins[1]);
+    assert!(
+        (50_000_000..100_000_000).contains(&before.p50_ns),
+        "{before:?}"
+    );
+    // In the drop 1.1516 mbit arrive in a second, and nothing is lost: the packets wait in the queue
+    for bin in &bins[4..6] {
+        assert!(
+            bin.by_arrival.bits.abs_diff(1_151_500) <= 16_000,
+            "bin {}: {} bits",
+            bin.bin,
+            bin.by_arrival.bits
+        );
+    }
+    for bin in &bins[3..8] {
+        assert_eq!(bin.by_send.lost, 0, "bin {}", bin.bin);
+    }
+    // The packets of second 4 wait 0.79 s at its start and 1.5 s at its end
+    assert!(
+        delay(&bins[4]).p50_ns > 500_000_000,
+        "the packets of second 4 wait in the queue: {:?}",
+        delay(&bins[4])
+    );
+    // After the drop the queue empties faster than the packets come: more arrive in a second than were sent in it
+    assert!(
+        bins[6].by_arrival.received >= 260,
+        "{} arrivals in bin 6",
+        bins[6].by_arrival.received
+    );
+}
+
+/// The outage: what the bins in and around the window look like in both views, from the steps that were recorded.
+fn the_outage_is_in_the_bins(bins: &[series::Bin], result: &netscenario_core::RunResult) {
+    // The outage: bin 10 is inside the window, and the packets of bin 9 can only have arrived before the start step was
+    // done (250 a second, one more for the edge). Seen from the sender the packets are lost in bins 8 to 10: those sent
+    // up to 52 ms (50 ms of delay and the frame at 4 mbit) before an edge are lost with it.
+    let at = |kind: &str| {
+        result
+            .events
+            .iter()
+            .find(|e| e.kind == kind)
+            .unwrap_or_else(|| panic!("no step {kind}"))
+    };
+    let (start, end) = (at("outage-start"), at("outage-end"));
+    assert_eq!(bins[10].by_arrival.received, 0);
+    // Packets of 4 ms: the number of them in a stretch of time, rounded up, and one more for the edge
+    let late = |step: &EventRecord| step.applied_ns.saturating_sub(step.scheduled_ns);
+    let allowed = late(start).div_ceil(4_000_000) + 1;
+    assert!(
+        bins[9].by_arrival.received <= allowed,
+        "{} arrivals in bin 9, the start step was done {} ns late",
+        bins[9].by_arrival.received,
+        late(start)
+    );
+    let survivors =
+        |lateness_ns: u64| lateness_ns.saturating_sub(50_000_000).div_ceil(4_000_000) + 1;
+    assert!(
+        bins[9].by_send.received <= survivors(late(start)),
+        "{} of bin 9 arrived",
+        bins[9].by_send.received
+    );
+    assert!(
+        bins[10].by_send.received <= 52_000_000 / 4_000_000 + 1,
+        "{} of bin 10 arrived",
+        bins[10].by_send.received
+    );
+    assert!(bins[8].by_send.lost <= 14, "{}", bins[8].by_send.lost);
+    assert!(
+        bins[11].by_send.lost <= survivors(late(end)),
+        "{} of bin 11 lost",
+        bins[11].by_send.lost
+    );
+    for bin in &bins[12..14] {
+        assert_eq!(bin.by_send.lost, 0, "bin {}", bin.bin);
+    }
+}
+
+/// The recoveries after the three events, seen from the sender (the default of the run) and from the receiver.
+fn the_recoveries_follow_from_the_bins(
+    result: &netscenario_core::RunResult,
+    bins: &[series::Bin],
+    bin_ns: u64,
+) {
+    let workload = &result.workloads[0];
+    // The recovery seen from the sender, which is what the run calculates by default
+    let kinds: Vec<(usize, &str)> = workload
+        .recoveries
+        .iter()
+        .map(|r| (r.event, r.kind.as_str()))
+        .collect();
+    assert_eq!(kinds, [(0, "set"), (1, "set"), (2, "outage-end")]);
+    for found in &workload.recoveries {
+        assert_eq!(found.basis, Basis::Send);
+        assert_eq!(found.time_ns, Some(0), "{found:?}");
+        assert_eq!(found.reason, None);
+    }
+    // The baseline of the outage: the last five bins before it, of which four lost nothing
+    assert_eq!(workload.recoveries[2].baseline, Some(1.0));
+    assert_eq!(workload.recoveries[2].disturbance_ns, 9_000_000_000);
+    assert_eq!(workload.recoveries[2].from_ns, 11_000_000_000);
+
+    // The same series seen from the receiver, from the file and the library: the drop takes 3 s to recover from
+    let mut arrival = RecoveryOptions::default();
+    arrival.basis = Basis::Arrival;
+    let found = recovery::recoveries(&result.events, bins, bin_ns, &arrival);
+    let times: Vec<(usize, Option<u64>)> = found.iter().map(|r| (r.event, r.time_ns)).collect();
+    assert_eq!(
+        (times[0], times[2]),
+        ((0, Some(3_000_000_000)), (2, Some(0)))
+    );
+    assert_eq!(found[0].recovered_at_ns, Some(6_000_000_000));
+    // The restore at 5 s has a baseline of bins that are already in the drop (the median of 0.95, 1, 1, 0.6, 0.58 is
+    // 0.95), and the window 5 to 7 (86 %) is close to the 85 % that it asks for: it is back within a bin or two
+    assert!(
+        times[1].1.is_some_and(|time| time <= 1_000_000_000),
+        "{:?}",
+        found[1]
+    );
+    assert!(
+        found[0].baseline.is_some_and(|b| b >= 0.97),
+        "{:?}",
+        found[0]
+    );
+}
+
+/// The scene of the series (PRB-07, D-070): 2 mbit of 1,000 byte payloads (250 packets a second, one every 4 ms) over a
+/// link with 50 ms of delay. The rate of the link drops from 4 mbit to 1.2 mbit at 3 s and goes back at 5 s, and from 9 s
+/// to 11 s the delivery is cut by an outage. The series, in bins of a second from the start of the measured phase, has
+/// to show all of it, in both views:
+///
+/// - Frames are the payload and 42 bytes, so 1.2 mbit of frames is 143.95 packets a second, 1.1516 mbit of payload, 58 %
+///   of what is sent. In bins 4 and 5 that is what arrives. The queue of the link grows by 106 packets a second for 2 s:
+///   212 packets, far below the queue of the link, so nothing is lost, and the packets wait (0.05 s at 3 s, 1.5 s at 5 s).
+/// - `netem` works out the moment a packet leaves when the packet enters, so the 212 packets that are queued at 5 s keep
+///   their spacing of 1.2 mbit and leave until 6.47 s, and the packets behind them leave at 4 mbit (480 a second) next
+///   to the 250 that come. Bin 6 has more arrivals than packets sent in it, which the cap of the level
+///   (`min(arrived, sent)`) must not count twice, and the queue is empty again at about 8 s.
+/// - The outage is a window at the delivery: bin 10 is inside it and has no arrival, bin 9 has the packets that arrived
+///   before the start step was done. Seen from the sender the packets sent from 50 ms before 9 s to 50 ms before 11 s
+///   are lost, so the lost packets are in bins 8 to 10 and not where the silence is.
+/// - The recovery after the drop is 0 s seen from the sender (nothing was lost, the packets came late) and 3 s seen from
+///   the receiver (bins 3 to 5 are at 58 to 60 %, the window 5 to 7 is at 86 %, and the first window at 90 % of the
+///   baseline is 6 to 8). After the end of the outage both are 0: the link is back at that moment and the packets lost
+///   were sent before it.
+#[test]
+fn the_series_of_a_drop_in_bandwidth_and_an_outage_shows_both_in_both_views_and_the_recovery_is_read_from_it()
+ {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("timeline-series");
+    let mut backend = backend(|_| {});
+    let latest = latest();
+    let scene = Scenario::from_yaml(
+        "version: 0\nname: series-test\nduration: 14s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n      forward: { delay: 50ms, rate: 4mbit }\nworkloads:\n  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1000b }\ntimeline:\n  - { at: 3s, link: access, set: { forward: { rate: 1200kbit } } }\n  - { at: 5s, link: access, set: { forward: { rate: 4mbit } } }\n  - { at: 9s, link: access, outage: 2s, direction: forward }\n",
+        "series-test.yaml",
+    )
+    .unwrap();
+    let result = run(&mut backend, &scene, &options(&dir)).unwrap();
+    let workload = &result.workloads[0];
+    assert_eq!(
+        lateness_problems(&result.events, 4_000_000, latest),
+        Vec::<String>::new()
+    );
+
+    // The file is the series, and the result says where it is and how it is cut
+    let info = workload.series.as_ref().expect("a series");
+    assert_eq!(info.bin_ns, 1_000_000_000);
+    assert_eq!(info.file, "series-media.jsonl");
+    let text = std::fs::read_to_string(dir.join(&info.file)).unwrap();
+    let bins: Vec<series::Bin> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(bins.len() as u64, info.bins);
+    assert!(bins.len() >= 14, "{} bins", bins.len());
+    for (index, bin) in bins.iter().enumerate() {
+        assert_eq!(
+            (bin.bin, bin.start_ns),
+            (index as u64, index as u64 * 1_000_000_000)
+        );
+    }
+    // Both views add up to what the statistics say
+    let stats = &workload.stats;
+    let sum = |each: fn(&series::Bin) -> u64| bins.iter().map(each).sum::<u64>();
+    assert_eq!(sum(|b| b.by_send.sent), stats.sent);
+    assert_eq!(sum(|b| b.by_send.received), stats.received);
+    assert_eq!(sum(|b| b.by_send.lost), stats.lost);
+    assert_eq!(sum(|b| b.by_arrival.received), stats.received);
+    assert_eq!(sum(|b| b.by_arrival.bits), stats.received * 8_000);
+    // A packet every 4 ms: a bin of the run holds 250 slots
+    for bin in &bins[..14] {
+        assert_eq!(bin.by_send.sent, 250, "bin {}", bin.bin);
+    }
+
+    the_drop_is_in_the_bins(&bins);
+    the_outage_is_in_the_bins(&bins, &result);
+    the_recoveries_follow_from_the_bins(&result, &bins, info.bin_ns);
+
+    // Written once per workload, and nothing but the result and the files that belong to it is left
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
 }
