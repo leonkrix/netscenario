@@ -146,8 +146,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | ASR-01 | Threshold assertions on metrics | M | 0.1 | done (plain `assert` on the numbers of the result in test code: [PYTEST.md](docs/PYTEST.md), [examples/python-test/](examples/python-test/); the `expect` section is ASR-07) |
-| ASR-02 | Repetitions with derived seeds | M | 0.2 | in progress (library and command line: [STATISTICS.md](docs/STATISTICS.md), D-074; Python and the plugin follow) |
-| ASR-03 | Confidence intervals (bootstrap) | M | 0.2 | in progress (library and command line: [STATISTICS.md](docs/STATISTICS.md), D-074; Python and the plugin follow) |
+| ASR-02 | Repetitions with derived seeds | M | 0.2 | done (`run --repetitions`, `run(..., repetitions=n)`, the marker and `netscenario_runs`: [STATISTICS.md](docs/STATISTICS.md), D-074; tests in [`test_runset.py`](python/netscenario/tests/test_runset.py) and [`binary.rs`](crates/netscenario-cli/tests/binary.rs)) |
+| ASR-03 | Confidence intervals (bootstrap) | M | 0.2 | done (expanded percentile for the mean, percentile for the median, coverage measured: [STATISTICS.md](docs/STATISTICS.md), D-074; tests in [`bootstrap.rs`](crates/netscenario-core/src/bootstrap.rs), the stability of the claim in [ACCEPTANCE.md](docs/ACCEPTANCE.md)) |
 | ASR-04 | Baselines and regression detection (effect size, interval, "erratic" marking) | M | 0.7 | planned |
 | ASR-05 | Statistical comparison of two sets of runs (rank test) | S | 0.7 | planned |
 | ASR-06 | Policy for flaky runs: rerun and report it | S | 0.5 | planned |

@@ -3,8 +3,9 @@
 pytest finds this module through the ``pytest11`` entry point. What it offers:
 
 - the fixture ``netscenario``: a :class:`pytest_netscenario.runner.Runner` for the test,
-- the marker ``@pytest.mark.netscenario("file.yaml", seed=..., settle=...)`` and the fixture
-  ``netscenario_result``, which runs the scenario of the marker and gives the result,
+- the marker ``@pytest.mark.netscenario("file.yaml", seed=..., settle=...)`` and the fixtures
+  ``netscenario_result`` and ``netscenario_runs`` (with ``repetitions=``), which run the scenario of
+  the marker and give the result or the set of results,
 - the option ``--netscenario-environment`` and the ini option ``netscenario_scenarios``,
 - an attachment to the report of every test that ran a scenario.
 """
@@ -14,14 +15,15 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Generator
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 import netscenario as ns
 from pytest_netscenario import runner as runner_module
-from pytest_netscenario.runner import Runner, describe, properties
+from pytest_netscenario.runner import Runner, describe, describe_set, properties, set_properties
 
-_RESULTS: pytest.StashKey[list[ns.Result]] = pytest.StashKey()
+_RESULTS: pytest.StashKey[list[ns.Result | ns.RunSet]] = pytest.StashKey()
 """The results of the runs of a test, kept on the test item until its report is made."""
 
 _DOCTOR: pytest.StashKey[ns.DoctorReport] = pytest.StashKey()
@@ -30,6 +32,9 @@ _DOCTOR: pytest.StashKey[ns.DoctorReport] = pytest.StashKey()
 _MODES = ("auto", "skip", "fail")
 _MARKER_OPTIONS = frozenset(
     {
+        "repetitions",
+        "statistic",
+        "confidence",
         "seed",
         "settle",
         "packets",
@@ -69,10 +74,12 @@ def pytest_configure(config: pytest.Config) -> None:
     """Register the marker."""
     config.addinivalue_line(
         "markers",
-        "netscenario(scenario, *, seed=None, settle=None, packets=None, capture=None, bin=None, "
+        "netscenario(scenario, *, repetitions=None, statistic=None, confidence=None, "
+        "seed=None, settle=None, packets=None, capture=None, bin=None, "
         "recovery_basis=None, recovery_baseline=None, recovery_window=None, "
         "recovery_fraction=None): run this scenario file for the test; the fixture "
-        "netscenario_result gives the result",
+        "netscenario_result gives the result, and netscenario_runs the set of results with "
+        "repetitions",
     )
 
 
@@ -121,11 +128,12 @@ def netscenario(
     here = request.path.parent
     search = [here, *pytestconfig.getini("netscenario_scenarios"), pytestconfig.rootpath]
 
-    def record(result: ns.Result) -> None:
+    def record(result: ns.Result | ns.RunSet) -> None:
         item.stash.setdefault(_RESULTS, []).append(result)
         # On the item, as `record_property` does: the reports of the test copy them from there, and
         # the JUnit file takes them from the last of them
-        item.user_properties.extend(properties(result))
+        found = set_properties(result) if isinstance(result, ns.RunSet) else properties(result)
+        item.user_properties.extend(found)
 
     return Runner(
         out_root=tmp_path / "netscenario",
@@ -135,20 +143,12 @@ def netscenario(
     )
 
 
-@pytest.fixture
-def netscenario_result(request: pytest.FixtureRequest, netscenario: Runner) -> ns.Result:
-    """The result of the scenario that the marker ``netscenario`` names.
-
-    Example:
-        >>> @pytest.mark.netscenario("lte-like.yaml", seed=42)  # doctest: +SKIP
-        ... def test_media(netscenario_result):
-        ...     assert netscenario_result["media"].loss_ratio < 0.02
-    """
+def _marker_run(request: pytest.FixtureRequest, fixture: str) -> tuple[str, dict[str, Any]]:
+    """The scenario and the options of the marker, or a failure that says what is wrong."""
     marker = request.node.get_closest_marker("netscenario")
     if marker is None:
         pytest.fail(
-            "the fixture netscenario_result needs the marker: "
-            '@pytest.mark.netscenario("scenario.yaml")',
+            f'the fixture {fixture} needs the marker: @pytest.mark.netscenario("scenario.yaml")',
             pytrace=False,
         )
     if len(marker.args) != 1:
@@ -164,7 +164,47 @@ def netscenario_result(request: pytest.FixtureRequest, netscenario: Runner) -> n
             f"it takes {', '.join(sorted(_MARKER_OPTIONS))}",
             pytrace=False,
         )
-    return netscenario.run(marker.args[0], **marker.kwargs)
+    return marker.args[0], dict(marker.kwargs)
+
+
+@pytest.fixture
+def netscenario_result(request: pytest.FixtureRequest, netscenario: Runner) -> ns.Result:
+    """The result of the scenario that the marker ``netscenario`` names.
+
+    Example:
+        >>> @pytest.mark.netscenario("lte-like.yaml", seed=42)  # doctest: +SKIP
+        ... def test_media(netscenario_result):
+        ...     assert netscenario_result["media"].loss_ratio < 0.02
+    """
+    scenario, options = _marker_run(request, "netscenario_result")
+    if "repetitions" in options:
+        pytest.fail(
+            "the marker netscenario has repetitions, so the result is a set: use the fixture "
+            "netscenario_runs",
+            pytrace=False,
+        )
+    # No repetitions in the marker, so a single run
+    return cast("ns.Result", netscenario.run(scenario, **options))
+
+
+@pytest.fixture
+def netscenario_runs(request: pytest.FixtureRequest, netscenario: Runner) -> ns.RunSet:
+    """The set of runs of the scenario that the marker ``netscenario`` names, with ``repetitions``.
+
+    Example:
+        >>> @pytest.mark.netscenario("lte-like.yaml", repetitions=10, seed=42)  # doctest: +SKIP
+        ... def test_media(netscenario_runs):
+        ...     assert netscenario_runs.metric("media.loss_ratio").ci95_high < 0.05
+    """
+    scenario, options = _marker_run(request, "netscenario_runs")
+    if "repetitions" not in options:
+        pytest.fail(
+            "the fixture netscenario_runs needs repetitions in the marker: "
+            '@pytest.mark.netscenario("scenario.yaml", repetitions=10)',
+            pytrace=False,
+        )
+    # Repetitions are in the marker, so a set
+    return cast("ns.RunSet", netscenario.run(scenario, **options))
 
 
 @pytest.hookimpl(wrapper=True)
@@ -179,5 +219,6 @@ def pytest_runtest_makereport(
     if call.when == "call":
         results = item.stash.get(_RESULTS, None)
         for result in results or ():
-            report.sections.append(("netscenario", describe(result)))
+            text = describe_set(result) if isinstance(result, ns.RunSet) else describe(result)
+            report.sections.append(("netscenario", text))
     return report

@@ -104,6 +104,26 @@ silent = [b.start for b in media.series.read() if b.by_arrival.received == 0]
 
 A run without a `seed` draws one and records it; `ns.run(scenario, seed=result.seed.value)` repeats it.
 
+## Repetitions and confidence intervals
+
+One run is one sample. `repetitions` runs the scenario several times with seeds derived from one seed and returns a `netscenario.RunSet` with an interval for each metric (ASR-02, ASR-03; the method, its coverage and its limits are in [STATISTICS.md](STATISTICS.md)):
+
+```python
+runs = ns.run(scenario, repetitions=10, seed=42)      # 5 to 1000 runs, one after the other
+loss = runs.metric("media.loss_ratio")                # a SetMetric: every run has it
+assert loss.ci95_high < 0.05                          # the upper end of the 95 % interval of the mean
+print(loss.mean, loss.low, loss.high, loss.stddev)    # the interval is for the level of the set
+p99 = runs.metric("media.delay.p99")                  # seconds: the mean over the runs of the p99 of a run
+print(runs.results[3]["media"].lost)                  # the Result of run number 4, read from its directory
+```
+
+- **Names.** `<workload>.<what>` in SI units, as in the table of [STATISTICS.md](STATISTICS.md#the-metrics): `media.loss_ratio`, `media.delay.p99` (seconds), `media.throughput.mean` (bits per second), and `<program>.<metric>.last|min|max` for the metrics of a program of your own. `runs.metric("media.loss_ratoi")` is a `KeyError` that names the metrics that look like it.
+- **The interval** (`SetMetric.interval`) has `estimate`, `low`, `high`, `level`, `method`, `tail`, `resamples` and `runs`. `statistic="median"` makes it an interval around the median, `confidence=0.9` changes the level. `ci95_low` and `ci95_high` are the short names for the 95 % level and raise a `ValueError` for a set made with another level, instead of giving a number that does not mean what its name says; `low` and `high` are for the level of the set.
+- **A metric that only some runs have** (the delay of a run in which no packet arrived) is not in `runs.metrics`; `runs.partial` lists it, and `runs.metric(name)` says in how many runs it was there.
+- **The seeds.** `runs.seed` is the seed of the set (`drawn` if the scenario had none, and `seed=runs.seed.value` repeats the set), and `runs.runs[i].seed` the seed of run `i`.
+- **Failure.** A set ends with the first run that fails, with that run's exception, and has no `RunSet`; the directories of the finished runs stay in `out`. The observer is told `RepetitionStarted(index, total)` before the events of each run.
+- **What to assert.** Compare the end of the interval that is on the dangerous side with a threshold that has room: `loss.ci95_high < 0.05` for a link that loses 1 %. A threshold near the mean fails about half of the time however many runs there are ([STATISTICS.md](STATISTICS.md#what-stable-means)).
+
 ## Errors
 
 Every error is a `netscenario.NetscenarioError`. They match the exit codes of the command line ([CLI.md](CLI.md)):
@@ -129,7 +149,7 @@ token = ns.CancelToken()
 result = ns.run(scenario, observer=show, cancel=token)   # token.cancel() from any thread stops it
 ```
 
-The events are `Provisioned`, `ReceiversReady`, `Started`, `Progress` (once a second), `Settling`, `Collecting`, `TearingDown` and `Finished`, and a `StepDone` (the event of the timeline and how late it was) for each step of a timeline, between `Started` and `Settling` ([ARCHITECTURE.md](ARCHITECTURE.md), "Watching and stopping a run"). An exception in the observer stops the run and is raised.
+The events are `Provisioned`, `ReceiversReady`, `Started`, `Progress` (once a second), `Settling`, `Collecting`, `TearingDown` and `Finished`, a `RepetitionStarted` at the start of each run of a set, and a `StepDone` (the event of the timeline and how late it was) for each step of a timeline, between `Started` and `Settling` ([ARCHITECTURE.md](ARCHITECTURE.md), "Watching and stopping a run"). An exception in the observer stops the run and is raised.
 
 `ns.run` blocks, but it gives up the GIL and looks for interrupts every 100 ms. **Ctrl-C** (`KeyboardInterrupt`) and `pytest-timeout` stop the run: the network is torn down first, then the interrupt is raised. A cancel from Python is an error and not a partial result: the option that keeps what was recorded (`RunOptions::partial_on_cancel`, D-066) is for the command line. A run cannot be left behind: everything runs in a PID namespace that the kernel ends when the run's supervisor dies (D-022).
 
@@ -139,4 +159,4 @@ Python cannot be the supervisor of a run (it has several threads and cannot move
 
 ## Not yet
 
-Starting your own program in a node (release 0.2), repetitions and confidence intervals (0.2), `asyncio` (0.3), per-packet data as frames (0.3). The pytest plugin is described in [PYTEST.md](PYTEST.md).
+`asyncio` (0.3), per-packet data as frames (0.3). The pytest plugin is described in [PYTEST.md](PYTEST.md).

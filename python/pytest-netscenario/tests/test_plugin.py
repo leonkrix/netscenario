@@ -373,6 +373,10 @@ def test_two_runs_of_a_test_go_into_two_directories(pytester: pytest.Pytester) -
         ("@pytest.mark.netscenario", "one argument"),
         ('@pytest.mark.netscenario("a.yaml", "b.yaml")', "one argument"),
         ('@pytest.mark.netscenario("plug.yaml", sead=1)', "does not know sead"),
+        (
+            '@pytest.mark.netscenario("plug.yaml", repetitions=5)',
+            "use the fixture netscenario_runs",
+        ),
     ],
 )
 def test_a_wrong_marker_says_what_is_wrong(
@@ -394,6 +398,47 @@ def test_a_wrong_marker_says_what_is_wrong(
     result.stdout.fnmatch_lines([f"*{message}*"])
 
 
+def test_the_fixture_of_a_set_needs_repetitions_in_the_marker(pytester: pytest.Pytester) -> None:
+    pytester.makefile(".yaml", plug=SCENARIO)
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.netscenario("plug.yaml", seed=1)
+        def test_it(netscenario_runs):
+            pass
+        """
+    )
+    result = pytester.runpytest()
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*needs repetitions in the marker*"])
+
+
+def test_the_marker_takes_repetitions_and_the_options_of_the_interval(
+    pytester: pytest.Pytester,
+) -> None:
+    result = pytester.runpytest("--markers")
+    result.stdout.fnmatch_lines(["*repetitions=None, statistic=None, confidence=None*"])
+
+
+@pytest.mark.usefixtures("runnable")
+def test_a_run_with_too_few_repetitions_is_a_value_error(pytester: pytest.Pytester) -> None:
+    pytester.makefile(".yaml", plug=SCENARIO)
+    pytester.makepyfile(
+        """
+        import pytest
+
+        def test_it(netscenario):
+            with pytest.raises(ValueError, match="from 5"):
+                netscenario.run("plug.yaml", repetitions=4)
+            with pytest.raises(ValueError, match="need repetitions"):
+                netscenario.run("plug.yaml", statistic="median")
+        """
+    )
+    # The checks are made before a network is built; the guard of the environment comes first
+    pytester.runpytest().assert_outcomes(passed=1)
+
+
 def test_the_marker_is_registered(pytester: pytest.Pytester) -> None:
     result = pytester.runpytest("--markers")
     result.stdout.fnmatch_lines(["@pytest.mark.netscenario(scenario, *"])
@@ -411,3 +456,88 @@ def test_find_scenario_file_takes_the_first_directory_that_has_it(tmp_path: Path
     assert runner.find_scenario_file(absolute, [first]) == absolute
     with pytest.raises(FileNotFoundError, match="does not exist"):
         runner.find_scenario_file(tmp_path / "nothing.yaml", [first])
+
+
+# ---- sets of runs (ASR-02, ASR-03) ----
+
+SET_FIXTURE = (
+    Path(__file__).resolve().parents[2] / "netscenario" / "tests" / "fixtures" / "runset.json"
+)
+
+
+def a_set() -> ns.RunSet:
+    return ns.RunSet.from_json(SET_FIXTURE.read_text(encoding="utf-8"), Path("out"))
+
+
+def test_the_report_of_a_set_shows_the_headline_metrics_with_their_intervals() -> None:
+    text = runner.describe_set(a_set())
+    lines = text.splitlines()
+    assert lines[0] == ("t: 6 repetitions, seed 7; interval of the mean, 95%, expanded-percentile")
+    loss = next(line for line in lines if line.startswith("  w.loss_ratio:"))
+    assert loss.startswith("  w.loss_ratio: 7.00% [")
+    assert " to " in loss
+    assert "spread 3.74%" in loss
+    # The mean of the headline metrics only: not the counts
+    assert not any(line.startswith("  w.sent") for line in lines)
+    assert any(
+        "metrics are missing in some runs, no interval: w.delay.max" in line for line in lines
+    )
+    assert lines[-1] == f"  set: {Path('out') / 'runset.json'}"
+
+
+def test_the_properties_of_a_set_are_the_mean_and_the_ends_of_the_interval() -> None:
+    found = dict(runner.set_properties(a_set()))
+    assert found["netscenario.t.repetitions"] == 6
+    assert found["netscenario.t.confidence"] == pytest.approx(0.95)
+    assert found["netscenario.t.w.loss_ratio.mean"] == pytest.approx(0.07)
+    low, high = found["netscenario.t.w.loss_ratio.low"], found["netscenario.t.w.loss_ratio.high"]
+    assert isinstance(low, float)
+    assert isinstance(high, float)
+    assert low < 0.07 < high
+    # What is not a headline metric is not a property
+    assert not any(".sent." in name for name in found)
+
+
+def test_canary_a_wrong_expectation_about_the_report_fails() -> None:
+    # The checks above compare with exact text; this shows that they could fail
+    assert runner.describe_set(a_set()).splitlines()[0] != "t: 5 repetitions"
+
+
+@pytest.mark.usefixtures("runnable")
+def test_the_marker_runs_a_set_and_gives_it(pytester: pytest.Pytester) -> None:
+    pytester.makefile(".yaml", plug=SCENARIO)
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.netscenario("plug.yaml", repetitions=5, seed=7, settle=0.2)
+        def test_it(netscenario_runs):
+            assert netscenario_runs.repetitions == 5
+            assert netscenario_runs.seed.value == 7
+            assert netscenario_runs.metric("media.sent").mean == 209
+            assert netscenario_runs.metric("media.loss_ratio").ci95_high < 0.01
+        """
+    )
+    pytester.runpytest().assert_outcomes(passed=1)
+
+
+@pytest.mark.usefixtures("runnable")
+def test_the_numbers_of_a_set_are_in_the_report_and_the_junit_file(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makefile(".yaml", plug=SCENARIO)
+    pytester.makepyfile(
+        """
+        def test_it(netscenario):
+            runs = netscenario.run("plug.yaml", repetitions=5, settle=0.2)
+            assert runs.metric("media.lost").mean == 999
+        """
+    )
+    result = pytester.runpytest("--junitxml=junit.xml")
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(
+        ["*- netscenario -*", "plug: 5 repetitions, seed * (drawn); interval of the mean*"]
+    )
+    tree = ET.parse(pytester.path / "junit.xml")  # noqa: S314 - the file was just written by pytest
+    names = {e.get("name") for e in tree.iter("property")}
+    assert {"netscenario.plug.repetitions", "netscenario.plug.media.loss_ratio.high"} <= names

@@ -1,0 +1,44 @@
+name: Stability
+
+# The acceptance criterion of release 0.2: an assertion with a confidence interval is stable over 100 runs of
+# the CI (docs/ACCEPTANCE.md). It takes more than an hour, so it is not a check of pull requests: it runs once a week
+# and on request.
+on:
+  schedule:
+    - cron: '17 4 * * 3'
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: How many times to run the acceptance test
+        default: '100'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stability-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  stability:
+    name: Acceptance test, ${{ inputs.rounds || '100' }} rounds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python: '3.13'
+          tools: just@1.40.0
+      # A tc that knows the seed of netem, and the permission to create user namespaces
+      - uses: ./.github/actions/namespaces
+      - name: Run the acceptance test
+        env:
+          ROUNDS: ${{ inputs.rounds || '100' }}
+        run: just stability "$ROUNDS"
