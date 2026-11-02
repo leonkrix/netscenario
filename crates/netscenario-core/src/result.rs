@@ -51,6 +51,41 @@ pub struct RunResult {
     /// scenario without one.
     #[serde(default)]
     pub programs: Vec<ProgramResult>,
+    /// One entry for each captured interface (`measure.capture`), two for each link, in the order of the list and, for a
+    /// link, of `between` (PRB-09). Empty if nothing is captured.
+    #[serde(default)]
+    pub captures: Vec<CaptureResult>,
+}
+
+/// A capture of one interface (PRB-09, D-047, D-073). Times are in nanoseconds from the start of the measured phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct CaptureResult {
+    /// The link.
+    pub link: String,
+    /// The node whose interface it is.
+    pub node: String,
+    /// The name of the interface in the node.
+    pub interface: String,
+    /// The pcap file, relative to `result.json`.
+    pub file: String,
+    /// The frames in the file, both directions.
+    pub packets: u64,
+    /// The bytes of the frames (without the headers of the file).
+    pub bytes: u64,
+    /// The time of the first frame, if there is one.
+    pub first_ns: Option<i64>,
+    /// The time of the last frame.
+    pub last_ns: Option<i64>,
+    /// The real-time clock minus `CLOCK_MONOTONIC` at the start of the capture: the timestamps in the file are on the
+    /// real-time clock, and this turns one into a time of the records (`time - offset - start of the measured phase`).
+    pub realtime_minus_monotonic_ns: i64,
+    /// The size of the receive buffer of the capture that the kernel gave, in bytes (`net.core.rmem_max` decides).
+    pub receive_buffer_bytes: u64,
+    /// The frames the interface counted (received and sent) while the capture ran, if its counters could be read.
+    pub interface_frames: Option<u64>,
+    /// How many of those frames are not in the file. `Some(0)` is a whole capture, `None` that it could not check itself.
+    pub missing: Option<u64>,
 }
 
 /// What came of a program of your own (WRK-06, WRK-10, PRB-08; D-072). Times are in nanoseconds from the start of the
@@ -558,6 +593,7 @@ mod tests {
             events: Vec::new(),
             notes: vec!["a note".to_owned()],
             programs: Vec::new(),
+            captures: Vec::new(),
             directions: vec![DirectionTally {
                 link: "l".to_owned(),
                 direction: "forward".to_owned(),

@@ -36,7 +36,6 @@ def run_scenario(
     out_dir: str,
     seed: int | None = None,
     settle: float | None = None,
-    packets: bool = False,
     observer: Callable[[str, dict[str, float]], None] | None = None,
     cancel: CancelToken | None = None,
     bin: float | None = None,
@@ -45,5 +44,7 @@ def run_scenario(
     recovery_window: int | None = None,
     recovery_fraction: float | None = None,
     working_dir: str | None = None,
+    capture: list[str] | None = None,
+    packets: bool | None = None,
 ) -> str:
     """Run a scenario; return the text of ``result.json``."""

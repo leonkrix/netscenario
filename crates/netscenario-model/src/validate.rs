@@ -3,6 +3,7 @@
 
 use crate::error::Problem;
 use crate::generators::{Generator, Pattern};
+use crate::measure::{MAX_BINS, MIN_BIN};
 use crate::scenario::{
     Change, Direction, Event, Impairments, Jitter, JitterDistribution, Link, Loss, Scenario,
     Workload,
@@ -38,6 +39,7 @@ impl Scenario {
         self.check_links(&nodes, nodes_ok, &mut problems);
         self.check_workloads(&nodes, nodes_ok, &mut problems);
         self.check_timeline(&mut problems);
+        self.check_measure(&mut problems);
         problems
     }
 
@@ -278,6 +280,70 @@ fn check_pattern(workload: &Generator<'_>, size: u64, base: &str, problems: &mut
 }
 
 impl Scenario {
+    /// The section `measure`: a bin that can be worked with, a definition of the recovery that means something, and links
+    /// that exist (D-073).
+    fn check_measure(&self, problems: &mut Vec<Problem>) {
+        let measure = &self.measure;
+        if let Some(bin) = measure.series.as_ref().and_then(|series| series.bin) {
+            let path = "measure.series.bin";
+            if bin < MIN_BIN {
+                problems.push(
+                    Problem::new(format!("a bin of {bin} is shorter than {MIN_BIN}")).at_path(path),
+                );
+            } else if !self.duration.is_zero()
+                && self.duration.as_nanos() / bin.as_nanos() > MAX_BINS
+            {
+                problems.push(
+                    Problem::new(format!(
+                        "a bin of {bin} makes more than {MAX_BINS} bins for a run of {}",
+                        self.duration
+                    ))
+                    .at_path(path)
+                    .with_help("use a longer bin or a shorter duration"),
+                );
+            }
+        }
+        if let Some(recovery) = &measure.recovery {
+            for (key, value) in [
+                ("baseline-bins", recovery.baseline_bins),
+                ("window-bins", recovery.window_bins),
+            ] {
+                if value == Some(0) {
+                    problems.push(
+                        Problem::new(format!("`{key}` must be at least 1"))
+                            .at_path(format!("measure.recovery.{key}")),
+                    );
+                }
+            }
+            if recovery
+                .fraction
+                .is_some_and(|fraction| fraction.micro_percent() == 0)
+            {
+                problems.push(
+                    Problem::new("`fraction` must be above 0 %")
+                        .at_path("measure.recovery.fraction")
+                        .with_help("it is the share of the level before the event that has to be reached again, for example 90%"),
+                );
+            }
+        }
+        let ids: Vec<&str> = self
+            .topology
+            .links
+            .iter()
+            .map(|link| link.id.as_str())
+            .collect();
+        for (index, link) in measure.capture.iter().enumerate() {
+            let path = format!("measure.capture[{index}]");
+            if !ids.contains(&link.as_str()) {
+                problems.push(unknown_link(link, &ids, path));
+            } else if measure.capture[..index].contains(link) {
+                problems.push(
+                    Problem::new(format!("the link '{link}' is captured twice")).at_path(path),
+                );
+            }
+        }
+    }
+
     /// The events: each one inside the measured phase, on a link that exists, doing exactly one thing, and
     /// every state that the steps lead to a valid set of impairments (D-050).
     fn check_timeline(&self, problems: &mut Vec<Problem>) {

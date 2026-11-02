@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A lossy link whose two interfaces are captured: `capture-access-client.pcap` and `capture-access-server.pcap` next to
+# `result.json`, readable with tcpdump and Wireshark. The tap sits after the queue of the link, so the packets that the
+# link drops are in neither file; the sender's records say how many were sent. The rest of `measure` sets the bins of the
+# series, so the section is the one place that says what is measured.
+version: 0
+name: capture-a-link
+seed: 11
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward:
+        delay: 20ms
+        loss: { model: random, p: 5% }
+      reverse:
+        delay: 20ms
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 1mbit
+    packet-size: 1000b
+measure:
+  series:
+    bin: 500ms
+  capture: [access]

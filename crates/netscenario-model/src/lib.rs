@@ -30,6 +30,7 @@ mod command;
 mod decimal;
 pub mod error;
 mod generators;
+mod measure;
 mod read;
 mod required;
 mod reserved;
@@ -44,6 +45,9 @@ pub use builder::ScenarioBuilder;
 pub use command::{MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ENV_ENTRIES, RESERVED_ENV_PREFIX};
 pub use error::{Error, Location, Problem};
 pub use generators::{Generator, Pattern, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
+pub use measure::{
+    MAX_BINS, MIN_BIN, Measure, MeasureOverrides, RecoveryBasis, RecoverySettings, SeriesSettings,
+};
 pub use read::MAX_FILE_BYTES;
 pub use scenario::{
     Backend, Change, Command, Direction, Edit, Event, FormatVersion, Impairments,

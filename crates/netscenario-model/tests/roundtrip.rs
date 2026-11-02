@@ -7,9 +7,9 @@
 use netscenario_model::{
     Backend, Change, Command, Direction, Duration, Edit, Event, FormatVersion, Impairments,
     ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, MAX_PACKET_SIZE,
-    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM, Name, OnExit,
-    Probability, Rate, Ready, Reorder, Scenario, Shutdown, Signal, Size, Topology, UdpCbr,
-    UdpChecksum, Workload,
+    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM, Measure, Name,
+    OnExit, Probability, Rate, Ready, RecoveryBasis, RecoverySettings, Reorder, Scenario,
+    SeriesSettings, Shutdown, Signal, Size, Topology, UdpCbr, UdpChecksum, Workload,
 };
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -307,9 +307,37 @@ fn valid_scenario() -> impl Strategy<Value = Scenario> {
                     },
                     workloads,
                     timeline: timeline(duration, &steps),
+                    measure: measure(duration, seed),
                 }
             },
         )
+}
+
+/// A section `measure` that is valid by construction, from the duration and the seed: nothing, or a bin of a sixteenth of the
+/// run with parts of the recovery, a capture of the link, and the export of the packets.
+fn measure(duration: u64, seed: Option<u64>) -> Measure {
+    let Some(seed) = seed else {
+        return Measure::default();
+    };
+    let mut measure = Measure::default();
+    let mut series = SeriesSettings::default();
+    series.bin = Some(Duration::from_nanos((duration / 16).max(1_000_000)));
+    measure.series = Some(series);
+    let mut recovery = RecoverySettings::default();
+    if seed % 2 == 0 {
+        recovery.basis = Some(RecoveryBasis::Arrival);
+        recovery.window_bins = Some(1 + u32::try_from(seed % 7).unwrap());
+    }
+    if seed % 3 == 0 {
+        recovery.fraction = Some("75%".parse().unwrap());
+        recovery.baseline_bins = Some(2);
+    }
+    measure.recovery = Some(recovery);
+    if seed % 5 < 2 {
+        measure.capture = vec![Name::new("link").unwrap()];
+    }
+    measure.packets = seed % 4 == 1;
+    measure
 }
 
 /// Events that are valid by construction: each in a slot of its own (an eighth of the duration), so that no

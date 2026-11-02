@@ -560,6 +560,44 @@ class Program:
 
 
 @dataclass(frozen=True)
+class Capture:
+    """The capture of one interface of a link (``measure.capture``), as a pcap file."""
+
+    link: str
+    """The link."""
+    node: str
+    """The node whose interface it is."""
+    interface: str
+    """The name of the interface in the node."""
+    file: Path
+    """The pcap file (nanosecond timestamps, Ethernet) that ``tcpdump`` and Wireshark read."""
+    packets: int
+    """The frames in the file, both directions."""
+    bytes: int
+    """The bytes of the frames."""
+    first: float | None
+    """The time of the first frame in seconds from the start of the measured phase, if any."""
+    last: float | None
+    """The time of the last frame."""
+    clock_offset: float
+    """The real-time clock minus the monotonic clock at the start, in seconds: the timestamps in the
+    file are on the real-time clock."""
+    receive_buffer: int
+    """The size of the receive buffer of the capture in bytes (``net.core.rmem_max`` limits it)."""
+    interface_frames: int | None
+    """The frames the interface counted while the capture ran, or ``None`` if the counters could not
+    be read."""
+    missing: int | None
+    """How many of them are not in the file: 0 for a whole capture, ``None`` if it could not check
+    itself."""
+
+    @property
+    def complete(self) -> bool:
+        """Whether the capture checked itself and has every frame the interface counted."""
+        return self.missing == 0
+
+
+@dataclass(frozen=True)
 class QueueCheck:
     """The packets of one direction of a link that drew a number for the random loss.
 
@@ -717,6 +755,9 @@ class Result:
     working. Empty if the run went as usual."""
     programs: Mapping[str, Program] = field(default_factory=lambda: MappingProxyType({}))
     """The programs of your own (``kind: command``) by id, in the order of the scenario."""
+    captures: tuple[Capture, ...] = ()
+    """The captures of the interfaces (``measure.capture``): two for each captured link, in the
+    order of the list and of ``between``."""
 
     def __getitem__(self, workload_id: str) -> Workload:
         """The workload with this id."""
@@ -818,9 +859,27 @@ class Result:
             programs=MappingProxyType(
                 {p["id"]: _program(p, directory) for p in raw.get("programs", ())}
             ),
+            captures=tuple(_capture(c, directory) for c in raw.get("captures", ())),
             out_dir=directory,
             raw=MappingProxyType(raw),
         )
+
+
+def _capture(data: dict[str, Any], directory: Path) -> Capture:
+    return Capture(
+        link=data["link"],
+        node=data["node"],
+        interface=data["interface"],
+        file=directory / data["file"],
+        packets=int(data["packets"]),
+        bytes=int(data["bytes"]),
+        first=None if data["first_ns"] is None else data["first_ns"] / _NANOSECONDS,
+        last=None if data["last_ns"] is None else data["last_ns"] / _NANOSECONDS,
+        clock_offset=data["realtime_minus_monotonic_ns"] / _NANOSECONDS,
+        receive_buffer=int(data["receive_buffer_bytes"]),
+        interface_frames=data["interface_frames"],
+        missing=data["missing"],
+    )
 
 
 def _program(data: dict[str, Any], directory: Path) -> Program:

@@ -32,6 +32,7 @@ backend: auto           # optional: auto (default) or kernel
 topology: { ... }       # required: the nodes and the link
 workloads: [ ... ]      # required: what sends traffic, at least one
 timeline: [ ... ]       # optional: changes over time (release 0.2)
+measure: { ... }        # optional: what is measured besides the statistics (release 0.2)
 ```
 
 A complete scenario of release 0.1:
@@ -75,6 +76,7 @@ workloads:
 | `topology` | yes | See below. |
 | `workloads` | yes | A list with at least one workload. |
 | `timeline` | no | A list of events, see [Timeline](#timeline). |
+| `measure` | no | The width of the bins of the series, how the time to recover is worked out, the links to capture and the export of every packet, see [What is measured](#what-is-measured). |
 
 ## Values
 
@@ -240,6 +242,34 @@ workloads:
 
 The result has the **mean** rate of the payload in `rate_bits_per_second` for these kinds (the rate of the scenario for `udp-poisson`), and the command line says `on average`. The series ([RESULTS.md](RESULTS.md)) shows the pattern in time: a bin in an off phase is empty, a burst is a bin that holds ten packets.
 
+## What is measured
+
+```yaml
+measure:
+  series:
+    bin: 500ms              # the width of a bin of the series of each workload (default 1s)
+  recovery:                 # how the time to recover after an event is worked out
+    basis: arrival          # send (default) or arrival
+    baseline-bins: 5        # bins before the disturbance that make the baseline (default 5)
+    window-bins: 3          # bins in a row that have to be back at the level (default 3)
+    fraction: 90%           # the share of the baseline to reach again (default 90%)
+  capture: [access]         # links whose interfaces are captured as pcap files, at both ends
+  packets: true             # also write packets-<id>.jsonl, one line for each packet (default false)
+```
+
+A scenario is the whole experiment: what runs **and what is measured**. A threshold on the time to recover only means something with the definition of the time to recover next to it, and the hash of the scenario in the result tells whether two results were measured in the same way. So these keys are in the file, not in the options of a run (D-073). The options of a run are only about how this machine runs it: the directory of the result, the seed to repeat a run with, the settle time, the working directory, the form of the output.
+
+Every key is optional, and so is the section. `--bin`, `--recovery-basis`, `--recovery-baseline`, `--recovery-window`, `--recovery-fraction`, `--capture` and `--packets` on the command line, and the arguments of the same names in Python (`bin`, `recovery_basis`, ...), **replace** the key for one run, which is how a test tries another bin without editing the file. The scenario that ran, with the replacements, is the one whose hash is in the result.
+
+| Key | Meaning |
+| --- | --- |
+| `series.bin` | A Duration, at least `1ms`; the measured phase may have at most a million bins. The width of a bin of `series-<id>.jsonl` and the resolution of the time to recover ([RESULTS.md](RESULTS.md)). |
+| `recovery.basis` | `send` or `arrival`: the view the level of a bin is made from. |
+| `recovery.baseline-bins`, `recovery.window-bins` | Integers of at least 1. |
+| `recovery.fraction` | A percentage above 0 % and at most 100 %. |
+| `capture` | A list of link ids, each at most once; an id that is not a link is refused with a hint. Both interfaces of each link are captured, in the node at each end: `capture-<link>-<node>.pcap`. The tap sits after the queue of the interface, so a packet that the impairment dropped is in no file, see [RESULTS.md](RESULTS.md#captures-prb-09-d-047-d-073). Backends that cannot capture refuse the key by name. |
+| `packets` | A boolean, default `false`. |
+
 ## A program of your own
 
 ```yaml
@@ -289,7 +319,7 @@ These keys are not part of version 0 in release 0.1. A scenario that uses one is
 
 | Key | Planned in | Meaning |
 | --- | --- | --- |
-| `repetitions`, `probes` | 0.2 | Repeated runs, extra measurements. |
+| `repetitions` | 0.2 | Repeated runs. |
 | `allow-limited`, `expect`, `params`, `include` | 0.3 | Accepted restrictions, assertions in the file, parameters and includes. |
 | `matrix` | 0.5 | Sweeps. |
 | `mobility` | 0.6 | Positions over time. |

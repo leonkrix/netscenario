@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +29,8 @@ def run(
     out: str | os.PathLike[str] | None = None,
     seed: int | None = None,
     settle: float | None = None,
-    packets: bool = False,
+    packets: bool | None = None,
+    capture: Sequence[str] | None = None,
     observer: Callable[[RunEvent], None] | None = None,
     cancel: _native.CancelToken | None = None,
     bin: float | None = None,
@@ -46,6 +47,10 @@ def run(
     that it creates is touched. The call blocks, gives up the GIL, and can be interrupted: Ctrl-C
     (``KeyboardInterrupt``) and ``cancel`` stop the run, which tears the network down first.
 
+    The arguments ``bin``, ``recovery_*``, ``capture`` and ``packets`` name keys of the section
+    ``measure`` of the scenario (``docs/SCENARIO-FORMAT.md``) and replace them for this run; the
+    result records what was used.
+
     Args:
         scenario: A :class:`Scenario`, or the path of a scenario file.
         out: The directory for the result and the files that belong to it. Default: a new directory
@@ -54,8 +59,10 @@ def run(
             seed is repeated.
         settle: How long to wait after the last packet for the packets still in the network, in
             seconds. Default: until the queues of the links are empty and 0.3 s more.
-        packets: Also write one line of JSON for each packet of each workload
-            (``Workload.packets_file``).
+        packets: ``True``: also write one line of JSON for each packet of each workload
+            (``Workload.packets_file``); overrides ``measure.packets`` of the scenario for this run.
+        capture: The links whose interfaces are captured as pcap files, at both ends
+            (``Result.captures``); replaces ``measure.capture`` of the scenario for this run.
         observer: Called with a :class:`netscenario.events.RunEvent` for each event of the run, on
             the thread that runs, between two steps. An exception in it stops the run and is raised.
         cancel: A :class:`CancelToken` that stops the run.
@@ -107,7 +114,6 @@ def run(
         str(directory),
         seed=seed,
         settle=settle,
-        packets=packets,
         observer=notify if observer is not None else None,
         cancel=cancel,
         bin=bin,
@@ -116,6 +122,8 @@ def run(
         recovery_window=recovery_window,
         recovery_fraction=recovery_fraction,
         working_dir=str(_working_dir(loaded, working_dir)),
+        capture=None if capture is None else list(capture),
+        packets=packets,
     )
     return Result.from_json(text, directory)
 

@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::capture::{Capture, CaptureConfig};
 use crate::events::Event;
 use crate::receiver::{ReceiveConfig, Receiver};
 use crate::schedule::{Distribution, Schedule, Stream};
@@ -44,6 +45,7 @@ Usage:
                          [--barriers <packet>:<id>,...]
   netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
                          [--udp-checksum <on|off>] [--wire-out <file>]
+  netscenario-agent capture --interface <name> --out <file.pcap> [--flow <n>] [--receive-buffer <bytes>]
 
 The agent is started by netscenario inside a node; see docs/AGENT.md.
 ";
@@ -149,6 +151,9 @@ where
         )
         .map_err(Problem::Usage)
         .and_then(|options| recv_command(&options, stdin, out)),
+        "capture" => Options::parse(rest, &["interface", "out", "flow", "receive-buffer"], &[])
+            .map_err(Problem::Usage)
+            .and_then(|options| capture_command(&options, stdin, out)),
         other => Err(Problem::Usage(format!("unknown command '{other}'"))),
     };
     match result {
@@ -419,6 +424,51 @@ fn send_command(
     let summary =
         send_with(&config, &mut port).map_err(|error| Problem::Failed(error.to_string()))?;
     say(out, &Event::Sent(summary));
+    Ok(OK)
+}
+
+/// `capture --interface <name> --out <file>`: writes the frames of an interface of the node as pcap until it reads `stop` (or its
+/// input ends), and says what it wrote and whether it is whole (D-073).
+fn capture_command(
+    options: &Options,
+    stdin: impl BufRead + Send + 'static,
+    out: &mut impl Write,
+) -> Result<u8, Problem> {
+    let config = CaptureConfig {
+        interface: options.required("interface")?,
+        flow: options.optional("flow")?.unwrap_or(0),
+        receive_buffer: options.optional("receive-buffer")?,
+    };
+    let path: String = options.required("out")?;
+    let file = std::fs::File::create(&path)
+        .map_err(|error| Problem::Failed(format!("cannot create {path}: {error}")))?;
+    let capture =
+        Capture::open(config.clone()).map_err(|error| Problem::Failed(error.to_string()))?;
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let stop = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            for line in stdin.lines() {
+                if line.is_ok_and(|line| line.trim() == "stop") {
+                    break;
+                }
+            }
+            // `stop` or the end of the input
+            stop.store(true, Ordering::SeqCst);
+        });
+    }
+    say(
+        out,
+        &Event::CaptureReady {
+            flow: config.flow,
+            interface: config.interface,
+            receive_buffer_bytes: capture.receive_buffer_bytes,
+        },
+    );
+    let summary = capture
+        .run(&stop, file)
+        .map_err(|error| Problem::Failed(format!("cannot capture: {error}")))?;
+    say(out, &Event::Captured(summary));
     Ok(OK)
 }
 

@@ -212,3 +212,49 @@ def test_every_faulty_file_of_the_corpus_is_refused_with_problems(repository: Pa
 def test_the_missing_file_is_an_oserror(tmp_path: Path) -> None:
     with pytest.raises(OSError, match=r"nothing\.yaml"):
         ns.Scenario.load(tmp_path / "nothing.yaml")
+
+
+def test_the_measure_section_is_built_from_its_arguments_and_left_out_when_empty() -> None:
+    def build(**measure: object) -> ns.Scenario:
+        return (
+            ns.Scenario.builder("m", duration="2s")
+            .nodes("a", "b")
+            .link("l", "a", "b")
+            .udp_cbr("w", "a", "b", rate="1mbit", packet_size="1000b")
+            .measure(**measure)  # type: ignore[arg-type]
+            .build()
+        )
+
+    assert "measure" not in build().data
+    full = build(
+        bin="500ms",
+        recovery_basis="arrival",
+        recovery_baseline_bins=4,
+        recovery_window_bins=2,
+        recovery_fraction="80%",
+        capture=["l"],
+        packets=True,
+    )
+    assert full.data["measure"] == {
+        "series": {"bin": "500ms"},
+        "recovery": {
+            "basis": "arrival",
+            "baseline-bins": 4,
+            "window-bins": 2,
+            "fraction": "80%",
+        },
+        "capture": ["l"],
+        "packets": True,
+    }
+
+
+def test_canary_a_capture_of_a_link_that_does_not_exist_is_refused_with_the_path() -> None:
+    with pytest.raises(ns.ScenarioError, match=r"measure\.capture"):
+        (
+            ns.Scenario.builder("m", duration="2s")
+            .nodes("a", "b")
+            .link("l", "a", "b")
+            .udp_cbr("w", "a", "b", rate="1mbit", packet_size="1000b")
+            .measure(capture=["nope"])
+            .build()
+        )

@@ -121,9 +121,60 @@ def test_canary_options_that_make_no_sense_are_refused_before_anything_is_built(
         ns.run(scenario(), **options)  # type: ignore[arg-type]
 
 
-def test_a_bin_shorter_than_a_millisecond_is_refused_by_the_run(tmp_path: Path) -> None:
-    with pytest.raises(ns.RunError, match="shorter than a millisecond"):
+def test_a_bin_shorter_than_a_millisecond_is_refused_with_the_path_of_the_key(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ns.ScenarioError, match=r"measure\.series\.bin"):
         ns.run(scenario(), out=tmp_path / "out", bin=0.0001)
+
+
+def test_the_section_measure_of_the_file_is_used_and_an_argument_replaces_it(
+    tmp_path: Path,
+) -> None:
+    measured = (
+        ns.Scenario.builder("py-measure", duration="2s")
+        .nodes("client", "server")
+        .link("access", "client", "server")
+        .udp_cbr("media", "client", "server", rate="2mbit", packet_size="1200b")
+        .measure(bin="500ms", packets=True)
+        .build()
+    )
+    from_file = ns.run(measured, out=tmp_path / "file", settle=0.3)
+    media = from_file["media"]
+    assert media.series is not None
+    assert media.series.bin == pytest.approx(0.5)
+    assert media.packets_file is not None
+    replaced = ns.run(measured, out=tmp_path / "arg", settle=0.3, bin=1.0)
+    assert replaced["media"].series is not None
+    assert replaced["media"].series.bin == pytest.approx(1.0)
+    # The scenario that ran is the one with the argument in it, so the hash tells the two apart
+    assert from_file.scenario_hash != replaced.scenario_hash
+
+
+def test_a_link_is_captured_at_both_ends_by_the_file_or_by_an_argument(tmp_path: Path) -> None:
+    captured = (
+        ns.Scenario.builder("py-capture", duration="1s")
+        .nodes("client", "server")
+        .link("access", "client", "server")
+        .udp_cbr("media", "client", "server", rate="2mbit", packet_size="1200b")
+        .measure(capture=["access"])
+        .build()
+    )
+    run = ns.run(captured, out=tmp_path / "file", settle=0.3)
+    assert [(c.link, c.node) for c in run.captures] == [("access", "client"), ("access", "server")]
+    for capture in run.captures:
+        assert capture.file == run.out_dir / f"capture-access-{capture.node}.pcap"
+        assert capture.file.is_file()
+        # 209 packets of the workload and nothing else on a link without other traffic
+        assert capture.packets >= run["media"].sent
+        assert capture.complete
+        assert capture.first is not None
+        assert capture.clock_offset > 1e9, "the real-time clock, in seconds since 1970"
+    # The file of the other run has no capture, and the argument alone can switch it on
+    plain = ns.run(scenario(duration="1s"), out=tmp_path / "plain", settle=0.3)
+    assert plain.captures == ()
+    asked = ns.run(scenario(duration="1s"), out=tmp_path / "asked", settle=0.3, capture=["access"])
+    assert len(asked.captures) == 2
 
 
 def test_a_program_of_your_own_runs_in_the_directory_of_the_file_and_reports_its_metrics(

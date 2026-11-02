@@ -276,11 +276,15 @@ mod tests {
             ),
             (
                 &["run", "a.yaml", "--recovery-window", "0"][..],
-                "the window of the recovery needs at least one bin",
+                "--recovery-window needs at least 1 bin",
             ),
             (
                 &["run", "a.yaml", "--recovery-fraction", "150"][..],
-                "the fraction of the recovery is 1.5",
+                "--recovery-fraction is a percent from above 0 to 100",
+            ),
+            (
+                &["run", "a.yaml", "--capture", "bad name"][..],
+                "--capture: 'bad name'",
             ),
             (
                 &["run", "a.yaml", "--recovery-baseline", "x"][..],

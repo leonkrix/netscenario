@@ -10,10 +10,8 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
-use netscenario_core::{
-    Basis, CancelToken, Error, RecoveryOptions, RunEvent, RunOptions, RunResult, run,
-};
-use netscenario_model::Scenario;
+use netscenario_core::{CancelToken, Error, RunEvent, RunOptions, RunResult, run};
+use netscenario_model::{MeasureOverrides, Name, Probability, RecoveryBasis, Scenario};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -110,7 +108,7 @@ fn event_to_python<'py>(
     Ok((kind, fields))
 }
 
-/// The arguments of the call that shape the series of each workload and the time to recover; `None` is the default.
+/// The arguments of the call that name keys of the section `measure` of the scenario (D-073); `None` leaves the file's key.
 pub(crate) struct Series {
     /// The width of a bin, in seconds.
     pub(crate) bin: Option<f64>,
@@ -119,46 +117,84 @@ pub(crate) struct Series {
     pub(crate) recovery_window: Option<u32>,
     /// The share of the baseline to reach again, from 0 to 1.
     pub(crate) recovery_fraction: Option<f64>,
+    /// The links to capture.
+    pub(crate) capture: Option<Vec<String>>,
+    pub(crate) packets: Option<bool>,
 }
 
 impl Series {
-    /// Puts the arguments into the options of the run.
+    /// The overrides these arguments make.
     ///
     /// # Errors
     ///
-    /// `ValueError` for an argument that makes no sense; the width of the bin against the length of the run is
-    /// checked by the run before anything is built.
-    fn apply(self, options: &mut RunOptions) -> PyResult<()> {
+    /// `ValueError` for an argument that makes no sense. What only the whole scenario can judge (a link that does not exist,
+    /// a bin against the length of the run) is checked by the run before anything is built.
+    fn overrides(self) -> PyResult<MeasureOverrides> {
         let invalid = |text: String| pyo3::exceptions::PyValueError::new_err(text);
+        let mut overrides = MeasureOverrides::default();
         if let Some(seconds) = self.bin {
             if !(seconds.is_finite() && seconds > 0.0) {
                 return Err(invalid(format!(
                     "bin is a number of seconds above zero, not {seconds}"
                 )));
             }
-            options.bin = Duration::try_from_secs_f64(seconds)
-                .map_err(|_| invalid(format!("bin of {seconds} seconds is too long")))?;
+            let nanos = (seconds * 1e9).round();
+            if nanos >= 1.8e19 {
+                return Err(invalid(format!("bin of {seconds} seconds is too long")));
+            }
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            // checked above: 0 < nanos < 1.8e19
+            {
+                overrides.bin = Some(netscenario_model::Duration::from_nanos(nanos as u64));
+            }
         }
-        let mut recovery = RecoveryOptions::default();
         if let Some(word) = self.recovery_basis {
-            recovery.basis = Basis::from_word(&word).ok_or_else(|| {
-                invalid(format!(
-                    "recovery_basis is 'send' or 'arrival', not '{word}'"
-                ))
-            })?;
+            overrides.basis = Some(match word.as_str() {
+                "send" => RecoveryBasis::Send,
+                "arrival" => RecoveryBasis::Arrival,
+                other => {
+                    return Err(invalid(format!(
+                        "recovery_basis is 'send' or 'arrival', not '{other}'"
+                    )));
+                }
+            });
         }
-        if let Some(bins) = self.recovery_baseline {
-            recovery.baseline_bins = bins;
+        for (name, value) in [
+            ("recovery_baseline", self.recovery_baseline),
+            ("recovery_window", self.recovery_window),
+        ] {
+            if value == Some(0) {
+                return Err(invalid(format!("{name} needs at least 1 bin")));
+            }
         }
-        if let Some(bins) = self.recovery_window {
-            recovery.window_bins = bins;
-        }
+        overrides.baseline_bins = self.recovery_baseline;
+        overrides.window_bins = self.recovery_window;
         if let Some(fraction) = self.recovery_fraction {
-            recovery.fraction = fraction;
+            let micro = (fraction * 100_000_000.0).round();
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            // checked: 0 < micro <= 100,000,000
+            let probability = (micro > 0.0 && micro <= 100_000_000.0)
+                .then(|| Probability::from_micro_percent(micro as u32))
+                .flatten();
+            overrides.fraction = Some(probability.ok_or_else(|| {
+                invalid(format!(
+                    "recovery_fraction is above 0 and at most 1, not {fraction}"
+                ))
+            })?);
         }
-        recovery.check().map_err(invalid)?;
-        options.recovery = recovery;
-        Ok(())
+        if let Some(links) = self.capture {
+            overrides.capture = Some(
+                links
+                    .iter()
+                    .map(|link| {
+                        Name::new(link)
+                            .map_err(|error| invalid(format!("capture: '{link}': {error}")))
+                    })
+                    .collect::<PyResult<Vec<Name>>>()?,
+            );
+        }
+        overrides.packets = self.packets;
+        Ok(overrides)
     }
 }
 
@@ -171,7 +207,6 @@ pub(crate) struct Request {
     pub(crate) out_dir: String,
     pub(crate) seed: Option<u64>,
     pub(crate) settle: Option<f64>,
-    pub(crate) packets: bool,
     pub(crate) observer: Option<Py<PyAny>>,
     pub(crate) cancel: Option<CancelToken>,
     pub(crate) working_dir: Option<String>,
@@ -240,7 +275,6 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
         out_dir,
         seed,
         settle,
-        packets,
         observer,
         cancel,
         working_dir,
@@ -251,14 +285,13 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
     if seed.is_some() {
         scenario.seed = seed;
     }
+    scenario.measure.apply(&series.overrides()?);
     let token = cancel.unwrap_or_default();
 
     // What goes wrong in the observer: the first error is kept, the run is cancelled, and it is raised after
     let callback_error: Arc<Mutex<Option<PyErr>>> = Arc::new(Mutex::new(None));
     let mut options = RunOptions::new(&agent, &out_dir).with_cancel(token.clone());
-    options.export_packets = packets;
     options.settle = settle.map(Duration::from_secs_f64);
-    series.apply(&mut options)?;
     options.working_dir = working_dir.map(std::path::PathBuf::from);
     if let Some(callable) = observer {
         let (error_slot, cancel_on_error) = (Arc::clone(&callback_error), token.clone());

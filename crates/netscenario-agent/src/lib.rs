@@ -11,10 +11,12 @@
 //! packet, [`records`] the file, [`schedule`] the moments at which packets leave, [`tap`] the reader of the
 //! frames that reach an interface, and [`cli`] the command line of the program `netscenario-agent`.
 
+pub mod capture;
 pub mod cli;
 pub mod clock;
 pub mod crc;
 pub mod events;
+pub mod pcap;
 pub mod receiver;
 pub mod records;
 pub mod rng;

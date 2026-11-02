@@ -11,6 +11,7 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::generators::{Generator, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
+use crate::measure::Measure;
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
 /// The version of the scenario format that this crate reads: the integer `0`.
@@ -131,6 +132,10 @@ pub struct Scenario {
     /// Changes over time: events at moments of the measured phase. Empty if the network stays as it is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub timeline: Vec<Event>,
+    /// What is measured besides the statistics, and how the numbers are derived (D-073): the bins of the series, the
+    /// time to recover, the packets to capture. Absent if the defaults are wanted.
+    #[serde(default, skip_serializing_if = "Measure::is_default")]
+    pub measure: Measure,
 }
 
 /// The nodes and the links. In release 0.1: two nodes and one link (point to point).

@@ -21,6 +21,7 @@
 
 use crate::error::Problem;
 use crate::generators::{PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
+use crate::measure::Measure;
 use crate::scenario::{
     Backend, Change, Command, Direction, Event, FormatVersion, Impairments, Jitter,
     JitterDistribution, Link, Loss, Reorder, Scenario, Topology, True, UdpCbr, UdpChecksum,
@@ -208,6 +209,7 @@ pub struct ScenarioBuilder {
     links: Vec<Link>,
     workloads: Vec<Workload>,
     timeline: Vec<Event>,
+    measure: Measure,
     problems: Vec<Problem>,
 }
 
@@ -224,6 +226,7 @@ impl Scenario {
             links: Vec::new(),
             workloads: Vec::new(),
             timeline: Vec::new(),
+            measure: Measure::default(),
             problems: Vec::new(),
         };
         builder.name = builder.name_at(name, "name");
@@ -475,6 +478,13 @@ impl ScenarioBuilder {
         self
     }
 
+    /// Sets what is measured besides the statistics: the bins of the series, the time to recover, the links to capture.
+    #[must_use]
+    pub fn measure(mut self, measure: Measure) -> Self {
+        self.measure = measure;
+        self
+    }
+
     /// Adds an event to the timeline (checked when the scenario is built).
     #[must_use]
     pub fn event(mut self, event: Event) -> Self {
@@ -551,6 +561,7 @@ impl ScenarioBuilder {
             },
             workloads: self.workloads,
             timeline: self.timeline,
+            measure: self.measure,
         };
         let problems = scenario.validate();
         if problems.is_empty() {

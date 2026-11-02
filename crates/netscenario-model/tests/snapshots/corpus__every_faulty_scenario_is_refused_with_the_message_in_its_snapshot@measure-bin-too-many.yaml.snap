@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/measure-bin-too-many.yaml
+---
+error: a bin of 1ms makes more than 1000000 bins for a run of 2000s
+  --> measure-bin-too-many.yaml:12:18
+   |
+11 | measure:
+12 |   series: { bin: 1ms }
+   |                  ^^^
+   = path: measure.series.bin
+   = help: use a longer bin or a shorter duration

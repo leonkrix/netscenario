@@ -145,20 +145,17 @@ fn an_on_off_source_fills_every_bin_of_its_cycle_in_the_series() {
     }
     let dir = work_dir("patterns-onoff");
     let mut backend = backend(|_| {});
-    let mut options = options(&dir);
-    options.bin = Duration::from_millis(100);
-    let result = run(
-        &mut backend,
-        &scenario(
-            5,
-            "3s",
-            "",
-            "{ id: media, kind: udp-onoff, from: client, to: server, rate: 8mbit, packet-size: 100b, on: 20ms, off: 80ms }",
-            "",
-        ),
-        &options,
-    )
-    .unwrap();
+    let mut binned = scenario(
+        5,
+        "3s",
+        "",
+        "{ id: media, kind: udp-onoff, from: client, to: server, rate: 8mbit, packet-size: 100b, on: 20ms, off: 80ms }",
+        "",
+    );
+    let mut series = netscenario_model::SeriesSettings::default();
+    series.bin = Some("100ms".parse().unwrap());
+    binned.measure.series = Some(series);
+    let result = run(&mut backend, &binned, &options(&dir)).unwrap();
     let schedule = Schedule::OnOff {
         stream: Stream {
             bits_per_second: 8_000_000,
@@ -244,20 +241,15 @@ fn a_step_lands_before_the_packet_that_the_random_schedule_says_and_the_loss_rep
     let lost = |label: &str| {
         let dir = work_dir(label);
         let mut backend = backend(|_| {});
-        let mut options = options(&dir);
-        options.export_packets = true;
-        let result = run(
-            &mut backend,
-            &scenario(
-                5,
-                "4s",
-                "      forward: { delay: 5ms }\n",
-                "{ id: media, kind: udp-poisson, from: client, to: server, rate: 1mbit, packet-size: 125b }",
-                "  - { at: 2s, link: access, set: { forward: { loss: { model: random, p: 30% } } } }\n",
-            ),
-            &options,
-        )
-        .unwrap();
+        let mut exporting = scenario(
+            5,
+            "4s",
+            "      forward: { delay: 5ms }\n",
+            "{ id: media, kind: udp-poisson, from: client, to: server, rate: 1mbit, packet-size: 125b }",
+            "  - { at: 2s, link: access, set: { forward: { loss: { model: random, p: 30% } } } }\n",
+        );
+        exporting.measure.packets = true;
+        let result = run(&mut backend, &exporting, &options(&dir)).unwrap();
         let lost: Vec<u64> = std::fs::read_to_string(dir.join("packets-media.jsonl"))
             .unwrap()
             .lines()

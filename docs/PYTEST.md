@@ -28,7 +28,7 @@ It gives a `Runner` for the test.
 
 | Call | What it does |
 | --- | --- |
-| `netscenario.run(scenario, ...)` | Runs a scenario and returns the `netscenario.Result`. `scenario` is a `Scenario` or the name of a file. The options are those of `netscenario.run`: `seed`, `settle`, `packets`, `observer`, `cancel`, the options of the series and the time to recover (`bin`, `recovery_basis`, `recovery_baseline`, `recovery_window`, `recovery_fraction`), and `out` for the directory. |
+| `netscenario.run(scenario, ...)` | Runs a scenario and returns the `netscenario.Result`. `scenario` is a `Scenario` or the name of a file. The options are those of `netscenario.run`: `seed`, `settle`, `observer`, `cancel` and `out` for the directory, and the arguments that replace a key of the section `measure` of the scenario for this run (`bin`, `recovery_basis`, `recovery_baseline`, `recovery_window`, `recovery_fraction`, `capture`, `packets`; [SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#what-is-measured)). |
 | `netscenario.load(name)` | Reads and checks a scenario file and returns the `Scenario`, without running it. This works on any machine. |
 | `netscenario.results` | The results of the runs of this test so far. |
 
@@ -40,7 +40,7 @@ A run can be interrupted: Ctrl-C and `pytest-timeout` stop it, the network is to
 
 ## The marker `netscenario` and the fixture `netscenario_result`
 
-`@pytest.mark.netscenario("file.yaml", seed=None, settle=None, packets=False)` names a scenario file for the test, and `netscenario_result` runs it and gives the result. The marker takes exactly one argument and the options `seed`, `settle`, `packets`, `bin` and `recovery_basis`, `recovery_baseline`, `recovery_window` and `recovery_fraction` (the series and the time to recover, [RESULTS.md](RESULTS.md)); anything else is an error of the test with a message that says what is wrong.
+`@pytest.mark.netscenario("file.yaml", seed=None, settle=None, packets=False)` names a scenario file for the test, and `netscenario_result` runs it and gives the result. The marker takes exactly one argument and the options `seed`, `settle`, and those that replace a key of `measure` (`packets`, `capture`, `bin`, `recovery_basis`, `recovery_baseline`, `recovery_window`, `recovery_fraction`; [RESULTS.md](RESULTS.md)); anything else is an error of the test with a message that says what is wrong.
 
 ## A machine that cannot run scenarios
 

@@ -446,19 +446,15 @@ fn lost_packets(
         delay: change_takes,
     };
     let mut options = options(&dir);
-    options.export_packets = true;
     options.barriers = barriers;
-    let result = run(
-        &mut backend,
-        &scenario(
-            "seed: 5\n",
-            "      forward: { delay: 5ms }\n",
-            "2s",
-            "  - { at: 1s, link: access, set: { forward: { loss: { model: random, p: 30% } } } }\n",
-        ),
-        &options,
-    )
-    .unwrap();
+    let mut exporting = scenario(
+        "seed: 5\n",
+        "      forward: { delay: 5ms }\n",
+        "2s",
+        "  - { at: 1s, link: access, set: { forward: { loss: { model: random, p: 30% } } } }\n",
+    );
+    exporting.measure.packets = true;
+    let result = run(&mut backend, &exporting, &options).unwrap();
     let lost: Vec<u64> = std::fs::read_to_string(dir.join("packets-media.jsonl"))
         .unwrap()
         .lines()

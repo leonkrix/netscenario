@@ -8,10 +8,9 @@ use std::time::SystemTime;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
 use netscenario_core::{
-    Basis, CancelToken, Error, RecoveryOptions, RunEvent, RunObserver, RunOptions, agent_next_to,
-    rfc3339_utc, run,
+    CancelToken, Error, RunEvent, RunObserver, RunOptions, agent_next_to, rfc3339_utc, run,
 };
-use netscenario_model::Duration;
+use netscenario_model::{Duration, MeasureOverrides, Name, Probability, RecoveryBasis, Scenario};
 
 use crate::args::{Parsed, Spec};
 use crate::exit;
@@ -20,9 +19,9 @@ use crate::render::summary;
 use crate::validate::{Loaded, load};
 
 pub(crate) const RUN_HELP: &str = "\
-Usage: netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--bin <duration>] [--packets] [--json]
-                       [--recovery-basis send|arrival] [--recovery-baseline <bins>] [--recovery-window <bins>]
-                       [--recovery-fraction <percent>]
+Usage: netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--json] [--packets]
+                       [--bin <duration>] [--capture all|<link>,...] [--recovery-basis send|arrival]
+                       [--recovery-baseline <bins>] [--recovery-window <bins>] [--recovery-fraction <percent>]
 
 Runs a scenario: builds the network in network namespaces, starts the agents in the nodes, lets the
 workloads run for the duration of the scenario, and writes the result. Nothing outside the namespaces
@@ -32,14 +31,19 @@ that it creates is touched, and everything is removed afterwards, also after an 
   --seed <n>           use this seed instead of the one in the file (to repeat a run that drew its own)
   --settle <duration>  how long to wait after the last packet for the packets still in the network
                        (for example 2s; default: until the queues of the links are empty, and 0.3 s more)
-  --bin <duration>     the width of a bin of the series of each workload (for example 500ms; default 1s). The
-                       series is written to series-<id>.jsonl; see docs/RESULTS.md
-  --recovery-basis     the view the time to recover is made from: send (default) or arrival
-  --recovery-baseline  how many bins before the disturbance make the baseline level (default 5)
-  --recovery-window    how many bins a window has; the level has to hold for that long (default 3)
-  --recovery-fraction  the share of the baseline that has to be reached again, in percent (default 90)
-  --packets            also write one line of JSON for each packet of each workload
   --json               print result.json on standard output instead of the summary
+
+These options name keys of the section `measure` of the file and replace them for this run; the result says what
+was used (see docs/SCENARIO-FORMAT.md):
+
+  --bin <duration>     measure.series.bin: the width of a bin of the series (for example 500ms; default 1s)
+  --capture <links>    measure.capture: capture the interfaces of these links (`all`, or ids separated by commas) as
+                       pcap files, at both ends
+  --recovery-basis     measure.recovery.basis: the view the time to recover is made from: send (default) or arrival
+  --recovery-baseline  measure.recovery.baseline-bins: bins before the disturbance for the baseline (default 5)
+  --recovery-window    measure.recovery.window-bins: bins in a row that have to be back at the level (default 3)
+  --recovery-fraction  measure.recovery.fraction: the share of the baseline to reach again, in percent (default 90)
+  --packets            measure.packets: also write one line of JSON for each packet of each workload
 
 The result is described in docs/RESULTS.md. Run `netscenario doctor` first on a new machine.
 
@@ -59,6 +63,7 @@ pub(crate) const RUN_SPEC: Spec = Spec {
         "seed",
         "settle",
         "bin",
+        "capture",
         "recovery-basis",
         "recovery-baseline",
         "recovery-window",
@@ -67,16 +72,25 @@ pub(crate) const RUN_SPEC: Spec = Spec {
     flags: &["packets", "json"],
 };
 
-/// The width of a bin and the parameters of the recovery from the command line (D-070), or what is wrong with them.
-fn series_options(parsed: &Parsed) -> Result<(std::time::Duration, RecoveryOptions), String> {
-    let mut recovery = RecoveryOptions::default();
-    let bin = match parsed.value("bin").map(Duration::from_str).transpose() {
-        Ok(bin) => bin.map_or(std::time::Duration::from_secs(1), std::time::Duration::from),
-        Err(error) => return Err(format!("--bin: {error}")),
-    };
+/// What the command line asks for in the section `measure` of the file (D-070, D-073), or what is wrong with it. `links` are
+/// the ids of the links of the scenario, for `--capture all`.
+fn measure_overrides(parsed: &Parsed, links: &[Name]) -> Result<MeasureOverrides, String> {
+    let mut overrides = MeasureOverrides::default();
+    overrides.bin = parsed
+        .value("bin")
+        .map(Duration::from_str)
+        .transpose()
+        .map_err(|error| format!("--bin: {error}"))?;
     if let Some(word) = parsed.value("recovery-basis") {
-        recovery.basis = Basis::from_word(word)
-            .ok_or_else(|| format!("--recovery-basis is send or arrival, not '{word}'"))?;
+        overrides.basis = Some(match word {
+            "send" => RecoveryBasis::Send,
+            "arrival" => RecoveryBasis::Arrival,
+            other => {
+                return Err(format!(
+                    "--recovery-basis is send or arrival, not '{other}'"
+                ));
+            }
+        });
     }
     let count = |name: &str| -> Result<Option<u32>, String> {
         parsed
@@ -85,20 +99,55 @@ fn series_options(parsed: &Parsed) -> Result<(std::time::Duration, RecoveryOptio
             .transpose()
             .map_err(|_| format!("--{name} needs a whole number of bins"))
     };
-    if let Some(bins) = count("recovery-baseline")? {
-        recovery.baseline_bins = bins;
-    }
-    if let Some(bins) = count("recovery-window")? {
-        recovery.window_bins = bins;
+    overrides.baseline_bins = count("recovery-baseline")?;
+    overrides.window_bins = count("recovery-window")?;
+    for (name, value) in [
+        ("recovery-baseline", overrides.baseline_bins),
+        ("recovery-window", overrides.window_bins),
+    ] {
+        if value == Some(0) {
+            return Err(format!("--{name} needs at least 1 bin"));
+        }
     }
     if let Some(text) = parsed.value("recovery-fraction") {
         let percent: f64 = text.trim_end_matches('%').parse().map_err(|_| {
             "--recovery-fraction needs a number of percent, for example 90".to_owned()
         })?;
-        recovery.fraction = percent / 100.0;
+        overrides.fraction = fraction_of(percent);
+        if overrides.fraction.is_none() {
+            return Err("--recovery-fraction is a percent from above 0 to 100".to_owned());
+        }
     }
-    recovery.check()?;
-    Ok((bin, recovery))
+    if let Some(text) = parsed.value("capture") {
+        overrides.capture = Some(if text == "all" {
+            links.to_vec()
+        } else {
+            text.split(',')
+                .map(|id| {
+                    Name::new(id.trim())
+                        .map_err(|error| format!("--capture: '{}': {error}", id.trim()))
+                })
+                .collect::<Result<Vec<Name>, String>>()?
+        });
+    }
+    if parsed.flag("packets") {
+        overrides.packets = Some(true);
+    }
+    Ok(overrides)
+}
+
+/// A percent from above 0 to 100 as a probability, to the millionth of a percent; `None` outside it.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the value is checked to lie between 0 and 100,000,000 before the cast"
+)]
+fn fraction_of(percent: f64) -> Option<Probability> {
+    let micro = (percent * 1_000_000.0).round();
+    (0.0..=100_000_000.0)
+        .contains(&micro)
+        .then(|| Probability::from_micro_percent(micro as u32))
+        .flatten()
 }
 
 /// The directory for a result when none is given: the name of the scenario and the time, so that two runs do
@@ -211,12 +260,9 @@ fn report(error: &Error, loaded: &Loaded, err: &mut impl Write) -> u8 {
 struct Numbers {
     seed: Option<u64>,
     settle: Option<std::time::Duration>,
-    /// The width of a bin of the series.
-    bin: std::time::Duration,
-    recovery: RecoveryOptions,
 }
 
-/// Reads the seed, the settle time, and the bin and the recovery of the series.
+/// Reads the seed and the settle time.
 fn numbers(parsed: &Parsed) -> Result<Numbers, String> {
     let Ok(seed) = parsed.value("seed").map(str::parse::<u64>).transpose() else {
         return Err("--seed needs a whole number from 0 to 18446744073709551615".to_owned());
@@ -227,13 +273,47 @@ fn numbers(parsed: &Parsed) -> Result<Numbers, String> {
         .transpose()
         .map_err(|error| format!("--settle: {error}"))?
         .map(std::time::Duration::from);
-    let (bin, recovery) = series_options(parsed)?;
-    Ok(Numbers {
-        seed,
-        settle,
-        bin,
-        recovery,
-    })
+    Ok(Numbers { seed, settle })
+}
+
+/// The scenario of the file with the options of the run over it: the seed, and the keys of `measure` that an option names
+/// replace the keys of the file for this run (D-073). Checked again afterwards, because an option can be as wrong as a key.
+fn prepared(
+    parsed: &Parsed,
+    loaded: &Loaded,
+    seed: Option<u64>,
+    err: &mut impl Write,
+) -> Result<Scenario, u8> {
+    let mut scenario = match &loaded.scenario {
+        Ok(scenario) => scenario.clone(),
+        Err(error) => {
+            let _ = write!(err, "{}", error.render());
+            return Err(exit::USAGE);
+        }
+    };
+    if seed.is_some() {
+        scenario.seed = seed;
+    }
+    let links: Vec<Name> = scenario
+        .topology
+        .links
+        .iter()
+        .map(|l| l.id.clone())
+        .collect();
+    match measure_overrides(parsed, &links) {
+        Ok(overrides) => scenario.measure.apply(&overrides),
+        Err(message) => return Err(crate::usage_error(err, "run", &message, RUN_HELP)),
+    }
+    if let Some(problem) = scenario.validate().first() {
+        let place = problem.path.as_deref().unwrap_or("the scenario");
+        let _ = writeln!(
+            err,
+            "netscenario: the options of the run make the scenario invalid: {place}: {}",
+            problem.message
+        );
+        return Err(exit::USAGE);
+    }
+    Ok(scenario)
 }
 
 pub(crate) fn run_command<S: AsRef<str>>(
@@ -253,15 +333,14 @@ pub(crate) fn run_command<S: AsRef<str>>(
         Ok(path) => path,
         Err(message) => return crate::usage_error(err, "run", &message, RUN_HELP),
     };
-    let Numbers {
-        seed,
-        settle,
-        bin,
-        recovery,
-    } = match numbers(&parsed) {
+    let Numbers { seed, settle } = match numbers(&parsed) {
         Ok(numbers) => numbers,
         Err(message) => return crate::usage_error(err, "run", &message, RUN_HELP),
     };
+    // A wrong option is a wrong command line whether or not the file can be read; the links come with the file
+    if let Err(message) = measure_overrides(&parsed, &[]) {
+        return crate::usage_error(err, "run", &message, RUN_HELP);
+    }
     let loaded = match load(path) {
         Ok(loaded) => loaded,
         Err(message) => {
@@ -269,16 +348,10 @@ pub(crate) fn run_command<S: AsRef<str>>(
             return exit::USAGE;
         }
     };
-    let mut scenario = match &loaded.scenario {
-        Ok(scenario) => scenario.clone(),
-        Err(error) => {
-            let _ = write!(err, "{}", error.render());
-            return exit::USAGE;
-        }
+    let scenario = match prepared(&parsed, &loaded, seed, err) {
+        Ok(scenario) => scenario,
+        Err(code) => return code,
     };
-    if seed.is_some() {
-        scenario.seed = seed;
-    }
 
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
@@ -301,9 +374,6 @@ pub(crate) fn run_command<S: AsRef<str>>(
         .map_or_else(|| default_out(scenario.name.as_str()), PathBuf::from);
     let mut options = RunOptions::new(agent, &out_dir);
     options.settle = settle;
-    options.export_packets = parsed.flag("packets");
-    options.bin = bin;
-    options.recovery = recovery;
     // The programs of your own run where the scenario file is (D-041)
     options.working_dir = scenario_directory(path);
     // Ctrl-C stops the workloads and keeps what was recorded (D-066)
@@ -404,32 +474,43 @@ mod tests {
 
     /// The defaults are those of the library, and every option moves its own parameter (D-070).
     #[test]
-    fn the_options_of_the_series_and_the_recovery_are_read() {
-        let (bin, recovery) = series_options(&parsed(&[])).unwrap();
-        assert_eq!(bin, std::time::Duration::from_secs(1));
-        assert_eq!(recovery, RecoveryOptions::default());
-        let (bin, recovery) = series_options(&parsed(&[
-            "--bin",
-            "250ms",
-            "--recovery-basis",
-            "arrival",
-            "--recovery-baseline",
-            "8",
-            "--recovery-window",
-            "4",
-            "--recovery-fraction",
-            "95%",
-        ]))
+    fn the_options_of_the_measure_section_are_read() {
+        let links: Vec<Name> = vec!["access".parse().unwrap()];
+        let none = measure_overrides(&parsed(&[]), &links).unwrap();
+        assert_eq!(none, MeasureOverrides::default());
+        let given = measure_overrides(
+            &parsed(&[
+                "--bin",
+                "250ms",
+                "--recovery-basis",
+                "arrival",
+                "--recovery-baseline",
+                "8",
+                "--recovery-window",
+                "4",
+                "--recovery-fraction",
+                "95%",
+                "--capture",
+                "all",
+                "--packets",
+            ]),
+            &links,
+        )
         .unwrap();
-        assert_eq!(bin, std::time::Duration::from_millis(250));
-        assert_eq!(
-            (recovery.basis, recovery.baseline_bins, recovery.window_bins),
-            (Basis::Arrival, 8, 4)
-        );
-        assert!((recovery.fraction - 0.95).abs() < 1e-12);
-        // Canary: a value without the percent sign is the same percent
-        let (_, plain) = series_options(&parsed(&["--recovery-fraction", "95"])).unwrap();
-        assert!((plain.fraction - 0.95).abs() < 1e-12);
+        assert_eq!(given.bin, Some("250ms".parse().unwrap()));
+        assert_eq!(given.basis, Some(RecoveryBasis::Arrival));
+        assert_eq!((given.baseline_bins, given.window_bins), (Some(8), Some(4)));
+        assert_eq!(given.fraction.unwrap().micro_percent(), 95_000_000);
+        assert_eq!(given.capture.as_deref(), Some(&links[..]));
+        assert_eq!(given.packets, Some(true));
+        // A value without the percent sign is the same percent, and a list names the links
+        let plain = measure_overrides(
+            &parsed(&["--recovery-fraction", "95", "--capture", "a,b"]),
+            &links,
+        )
+        .unwrap();
+        assert_eq!(plain.fraction.unwrap().micro_percent(), 95_000_000);
+        assert_eq!(plain.capture.unwrap().len(), 2);
     }
 
     #[test]

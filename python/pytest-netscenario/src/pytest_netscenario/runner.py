@@ -86,7 +86,8 @@ class Runner:
         *,
         seed: int | None = None,
         settle: float | None = None,
-        packets: bool = False,
+        packets: bool | None = None,
+        capture: Sequence[str] | None = None,
         observer: Callable[[RunEvent], None] | None = None,
         cancel: CancelToken | None = None,
         out: str | os.PathLike[str] | None = None,
@@ -106,7 +107,8 @@ class Runner:
                 :meth:`load`).
             seed: Use this seed and not the one in the scenario.
             settle: How long to wait for the packets still in the network, in seconds.
-            packets: Also write the JSON Lines file with a line for each packet.
+            packets: ``True``: also write the JSON Lines file with a line for each packet.
+            capture: The links to capture as pcap files, at both ends.
             observer: Called with each :class:`netscenario.events.RunEvent`.
             cancel: A :class:`netscenario.CancelToken` that stops the run.
             out: The directory for the result. Default: a new one in the temporary directory of the
@@ -134,6 +136,7 @@ class Runner:
             seed=seed,
             settle=settle,
             packets=packets,
+            capture=capture,
             observer=observer,
             cancel=cancel,
             bin=bin,
