@@ -588,7 +588,7 @@ mod tests {
             .map(|loss| result_with(*loss, 5))
             .collect();
         let (metrics, partial) = aggregate(&results, 1, &RunSetOptions::new(5)).unwrap();
-        assert!(partial.is_empty());
+        assert_eq!(partial, Vec::<PartialMetric>::new());
         let loss = metrics.iter().find(|m| m.name == "w.loss_ratio").unwrap();
         assert_eq!(loss.values, [0.1, 0.2, 0.3, 0.4, 0.5]);
         assert!((loss.mean - 0.3).abs() < 1e-12 && (loss.median - 0.3).abs() < 1e-12);
