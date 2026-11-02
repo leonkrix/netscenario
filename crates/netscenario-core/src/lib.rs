@@ -6,7 +6,8 @@
 //! created (BKD-03), and then builds the nodes, links and impairments through the trait.
 //!
 //! [`run`] then starts the agents in the nodes, lets the workloads run and returns a [`RunResult`] with the
-//! statistics of [`stats`]. The timeline and the link models arrive with the later releases.
+//! statistics of [`stats`]. The timeline (`set`, `outage`, `down`, `up`) is done by [`run`] since release 0.2 (see
+//! [`timeline`]); the link models arrive with the later releases.
 //!
 //! The check needs no machine: a backend is a set of declarations, and a scenario that asks for more is
 //! refused with the path in the file and a way out.
