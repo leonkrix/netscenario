@@ -83,3 +83,5 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-075](decisions/D-075.md) | A run records its scenario, and a replay runs it with the recorded seed and compares the lost packets and the machine | Accepted 2026-11-03 |
 | [D-076](decisions/D-076.md) | A report is made from a result directory and nothing else, in three formats, and the JUnit failures are the ones a result can know | Accepted 2026-11-03 |
 | [D-077](decisions/D-077.md) | Python gets the reports and the replay as thin layers over the native library, and the properties of the plugin come from the core | Accepted 2026-11-03 |
+| [D-078](decisions/D-078.md) | A topology is one graph with shortcuts, the routes are automatic, set in part or fully manual, and every node has an address of its own | Accepted 2026-11-03 |
+| [D-079](decisions/D-079.md) | A link that needs a queue discipline or a rate that changes is built through a fabric namespace, with a delaying `netem` in front of the shaper | Accepted 2026-11-03 |

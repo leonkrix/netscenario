@@ -46,16 +46,18 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | TOP-01 | Point to point (two nodes, one link) | M | 0.1 | done (`tests/provision.rs`, `tests/run.rs`; [examples/](examples/)) |
 | TOP-02 | Star (nodes around a hub) | M | 0.3 | planned |
-| TOP-03 | Chain with routing (several hops, router nodes) | M | 0.3 | planned |
+| TOP-03 | Chain with routing (several hops, router nodes): routes computed by the shortest path (hop count, optional link `cost`), single routes set by hand, or fully manual (`routing: manual`); a node address on `lo` ([D-078](docs/decisions/D-078.md)) | M | 0.3 | planned |
 | TOP-04 | Dumbbell (shared bottleneck) | M | 0.3 | planned |
-| TOP-05 | Multipath and multi-homing (several links between nodes) | M | 0.3 | planned |
-| TOP-06 | Arbitrary graph with static routes | M | 0.3 | planned |
+| TOP-05 | Multipath and multi-homing (several links between nodes): metric routes for failover, ECMP and weights when asked, the first hop of a multi-homed host by `via` | M | 0.3 | planned |
+| TOP-06 | Arbitrary graph with static routes (explicit `routes` per node, on top of or instead of the automatic ones) | M | 0.3 | planned |
 | TOP-07 | Dynamic topology: links up and down | M | 0.2 | done (TML-02, D-064; `tests/timeline.rs`) |
 | TOP-08 | IPv4 (0.1) and IPv6 (0.3) | M | 0.1 | done for 0.1 (IPv4, `10.100.n.0/30`: `every_end_of_a_link_gets_its_address`, `tests/run.rs`); IPv6 comes with 0.3 |
 | TOP-09 | NAT and firewall nodes | C | 0.8 | idea |
 | TOP-10 | Dynamic topology: nodes joining and leaving (split from TOP-07, which is done for links) | M | 0.6 | planned |
-| TOP-10 | Shared segments, broadcast, multicast | C | 0.8 | idea |
+| TOP-12 | Shared segments, broadcast, multicast (was a second TOP-10) | C | 0.8 | idea |
 | TOP-11 | Shared wireless medium (contention, hidden terminals) | C | 1.x | idea |
+| TOP-13 | Pin one flow to a path over several nodes (policy routing by a source address of the workload) | C | 1.x | idea |
+| TOP-14 | Dynamic routing is not built in: a routing daemon (FRR, BIRD, babeld) runs as a program of a node and the timeline moves the network under it (see PRO-03) | C | - | idea |
 
 ## Link impairments (LNK)
 
@@ -200,6 +202,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | CLI-01 | `run`, `validate`, `doctor`, `clean` | M | 0.1 | done ([CLI.md](docs/CLI.md), `tests/binary.rs`) |
 | CLI-02 | `report`: HTML and Markdown from result files | M | 0.2 | done (`netscenario report <dir> --format md\|html\|junit`: [REPORTS.md](docs/REPORTS.md), D-076) |
 | CLI-03 | `profiles` and `capabilities`: what exists, what a backend can do | S | 0.3 | planned |
+| CLI-07 | `expand` (the long form of a scenario that uses shortcuts, parameters or profiles) and `show` (the graph, the addresses, the effective routes: text and Graphviz) | S | 0.3 | planned |
 | CLI-04 | `schema`: print the JSON Schema | S | 0.1 | done (`netscenario schema`) |
 | CLI-05 | Shell completions and man pages | S | 0.8 | planned |
 | CLI-06 | Machine-readable output and documented exit codes | M | 0.1 | done (exit codes in [CLI.md](docs/CLI.md), 130 and 143 for Ctrl-C and `kill` with the result of the part that ran, D-066; `--json` on `run`, `validate`, `doctor`, `clean`; the code 1 comes with assertions) |
@@ -257,7 +260,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `tests/fidelity.rs`: delay, loss, rate, both jitters, jitter with a rate; three canaries; CI numbers per runner as artifacts) |
 | QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | done (the Rust version is checked on the CI with 1.89; `cargo-semver-checks` compares the public API of `netscenario-model` and `netscenario-core` with `main` in every pull request and with the last release in a release, D-037) |
 | QA-08 | Supply chain: dependency audit and policy, OpenSSF Scorecard, actions pinned to commits | M | 0.1 | done (`cargo deny` in every pull request and weekly, OpenSSF Scorecard, CodeQL, pinned actions, Dependabot) |
-| QA-09 | Coverage figures (for information) | C | 0.3 | idea |
+| QA-09 | Coverage figures (for information) | C | - | idea |
 | QA-10 | Tests on several kernels and distributions | S | 0.5 | planned |
 
 ## Documentation (DOC)
@@ -288,6 +291,17 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | INT-01 | Example scenarios for loss recovery (forward error correction), as a test of the Tetrys library | S | 0.8 | planned |
 | INT-02 | Scenario library for the research use of the maintainer (airborne networks) | C | 1.x | idea |
 
+## Protocols and routing (PRO)
+
+Ideas for after the topologies of release 0.3. A node can run any program already (WRK-06), so a protocol stack or a routing daemon can be brought; these rows are about making that easy and measurable. The tool does not implement protocol stacks or routing algorithms itself (see the note in the parking lot).
+
+| ID | Feature | Prio | Release | Status |
+| --- | --- | --- | --- | --- |
+| PRO-01 | Adapters: recipes that say how to start a program in a node, which metrics it prints and what to capture, shipped as tested example scenarios (QUIC, WebRTC, Tetrys, FRR) | S | 0.8 | idea |
+| PRO-02 | Kernel transports as options of a TCP workload: `mptcp: true`, SCTP (refused where the kernel lacks them) | C | 0.6 | idea |
+| PRO-03 | Routing daemons (FRR OSPF and BGP, babeld, olsrd) as programs of router nodes, with the convergence after a `down` as a metric (the time until a flow arrives again and the packets lost in between) | C | 0.8 | idea |
+| PRO-04 | A simple routing scheme of our own in the Engine backend, where determinism matters | C | 1.x | idea |
+
 ## Parking lot
 
 Ideas that are not features yet. Add them here before they are lost; promote them to a line above when they have a use and a release.
@@ -296,6 +310,7 @@ Ideas that are not features yet. Add them here before they are lost; promote the
 - Recording the network conditions of a real device and replaying them in a test.
 - A public collection of scenarios and profiles that users can share.
 - Visual editor for topologies.
+- Protocol stacks and routing algorithms inside the tool: probably not (a second product, and the faithfulness of each implementation would have to be proven); the adapters of PRO-01 bring existing implementations instead.
 
 ## Criteria for 1.0
 
