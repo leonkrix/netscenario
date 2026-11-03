@@ -248,6 +248,22 @@ pub fn scenario_diff(recorded: &Recorded, file: &Scenario) -> Vec<Difference> {
     out
 }
 
+/// The comparison as JSON (`format` `netscenario-replay`): the two directories, the seed, and the comparison. The command line
+/// prints it with `--json`, and the Python layer reads it.
+#[must_use]
+pub fn replay_json(recorded: &Recorded, replay_dir: &Path, comparison: &Comparison) -> String {
+    let value = serde_json::json!({
+        "format": "netscenario-replay",
+        "version": 0,
+        "original": recorded.dir.display().to_string(),
+        "replay": replay_dir.display().to_string(),
+        "seed": recorded.result.seed.value,
+        "listed_sequences": LISTED_SEQUENCES,
+        "comparison": comparison,
+    });
+    serde_json::to_string_pretty(&value).unwrap_or_default()
+}
+
 /// What the replay says about the lost packets of one workload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]

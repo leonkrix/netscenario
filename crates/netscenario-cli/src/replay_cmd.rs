@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
 use netscenario_core::{
-    CancelToken, Comparison, Error, LISTED_SEQUENCES, Recorded, RunOptions, Verdict, agent_next_to,
-    compare, run, scenario_diff,
+    CancelToken, Error, Recorded, RunOptions, Verdict, agent_next_to, compare, replay_json, run,
+    scenario_diff,
 };
 
 use crate::args::{Parsed, Spec};
@@ -213,7 +213,7 @@ fn replay_run(
             }
             let comparison = compare(&recorded.result, dir, &replayed, out_dir);
             if json {
-                let _ = writeln!(out, "{}", comparison_json(recorded, out_dir, &comparison));
+                let _ = writeln!(out, "{}", replay_json(recorded, out_dir, &comparison));
             } else {
                 let _ = write!(
                     out,
@@ -243,18 +243,4 @@ fn same_directory(a: &Path, b: &Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
     }
-}
-
-/// The comparison as JSON, with the two directories.
-fn comparison_json(recorded: &Recorded, replay_dir: &Path, comparison: &Comparison) -> String {
-    let value = serde_json::json!({
-        "format": "netscenario-replay",
-        "version": 0,
-        "original": recorded.dir.display().to_string(),
-        "replay": replay_dir.display().to_string(),
-        "seed": recorded.result.seed.value,
-        "listed_sequences": LISTED_SEQUENCES,
-        "comparison": comparison,
-    });
-    serde_json::to_string_pretty(&value).unwrap_or_default()
 }

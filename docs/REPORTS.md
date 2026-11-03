@@ -10,6 +10,8 @@ netscenario report results/lte --format html --out report.html
 
 The report goes to standard output, or to the file of `--out`, for every format. The command exits with 0 whenever it could make the report, also for a JUnit report with failed cases: the failures are in the report. A directory that is not a result, or a file that cannot be read, is exit code 2 with the name of the file.
 
+In Python the same reports are `netscenario.report(directory, format)`, `Result.report` and `RunSet.report` ([PYTHON.md](PYTHON.md#reports)); the properties of the JUnit report are the ones that the pytest plugin writes ([PYTEST.md](PYTEST.md)).
+
 A sample of each format, made from a fixed run, is in [`docs/sample-report/`](sample-report/): [`report.md`](sample-report/report.md), [`junit.xml`](sample-report/junit.xml) and [`report.html`](sample-report/report.html). A test makes the three again and fails if they differ, so they show what the code writes today.
 
 ## Markdown (`--format md`)

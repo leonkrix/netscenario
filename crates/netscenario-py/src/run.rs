@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
 use netscenario_core::{
-    CancelToken, Error, Repetition, RunEvent, RunOptions, RunSetOptions, run, run_set,
+    CancelToken, Error, Recorded, Repetition, RunEvent, RunOptions, RunSetOptions, compare,
+    replay_json, run, run_set,
 };
 use netscenario_model::{MeasureOverrides, Name, Probability, RecoveryBasis, Scenario};
 use pyo3::prelude::*;
@@ -277,13 +278,22 @@ pub(crate) struct Request {
     pub(crate) set: Option<RunSetOptions>,
 }
 
-/// Starts the run on a thread of its own. The outcome appears in the slot that is returned. A set of runs is run one
-/// after the other on that thread; `before` is told about each repetition before it starts.
+/// What the thread of the run does.
+enum Job {
+    /// One run of this scenario.
+    Run(Scenario),
+    /// A set of runs of this scenario.
+    Set(Scenario, RunSetOptions),
+    /// A recorded run, run again and compared with its original.
+    Replay(Scenario, Box<Recorded>),
+}
+
+/// Starts the job on a thread of its own. The outcome appears in the slot that is returned. A set of runs is run one after the
+/// other on that thread; `before` is told about each repetition before it starts.
 fn start_worker(
-    scenario: Scenario,
+    job: Job,
     supervisor: String,
     options: RunOptions,
-    set: Option<RunSetOptions>,
     before: Box<dyn FnMut(&Repetition) + Send>,
 ) -> Outcome {
     let outcome: Outcome = Arc::new((Mutex::new(None), Condvar::new()));
@@ -291,8 +301,8 @@ fn start_worker(
     std::thread::spawn(move || {
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut before = before;
-            if let Some(set) = set {
-                return run_set(
+            match job {
+                Job::Set(scenario, set) => run_set(
                     &scenario,
                     &options,
                     &set,
@@ -303,11 +313,21 @@ fn start_worker(
                     },
                     &mut *before,
                 )
-                .map(|result| result.to_json());
+                .map(|result| result.to_json()),
+                Job::Run(scenario) => {
+                    let mut backend =
+                        KernelBackend::new(KernelOptions::for_scenario(&supervisor, &scenario))?;
+                    run(&mut backend, &scenario, &options).map(|result| result.to_json())
+                }
+                Job::Replay(scenario, recorded) => {
+                    let mut backend =
+                        KernelBackend::new(KernelOptions::for_scenario(&supervisor, &scenario))?;
+                    let replayed = run(&mut backend, &scenario, &options)?;
+                    let comparison =
+                        compare(&recorded.result, &recorded.dir, &replayed, &options.out_dir);
+                    Ok(replay_json(&recorded, &options.out_dir, &comparison))
+                }
             }
-            let mut backend =
-                KernelBackend::new(KernelOptions::for_scenario(&supervisor, &scenario))?;
-            run(&mut backend, &scenario, &options).map(|result| result.to_json())
         }));
         let finished = match ran {
             Ok(result) => Finished::Returned(Box::new(result)),
@@ -351,34 +371,33 @@ fn wait_for(py: Python<'_>, outcome: &Outcome, token: &CancelToken) -> (Finished
     }
 }
 
-/// Runs the scenario and returns the text of `result.json`.
-pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
-    let Request {
-        source,
-        source_name,
-        supervisor,
-        agent,
-        out_dir,
-        seed,
-        settle,
-        observer,
-        cancel,
-        working_dir,
-        series,
-        set,
-    } = request;
-    let mut scenario =
-        Scenario::from_yaml(&source, &source_name).map_err(|error| errors::scenario(py, &error))?;
-    if seed.is_some() {
-        scenario.seed = seed;
-    }
-    scenario.measure.apply(&series.overrides()?);
-    let token = cancel.unwrap_or_default();
+/// What the calling thread keeps while the job runs: the token that stops it and the slot for what goes wrong in the observer.
+struct Watch {
+    token: CancelToken,
+    callback_error: Arc<Mutex<Option<PyErr>>>,
+}
 
+/// What a job needs besides the scenario: the options of the core with the observer that calls Python, and the function that is
+/// told about each repetition.
+struct Prepared {
+    options: RunOptions,
+    before: Box<dyn FnMut(&Repetition) + Send>,
+    watch: Watch,
+}
+
+fn prepare(
+    agent: &str,
+    out_dir: &str,
+    settle: Option<Duration>,
+    working_dir: Option<String>,
+    observer: Option<Py<PyAny>>,
+    cancel: Option<CancelToken>,
+) -> Prepared {
+    let token = cancel.unwrap_or_default();
     // What goes wrong in the observer: the first error is kept, the run is cancelled, and it is raised after
     let callback_error: Arc<Mutex<Option<PyErr>>> = Arc::new(Mutex::new(None));
-    let mut options = RunOptions::new(&agent, &out_dir).with_cancel(token.clone());
-    options.settle = settle.map(Duration::from_secs_f64);
+    let mut options = RunOptions::new(agent, out_dir).with_cancel(token.clone());
+    options.settle = settle;
     options.working_dir = working_dir.map(std::path::PathBuf::from);
     // The observer is called for the events of every run, and for the start of each repetition of a set
     let mut before: Box<dyn FnMut(&Repetition) + Send> = Box::new(|_| {});
@@ -407,14 +426,31 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
             });
         });
     }
+    Prepared {
+        options,
+        before,
+        watch: Watch {
+            token,
+            callback_error,
+        },
+    }
+}
 
-    let outcome = start_worker(scenario, supervisor, options, set, before);
-    let (finished, interrupt) = wait_for(py, &outcome, &token);
-
+/// Waits for the job and turns its end into the text it returned or the exception of Python: an interrupt first, then an error
+/// of the observer, then the error of the core, which is rendered with the lines of `source`.
+fn conclude(
+    py: Python<'_>,
+    outcome: &Outcome,
+    watch: &Watch,
+    source_name: &str,
+    source: &str,
+) -> PyResult<String> {
+    let (finished, interrupt) = wait_for(py, outcome, &watch.token);
     if let Some(error) = interrupt {
         return Err(error);
     }
-    if let Some(error) = callback_error
+    if let Some(error) = watch
+        .callback_error
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take()
@@ -424,10 +460,112 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
     match finished {
         Finished::Returned(returned) => match *returned {
             Ok(text) => Ok(text),
-            Err(error) => Err(errors::core(py, &error, &source_name, &source)),
+            Err(error) => Err(errors::core(py, &error, source_name, source)),
         },
         Finished::Panicked(text) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
             "internal error in the native library: {text}"
         ))),
     }
+}
+
+/// Runs the scenario and returns the text of `result.json`, or with a set the text of `runset.json`.
+pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
+    let Request {
+        source,
+        source_name,
+        supervisor,
+        agent,
+        out_dir,
+        seed,
+        settle,
+        observer,
+        cancel,
+        working_dir,
+        series,
+        set,
+    } = request;
+    let mut scenario =
+        Scenario::from_yaml(&source, &source_name).map_err(|error| errors::scenario(py, &error))?;
+    if seed.is_some() {
+        scenario.seed = seed;
+    }
+    scenario.measure.apply(&series.overrides()?);
+    let Prepared {
+        options,
+        before,
+        watch,
+    } = prepare(
+        &agent,
+        &out_dir,
+        settle.map(Duration::from_secs_f64),
+        working_dir,
+        observer,
+        cancel,
+    );
+    let job = match set {
+        Some(set) => Job::Set(scenario, set),
+        None => Job::Run(scenario),
+    };
+    let outcome = start_worker(job, supervisor, options, before);
+    conclude(py, &outcome, &watch, &source_name, &source)
+}
+
+/// What the Python call of a replay asks for.
+pub(crate) struct ReplayRequest {
+    pub(crate) dir: String,
+    pub(crate) supervisor: String,
+    pub(crate) agent: String,
+    pub(crate) out_dir: String,
+    pub(crate) observer: Option<Py<PyAny>>,
+    pub(crate) cancel: Option<CancelToken>,
+    pub(crate) working_dir: Option<String>,
+}
+
+/// Runs a recorded run again and returns the comparison with the original as the JSON of `netscenario replay --json`.
+///
+/// # Errors
+///
+/// `ValueError` if the directory cannot be replayed (not a run, no scenario, a scenario that is not the one of the result);
+/// the exceptions of a run otherwise.
+pub(crate) fn execute_replay(py: Python<'_>, request: ReplayRequest) -> PyResult<String> {
+    let ReplayRequest {
+        dir,
+        supervisor,
+        agent,
+        out_dir,
+        observer,
+        cancel,
+        working_dir,
+    } = request;
+    let recorded = Recorded::load(std::path::Path::new(&dir))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    let scenario = recorded.scenario_to_replay();
+    let source = std::fs::read_to_string(recorded.dir.join(netscenario_core::SCENARIO_FILE))
+        .unwrap_or_default();
+    let Prepared {
+        mut options,
+        before,
+        watch,
+    } = prepare(
+        &agent,
+        &out_dir,
+        Some(recorded.settle()),
+        working_dir,
+        observer,
+        cancel,
+    );
+    options.settle = Some(recorded.settle());
+    let outcome = start_worker(
+        Job::Replay(scenario, Box::new(recorded)),
+        supervisor,
+        options,
+        before,
+    );
+    conclude(
+        py,
+        &outcome,
+        &watch,
+        netscenario_core::SCENARIO_FILE,
+        &source,
+    )
 }

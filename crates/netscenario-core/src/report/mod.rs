@@ -38,7 +38,7 @@ use crate::runset::{RUNSET_FILE, RunSetResult};
 use crate::series::Bin;
 
 pub use html::html;
-pub use text::{junit, markdown};
+pub use text::{junit, markdown, run_properties, set_properties};
 
 /// A format of a report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

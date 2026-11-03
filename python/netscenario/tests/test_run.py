@@ -382,3 +382,49 @@ def test_a_set_of_repetitions_has_derived_seeds_and_an_interval_for_each_metric(
     again = ns.run(lossy, repetitions=5, out=tmp_path / "again", settle=0.3)
     assert again.metric("media.lost").values == lost.values
     assert [run.seed for run in again.runs] == [run.seed for run in runs.runs]
+
+
+def test_a_replay_loses_the_same_packets_and_another_seed_does_not(tmp_path: Path) -> None:
+    # 1 s at 2 mbit/s is 208 packets; at 10 % loss another seed loses the same packets with a
+    # probability far below 1e-9
+    lossy = scenario(duration="1s", link=ns.Impairments(delay="5ms", loss="10%"), seed=7)
+    first = ns.run(lossy, out=tmp_path / "first", settle=0.3)
+    heard: list[RunEvent] = []
+    again = ns.replay(first.out_dir, out=tmp_path / "again", observer=heard.append)
+    assert again.reproduced, (again.verdict, again.workloads)
+    assert (again.seed, again.original_dir, again.replay_dir) == (
+        7,
+        first.out_dir,
+        tmp_path / "again",
+    )
+    assert not again.other_machine
+    assert again.provenance == ()
+    assert again.workloads[0].identical
+    replayed = again.result()
+    assert replayed["media"].lost == first["media"].lost
+    assert replayed.settle == pytest.approx(first.settle), (
+        "the replay waits as long as the original"
+    )
+    assert any(isinstance(event, ns.events.Started) for event in heard)
+
+    # The canary: the same directory with another recorded seed is a replay that differs
+    path = first.out_dir / "result.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["seed"]["value"] = 8
+    path.write_text(json.dumps(data), encoding="utf-8")
+    other = ns.replay(first.out_dir, out=tmp_path / "other")
+    assert other.verdict == "differs"
+    assert not other.reproduced
+    assert other.workloads[0].count_only_replay > 0
+
+
+def test_the_reports_of_a_real_run_are_made_in_python(tmp_path: Path) -> None:
+    run = ns.run(scenario(duration="1s", link=ns.Impairments(delay="5ms")), out=tmp_path / "out")
+    assert run.report("md").startswith("## netscenario: py-test\n")
+    junit = ns.report(run.out_dir, "junit")
+    assert 'name="media"' in junit
+    html = ns.report(run.out_dir, "html")
+    assert "<svg " in html
+    for needle in ("http://", "https://", "<script", "src=", "href=", "url("):
+        assert needle not in html, needle
+    assert html == run.report("html"), "the same directory gives the same bytes"

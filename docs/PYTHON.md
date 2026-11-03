@@ -124,6 +124,33 @@ print(runs.results[3]["media"].lost)                  # the Result of run number
 - **Failure.** A set ends with the first run that fails, with that run's exception, and has no `RunSet`; the directories of the finished runs stay in `out`. The observer is told `RepetitionStarted(index, total)` before the events of each run.
 - **What to assert.** Compare the end of the interval that is on the dangerous side with a threshold that has room: `loss.ci95_high < 0.05` for a link that loses 1 %. A threshold near the mean fails about half of the time however many runs there are ([STATISTICS.md](STATISTICS.md#what-stable-means)).
 
+## Reports
+
+The reports of the command line ([REPORTS.md](REPORTS.md)) are functions too. They are made from a result directory and nothing else, so the same directory gives the same text:
+
+```python
+result = ns.run(scenario, out="results/lte")
+summary = result.report()                       # Markdown, for the summary of a CI job
+junit = ns.report("results/lte", "junit")       # one test case for each workload, metrics as properties
+Path("report.html").write_text(result.report("html"))   # one file with inline charts, nothing to fetch
+runs.report("md")                               # a set of runs: the headline metrics with their intervals
+```
+
+`ns.report(directory, format)` takes `"md"` (the default), `"junit"` or `"html"` and returns the text; `Result.report` and `RunSet.report` are the same for their own `out_dir`, which has to be still there (the HTML reads the series and the records from it). A directory that is not a result, a file that cannot be read and a wrong format are a `ValueError`. `ns.junit_properties(result)` gives the properties that the report writes for a result or a set, as `(name, value)` pairs: the pytest plugin writes the same list, because both come from the native library.
+
+## Replay
+
+`ns.replay(directory)` runs a recorded run again and says whether the same packets were lost (ENV-03; [CLI.md](CLI.md#replay) has the details and [D-075](decisions/D-075.md) the reasons):
+
+```python
+first = ns.run(scenario, seed=42, out="results/first")
+again = ns.replay(first.out_dir)                 # the recorded scenario and the recorded seed
+assert again.reproduced, again.verdict
+print(again.workloads[0].lost_original, again.other_machine, again.result()["media"].lost)
+```
+
+The result is a `Replay`: the `verdict` (`"reproduced"`, `"differs"`, `"not-promised"` or `"not-comparable"`), `workloads` with the lost packets of the original and of the replay (and the first sequence numbers that only one of them lost), `provenance` with the fields in which the machine differs, `other_machine`, and `reasons`. **A replay that lost other packets is returned and not raised**: `again.reproduced` is false and the verdict `"differs"` says it failed where both runs promised the loss repeats from the seed; `"not-promised"` is a difference that the notes explain (an outage, corruption, a program that sends). `again.result()` is the `Result` of the replay, which is a run of its own in `out` (default: a new temporary directory). A directory that cannot be replayed (not a run, the directory of a set, a run from before the scenario was recorded, a scenario that is not the one of the result) is a `ValueError` with the reason; the other errors are those of `ns.run`.
+
 ## Errors
 
 Every error is a `netscenario.NetscenarioError`. They match the exit codes of the command line ([CLI.md](CLI.md)):
