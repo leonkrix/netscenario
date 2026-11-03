@@ -1,6 +1,6 @@
 # netscenario
 
-Declarative network scenarios for tests: describe a network (nodes, links, delay, jitter, loss, rate), send traffic through it, measure per packet, and assert on the numbers.
+Declarative network scenarios for tests: describe a network (nodes, links, delay, jitter, loss, rate, and how they change over time), send traffic through it or run your own program in it, measure per packet, and assert on the numbers, with confidence intervals over repeated runs.
 
 ```bash
 pip install netscenario
@@ -32,6 +32,15 @@ print(
     f"{video.sent} packets sent, {video.loss_ratio:.1%} lost, p99 delay {video.delay.p99 * 1000:.0f} ms"
 )
 assert video.delay.p99 < 0.100  # seconds
+```
+
+Repeat a scenario with seeds derived from one seed and assert on an interval, make reports and replay a run:
+
+```python
+runs = ns.run(scenario, repetitions=10)
+assert runs.metric("video.loss_ratio").ci95_high < 0.05
+open("report.html", "w").write(runs.report("html"))  # or "md" for a CI summary, "junit"
+assert ns.replay(result.out_dir).reproduced  # the recorded seed, the same lost packets
 ```
 
 The wheel carries the extension module and the two programs that a run needs (`netscenario` and `netscenario-agent`), and puts the command `netscenario` on the `PATH`. It is for **Linux** (x86_64 and aarch64) with the tools `ip`, `tc`, `unshare`, `nsenter` and `prlimit` (packages `iproute2` and `util-linux`). A run creates network namespaces, which Debian and Ubuntu 22.04 allow without root; Ubuntu 24.04 needs one setting, and a container needs more: [permissions](https://github.com/leonkrix/netscenario/blob/main/docs/PERMISSIONS.md). If something does not work, start with `netscenario doctor` and the [troubleshooting guide](https://github.com/leonkrix/netscenario/blob/main/docs/TROUBLESHOOTING.md).

@@ -46,7 +46,8 @@ error: `both` cannot be combined with `forward` or `reverse`
 `netscenario validate file.yaml` checks a file without running it, and works on any machine. The mistakes people make most often:
 
 - **A number without a unit** (`delay: 40`) or a probability without a percent sign (`p: 0.01`). A bare number could be seconds or milliseconds, so it is refused. Write `40ms` and `1%`.
-- **A key of a later release** (a `timeline`, a loss model other than `random`, a queue). The error says in which release it is planned ([FEATURES.md](../FEATURES.md)).
+- **A key of a later release** (a queue, a loss model such as `trace`, a workload kind such as `tcp-bulk`). The error says in which release it is planned ([FEATURES.md](../FEATURES.md)).
+- **`repetitions` in the file.** It is an option of a run, not a key: `netscenario run --repetitions 10`, or `repetitions=10` in Python ([STATISTICS.md](STATISTICS.md)).
 - **A misspelled key, value, unit or name**: the error lists the keys that are allowed there (`unknown field `dealy`, expected one of delay, jitter, loss, rate`) and, if exactly one name is close, asks `did you mean 'delay'?`. The same holds for the values of an enumeration, for a unit (`Mbit`, `min`, `mbps`) and for a node that does not exist. It is a guess: read the line the error points at.
 - **The wrong shape**: `netscenario schema` prints the JSON Schema; editors can use it to complete and check the file ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md)).
 
@@ -74,6 +75,10 @@ The network is torn down all the same; the message says what the supervisor or a
 - **Nothing is left behind**, also after a crash or a kill: the run lives in a namespace that the kernel removes when its first process ends. `netscenario clean --dry-run` shows what, if anything, would be ended; `netscenario clean` ends it ([DOCTOR.md](DOCTOR.md)).
 - **The run took too long.** A watchdog ends a run after the duration of the scenario plus 60 seconds.
 - **Run with `--packets`** to write the record of every packet next to the result, and look at the first and last packets of the workload ([RESULTS.md](RESULTS.md)).
+- **A program of your own fails the run before any packet.** It ended before it was ready, was not ready within `within`, or could not be started; the message has its id, what it was waited for and the end of its standard error. A name without a slash is looked for in `PATH` and a path with a slash from the directory of the scenario file; a socket bound only to the loopback does not count as ready, because the other node cannot reach it ([PROGRAMS.md](PROGRAMS.md)).
+- **A program of your own with `on-exit: fail` ended with an error before the end of the run.** The run ends with the exit code or signal and the end of its standard error, and writes no result, so there is no report to make; with `on-exit: continue` (the default) the crash is a finding and the result has it (`ended: "on-its-own"`).
+- **A capture fails the run: *cannot open a packet socket*.** The capture needs `CAP_NET_RAW` in the node; in a user namespace it is there, otherwise add `+net_raw` to the capabilities ([PERMISSIONS.md](PERMISSIONS.md)).
+- **A set of repetitions ended without a `runset.json`.** A set ends with the first run that fails, with that run's error, and keeps the directories of the runs that finished; an interval from fewer runs than were asked for would be a made-up number. `repetitions` is at least 5 and at most 1,000 ([STATISTICS.md](STATISTICS.md)).
 
 ## The result looks wrong (but is not)
 
@@ -88,10 +93,19 @@ The network is torn down all the same; the message says what the supervisor or a
 - **`loss_reproducible` is false.** `not_reproducible_because` in the result says why, and the command line prints it. With `corrupt` in the scenario it is always false, and the lost packets of two runs with one seed differ by a few (the place of the flipped bit is not seeded; `lost_in_queue` in `directions` repeats exactly). Otherwise either no seed could be applied (the `tc` is older than 6.6.0), or a queue counted packets that the workloads did not send (IPv6 neighbour discovery, ARP, a program of yours in the node) and that shifted the pattern. The command line names the queue and the two numbers, and `queue_checks` in the result has them ([RESULTS.md](RESULTS.md)).
 - **Numbers on a busy machine.** The agents measure with the clock of the machine; a machine whose cores are busy delays the wake-up of the sender and the receiver by a little. The tests of the project run one at a time for this reason ([FIDELITY.md](FIDELITY.md)). In a CI, do not run several scenarios side by side on few cores.
 
+## Replay and reports
+
+- **`replay` says the directory is not a run, or the directory of a set.** Give the directory that holds `result.json` (for a run of a set, `run-001` and so on). A directory without `scenario.json` was made by a version that did not record the scenario, and cannot be replayed: run the scenario file again ([CLI.md](CLI.md#replay)).
+- **`replay` says that `scenario.json` is not the scenario of the result.** One of the two files was changed after the run; the fingerprints in the message are the one of the result and the one of the file. Nothing is replayed.
+- **The replay is *NOT REPRODUCED* (exit code 1, `verdict` `differs`).** Both runs said that their loss repeats from the seed and the replay lost other packets. The summary names the packets, and says if the machine is not the original's: the lost packets of a seed depend on the kernel's `netem` and on `tc`, so look at the fields it lists first. A *not promised* replay (exit code 0) is a difference that the notes explain: an outage, corruption or a program that sends.
+- **`report --format html` names a file that is missing.** The HTML of a run is drawn from `series-<id>.jsonl` and `flow-<n>.records`, which have to be in the directory; a result of a version without a series gets a page without the charts over time. Markdown and JUnit need only `result.json` ([REPORTS.md](REPORTS.md)).
+- **A JUnit case fails.** Two reasons only: the run was interrupted, or the kernel refused packets of the workload and no `down` step explains it. A warning about reproducibility is text in the case, not a failure.
+
 ## pytest
 
 - **Tests are skipped: *this machine cannot run scenarios*.** On a laptop the plugin skips and prints the reason and the fix from `doctor`. On a CI (the variable `CI` is set) it fails the test instead, because a test that never ran proves nothing. `--netscenario-environment=skip|fail|auto` chooses ([PYTEST.md](PYTEST.md)).
 - **`FileNotFoundError` for a scenario.** The file is looked for next to the test file, in the directories of the ini option `netscenario_scenarios` (relative to the ini file) and in the root directory of the project. The error lists the places.
+- **`netscenario_result` or `netscenario_runs` is an error of the test.** The first is for a marker without `repetitions` and gives a `Result`; the second is for a marker with `repetitions` and gives a `RunSet`. The message says which one to use ([PYTEST.md](PYTEST.md)).
 - **No section `netscenario` in the report.** It is shown for failing tests; run with `-rA` for passing tests too. The plugin is found through its entry point: when it is installed, the header of a pytest run shows a line `netscenario: <version>`.
 
 ## Installing

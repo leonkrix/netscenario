@@ -50,9 +50,10 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | TOP-04 | Dumbbell (shared bottleneck) | M | 0.3 | planned |
 | TOP-05 | Multipath and multi-homing (several links between nodes) | M | 0.3 | planned |
 | TOP-06 | Arbitrary graph with static routes | M | 0.3 | planned |
-| TOP-07 | Dynamic topology: links up and down (0.2), nodes joining and leaving (0.6) | M | 0.2 | links up and down done (TML-02, D-064); nodes joining and leaving come with 0.6 |
+| TOP-07 | Dynamic topology: links up and down | M | 0.2 | done (TML-02, D-064; `tests/timeline.rs`) |
 | TOP-08 | IPv4 (0.1) and IPv6 (0.3) | M | 0.1 | done for 0.1 (IPv4, `10.100.n.0/30`: `every_end_of_a_link_gets_its_address`, `tests/run.rs`); IPv6 comes with 0.3 |
 | TOP-09 | NAT and firewall nodes | C | 0.8 | idea |
+| TOP-10 | Dynamic topology: nodes joining and leaving (split from TOP-07, which is done for links) | M | 0.6 | planned |
 | TOP-10 | Shared segments, broadcast, multicast | C | 0.8 | idea |
 | TOP-11 | Shared wireless medium (contention, hidden terminals) | C | 1.x | idea |
 
@@ -250,7 +251,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | QA-01 | Unit tests and property tests | M | 0.1 | done for 0.1 (unit tests in every crate, property tests of the units in `netscenario-model`; it grows with every release) |
 | QA-02 | Integration tests inside namespaces, on the CI | M | 0.1 | done (the CI creates real namespaces on `ubuntu-22.04` and `ubuntu-24.04`, as a user and as root) |
-| QA-03 | Fuzzing of the parsers that read input that is not trusted: the scenario, the packets and records of the agent, the metrics of a program | S | 0.2 | in progress (the five targets and the weekly workflow `fuzz.yml` are there: the scenario, the values, a datagram, a file of records, a result file; the metrics of a program and the replay file follow with the supervisor of programs and the replay file; brought forward from 0.3, because release 0.2 adds parsers of such input; ClusterFuzzLite and a 24-hour run stay in 0.8) |
+| QA-03 | Fuzzing of the parsers that read input that is not trusted: the scenario, the packets and records of the agent, the metrics of a program | S | 0.2 | done (eight targets and the weekly workflow `fuzz.yml`: the scenario, the values, a datagram, a file of records, a result file, the metrics of a program, the file of a set of runs and the reports made of a result file; [fuzz/](fuzz/), D-045, D-053; the replay reads the same two files and the scenario, which have targets; brought forward from 0.3, because release 0.2 adds parsers of such input; ClusterFuzzLite and a 24-hour run stay in 0.8) |
 | QA-04 | Snapshot tests for reports and the schema | S | 0.2 | done (the Markdown, the JUnit and each drawing, and a sample report that a test makes again: [`tests.rs`](crates/netscenario-core/src/report/tests.rs); the schema: [`schema.rs`](crates/netscenario-model/tests/schema.rs)) |
 | QA-05 | Benchmarks of the engine (throughput, added delay) | S | 0.4 | planned |
 | QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `tests/fidelity.rs`: delay, loss, rate, both jitters, jitter with a rate; three canaries; CI numbers per runner as artifacts) |

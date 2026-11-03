@@ -1,0 +1,8 @@
+{"metric": "frames_per_second", "value": 29.7, "unit": "1/s"}
+{"metric":"rtt","value":61.2}
+a line that is not a metric
+{"metric": "", "value": 1}
+{"metric": "x", "value": 1e999}
+{"metric": "x", "valeu": 1}
+  {"metric": "calls", "value": 3}  
+{"metric": "a\u0001b", "value": 1}

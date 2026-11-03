@@ -40,6 +40,13 @@ filter_commits = false
 topo_order = false
 sort_commits = "oldest"
 tag_pattern = "v[0-9]*"
+# GitHub cuts a long title of a pull request at 72 characters: the subject of the squash commit ends with a "…" before the number
+# of the pull request, and the first line of the body, a bullet, is the first commit of the branch, which carries the whole title.
+# Put the title together again from there. A title that was written without the "f" of "fix" (#73) is repaired.
+commit_preprocessors = [
+  { pattern = '^[^\n]*… (\(#[0-9]+\))\n\n\* ([^\n]*)', replace = "${2} ${1}" },
+  { pattern = '^ix: ', replace = "fix: " },
+]
 commit_parsers = [
   # The experiments that came before the workspace: their fixes are not changes of the product
   { sha = "21561d51502c5da9bcff0d5030d170e602697170", skip = true },
@@ -52,7 +59,7 @@ commit_parsers = [
   { message = "^perf", group = "Performance" },
   { message = "^revert", group = "Reverted" },
   # What does not change the product for a user is not in the changelog; a breaking change always is
-  { message = "^(docs|test|ci|chore|build|refactor|style)", breaking = false, skip = true },
-  { message = "^(docs|test|ci|chore|build|refactor|style)", group = "Other changes" },
+  { message = "^(docs|test|ci|chore|build|refactor|style|spikes)", breaking = false, skip = true },
+  { message = "^(docs|test|ci|chore|build|refactor|style|spikes)", group = "Other changes" },
   { message = ".*", group = "Other" },
 ]
