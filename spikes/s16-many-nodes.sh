@@ -122,7 +122,7 @@ flows_over_two_paths() { # POLICY
   node b $FLOW server 4 10.209.0.1 7000 100000 1.0 >/dev/null 2>&1 &
   local spid=$!
   sleep 0.3
-  for port in $(seq 20001 20020); do node a $FLOW client 4 10.209.0.1 7000 20 2000 "$port"; done
+  for port in $(seq 20001 20020); do node a $FLOW client 4 10.209.0.1 7000 20 2000 "$port" >/dev/null; done
   sleep 0.3; kill "$spid" 2>/dev/null; wait "$spid" 2>/dev/null
   after0="$(rx_tx a l0a | awk '{print $2}')"; after2="$(rx_tx a l2a | awk '{print $2}')"
   echo "$((after0 - before0)) $((after2 - before2))"
@@ -148,7 +148,7 @@ failover() { # END (a|r1) IGNORE (0|1)
   node b $FLOW server 4 10.209.0.1 7000 1500 1.5 >"$out" 2>&1 &
   local spid=$!
   sleep 0.4
-  node a $FLOW client 4 10.209.0.1 7000 1500 500 &
+  node a $FLOW client 4 10.209.0.1 7000 1500 500 >/dev/null &
   local cpid=$!
   sleep 1.0
   if [ "$end" = a ]; then node a ip link set l0a down; else node r1 ip link set l0b down; fi

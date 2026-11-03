@@ -91,7 +91,13 @@ def server(fam, address, port, count, wait):
 def client(fam, address, port, count, pps, src_port):
     sock = socket.socket(family(fam), socket.SOCK_DGRAM)
     if src_port:
-        sock.bind(("::" if fam == "6" else "0.0.0.0", src_port))
+        # Bind to the address the route to the target would use, not to all interfaces: ask the kernel by connecting a
+        # throwaway socket, then bind the real one to that address and the wanted port
+        probe = socket.socket(family(fam), socket.SOCK_DGRAM)
+        probe.connect((address, port))
+        local = probe.getsockname()[0]
+        probe.close()
+        sock.bind((local, src_port))
     forced = os.environ.get("FLOW_SNDBUFFORCE")
     plain = os.environ.get("FLOW_SNDBUF")
     note = ""
