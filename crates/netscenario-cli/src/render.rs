@@ -3,7 +3,10 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use netscenario_core::{MetricSet, RunResult, RunSetResult, WorkloadResult};
+use netscenario_core::{
+    Comparison, MetricSet, Recorded, RunResult, RunSetResult, Verdict, WorkloadComparison,
+    WorkloadResult,
+};
 
 /// Up to this many seconds the throughput of every second is listed; a longer run shows the average.
 const MAX_LISTED_SECONDS: usize = 6;
@@ -87,6 +90,129 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
         let _ = writeln!(text, "  note: {note}");
     }
     let _ = writeln!(text, "\nresult: {}", out_dir.join("result.json").display());
+    text
+}
+
+/// A list of sequence numbers for a sentence: `4, 8, 17`, with `...` where it is cut.
+fn sequences(listed: &[u64], total: u64) -> String {
+    let mut text = listed
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if total > listed.len() as u64 {
+        text.push_str(", ...");
+    }
+    text
+}
+
+/// What the replay found about one workload, in one or two lines.
+fn replay_workload(text: &mut String, workload: &WorkloadComparison) {
+    if workload.identical() {
+        let _ = writeln!(
+            text,
+            "  {}: lost {} of the packets in both runs, the same ones",
+            workload.id, workload.lost_original
+        );
+        return;
+    }
+    let _ = writeln!(
+        text,
+        "  {}: the original lost {}, the replay {}; {} packet{} differ",
+        workload.id,
+        workload.lost_original,
+        workload.lost_replay,
+        workload.differing,
+        if workload.differing == 1 { "" } else { "s" }
+    );
+    if !workload.only_original.is_empty() {
+        let _ = writeln!(
+            text,
+            "    lost only in the original: {}",
+            sequences(&workload.only_original, workload.count_only_original)
+        );
+    }
+    if !workload.only_replay.is_empty() {
+        let _ = writeln!(
+            text,
+            "    lost only in the replay: {}",
+            sequences(&workload.only_replay, workload.count_only_replay)
+        );
+    }
+}
+
+/// The text printed after a replay: the machines, the lost packets of each workload and the verdict.
+pub(crate) fn replay_summary(
+    recorded: &Recorded,
+    replay_dir: &Path,
+    comparison: &Comparison,
+) -> String {
+    let mut text = String::new();
+    let original = &recorded.result;
+    let _ = writeln!(
+        text,
+        "netscenario replay: {}\n  original {} (run {})\n  replay   {}",
+        original.scenario.name,
+        recorded.dir.display(),
+        original.provenance.started_at,
+        replay_dir.display()
+    );
+    match original.seed.value {
+        Some(seed) => {
+            let _ = writeln!(
+                text,
+                "  seed {seed}{}",
+                if original.seed.drawn {
+                    " (drawn by the original)"
+                } else {
+                    ""
+                }
+            );
+        }
+        None => {
+            let _ = writeln!(text, "  no seed (the backend could not apply one)");
+        }
+    }
+    if comparison.other_machine {
+        let _ = writeln!(
+            text,
+            "  machine: NOT the one of the original (original -> replay):"
+        );
+    } else if comparison.provenance.is_empty() {
+        let _ = writeln!(text, "  machine: the same as the original");
+    } else {
+        let _ = writeln!(text, "  machine: the same as the original, other versions:");
+    }
+    for difference in &comparison.provenance {
+        let _ = writeln!(
+            text,
+            "    {}: {} -> {}",
+            difference.path, difference.recorded, difference.other
+        );
+    }
+    if !comparison.workloads.is_empty() {
+        let _ = writeln!(text, "\nlost packets");
+        for workload in &comparison.workloads {
+            replay_workload(&mut text, workload);
+        }
+    }
+    for reason in &comparison.reasons {
+        let _ = writeln!(text, "  note: {reason}");
+    }
+    let verdict = match comparison.verdict {
+        Verdict::Reproduced => "the replay lost the same packets as the original.".to_owned(),
+        Verdict::Differs => {
+            let mut line = "NOT REPRODUCED: the replay lost other packets than the original, although the loss repeats from the seed.".to_owned();
+            if comparison.other_machine {
+                line.push_str("\n  The machine is not the original's, which can explain it: the lost packets of a seed depend on the kernel's netem and on the version of tc.");
+            }
+            line
+        }
+        Verdict::NotPromised => "the lost packets differ, which the notes above said can happen: the loss of this scenario does not repeat from its seed.".to_owned(),
+        Verdict::NotComparable => "the runs could not be compared (see the notes above).".to_owned(),
+        _ => "the comparison has a verdict that this version does not know.".to_owned(),
+    };
+    let _ = writeln!(text, "\nresult: {verdict}");
     text
 }
 
@@ -728,6 +854,111 @@ mod tests {
       ],
       "partial": [{"name": "media.delay.p50", "present_in": 4, "of": 5}]
     }"#;
+
+    /// A replay that is identical to its original: lost 2 of the packets in both runs.
+    const COMPARISON: &str = r#"{
+      "verdict": "reproduced",
+      "workloads": [{"id": "media", "lost_original": 2, "lost_replay": 2, "only_original": [], "only_replay": [],
+                     "count_only_original": 0, "count_only_replay": 0, "differing": 0}],
+      "provenance": [], "other_machine": false, "reasons": []
+    }"#;
+
+    fn recorded() -> Recorded {
+        Recorded {
+            dir: Path::new("original").to_path_buf(),
+            result: RunResult::from_json(RESULT).unwrap(),
+            scenario: netscenario_model::Scenario::from_yaml(
+                "version: 0\nname: lte-like-link\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\nworkloads:\n  - { id: media, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n",
+                "t.yaml",
+            )
+            .unwrap(),
+        }
+    }
+
+    fn summary_of(comparison: &str) -> String {
+        replay_summary(
+            &recorded(),
+            Path::new("replay"),
+            &serde_json::from_str(comparison).unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_reproduced_replay_says_so_and_names_the_machine() {
+        let text = summary_of(COMPARISON);
+        for expected in [
+            "netscenario replay: lte-like-link",
+            "original original (run 2026-10-30T12:27:30Z)",
+            "replay   replay",
+            "seed 42 (drawn by the original)",
+            "machine: the same as the original",
+            "media: lost 2 of the packets in both runs, the same ones",
+            "result: the replay lost the same packets as the original.",
+        ] {
+            assert!(text.contains(expected), "{expected:?} is not in\n{text}");
+        }
+        assert!(!text.contains("NOT REPRODUCED"), "{text}");
+    }
+
+    /// Canary: other packets are told with their numbers, the verdict says that the replay failed, and another machine is
+    /// offered as the likely reason.
+    #[test]
+    fn a_failed_replay_names_the_packets_and_the_machine() {
+        let text = summary_of(
+            r#"{
+              "verdict": "differs",
+              "workloads": [{"id": "media", "lost_original": 3, "lost_replay": 3, "only_original": [4, 8],
+                             "only_replay": [5, 9], "count_only_original": 2, "count_only_replay": 2, "differing": 4}],
+              "provenance": [{"path": "kernel", "recorded": "6.12.1", "other": "6.8.0"},
+                             {"path": "backend_details.tc", "recorded": "iproute2 6.15.0", "other": "iproute2 6.1.0"}],
+              "other_machine": true, "reasons": []
+            }"#,
+        );
+        for expected in [
+            "machine: NOT the one of the original (original -> replay):",
+            "kernel: 6.12.1 -> 6.8.0",
+            "backend_details.tc: iproute2 6.15.0 -> iproute2 6.1.0",
+            "media: the original lost 3, the replay 3; 4 packets differ",
+            "lost only in the original: 4, 8",
+            "lost only in the replay: 5, 9",
+            "NOT REPRODUCED",
+            "The machine is not the original's, which can explain it",
+        ] {
+            assert!(text.contains(expected), "{expected:?} is not in\n{text}");
+        }
+        assert!(!text.contains("same packets as the original"), "{text}");
+    }
+
+    #[test]
+    fn a_cut_list_of_packets_ends_with_dots_and_a_complete_one_does_not() {
+        assert_eq!(sequences(&[1, 2], 2), "1, 2");
+        assert_eq!(sequences(&[1, 2], 40), "1, 2, ...");
+        assert_eq!(sequences(&[], 0), "");
+    }
+
+    #[test]
+    fn the_replay_of_a_loss_that_was_not_promised_and_of_runs_that_cannot_be_compared_say_so() {
+        let text = summary_of(
+            r#"{"verdict": "not-promised", "workloads": [{"id": "media", "lost_original": 1, "lost_replay": 2,
+                "only_original": [], "only_replay": [7], "count_only_original": 0, "count_only_replay": 1, "differing": 1}],
+                "provenance": [], "other_machine": false, "reasons": ["original: the scenario has an outage"]}"#,
+        );
+        assert!(
+            text.contains("note: original: the scenario has an outage"),
+            "{text}"
+        );
+        assert!(text.contains("does not repeat from its seed"), "{text}");
+        assert!(!text.contains("NOT REPRODUCED"), "{text}");
+        let text = summary_of(
+            r#"{"verdict": "not-comparable", "workloads": [], "provenance": [], "other_machine": false,
+                "reasons": ["the original run was interrupted"]}"#,
+        );
+        assert!(text.contains("could not be compared"), "{text}");
+        assert!(
+            !text.contains("lost packets\n"),
+            "no workloads, no section: {text}"
+        );
+    }
 
     #[test]
     fn the_summary_of_a_set_shows_the_headline_metrics_with_their_intervals() {

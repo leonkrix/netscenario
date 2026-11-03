@@ -24,7 +24,6 @@ use crate::backend::{
 use crate::captures::Captures;
 use crate::error::Error;
 use crate::export::write_packets_refused;
-use crate::hash::sha256_hex;
 use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
 use crate::programs::Programs;
@@ -392,10 +391,7 @@ pub fn run(
         version: RESULT_VERSION,
         scenario: ScenarioInfo {
             name: scenario.name.to_string(),
-            hash: format!(
-                "sha256:{}",
-                sha256_hex(&serde_json::to_vec(scenario).unwrap_or_default())
-            ),
+            hash: crate::replay::scenario_hash(scenario),
         },
         provenance: collect(&backend.describe(), started),
         seed: SeedInfo {
@@ -434,6 +430,15 @@ pub fn run(
         programs,
         captures,
     };
+    // The scenario as it ran, so that the run can be replayed (ENV-03, D-075): it is written first, so that a directory with a
+    // result always has it
+    let scenario_path = options.out_dir.join(crate::replay::SCENARIO_FILE);
+    std::fs::write(&scenario_path, crate::replay::scenario_json(scenario)).map_err(|error| {
+        failure(
+            "write the scenario",
+            format!("{}: {error}", scenario_path.display()),
+        )
+    })?;
     let path = options.out_dir.join("result.json");
     std::fs::write(&path, result.to_json())
         .map_err(|error| failure("write the result", format!("{}: {error}", path.display())))?;
@@ -2054,6 +2059,25 @@ mod tests {
         let mut options = RunOptions::new(std::env::current_exe().unwrap(), dir(name));
         options.settle = Some(Duration::from_millis(1));
         options
+    }
+
+    /// The run records the scenario it ran with, so that it can be replayed (ENV-03): the file is the canonical scenario, its
+    /// fingerprint is the one in the result, and a drawn seed is in the result and not in the scenario.
+    #[test]
+    fn a_run_records_the_scenario_it_ran_with() {
+        let mut backend = Fake::new(None);
+        let options = options("records-the-scenario");
+        let mut drawn = scenario();
+        drawn.seed = None;
+        let result = run(&mut backend, &drawn, &options).unwrap();
+        let recorded = crate::Recorded::load(&options.out_dir).unwrap();
+        assert_eq!(recorded.scenario, drawn);
+        assert_eq!(recorded.result.scenario.hash, result.scenario.hash);
+        assert_eq!(recorded.scenario.seed, None);
+        assert!(result.seed.drawn);
+        assert_eq!(recorded.scenario_to_replay().seed, result.seed.value);
+        assert!(options.out_dir.join(crate::SCENARIO_FILE).is_file());
+        let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 
     #[test]

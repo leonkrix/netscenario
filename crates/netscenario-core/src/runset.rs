@@ -28,7 +28,6 @@ use crate::bootstrap::{
     confidence_interval,
 };
 use crate::error::Error;
-use crate::hash::sha256_hex;
 use crate::machine::Provenance;
 use crate::result::{RunResult, ScenarioInfo};
 use crate::run::RunOptions;
@@ -397,10 +396,7 @@ fn summary(name: &str, values: Vec<f64>, interval: Interval) -> MetricSet {
 fn hash_without_seed(scenario: &Scenario) -> String {
     let mut plain = scenario.clone();
     plain.seed = None;
-    format!(
-        "sha256:{}",
-        sha256_hex(&serde_json::to_vec(&plain).unwrap_or_default())
-    )
+    crate::replay::scenario_hash(&plain)
 }
 
 /// Runs `scenario` `set.repetitions` times with `runner`, writes the runs and the set under `options.out_dir`, and returns

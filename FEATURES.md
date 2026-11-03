@@ -178,7 +178,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | ENV-01 | Seeds: one per scenario, derived for each component | M | 0.1 | done (derivation pinned, drawing and recording in the result, `tests/run.rs`; [RESULTS.md](docs/RESULTS.md)) |
 | ENV-02 | Provenance in every result (versions, kernel, `tc`, CPU, backend, seeds, scenario hash) | M | 0.1 | done |
-| ENV-03 | Replay a run from its result file | S | 0.2 | planned |
+| ENV-03 | Replay a run from its result file | S | 0.2 | done (`netscenario replay <dir>`: [CLI.md](docs/CLI.md), D-075; tests in [`replay.rs`](crates/netscenario-core/src/replay.rs) and [`binary.rs`](crates/netscenario-cli/tests/binary.rs)) |
 | ENV-04 | `netscenario doctor`: what this machine can do, and what it cannot | M | 0.1 | done for the Kernel backend ([DOCTOR.md](docs/DOCTOR.md), `tests/doctor.rs`); the probe of other backends comes with them |
 | ENV-05 | Report on timer and clock precision | S | 0.3 | planned |
 | ENV-06 | Result format with a version | M | 0.1 | done (`format` and `version`, 0 until 1.0) |

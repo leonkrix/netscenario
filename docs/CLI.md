@@ -22,8 +22,8 @@ They are part of the interface. A script can rely on them.
 
 | Code | Meaning |
 | --- | --- |
-| 0 | The command did what was asked (`run`: the run finished; `validate`: the scenario is valid; `doctor`: scenarios can run here). |
-| 1 | A run finished and an assertion about its result failed. No command returns it yet: assertions arrive with the `expect` section and the Python layer. |
+| 0 | The command did what was asked (`run`: the run finished; `replay`: the same packets were lost, or the loss was not promised to repeat; `validate`: the scenario is valid; `doctor`: scenarios can run here). |
+| 1 | A check that the command was asked to make did not hold. `replay`: the replay lost other packets than the original, although the loss repeats from the seed. Assertions on a result (the `expect` section) will return it too. |
 | 2 | The command line or the scenario is wrong: an unknown option, a file that cannot be read, a scenario with problems, or a scenario that asks for something the backend cannot reproduce exactly (the message names the feature, the backend and the way out). |
 | 3 | The machine does not allow the run: a tool or a permission is missing (`doctor` fails, the agent is not next to the program, the namespaces cannot be created). Run `netscenario doctor`. |
 | 4 | The run failed after it started: an agent did not start, did not answer or ended badly. The network is torn down all the same. |
@@ -67,6 +67,32 @@ On a terminal, one line shows how far the run is (`running, 12 of 30 s`) and is 
 The run, in order: the file is read and checked (exit 2 with the lines if it is wrong), the backend checks that it can reproduce the scenario exactly (exit 2 if not, before anything is created), the network is built, the agents start, the workloads run for the `duration` of the scenario, the result is written, and everything is removed. The summary shows the seed, the packets, the delay and the throughput of each workload; `result.json` has everything ([RESULTS.md](RESULTS.md)).
 
 A run needs `netscenario-agent` next to the `netscenario` program: `cargo build` and `cargo install` put both in the same directory. The program is also its own supervisor: a run starts it again inside the namespaces with the hidden commands `supervise` and `hold`, which are not for people and are not in the help (D-022).
+
+## `replay`
+
+```text
+netscenario replay <dir> [--out <dir>] [--scenario <file>] [--json]
+```
+
+Runs a recorded run again and says whether the same packets were lost (ENV-03, [D-075](decisions/D-075.md)). `<dir>` is the directory of a run (the `--out` of `netscenario run`; for a run of a set, `run-001` and so on). It holds `scenario.json`, the scenario exactly as it ran, and the replay uses it with the **recorded seed** and waits for the packets in the network as long as the original did.
+
+| Option | Meaning |
+| --- | --- |
+| `--out <dir>` | Where to write the result of the replay. Default: `netscenario-results/<name>-replay-<UTC time>/`. It must not be the directory that is replayed. |
+| `--scenario <file>` | Also compare this scenario file with the recorded scenario, field by field, and replay nothing if they differ: the error names each field with the value of the run and the value of the file. The replay always runs the recorded scenario and never the file. A file without a `seed` does not differ from a run that drew its seed. |
+| `--json` | Print the comparison as JSON (`format` `netscenario-replay`) instead of the summary. |
+
+Before anything is run, the directory is checked: `result.json` and `scenario.json` have to be there, the scenario has to be valid, and its fingerprint has to be the `scenario.hash` of the result (exit code 2, with both fingerprints, if not). A run written by a version that did not record the scenario cannot be replayed, and the directory of a set is not a run.
+
+The summary sets the replay against the original:
+
+- **The machine**: the backend and its details (the version of `tc`), the kernel and the processor, field by field. The lost packets of a seed depend on the kernel's `netem` and on `tc`, so a replay on another machine says "NOT the one of the original" and names what differs.
+- **The lost packets** of each workload: the same ones, or how many differ and the first sequence numbers that were lost in only one run. Delays and rates are not compared; they vary from run to run.
+- **The verdict**: *reproduced*; *not reproduced* (exit code 1: other packets although both runs said that their loss repeats from the seed); *not promised* (other packets, but the loss of a run does not repeat from its seed, because of an outage, corruption or a program that sends: the notes say which, exit code 0); *not comparable* (the original was interrupted).
+
+The programs of your own (`kind: command`) run in the directory where `replay` is run, because the directory of the original is not recorded.
+
+Exit codes: 0, 1 (not reproduced), 2 (the directory, the file or the options are wrong), 3, 4 and 130 or 143 as for `run`.
 
 ## `validate`
 
