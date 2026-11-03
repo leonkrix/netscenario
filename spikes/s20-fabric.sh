@@ -52,6 +52,17 @@ fabric_pair() {
   node a ip link set fa0 up; node b ip link set fb0 up
   AIF=fa0; BIF=fb0; FIF_TOWARDS_B=pb
 }
+
+# first_stage DEV: the egress queue at the node, a netem root that holds the loss and, so that the packet is released from the
+# socket of the sender, a delay of 1 microsecond (S17.6: the kernel orphans a packet in netem only when the netem has a delay,
+# a jitter or a rate), then an htb class with a pfifo as its leaf
+first_stage() { # NODE DEV RATE LIMIT [netem arguments]
+  local n="$1" dev="$2" rate="$3" limit="$4"; shift 4
+  node "$n" tc qdisc add dev "$dev" root handle 1: netem limit 100000 "$@"
+  node "$n" tc qdisc add dev "$dev" parent 1: handle 2: htb default 10
+  node "$n" tc class add dev "$dev" parent 2: classid 2:10 htb rate "$rate" ceil "$rate" burst 1600 cburst 1600
+  node "$n" tc qdisc add dev "$dev" parent 2:10 handle 10: pfifo limit "$limit"
+}
 # send ADDR COUNT PPS SIZE  -> REPORT (the receiver's JSON), CLIENT (the sender's JSON)
 send() {
   local count="$2" pps="$3" size="$4" out cl
@@ -66,7 +77,7 @@ send() {
 
 # S20.1 crossing and cost
 for build in direct bridge mirred; do
-  if [ "$build" = direct ]; then direct_pair; else fabric_pair "$build"; fi
+  case "$build" in direct) direct_pair;; *) fabric_pair "$build";; esac
   send 10.250.0.2 1000 1000 200
   info S20.1 "$build: $(printf '%s' "$REPORT" | field '"%d of 1000, p50 %.4f ms, p99 %.4f ms" % (d["received"], d["delay_ms"]["p50"], d["delay_ms"]["p99"])')"
 done
@@ -88,6 +99,12 @@ if [ "$HAS_NETEM" = 1 ]; then
   backpressure "netem root (no impairment), htb child, pfifo leaf" tree_netem_root
   tree_netem_only() { node a tc qdisc add dev l0a root netem limit 1000 rate 1mbit; }
   backpressure "netem root with a rate only (what 0.1 and 0.2 build)" tree_netem_only
+  tree_delay_1us() { first_stage a l0a 1mbit 1000 delay 1us; }
+  backpressure "netem root with delay 1us, htb child, pfifo leaf" tree_delay_1us
+  tree_rate_big() { first_stage a l0a 1mbit 1000 rate 100gbit; }
+  backpressure "netem root with rate 100gbit, htb child, pfifo leaf" tree_rate_big
+  tree_jitter_0() { first_stage a l0a 1mbit 1000 delay 1us 0us; }
+  backpressure "netem root with delay 1us 0us, htb child, pfifo leaf" tree_jitter_0
 else
   info S20.3 "netem trees: skipped, no netem"
 fi
@@ -96,30 +113,30 @@ if [ "$HAS_NETEM" = 1 ]; then
   # S20.2 the order of the stages with a jitter and a saturated shaper: 1 mbit, delay 20 ms, jitter 5 ms (normal), 1200-byte
   # datagrams at 120 per second (1.19 mbit on the wire, a little over), a queue of 15000 bytes, 1000 packets. The standard
   # deviation of the delays of the second half is the jitter plus the (small) changes of the queue.
-  for build in direct fabric-bridge fabric-mirred delay-first; do
+  for build in direct fabric-mirred delay-first; do
     case "$build" in
       direct) direct_pair
         node a tc qdisc add dev l0a root handle 1: netem limit 12 rate 1mbit
         node a tc qdisc add dev l0a parent 1: handle 2: netem limit 1000 delay 20ms 5ms distribution normal;;
-      fabric-bridge|fabric-mirred) fabric_pair "${build#fabric-}"
-        node a tc qdisc add dev fa0 root handle 1: htb default 10
-        node a tc class add dev fa0 parent 1: classid 1:10 htb rate 1mbit ceil 1mbit burst 3500
-        node a tc qdisc add dev fa0 parent 1:10 handle 10: pfifo limit 12
+      fabric-mirred) fabric_pair mirred
+        first_stage a fa0 1mbit 12 delay 1us
         node f tc qdisc add dev pb root netem limit 1000 delay 20ms 5ms distribution normal;;
       delay-first) direct_pair
         node a tc qdisc add dev l0a root handle 1: netem limit 1000 delay 20ms 5ms distribution normal
         node a tc qdisc add dev l0a parent 1: handle 2: htb default 10
-        node a tc class add dev l0a parent 2: classid 2:10 htb rate 1mbit ceil 1mbit burst 3500
+        node a tc class add dev l0a parent 2: classid 2:10 htb rate 1mbit ceil 1mbit burst 1600 cburst 1600
         node a tc qdisc add dev l0a parent 2:10 handle 10: pfifo limit 12;;
     esac
     send 10.250.0.2 1200 120 1200
-    info S20.2 "$build: $(printf '%s' "$REPORT" | field '"received %d of 1200, delay p50 %.1f ms, stdev of the second half %.2f ms (configured jitter 5 ms), reordered %d" % (d["received"], d["delay_ms"]["p50"], d["stdev_tail_ms"], d["reordered"])')"
+    info S20.2 "$build: $(printf '%s' "$REPORT" | field '"received %d of 1200, delay p50 %.1f ms, stdev of the delays (second half) %.2f ms, stdev of the gaps between arrivals %.2f ms (a shaper after the delay gives gaps of 10 ms exactly; configured jitter 5 ms), reordered %d" % (d["received"], d["delay_ms"]["p50"], d["stdev_tail_ms"], d["gap_stdev_ms"], d["reordered"])') ; the client took $(printf '%s' "$CLIENT" | field 'str(d["client_elapsed_s"]) + " s of " + str(d["planned_s"])')"
   done
 
   # S20.4 the seeded loss pattern: direct against fabric, 10 % loss, seed 1234, 2000 packets
-  for build in direct fabric-bridge; do
-    if [ "$build" = direct ]; then direct_pair; node a tc qdisc add dev l0a root netem loss 10% seed 1234
-    else fabric_pair bridge; node a tc qdisc add dev fa0 root netem loss 10% seed 1234; fi
+  for build in direct fabric-mirred-with-shaper; do
+    case "$build" in
+      direct) direct_pair; node a tc qdisc add dev l0a root netem loss 10% seed 1234;;
+      fabric-mirred-with-shaper) fabric_pair mirred; first_stage a fa0 100mbit 1000 loss 10% seed 1234 delay 1us;;
+    esac
     send 10.250.0.2 2000 1000 200
     info S20.4 "$build: lost $(printf '%s' "$REPORT" | field 'str(d["missing_count"]) + " " + d["missing_hash"]')"
   done
@@ -135,9 +152,15 @@ node f ip link set pb up; sleep 0.5
 send 10.250.0.2 200 200 200
 info S20.5 "pb up again: received $(printf '%s' "$REPORT" | field 'd["received"]') of 200"
 
+# S20.5b the node-side interface down (what 0.2 does): what does the sender get?
+fabric_pair mirred
+node a ip link set fa0 down
+send 10.250.0.2 200 200 200
+info S20.5 "mirred fabric, fa0 down at a: $(printf '%s' "$CLIENT" | field '"sender errors %d (%s)" % (d["send_errors"], d["first_error"])'); received $(printf '%s' "$REPORT" | field 'd["received"]'); b's interface: $(node b ip -br link show dev fb0 | awk '{print $2}')"
+
 # S20.6 TCP with no limit across the direct link and across the fabric: what does the hop cost?
 for build in direct bridge mirred; do
-  if [ "$build" = direct ]; then direct_pair; else fabric_pair "$build"; fi
+  case "$build" in direct) direct_pair;; *) fabric_pair "$build";; esac
   for n in "${!NODE_PID[@]}"; do for i in l0a l0b fa0 fb0 pa pb; do node "$n" ethtool -K "$i" gso off tso off gro off >/dev/null 2>&1; done; done
   out="$(mktemp)"
   node b $TCPFLOW server 10.250.0.2 7100 1 4 >"$out" 2>&1 &
@@ -148,3 +171,27 @@ for build in direct bridge mirred; do
   info S20.6 "$build, one TCP flow with no limit, offloads off: $(tail -n 1 "$out" | field 'round(sum(d["bytes_per_second"][0][1:]) * 8 / 3 / 1e6)') Mbit/s"
   rm -f "$out"
 done
+
+# S20.7 does a rate that steps follow in the fabric build (the htb class at the node, below a netem root with 1 us), with the sender not
+# pushed back? 6 mbit and 2 mbit alternating in steps of 100 and 20 ms (as S19), 1000-byte datagrams at 720 per second
+if [ "$HAS_NETEM" = 1 ]; then
+  STEPS="python3 $SPIKE_DIR/trace_steps.py"
+  for step in 100 20; do
+    fabric_pair mirred
+    first_stage a fa0 6000kbit 1000 delay 1us
+    node f tc qdisc add dev pb root netem limit 1000 delay 20ms
+    dump="$(mktemp)"; t0="$(mktemp)"; out="$(mktemp)"; drv="$(mktemp)"; cl="$(mktemp)"
+    count=$((720 * 9))
+    FLOW_DUMP="$dump" node b $FLOW server 4 10.250.0.2 7000 "$count" 2.0 >"$out" 2>&1 &
+    spid=$!
+    sleep 0.4
+    FLOW_SIZE=1000 nsenter -t "${NODE_PID[a]}" -n $FLOW client 4 10.250.0.2 7000 "$count" 720 >"$cl" 2>&1 &
+    cpid=$!
+    $STEPS drive "${NODE_PID[a]}" fa0 htb2 "$step" 6 2000 6000 "$t0" >"$drv" 2>&1
+    wait "$cpid"; wait "$spid"
+    info S20.7 "fabric build, htb at the node, steps of $step ms: $($STEPS analyze "$dump" "$t0" "$step" 6 2000 6000 1042 2>&1 | tail -n 1); the sender took $(tail -n 1 "$cl" | field 'str(d["client_elapsed_s"]) + " s of " + str(d["planned_s"])')"
+    rm -f "$dump" "$t0" "$out" "$drv" "$cl"
+  done
+else
+  info S20.7 "skipped, no netem"
+fi

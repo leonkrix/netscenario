@@ -20,6 +20,8 @@ def command(arm, iface, kbit):
         return f"qdisc change dev {iface} root handle 1: tbf rate {kbit}kbit burst 3500 limit 400000\n"
     if arm == "tbf-min":
         return f"qdisc change dev {iface} root handle 1: tbf rate {kbit}kbit burst 1600 limit 400000\n"
+    if arm == "htb2":  # an htb with the handle 2: below a netem root (handle 1:)
+        return f"class change dev {iface} parent 2: classid 2:10 htb rate {kbit}kbit ceil {kbit}kbit burst 1600 cburst 1600\n"
     if arm == "htb":
         return f"class change dev {iface} parent 1: classid 1:10 htb rate {kbit}kbit ceil {kbit}kbit burst 1600 cburst 1600\n"
     return f"qdisc change dev {iface} root handle 1: netem limit 100000 rate {kbit}kbit\n"

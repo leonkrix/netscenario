@@ -36,6 +36,13 @@ def percentile(values, fraction):
     return values[min(len(values) - 1, int(round(fraction * (len(values) - 1))))]
 
 
+def gap_stdev(arrivals):
+    """The standard deviation, in ms, of the gaps between arrivals (in the order of arrival) in the second half."""
+    gaps = [(b - a) / 1e6 for a, b in zip(arrivals, arrivals[1:])]
+    tail = gaps[len(gaps) // 2 :]
+    return statistics.pstdev(tail) if len(tail) > 1 else None
+
+
 def tail_stdev(seen):
     """The standard deviation of the delays of the second half of the packets (by sequence number)."""
     ordered = [seen[n] for n in sorted(seen)]
@@ -90,6 +97,7 @@ def server(fam, address, port, count, wait):
                 "missing_first": missing[:20],
                 "reordered": reordered,
                 "stdev_tail_ms": tail_stdev(seen),
+                "gap_stdev_ms": gap_stdev(arrivals),
                 "bins": bins,
                 "delay_max_ms": delays[-1] if delays else None,
                 "delay_ms": {
@@ -129,13 +137,19 @@ def client(fam, address, port, count, pps, src_port):
     start = time.monotonic()
     pad = b"x" * (int(os.environ.get("FLOW_SIZE", "200")) - HEADER.size)
     burst = int(os.environ.get("FLOW_BURST", "1"))
+    errors = 0
+    first_error = ""
     for n in range(count):
         target = start + (n // burst) * gap
         now = time.monotonic()
         if target > now:
             time.sleep(target - now)
-        sock.sendto(HEADER.pack(n, time.monotonic_ns()) + pad, (address, port))
-    print(json.dumps({"client_elapsed_s": round(time.monotonic() - start, 3), "planned_s": round(count * gap, 3), "sndbuf": sndbuf, "note": note}), flush=True)
+        try:
+            sock.sendto(HEADER.pack(n, time.monotonic_ns()) + pad, (address, port))
+        except OSError as error:
+            errors += 1
+            first_error = first_error or str(error)
+    print(json.dumps({"client_elapsed_s": round(time.monotonic() - start, 3), "planned_s": round(count * gap, 3), "sndbuf": sndbuf, "note": note, "send_errors": errors, "first_error": first_error}), flush=True)
 
 
 if __name__ == "__main__":
