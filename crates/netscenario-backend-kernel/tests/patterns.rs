@@ -45,9 +45,14 @@ fn options(dir: &std::path::Path) -> RunOptions {
 }
 
 fn records_of(result: &RunResult, dir: &std::path::Path) -> Vec<records::Record> {
-    records::read(std::fs::File::open(dir.join(&result.workloads[0].records_file)).unwrap())
-        .unwrap()
-        .records
+    let mut records =
+        records::read(std::fs::File::open(dir.join(&result.workloads[0].records_file)).unwrap())
+            .unwrap()
+            .records;
+    // The file is in the order of arrival, and two packets that left within microseconds of each other (a Poisson source
+    // has such gaps) can arrive the other way round: a test about the sending side reads them in the order of sending
+    records.sort_by_key(|record| record.sequence);
+    records
 }
 
 /// What the sender did, against what the schedule says: every packet of the schedule was sent, none more, and each left
