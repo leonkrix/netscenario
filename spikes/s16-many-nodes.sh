@@ -235,3 +235,30 @@ else
   info S16.10 "netem delay: skipped, no netem"
 fi
 lab_stop
+
+# S16.11 what an IPv6 interface sends on its own after it is up (multicast listener reports, router solicitations), and what
+# silences it. Two nodes, one link; tx+rx packets of one interface counted every 0.5 s for 5 s. A seeded loss pattern
+# shifts if such a packet enters a netem queue (S2), so the aim is zero after the setup, or a known short time.
+for variant in default no-solicit no-mld multicast-off all; do
+  lab_stop
+  node_new q1 v6; node_new q2 v6
+  for n in q1 q2; do
+    case "$variant" in
+      no-solicit|all) node "$n" sysctl -qw net.ipv6.conf.default.router_solicitations=0 net.ipv6.conf.all.router_solicitations=0;;
+    esac
+    case "$variant" in
+      no-mld|all) node "$n" sysctl -qw net.ipv6.conf.default.mldv1_unsolicited_report_interval=0 net.ipv6.conf.default.mldv2_unsolicited_report_interval=0 2>&1 | head -n 1;;
+    esac
+  done
+  LINK_FLAGS=nodad link_new 0 q1 q2 fd00:212::1/126 fd00:212::2/126
+  if [ "$variant" = multicast-off ] || [ "$variant" = all ]; then
+    node q1 ip link set l0a multicast off; node q2 ip link set l0b multicast off
+  fi
+  series=""
+  for k in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    series="$series $(rx_tx q1 l0a | awk '{print $1 + $2}')"
+  done
+  info S16.11 "IPv6, $variant: packets (rx+tx) of one interface every 0.5 s:$series"
+done
+lab_stop
