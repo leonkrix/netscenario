@@ -8,10 +8,12 @@
 mod errors;
 mod run;
 
+use netscenario_core::report::{self, Format};
+use netscenario_core::{RunResult, RunSetResult};
 use netscenario_model::Scenario;
 use pyo3::prelude::*;
 
-use crate::run::{PyCancelToken, Request, Series};
+use crate::run::{PyCancelToken, ReplayRequest, Request, Series};
 
 /// The version of the native library, the same as the version of the package.
 #[pyfunction]
@@ -114,6 +116,63 @@ fn run_scenario(
     )
 }
 
+/// Runs a recorded run again with its recorded seed and returns the comparison with the original as the JSON of
+/// `netscenario replay --json` (ENV-03, D-075, D-077). `dir` is the directory of the run; a directory that cannot be replayed is
+/// a `ValueError`.
+#[pyfunction]
+#[pyo3(signature = (dir, supervisor, agent, out_dir, observer=None, cancel=None, working_dir=None))]
+#[allow(clippy::too_many_arguments)] // the arguments of one call from Python, all of them by name
+fn replay_run(
+    py: Python<'_>,
+    dir: String,
+    supervisor: String,
+    agent: String,
+    out_dir: String,
+    observer: Option<Py<PyAny>>,
+    cancel: Option<PyRef<'_, PyCancelToken>>,
+    working_dir: Option<String>,
+) -> PyResult<String> {
+    run::execute_replay(
+        py,
+        ReplayRequest {
+            dir,
+            supervisor,
+            agent,
+            out_dir,
+            observer,
+            cancel: cancel.map(|token| token.token()),
+            working_dir,
+        },
+    )
+}
+
+/// The report of a result directory in a format (`md`, `junit` or `html`), as text (CLI-02, D-076). A directory that is not a
+/// result, or a file that cannot be read, is a `ValueError`.
+#[pyfunction]
+fn make_report(py: Python<'_>, dir: &str, format: &str) -> PyResult<String> {
+    let invalid = |text: String| pyo3::exceptions::PyValueError::new_err(text);
+    let format: Format = format.parse().map_err(invalid)?;
+    // Reading the files and drawing take a moment for a long run, and need no Python
+    py.detach(|| report::report(std::path::Path::new(dir), format))
+        .map_err(|error| invalid(error.to_string()))
+}
+
+/// The properties of a result for a `JUnit` file, as `(name, value)` pairs: the same list as the report (D-077). `text` is the
+/// text of a `result.json`.
+#[pyfunction]
+fn result_properties(text: &str) -> PyResult<Vec<(String, String)>> {
+    let result = RunResult::from_json(text).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(report::run_properties(&result))
+}
+
+/// The properties of a set of runs for a `JUnit` file: the same list as the report (D-077). `text` is the text of a
+/// `runset.json`.
+#[pyfunction]
+fn runset_properties(text: &str) -> PyResult<Vec<(String, String)>> {
+    let set = RunSetResult::from_json(text).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(report::set_properties(&set))
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(version, module)?)?;
@@ -122,6 +181,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(schema, module)?)?;
     module.add_function(wrap_pyfunction!(doctor, module)?)?;
     module.add_function(wrap_pyfunction!(run_scenario, module)?)?;
+    module.add_function(wrap_pyfunction!(replay_run, module)?)?;
+    module.add_function(wrap_pyfunction!(make_report, module)?)?;
+    module.add_function(wrap_pyfunction!(result_properties, module)?)?;
+    module.add_function(wrap_pyfunction!(runset_properties, module)?)?;
     module.add_class::<PyCancelToken>()?;
     Ok(())
 }

@@ -528,6 +528,44 @@ fn write_suite(
     let _ = writeln!(out, "  </testsuite>\n</testsuites>");
 }
 
+/// The properties of a program of your own: how it ended, its exit code and the last value of each metric it reported.
+fn program_properties(scenario: &str, program: &ProgramResult) -> Vec<(String, String)> {
+    let mut properties = vec![(
+        format!("netscenario.{scenario}.{}.ended", program.id),
+        program.ended.clone(),
+    )];
+    if let Some(code) = program.exit_code {
+        properties.push((
+            format!("netscenario.{scenario}.{}.exit_code", program.id),
+            code.to_string(),
+        ));
+    }
+    for metric in &program.metrics {
+        properties.push((
+            format!("netscenario.{scenario}.{}.{}", program.id, metric.name),
+            metric.last.to_string(),
+        ));
+    }
+    properties
+}
+
+/// The properties that a run gives to its test cases in a JUnit report: those of each workload, then those of each program, as
+/// `(name, value)` with the value as text. The pytest plugin takes its properties from here, so that its names and those of the
+/// report cannot differ (D-077).
+#[must_use]
+pub fn run_properties(result: &RunResult) -> Vec<(String, String)> {
+    let scenario = &result.scenario.name;
+    let mut found: Vec<(String, String)> = result
+        .workloads
+        .iter()
+        .flat_map(|workload| workload_properties(scenario, workload))
+        .collect();
+    for program in &result.programs {
+        found.extend(program_properties(scenario, program));
+    }
+    found
+}
+
 fn junit_run(result: &RunResult) -> String {
     let scenario = &result.scenario.name;
     let provenance = &result.provenance;
@@ -590,22 +628,7 @@ fn junit_run(result: &RunResult) -> String {
         });
     }
     for program in &result.programs {
-        let mut properties = vec![(
-            format!("netscenario.{scenario}.{}.ended", program.id),
-            program.ended.clone(),
-        )];
-        if let Some(code) = program.exit_code {
-            properties.push((
-                format!("netscenario.{scenario}.{}.exit_code", program.id),
-                code.to_string(),
-            ));
-        }
-        for metric in &program.metrics {
-            properties.push((
-                format!("netscenario.{scenario}.{}.{}", program.id, metric.name),
-                metric.last.to_string(),
-            ));
-        }
+        let properties = program_properties(scenario, program);
         cases.push(Case {
             name: program.id.clone(),
             seconds: program.ended_ns.saturating_sub(program.started_ns).max(0) as f64 / 1e9,
@@ -634,10 +657,13 @@ fn junit_run(result: &RunResult) -> String {
     out
 }
 
-fn junit_set(set: &RunSetResult) -> String {
+/// The properties that a set gives to the suite of its JUnit report: the number of runs, the level, the seed, and the mean and the
+/// ends of the interval of each headline metric. The pytest plugin takes its properties for a set from here (D-077).
+#[must_use]
+pub fn set_properties(set: &RunSetResult) -> Vec<(String, String)> {
     let scenario = &set.scenario.name;
     let prefix = format!("netscenario.{scenario}");
-    let mut suite_properties = vec![
+    let mut properties = vec![
         (format!("{prefix}.repetitions"), set.repetitions.to_string()),
         (
             format!("{prefix}.confidence"),
@@ -647,20 +673,27 @@ fn junit_set(set: &RunSetResult) -> String {
     ];
     for metric in &set.metrics {
         if HEADLINE.iter().any(|suffix| metric.name.ends_with(suffix)) {
-            suite_properties.push((
+            properties.push((
                 format!("{prefix}.{}.mean", metric.name),
                 metric.mean.to_string(),
             ));
-            suite_properties.push((
+            properties.push((
                 format!("{prefix}.{}.low", metric.name),
                 metric.interval.low.to_string(),
             ));
-            suite_properties.push((
+            properties.push((
                 format!("{prefix}.{}.high", metric.name),
                 metric.interval.high.to_string(),
             ));
         }
     }
+    properties
+}
+
+fn junit_set(set: &RunSetResult) -> String {
+    let scenario = &set.scenario.name;
+    let prefix = format!("netscenario.{scenario}");
+    let suite_properties = set_properties(set);
     let cases: Vec<Case> = set
         .runs
         .iter()

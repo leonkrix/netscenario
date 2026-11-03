@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=../../docs/schema/scenario-v0.json
+# A link that changes while a stream runs: 2 mbit of 1000 byte payloads over a link of 4 mbit with 50 ms of delay.
+# At 3 s the rate of the link drops to 1.2 mbit (less than the stream needs), at 5 s it is back at 4 mbit, and from 9 s
+# to 11 s the receiver is cut off by an outage. The result has the series of the stream by second and, for each event,
+# how long the stream took to be back at its level.
+version: 0
+name: bandwidth-drop
+duration: 14s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward: { delay: 50ms, rate: 4mbit }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1000b }
+timeline:
+  - { at: 3s, link: access, set: { forward: { rate: 1200kbit } } }
+  - { at: 5s, link: access, set: { forward: { rate: 4mbit } } }
+  - { at: 9s, link: access, outage: 2s, direction: forward }

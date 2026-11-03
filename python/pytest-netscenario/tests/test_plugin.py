@@ -278,7 +278,7 @@ def test_the_numbers_of_a_run_are_properties_of_the_test_in_a_junit_file(
             properties[name] = value
     assert properties["netscenario.plug.media.sent"] == "209"
     assert properties["netscenario.plug.media.lost"] == "0"
-    assert properties["netscenario.plug.media.loss_ratio"] == "0.0"
+    assert float(properties["netscenario.plug.media.loss_ratio"]) == 0.0
     assert 0.020 <= float(properties["netscenario.plug.media.delay_p50_s"]) < 0.022
 
 
@@ -487,12 +487,12 @@ def test_the_report_of_a_set_shows_the_headline_metrics_with_their_intervals() -
 
 def test_the_properties_of_a_set_are_the_mean_and_the_ends_of_the_interval() -> None:
     found = dict(runner.set_properties(a_set()))
-    assert found["netscenario.t.repetitions"] == 6
-    assert found["netscenario.t.confidence"] == pytest.approx(0.95)
-    assert found["netscenario.t.w.loss_ratio.mean"] == pytest.approx(0.07)
-    low, high = found["netscenario.t.w.loss_ratio.low"], found["netscenario.t.w.loss_ratio.high"]
-    assert isinstance(low, float)
-    assert isinstance(high, float)
+    # The values come as text, as the JUnit file has them
+    assert found["netscenario.t.repetitions"] == "6"
+    assert float(str(found["netscenario.t.confidence"])) == pytest.approx(0.95)
+    assert float(str(found["netscenario.t.w.loss_ratio.mean"])) == pytest.approx(0.07)
+    low = float(str(found["netscenario.t.w.loss_ratio.low"]))
+    high = float(str(found["netscenario.t.w.loss_ratio.high"]))
     assert low < 0.07 < high
     # What is not a headline metric is not a property
     assert not any(".sent." in name for name in found)

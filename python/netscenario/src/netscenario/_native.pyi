@@ -51,3 +51,23 @@ def run_scenario(
     confidence: float | None = None,
 ) -> str:
     """Run a scenario; return ``result.json``, or with ``repetitions`` the ``runset.json`` text."""
+
+def replay_run(
+    dir: str,
+    supervisor: str,
+    agent: str,
+    out_dir: str,
+    observer: Callable[[str, dict[str, float]], None] | None = None,
+    cancel: CancelToken | None = None,
+    working_dir: str | None = None,
+) -> str:
+    """Run a recorded run again; return the JSON of ``netscenario replay --json``."""
+
+def make_report(dir: str, format: str) -> str:
+    """The report of a result directory as text (``md``, ``junit`` or ``html``)."""
+
+def result_properties(text: str) -> list[tuple[str, str]]:
+    """The JUnit properties of a ``result.json``, as the report writes them."""
+
+def runset_properties(text: str) -> list[tuple[str, str]]:
+    """The JUnit properties of a ``runset.json``, as the report writes them."""

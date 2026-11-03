@@ -96,7 +96,7 @@ pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
 pub use recovery::{Basis, Recovery, RecoveryOptions};
 pub use replay::{
     Comparison, Difference, LISTED_SEQUENCES, Recorded, ReplayError, SCENARIO_FILE, Verdict,
-    WorkloadComparison, compare, scenario_diff, scenario_hash, scenario_json,
+    WorkloadComparison, compare, replay_json, scenario_diff, scenario_hash, scenario_json,
 };
 pub use result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, MetricSummary,

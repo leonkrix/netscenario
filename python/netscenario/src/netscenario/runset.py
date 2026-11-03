@@ -25,6 +25,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from netscenario.reports import ReportFormat, report
 from netscenario.results import Result
 
 _LEVEL_95 = 0.95
@@ -232,6 +233,17 @@ class RunSet:
     def __len__(self) -> int:
         """How many metrics."""
         return len(self.metrics)
+
+    def report(self, format: ReportFormat = "md") -> str:
+        """The report of this set as ``"md"`` (Markdown), ``"junit"`` (JUnit XML) or ``"html"``.
+
+        The same as :func:`netscenario.report` for :attr:`out_dir`: the headline metrics with their
+        intervals, and for the HTML one dot for each run against the interval.
+
+        Raises:
+            ValueError: A file of the directory cannot be read.
+        """
+        return report(self.out_dir, format)
 
     @property
     def results(self) -> tuple[Result, ...]:

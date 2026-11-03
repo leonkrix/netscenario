@@ -286,25 +286,11 @@ def describe_set(runs: RunSet) -> str:
 def set_properties(runs: RunSet) -> list[tuple[str, object]]:
     """The headline numbers of a set as properties of the test, for a JUnit file.
 
-    The names are ``netscenario.<scenario>.<metric>.<mean|low|high>`` for the metrics of
-    :func:`describe_set`, and ``netscenario.<scenario>.repetitions`` and ``.confidence``. Times are
-    in seconds.
+    The names are ``netscenario.<scenario>.<metric>.<mean|low|high>`` for the headline metrics, and
+    ``netscenario.<scenario>.repetitions``, ``.confidence`` and ``.seed``. Times are in seconds. The
+    list is the one of ``netscenario report --format junit``: it comes from the native library.
     """
-    prefix = f"netscenario.{runs.scenario_name}"
-    found: list[tuple[str, object]] = [
-        (f"{prefix}.repetitions", runs.repetitions),
-        (f"{prefix}.confidence", runs.confidence.level),
-    ]
-    for metric in runs:
-        if metric.name.endswith(_HEADLINE):
-            found.extend(
-                [
-                    (f"{prefix}.{metric.name}.mean", metric.mean),
-                    (f"{prefix}.{metric.name}.low", metric.interval.low),
-                    (f"{prefix}.{metric.name}.high", metric.interval.high),
-                ]
-            )
-    return found
+    return list(ns.junit_properties(runs))
 
 
 def describe(result: Result) -> str:
@@ -329,32 +315,62 @@ def describe(result: Result) -> str:
             f"received {workload.received}, lost {workload.loss_ratio:.2%}, "
             f"reordered {workload.reordered}, {delay}"
         )
+    lines.extend(_timeline_lines(result))
+    lines.extend(_program_lines(result))
     lines.append(f"  result: {result.out_dir / 'result.json'}")
     return "\n".join(lines)
+
+
+def _timeline_lines(result: Result) -> list[str]:
+    """What the run did to the links, and how long each workload took to recover."""
+    lines: list[str] = []
+    if result.steps:
+        lines.append("  timeline:")
+    for step in result.steps:
+        where = step.direction or "both ways"
+        how = (
+            f"before packet {step.packet}"
+            if step.packet is not None
+            else f"{step.lateness * 1000:.1f} ms late"
+        )
+        lines.append(
+            f"    event {step.event} at {step.scheduled:g} s: link {step.link} {where} {step.kind}"
+            f" ({how})"
+        )
+    for workload in result:
+        for recovery in workload.recoveries:
+            time = (
+                f"recovered in {recovery.time:g} s"
+                if recovery.time is not None
+                else f"not recovered ({recovery.reason})"
+            )
+            lines.append(
+                f"    {workload.id} after event {recovery.event} ({recovery.kind}): {time}"
+            )
+    return lines
+
+
+def _program_lines(result: Result) -> list[str]:
+    """How each program of your own ended, and the last value of its metrics."""
+    lines: list[str] = []
+    for program in result.programs.values():
+        code = "" if program.exit_code is None else f", exit {program.exit_code}"
+        last = ", ".join(f"{name} {metric.last:g}" for name, metric in program.metrics.items())
+        lines.append(
+            f"  program {program.id}: {program.how_it_ended}{code}" + (f"; {last}" if last else "")
+        )
+    return lines
 
 
 def properties(result: Result) -> list[tuple[str, object]]:
     """The numbers of a run as properties of the test, for a JUnit file.
 
-    The names are ``netscenario.<scenario>.<workload>.<metric>``; times are in seconds.
+    The names are ``netscenario.<scenario>.<workload>.<metric>`` (``sent``, ``received``,
+    ``lost``, ``loss_ratio``, ``reordered``, ``duplicates``, ``delay_min_s``, ``delay_p50_s``,
+    ``delay_p95_s``, ``delay_p99_s``, ``delay_max_s``, ``jitter_mean_s``,
+    ``throughput_mean_bps`` and ``loss_runs_longest``, times in seconds) and
+    ``netscenario.<scenario>.<program>.<metric>`` for the metrics of a program of your own. The
+    list is the one of ``netscenario report --format junit``: it comes from the native library, so
+    the names cannot differ.
     """
-    found: list[tuple[str, object]] = []
-    for workload in result:
-        prefix = f"netscenario.{result.scenario_name}.{workload.id}"
-        found.extend(
-            [
-                (f"{prefix}.sent", workload.sent),
-                (f"{prefix}.received", workload.received),
-                (f"{prefix}.lost", workload.lost),
-                (f"{prefix}.loss_ratio", workload.loss_ratio),
-                (f"{prefix}.reordered", workload.reordered),
-            ]
-        )
-        if workload.delay is not None:
-            found.extend(
-                [
-                    (f"{prefix}.delay_p50_s", workload.delay.p50),
-                    (f"{prefix}.delay_p99_s", workload.delay.p99),
-                ]
-            )
-    return found
+    return list(ns.junit_properties(result))

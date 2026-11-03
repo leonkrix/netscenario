@@ -23,6 +23,8 @@ from netscenario.errors import (
     ScenarioError,
     ScenarioProblem,
 )
+from netscenario.replay import Difference, LostPackets, Replay, Verdict, replay
+from netscenario.reports import ReportFormat, junit_properties, report
 from netscenario.results import (
     Address,
     Bin,
@@ -85,6 +87,7 @@ __all__ = [
     "Check",
     "Confidence",
     "Delay",
+    "Difference",
     "DirectionTally",
     "DoctorReport",
     "Extent",
@@ -96,6 +99,7 @@ __all__ = [
     "Loss",
     "LossRun",
     "LossRuns",
+    "LostPackets",
     "Metric",
     "NetscenarioError",
     "PartialMetric",
@@ -106,6 +110,8 @@ __all__ = [
     "Recovery",
     "Refusal",
     "Reordering",
+    "Replay",
+    "ReportFormat",
     "Restriction",
     "Result",
     "RunError",
@@ -122,9 +128,13 @@ __all__ = [
     "SetSeed",
     "Throughput",
     "TimelineStep",
+    "Verdict",
     "Workload",
     "__version__",
     "doctor",
     "events",
+    "junit_properties",
+    "replay",
+    "report",
     "run",
 ]

@@ -16,6 +16,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from netscenario.reports import ReportFormat, report
+
 _NANOSECONDS = 1e9
 
 
@@ -775,6 +777,17 @@ class Result:
     def __len__(self) -> int:
         """How many workloads."""
         return len(self.workloads)
+
+    def report(self, format: ReportFormat = "md") -> str:
+        """The report of this run as ``"md"`` (Markdown), ``"junit"`` (JUnit XML) or ``"html"``.
+
+        The same as :func:`netscenario.report` for :attr:`out_dir`, which has to be still there (the
+        HTML reads the series and the records from it).
+
+        Raises:
+            ValueError: A file of the directory cannot be read.
+        """
+        return report(self.out_dir, format)
 
     @classmethod
     def from_json(cls, text: str, out_dir: str | Path) -> Result:
