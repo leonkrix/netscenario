@@ -1,0 +1,15 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [client, r1, server, far]
+  links:
+    - { id: access, between: [client, r1] }
+    - { id: other, between: [server, far] }
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 1mbit
+    packet-size: 1200b

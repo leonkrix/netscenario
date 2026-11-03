@@ -3,14 +3,22 @@
 
 use crate::error::Problem;
 use crate::generators::{Generator, Pattern};
+use crate::graph::{PathError, Routes};
 use crate::measure::{MAX_BINS, MIN_BIN};
 use crate::scenario::{
     Change, Direction, Event, Impairments, Jitter, JitterDistribution, Link, Loss, Scenario,
     Workload,
 };
 use crate::suggest::closest;
+use crate::topology::{
+    DEFAULT_DESTINATION, DEFAULT_METRIC, MAX_LINKS, MAX_NODES, MAX_ROUTES, Role, Route, Routing,
+};
 use crate::units::{Duration, Name, Probability, Rate};
 
+/// The largest cost of a link.
+pub const MAX_COST: u32 = 1_000_000;
+/// The largest weight of a route (the kernel's limit for a multipath next hop).
+pub const MAX_WEIGHT: u32 = 256;
 /// The packets per second that a workload may send: what the agent was measured to deliver (spike S8).
 pub const MAX_PACKETS_PER_SECOND: u64 = 100_000;
 /// The smallest payload: the header of the agent.
@@ -37,22 +45,40 @@ impl Scenario {
         // A wrong list of nodes would make every reference to a node a second problem
         let nodes_ok = problems.len() == before;
         self.check_links(&nodes, nodes_ok, &mut problems);
-        self.check_workloads(&nodes, nodes_ok, &mut problems);
+        let links_ok = problems.len() == before;
+        if links_ok {
+            self.check_routes(&mut problems);
+        }
+        // Routes that are wrong would make every path a second problem
+        let structure_ok = problems.len() == before;
+        let routes = structure_ok.then(|| self.topology.routes());
+        self.check_workloads(&nodes, nodes_ok, routes.as_ref(), &mut problems);
         self.check_timeline(&mut problems);
         self.check_measure(&mut problems);
         problems
     }
 
     fn check_nodes(&self, problems: &mut Vec<Problem>) -> Vec<Name> {
-        let nodes = &self.topology.nodes;
-        if nodes.len() != 2 {
+        let nodes: Vec<Name> = self
+            .topology
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect();
+        if nodes.len() < 2 {
+            problems.push(
+                Problem::new(format!("a network needs at least two nodes, found {}", nodes.len()))
+                    .at_path("topology.nodes")
+                    .with_help("a node alone has nothing to talk to: add one, or write a star, chain or dumbbell"),
+            );
+        }
+        if nodes.len() > MAX_NODES {
             problems.push(
                 Problem::new(format!(
-                    "release 0.1 needs exactly two nodes, found {}",
+                    "a scenario may have at most {MAX_NODES} nodes, found {}",
                     nodes.len()
                 ))
-                .at_path("topology.nodes")
-                .with_help("more nodes (star, chain, dumbbell) arrive with release 0.3"),
+                .at_path("topology.nodes"),
             );
         }
         for (index, node) in nodes.iter().enumerate() {
@@ -63,20 +89,36 @@ impl Scenario {
                         .with_help("every node needs its own name"),
                 );
             }
+            if node.as_str() == DEFAULT_DESTINATION {
+                problems.push(
+                    Problem::new(format!(
+                        "'{DEFAULT_DESTINATION}' is the word for every destination in a route and cannot be the name of a node"
+                    ))
+                    .at_path(format!("topology.nodes[{index}]"))
+                    .with_help("choose another name"),
+                );
+            }
         }
-        nodes.clone()
+        nodes
     }
 
     fn check_links(&self, nodes: &[Name], nodes_ok: bool, problems: &mut Vec<Problem>) {
         let links = &self.topology.links;
-        if links.len() != 1 {
+        let before = problems.len();
+        if links.is_empty() {
+            problems.push(
+                Problem::new("a network needs at least one link, found none")
+                    .at_path("topology.links")
+                    .with_help("add a link between two of the nodes"),
+            );
+        }
+        if links.len() > MAX_LINKS {
             problems.push(
                 Problem::new(format!(
-                    "release 0.1 needs exactly one link, found {}",
+                    "a scenario may have at most {MAX_LINKS} links, found {}",
                     links.len()
                 ))
-                .at_path("topology.links")
-                .with_help("more links arrive with release 0.3"),
+                .at_path("topology.links"),
             );
         }
         for (index, link) in links.iter().enumerate() {
@@ -85,6 +127,24 @@ impl Scenario {
                 problems.push(
                     Problem::new(format!("the link name '{}' is used twice", link.id))
                         .at_path(format!("{base}.id")),
+                );
+            }
+            if link.id.as_str() == DEFAULT_DESTINATION {
+                problems.push(
+                    Problem::new(format!(
+                        "'{DEFAULT_DESTINATION}' is a word of the routes and cannot be the name of a link"
+                    ))
+                    .at_path(format!("{base}.id"))
+                    .with_help("choose another name"),
+                );
+            }
+            if let Some(cost) = link.cost
+                && !(1..=MAX_COST).contains(&cost)
+            {
+                problems.push(
+                    Problem::new(format!("the cost {cost} is outside 1 to {MAX_COST}"))
+                        .at_path(format!("{base}.cost"))
+                        .with_help("the cost is a whole number; 1 is the default"),
                 );
             }
             let [first, second] = &link.between;
@@ -118,9 +178,150 @@ impl Scenario {
                 }
             }
         }
+        // A link that is wrong would make the nodes without a link a second problem
+        if nodes_ok && problems.len() == before {
+            for (index, node) in nodes.iter().enumerate() {
+                if !links.iter().any(|link| link.between.contains(node)) {
+                    problems.push(
+                        Problem::new(format!("the node '{node}' has no link"))
+                            .at_path(format!("topology.nodes[{index}]"))
+                            .with_help("add a link to it, or remove the node"),
+                    );
+                }
+            }
+        }
     }
 
-    fn check_workloads(&self, nodes: &[Name], nodes_ok: bool, problems: &mut Vec<Problem>) {
+    /// The rules of the routes and of the routing, with the nodes and links known to exist.
+    fn check_routes(&self, problems: &mut Vec<Problem>) {
+        let topology = &self.topology;
+        if topology.routes.len() > MAX_ROUTES {
+            problems.push(
+                Problem::new(format!(
+                    "a scenario may list at most {MAX_ROUTES} routes, found {}",
+                    topology.routes.len()
+                ))
+                .at_path("topology.routes"),
+            );
+        }
+        if topology.ecmp && topology.routing == Routing::Manual {
+            problems.push(
+                Problem::new("`ecmp` needs `routing: auto`: with `manual` the routes are only the listed ones")
+                    .at_path("topology.ecmp")
+                    .with_help("list several routes with the same metric to share the packets of a node"),
+            );
+        }
+        for (index, route) in topology.routes.iter().enumerate() {
+            self.check_route(index, route, problems);
+        }
+    }
+
+    fn check_route(&self, index: usize, route: &Route, problems: &mut Vec<Problem>) {
+        let topology = &self.topology;
+        let node_names: Vec<&str> = topology.nodes.iter().map(|node| node.id.as_str()).collect();
+        let link_names: Vec<&str> = topology.links.iter().map(|link| link.id.as_str()).collect();
+        {
+            let base = format!("topology.routes[{index}]");
+            if topology.node(&route.node).is_none() {
+                problems.push(unknown_node(
+                    &route.node,
+                    &topology
+                        .nodes
+                        .iter()
+                        .map(|n| n.id.clone())
+                        .collect::<Vec<_>>(),
+                    format!("{base}.node"),
+                ));
+            }
+            if !route.is_default() && topology.node(&route.to).is_none() {
+                let mut known = node_names.clone();
+                known.push(DEFAULT_DESTINATION);
+                let list = format!(
+                    "the destinations are the nodes ({}) and `{DEFAULT_DESTINATION}`",
+                    node_names.join(", ")
+                );
+                let help = match closest(route.to.as_str(), &known) {
+                    Some(near) => format!("did you mean '{near}'? {list}"),
+                    None => list,
+                };
+                problems.push(
+                    Problem::new(format!(
+                        "the destination '{}' is neither a node nor `{DEFAULT_DESTINATION}`",
+                        route.to
+                    ))
+                    .at_path(format!("{base}.to"))
+                    .with_help(help),
+                );
+            }
+            match topology.link(&route.via) {
+                None => problems.push(unknown_link(&route.via, &link_names, format!("{base}.via"))),
+                Some(link) if !link.between.contains(&route.node) => {
+                    if topology.node(&route.node).is_some() {
+                        let own: Vec<&str> = topology
+                            .links
+                            .iter()
+                            .filter(|other| other.between.contains(&route.node))
+                            .map(|other| other.id.as_str())
+                            .collect();
+                        problems.push(
+                            Problem::new(format!(
+                                "the link '{}' does not touch the node '{}'",
+                                route.via, route.node
+                            ))
+                            .at_path(format!("{base}.via"))
+                            .with_help(format!(
+                                "the links of '{}' are: {}",
+                                route.node,
+                                own.join(", ")
+                            )),
+                        );
+                    }
+                }
+                Some(_) => {}
+            }
+            if route.to == route.node {
+                problems.push(
+                    Problem::new(format!("a route of '{}' to itself", route.node))
+                        .at_path(format!("{base}.to"))
+                        .with_help("a node reaches its own address without a route"),
+                );
+            }
+            if route.metric == Some(0) {
+                problems.push(
+                    Problem::new("the metric 0 is not allowed")
+                        .at_path(format!("{base}.metric"))
+                        .with_help(format!("use 1 or more; the default is {DEFAULT_METRIC}")),
+                );
+            }
+            if let Some(weight) = route.weight
+                && !(1..=MAX_WEIGHT).contains(&weight)
+            {
+                problems.push(
+                    Problem::new(format!("the weight {weight} is outside 1 to {MAX_WEIGHT}"))
+                        .at_path(format!("{base}.weight")),
+                );
+            }
+            if topology.routes[..index].iter().any(|other| {
+                other.node == route.node && other.to == route.to && other.via == route.via
+            }) {
+                problems.push(
+                    Problem::new(format!(
+                        "the route of '{}' to '{}' out of '{}' is listed twice",
+                        route.node, route.to, route.via
+                    ))
+                    .at_path(base),
+                );
+            }
+        }
+    }
+
+    fn check_workloads(
+        &self,
+        nodes: &[Name],
+        nodes_ok: bool,
+        routes: Option<&Routes>,
+        problems: &mut Vec<Problem>,
+    ) {
         if self.workloads.is_empty() {
             problems.push(
                 Problem::new("a scenario needs at least one workload, found none")
@@ -148,11 +349,108 @@ impl Scenario {
                 }
                 other => {
                     if let Some(generator) = other.generator() {
-                        self.check_generator(&generator, &base, nodes, nodes_ok, problems);
+                        self.check_generator(&generator, &base, nodes, nodes_ok, routes, problems);
                     }
                 }
             }
         }
+    }
+
+    /// A packet of the workload must get from the sender to the receiver over the routes.
+    fn check_path(
+        &self,
+        routes: &Routes,
+        from: &Name,
+        to: &Name,
+        base: &str,
+        problems: &mut Vec<Problem>,
+    ) {
+        let Err(error) = self.topology.path(routes, from, to) else {
+            return;
+        };
+        let manual = self.topology.routing == Routing::Manual;
+        let (message, help) = match error {
+            PathError::NoRoute { at } => {
+                let links: Vec<&str> = self
+                    .topology
+                    .links
+                    .iter()
+                    .filter(|link| link.between.contains(&at))
+                    .map(|link| link.id.as_str())
+                    .collect();
+                let message = if at == *from {
+                    format!("'{from}' has no route to '{to}'")
+                } else {
+                    format!(
+                        "the packets from '{from}' to '{to}' are lost at '{at}': it has no route to '{to}'"
+                    )
+                };
+                let help = if manual {
+                    format!(
+                        "the routing is manual, so list the route: `routes: [{{ node: {at}, to: {to}, via: <link> }}]`; the links of '{at}' are: {}",
+                        links.join(", ")
+                    )
+                } else {
+                    let hosts = self.hosts_between(from, to);
+                    if hosts.is_empty() {
+                        format!(
+                            "no chain of links joins '{at}' and '{to}': add a link, or list a route"
+                        )
+                    } else {
+                        let list: Vec<String> =
+                            hosts.iter().map(|name| format!("'{name}'")).collect();
+                        format!(
+                            "the links lead through {}, which do not forward because they are hosts: write them as `{{ id: <name>, role: router }}`",
+                            list.join(", ")
+                        )
+                    }
+                };
+                (message, help)
+            }
+            PathError::NotARouter { at } => (
+                format!(
+                    "the route from '{from}' to '{to}' leads through '{at}', which is a host and does not forward"
+                ),
+                format!("write the node as `{{ id: {at}, role: router }}`, or route around it"),
+            ),
+            PathError::Loop { at } => (
+                format!(
+                    "the routes from '{from}' to '{to}' lead in a circle and come back to '{at}'"
+                ),
+                format!("check the routes of '{at}' to '{to}'"),
+            ),
+        };
+        problems.push(
+            Problem::new(message)
+                .at_path(format!("{base}.to"))
+                .with_help(help),
+        );
+    }
+
+    /// The hosts on the shortest path between two nodes if every node were a router (empty if no chain of links
+    /// joins them).
+    fn hosts_between(&self, from: &Name, to: &Name) -> Vec<Name> {
+        let mut open = self.topology.clone();
+        for node in &mut open.nodes {
+            node.role = Role::Router;
+        }
+        open.routing = Routing::Auto;
+        open.routes.clear();
+        let routes = open.routes();
+        open.path(&routes, from, to)
+            .map(|path| {
+                path.nodes
+                    .into_iter()
+                    .skip(1)
+                    .filter(|name| name != to)
+                    .filter(|name| {
+                        self.topology
+                            .node(name)
+                            .is_some_and(|node| node.role == Role::Host)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn check_generator(
@@ -161,6 +459,7 @@ impl Scenario {
         base: &str,
         nodes: &[Name],
         nodes_ok: bool,
+        routes: Option<&Routes>,
         problems: &mut Vec<Problem>,
     ) {
         {
@@ -177,6 +476,14 @@ impl Scenario {
                     ))
                     .at_path(format!("{base}.to")),
                 );
+            }
+            if let Some(routes) = routes
+                && nodes_ok
+                && workload.from != workload.to
+                && nodes.contains(workload.from)
+                && nodes.contains(workload.to)
+            {
+                self.check_path(routes, workload.from, workload.to, base, problems);
             }
             let size = workload.packet_size.bytes();
             if !(MIN_PACKET_SIZE..=MAX_PACKET_SIZE).contains(&size) {

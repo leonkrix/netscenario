@@ -29,6 +29,8 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Feature                      | Kernel                                                            | Engine | Proxy |
 | ---------------------------- | ----------------------------------------------------------------- | ------ | ----- |
 | Point to point               | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/run.rs)) | ✔ 0.4  | ✔ 0.5 |
+| Several nodes and links      | ✔ 0.3                                                             | ✔ 0.4  | ~ 0.5 |
+| Routers and routes           | ✔ 0.3                                                             | ✔ 0.4  | ✘     |
 | Star                         | ✔ 0.3                                                             | ✔ 0.4  | ~ 0.5 |
 | Chain with routing           | ✔ 0.3                                                             | ✔ 0.4  | ✘     |
 | Dumbbell (shared bottleneck) | ✔ 0.3                                                             | ✔ 0.4  | ✘     |

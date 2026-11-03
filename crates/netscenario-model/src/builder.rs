@@ -24,9 +24,9 @@ use crate::generators::{PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
 use crate::measure::Measure;
 use crate::scenario::{
     Backend, Change, Command, Direction, Event, FormatVersion, Impairments, Jitter,
-    JitterDistribution, Link, Loss, Reorder, Scenario, Topology, True, UdpCbr, UdpChecksum,
-    Workload,
+    JitterDistribution, Link, Loss, Reorder, Scenario, True, UdpCbr, UdpChecksum, Workload,
 };
+use crate::topology::{Node, Role, Route, Routing, Topology};
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
 impl Impairments {
@@ -205,7 +205,10 @@ pub struct ScenarioBuilder {
     seed: Option<u64>,
     duration: Option<Duration>,
     backend: Backend,
-    nodes: Vec<Name>,
+    nodes: Vec<Node>,
+    routing: Routing,
+    ecmp: bool,
+    routes: Vec<Route>,
     links: Vec<Link>,
     workloads: Vec<Workload>,
     timeline: Vec<Event>,
@@ -223,6 +226,9 @@ impl Scenario {
             duration: None,
             backend: Backend::Auto,
             nodes: Vec::new(),
+            routing: Routing::Auto,
+            ecmp: false,
+            routes: Vec::new(),
             links: Vec::new(),
             workloads: Vec::new(),
             timeline: Vec::new(),
@@ -267,43 +273,139 @@ impl ScenarioBuilder {
         self
     }
 
-    /// The two nodes of release 0.1.
+    /// The two hosts of a point to point network. For more nodes use [`ScenarioBuilder::node`] and
+    /// [`ScenarioBuilder::router`].
     #[must_use]
     pub fn nodes(mut self, first: &str, second: &str) -> Self {
-        for (index, text) in [first, second].into_iter().enumerate() {
-            let path = format!("topology.nodes[{index}]");
-            if let Some(name) = self.name_at(text, &path) {
-                self.nodes.push(name);
-            }
+        for text in [first, second] {
+            self = self.node(text);
+        }
+        self
+    }
+
+    /// A host.
+    #[must_use]
+    pub fn node(mut self, name: &str) -> Self {
+        let path = format!("topology.nodes[{}]", self.nodes.len());
+        if let Some(name) = self.name_at(name, &path) {
+            self.nodes.push(Node::host(name));
+        }
+        self
+    }
+
+    /// A router: a node that forwards packets.
+    #[must_use]
+    pub fn router(mut self, name: &str) -> Self {
+        let path = format!("topology.nodes[{}]", self.nodes.len());
+        if let Some(name) = self.name_at(name, &path) {
+            self.nodes.push(Node {
+                id: name,
+                role: Role::Router,
+            });
         }
         self
     }
 
     /// A link between the two nodes, with impairments for the direction from the first to the second and for
-    /// the way back. For the same values in both directions use [`ScenarioBuilder::link_both`].
+    /// the way back. For the same values in both directions use [`ScenarioBuilder::link_both`]. Only for a
+    /// network of two nodes; for more use [`ScenarioBuilder::link_between`].
     #[must_use]
     pub fn link(
+        self,
+        id: &str,
+        forward: Option<Impairments>,
+        reverse: Option<Impairments>,
+    ) -> Self {
+        if let [first, second] = self.nodes.as_slice() {
+            let (first, second) = (first.id.as_str().to_owned(), second.id.as_str().to_owned());
+            self.link_between(id, &first, &second, forward, reverse)
+        } else {
+            let mut this = self;
+            let index = this.links.len();
+            this.problems.push(
+                Problem::new(
+                    "call `nodes` with two valid names before `link`, or use `link_between`",
+                )
+                .at_path(format!("topology.links[{index}]")),
+            );
+            this
+        }
+    }
+
+    /// A link between `first` and `second` with impairments for the direction from the first to the second and
+    /// for the way back.
+    #[must_use]
+    pub fn link_between(
         mut self,
         id: &str,
+        first: &str,
+        second: &str,
         forward: Option<Impairments>,
         reverse: Option<Impairments>,
     ) -> Self {
         let index = self.links.len();
         let id = self.name_at(id, &format!("topology.links[{index}].id"));
-        if let (Some(id), [first, second]) = (id, self.nodes.as_slice()) {
-            let between = [first.clone(), second.clone()];
-            self.links.push(Link {
-                id,
-                between,
-                forward,
-                reverse,
-                both: None,
-            });
-        } else if self.nodes.len() != 2 {
-            self.problems.push(
-                Problem::new("call `nodes` with two valid names before `link`")
-                    .at_path(format!("topology.links[{index}]")),
-            );
+        let first = self.name_at(first, &format!("topology.links[{index}].between[0]"));
+        let second = self.name_at(second, &format!("topology.links[{index}].between[1]"));
+        if let (Some(id), Some(first), Some(second)) = (id, first, second) {
+            let mut link = Link::new(id, [first, second]);
+            link.forward = forward;
+            link.reverse = reverse;
+            self.links.push(link);
+        }
+        self
+    }
+
+    /// What the link that was added last costs the automatic routing (1 by default).
+    #[must_use]
+    pub fn link_cost(mut self, cost: u32) -> Self {
+        if let Some(link) = self.links.last_mut() {
+            link.cost = Some(cost);
+        }
+        self
+    }
+
+    /// The routing: `Routing::Auto` (the default) or `Routing::Manual`.
+    #[must_use]
+    pub fn routing(mut self, routing: Routing) -> Self {
+        self.routing = routing;
+        self
+    }
+
+    /// Install every equally short path as a multipath route (with the automatic routing).
+    #[must_use]
+    pub fn ecmp(mut self) -> Self {
+        self.ecmp = true;
+        self
+    }
+
+    /// A route of `node` to `to` (a node, or `default`) out of the link `via`.
+    #[must_use]
+    pub fn route(mut self, node: &str, to: &str, via: &str) -> Self {
+        let index = self.routes.len();
+        let node = self.name_at(node, &format!("topology.routes[{index}].node"));
+        let to = self.name_at(to, &format!("topology.routes[{index}].to"));
+        let via = self.name_at(via, &format!("topology.routes[{index}].via"));
+        if let (Some(node), Some(to), Some(via)) = (node, to, via) {
+            self.routes.push(Route::new(node, to, via));
+        }
+        self
+    }
+
+    /// The metric of the route that was added last.
+    #[must_use]
+    pub fn route_metric(mut self, metric: u32) -> Self {
+        if let Some(route) = self.routes.last_mut() {
+            route.metric = Some(metric);
+        }
+        self
+    }
+
+    /// The weight of the route that was added last.
+    #[must_use]
+    pub fn route_weight(mut self, weight: u32) -> Self {
+        if let Some(route) = self.routes.last_mut() {
+            route.weight = Some(weight);
         }
         self
     }
@@ -555,9 +657,12 @@ impl ScenarioBuilder {
             seed: self.seed,
             duration,
             backend: self.backend,
-            topology: Topology {
-                nodes: self.nodes,
-                links: self.links,
+            topology: {
+                let mut topology = Topology::new(self.nodes, self.links);
+                topology.routing = self.routing;
+                topology.ecmp = self.ecmp;
+                topology.routes = self.routes;
+                topology
             },
             workloads: self.workloads,
             timeline: self.timeline,

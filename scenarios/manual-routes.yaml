@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# The automatic routes are on (the default) and two of them are replaced by hand: the packets of the client to the server
+# take the link `slow` although `fast` is shorter, and everything else is computed. A node needs a `default` route only
+# where nothing else says where to go.
+version: 0
+name: manual-routes
+duration: 10s
+topology:
+  nodes:
+    - client
+    - { id: r1, role: router }
+    - server
+  links:
+    - { id: fast, between: [client, r1], cost: 1 }
+    - { id: slow, between: [client, r1], cost: 5, both: { delay: 30ms } }
+    - { id: out, between: [r1, server] }
+  routes:
+    - { node: client, to: server, via: slow }
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 1mbit
+    packet-size: 1000b

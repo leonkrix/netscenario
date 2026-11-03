@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/topology-link-cost-zero.yaml
+---
+error: the cost 0 is outside 1 to 1000000
+ --> topology-link-cost-zero.yaml:7:54
+  |
+6 |   links:
+7 |     - { id: access, between: [client, server], cost: 0 }
+  |                                                      ^
+  = path: topology.links[0].cost
+  = help: the cost is a whole number; 1 is the default

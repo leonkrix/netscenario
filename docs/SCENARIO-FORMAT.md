@@ -29,7 +29,7 @@ name: lte-like-link     # required: a Name, used in reports and file names
 seed: 42                # optional: one seed, the seeds of the parts are derived from it
 duration: 30s           # required: the length of the measured phase
 backend: auto           # optional: auto (default) or kernel
-topology: { ... }       # required: the nodes and the link
+topology: { ... }       # required: the nodes, the links and the routes
 workloads: [ ... ]      # required: what sends traffic, at least one
 timeline: [ ... ]       # optional: changes over time (release 0.2)
 measure: { ... }        # optional: what is measured besides the statistics (release 0.2)
@@ -96,19 +96,30 @@ All values are strings or numbers in the file; this table says what is accepted.
 
 ```yaml
 topology:
-  nodes: [client, server]
+  nodes:
+    - client
+    - { id: edge, role: router }
+    - server
   links:
     - id: access
-      between: [client, server]
+      between: [client, edge]
       forward:  { ... }
       reverse:  { ... }
+    - { id: delivery, between: [edge, server] }
+  routing: auto          # or manual
+  routes: [ ... ]        # optional
 ```
 
-- `nodes` is a list of exactly two Names in release 0.1 (point to point, TOP-01). The longer form `{ id: router, role: router }` and more nodes arrive with release 0.3.
-- `links` is a list of exactly one link in release 0.1.
-- A link has an `id` (Name) and `between`: two different nodes from `nodes`. The first is the "forward" side: `forward` is the direction from the first node to the second, `reverse` the way back.
-- Impairments are set per direction (LNK-11). `both` sets the same values in both directions; **`both` cannot be combined with `forward` or `reverse`** (use one form). A direction that is not mentioned has no impairment.
-- The addresses are assigned by the tool from `10.0.0.0/8` (IPv4 only, TOP-08) and recorded in the result. They are not part of the file. A key `address` is reserved for a later release.
+A topology is one graph of nodes and links (D-078). Release 0.3 reads any number of nodes and links; a scenario of release 0.1 or 0.2 (two nodes and one link) is read as before and keeps its text and its hash.
+
+- **Nodes.** A node is written as its name (a host) or as `{ id, role }`. A **host** sends and receives and does not forward; a **router** forwards between its links. A node that lies on a path between two others has to be a router, and the error says which. At least two nodes, at most 256; every node has at least one link; the name `default` is taken (it is the word for every destination in a route).
+- **Links.** A link has an `id` (a Name) and `between`: two different nodes. Two nodes may have **several** links (multipath, multi-homing). The first is the "forward" side: `forward` is the direction from the first node to the second, `reverse` the way back. Impairments are set per direction (LNK-11); `both` sets the same values in both directions and **cannot be combined with `forward` or `reverse`**. A direction that is not mentioned has no impairment. `cost` (a whole number, 1 to 1,000,000, 1 by default) is what the link costs the automatic routing.
+- **Routing.** `routing: auto` (the default) computes a route from every node to every node by the shortest path: the smallest sum of the `cost` of the links, passing routers only. Equally short paths: the first link in the order of the file is taken, so the result is the same on every run; `ecmp: true` installs all of them as a multipath route. `routing: manual` switches the automatic routes off, and only the listed routes exist.
+- **Routes.** A route is `{ node, to, via }` with an optional `metric` and `weight`. `node` has the route; `to` is a node or `default` (every destination that has no route of its own); `via` is the **link** the packets leave by, and the node at its other end is the next hop (a link and not a neighbour, so that two links between the same nodes are told apart). The smaller `metric` is used first (100 by default), which makes a failover: when the interface of the first goes down, the second takes over. Routes with the same `metric` share the packets by their `weight` (1 by default, up to 256). With `routing: auto` a listed route replaces the automatic routes of the same node and destination and leaves all others alone; with `manual` the listed routes are all there is. A scenario is checked for a path over the routes for every workload that sends packets: a node without a route, a route through a host, and routes that lead in a circle are refused with the node where it goes wrong.
+- **Addresses.** The tool assigns every address and records it in the result; they are not part of the file. Every link gets a subnet of its own and every node an address of its own on its loopback, which workloads and programs use (`{server.addr}`), so a node with several links needs no choice of address. IPv4 only in release 0.3 so far (TOP-08). A key `address` is reserved for a later release.
+- **Which backends.** The Kernel backend builds the point to point network of release 0.1 and 0.2 today; networks of several nodes and routes are read and checked by every tool, and the Kernel backend refuses them with the feature `Several nodes and links` until it builds them (docs/COVERAGE.md).
+
+A chain of two routers is in [scenarios/three-hops.yaml](../scenarios/three-hops.yaml), a failover with listed routes in [scenarios/two-paths.yaml](../scenarios/two-paths.yaml) and a computed network with one route changed by hand in [scenarios/manual-routes.yaml](../scenarios/manual-routes.yaml).
 
 ### Impairments of a direction
 

@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/routes-unknown-node.yaml
+---
+error: the node 'clent' does not exist
+  --> routes-unknown-node.yaml:10:15
+   |
+ 9 |   routes:
+10 |     - { node: clent, to: server, via: access }
+   |               ^^^^^
+   = path: topology.routes[0].node
+   = help: did you mean 'client'? the nodes are: client, r1, server

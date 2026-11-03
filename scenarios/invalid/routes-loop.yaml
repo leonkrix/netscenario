@@ -1,0 +1,18 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [client, {id: r1, role: router}, server]
+  links:
+    - { id: access, between: [client, r1] }
+    - { id: core, between: [r1, server] }
+  routes:
+    - { node: client, to: server, via: access }
+    - { node: r1, to: server, via: access }
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 1mbit
+    packet-size: 1200b

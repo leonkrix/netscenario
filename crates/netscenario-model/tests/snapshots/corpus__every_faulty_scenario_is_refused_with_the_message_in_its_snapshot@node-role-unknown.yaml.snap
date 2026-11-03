@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/node-role-unknown.yaml
+---
+error: unknown variant `switch`, expected one of host, router
+ --> node-role-unknown.yaml:5:34
+  |
+4 | topology:
+5 |   nodes: [client, {id: r1, role: switch}, server]
+  |                                  ^^^^^^

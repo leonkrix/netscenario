@@ -14,6 +14,9 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [program-under-test.yaml](program-under-test.yaml) | A program of your own in a node (`kind: command`) with a readiness check and a shutdown, started by the Kernel backend ([docs/PROGRAMS.md](../docs/PROGRAMS.md); a complete example is [examples/echo-server](../examples/echo-server)) |
 | [capture-a-link.yaml](capture-a-link.yaml) | The section `measure`: both interfaces of a lossy link captured as pcap files, and the bins of the series ([docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FORMAT.md#what-is-measured)) |
 | [noisy-radio.yaml](noisy-radio.yaml) | Bursts of loss (both models), reordering, duplication and corruption |
+| [three-hops.yaml](three-hops.yaml) | A chain of two routers between a client and a server: three links with their own values, the routes computed by the shortest path (D-078) |
+| [two-paths.yaml](two-paths.yaml) | Two paths with listed routes and metrics, `routing: manual`, and a link of the fast path that goes down and comes back |
+| [manual-routes.yaml](manual-routes.yaml) | Two parallel links with a `cost`, and one route set by hand over the computed ones |
 | [damaged-payload.yaml](damaged-payload.yaml) | Corruption and a stream with `udp-checksum: false`, so that a damaged packet arrives and is counted |
 
 Each file starts with a line `# yaml-language-server: $schema=...` that points an editor at the JSON Schema of this checkout, for completion and checking while you write (docs/CLI.md has the form for your own files).

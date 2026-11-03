@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/routes-metric-zero.yaml
+---
+error: the metric 0 is not allowed
+  --> routes-metric-zero.yaml:10:56
+   |
+ 9 |   routes:
+10 |     - { node: client, to: server, via: access, metric: 0 }
+   |                                                        ^
+   = path: topology.routes[0].metric
+   = help: use 1 or more; the default is 100
