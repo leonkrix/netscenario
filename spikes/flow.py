@@ -7,7 +7,8 @@ All namespaces of one machine share CLOCK_MONOTONIC, so a one-way delay is the d
                                                    delay statistics in ms; ends after COUNT packets or WAIT seconds
                                                    without a packet (default 2)
   flow.py client FAMILY ADDRESS PORT COUNT PPS [SRC_PORT]  sends COUNT packets at PPS per second; the size of the
-                                                   datagram is FLOW_SIZE bytes (default 200)
+                                                   datagram is FLOW_SIZE bytes (default 200); with FLOW_BURST=n the
+                                                   packets go in bursts of n back to back, PPS bursts per second
 The server also prints the arrivals per 100 ms bin since the first packet ("bins") and the largest delay.
 
 FAMILY is 4 or 6.
@@ -40,6 +41,8 @@ def server(fam, address, port, count, wait):
     sock.settimeout(wait)
     seen = {}
     arrivals = []
+    reordered = 0
+    highest = -1
     print("ready", flush=True)
     try:
         while len(seen) < count:
@@ -49,6 +52,9 @@ def server(fam, address, port, count, wait):
                 continue
             seq, sent = HEADER.unpack_from(data)
             if seq not in seen:
+                if seq < highest:
+                    reordered += 1
+                highest = max(highest, seq)
                 seen[seq] = (received - sent) / 1e6
                 arrivals.append(received)
     except socket.timeout:
@@ -74,6 +80,7 @@ def server(fam, address, port, count, wait):
                 "missing_count": len(missing),
                 "missing_hash": hashlib.sha256(",".join(map(str, missing)).encode()).hexdigest()[:16],
                 "missing_first": missing[:20],
+                "reordered": reordered,
                 "bins": bins,
                 "delay_max_ms": delays[-1] if delays else None,
                 "delay_ms": {
@@ -112,8 +119,9 @@ def client(fam, address, port, count, pps, src_port):
     gap = 1.0 / pps
     start = time.monotonic()
     pad = b"x" * (int(os.environ.get("FLOW_SIZE", "200")) - HEADER.size)
+    burst = int(os.environ.get("FLOW_BURST", "1"))
     for n in range(count):
-        target = start + n * gap
+        target = start + (n // burst) * gap
         now = time.monotonic()
         if target > now:
             time.sleep(target - now)

@@ -211,3 +211,27 @@ else
   if [ "$p1" = "$p2" ] && [ "$p2" = "$p3" ]; then pass S16.9 "the pattern is the same with a bigger network around it"; else fail S16.9 "the pattern changed"; fi
   lab_stop
 fi
+
+# S16.10 do packets that leave within microseconds of each other arrive in order? Bursts of 4 back to back, 500 bursts per
+# second, 2000 packets, through one hop with and without a netem delay of 5 ms (the timer of netem runs on whichever CPU
+# is free). The receiver counts the packets that arrive after one with a higher number.
+node_new p1; node_new p2
+link_new 0 p1 p2 10.211.0.1/30 10.211.0.2/30
+burst_reordered() {
+  local out; out="$(mktemp)"
+  node p2 $FLOW server 4 10.211.0.2 7000 2000 1.5 >"$out" 2>&1 &
+  local spid=$!
+  sleep 0.4
+  FLOW_BURST=4 node p1 $FLOW client 4 10.211.0.2 7000 2000 500 >/dev/null 2>&1
+  wait "$spid"
+  BURST_REPORT="$(tail -n 1 "$out")"; rm -f "$out"
+}
+burst_reordered
+info S16.10 "bursts of 4, no netem: $(printf '%s' "$BURST_REPORT" | field '"%d of 2000 arrived, %d out of order" % (d["received"], d["reordered"])')"
+if node p1 tc qdisc add dev l0a root netem delay 5ms 2>/dev/null; then
+  burst_reordered
+  info S16.10 "bursts of 4, netem delay 5 ms: $(printf '%s' "$BURST_REPORT" | field '"%d of 2000 arrived, %d out of order" % (d["received"], d["reordered"])')"
+else
+  info S16.10 "netem delay: skipped, no netem"
+fi
+lab_stop
