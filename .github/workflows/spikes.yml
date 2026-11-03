@@ -9,6 +9,10 @@ on:
         description: "Run only S11 to S15 (release 0.2), not the spikes of release 0.1"
         type: boolean
         default: false
+      only_shapes:
+        description: "Run only S16 to S19 (release 0.3)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,19 +31,19 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends iproute2 iputils-ping python3 tcpdump
+          sudo apt-get install -y --no-install-recommends iproute2 iputils-ping python3 tcpdump ethtool
       # Three cases: as the runner user with the defaults of the image, as root, and as the runner
       # user after relaxing the AppArmor rule that blocks unprivileged user namespaces on Ubuntu 24.04.
       - name: Run the spikes as an unprivileged user
-        if: ${{ !inputs.only_new }}
+        if: ${{ !inputs.only_new && !inputs.only_shapes }}
         run: bash spikes/run-all.sh
         continue-on-error: true
       - name: Run the spikes as root
-        if: ${{ !inputs.only_new }}
+        if: ${{ !inputs.only_new && !inputs.only_shapes }}
         run: sudo SPIKE_OUT="$PWD/spikes/out-root" bash spikes/run-all.sh
         continue-on-error: true
       - name: Run the spikes as an unprivileged user, AppArmor restriction off
-        if: ${{ !inputs.only_new }}
+        if: ${{ !inputs.only_new && !inputs.only_shapes }}
         run: |
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -64,7 +68,7 @@ jobs:
           sudo env PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-newtc" bash spikes/s2-netem-seed.sh
         continue-on-error: true
       - name: Which options does tc know?
-        if: ${{ !inputs.only_new }}
+        if: ${{ !inputs.only_new && !inputs.only_shapes }}
         run: |
           tc -V || true
           ip -V || true
@@ -74,7 +78,7 @@ jobs:
       # The Rust and Python experiments (S7 to S10) run as the runner user. On Ubuntu 24.04 the AppArmor
       # restriction was relaxed by the step above, and the setting stays for the rest of the job.
       - name: S10 Toolchain of this image
-        if: ${{ !inputs.only_new }}
+        if: ${{ !inputs.only_new && !inputs.only_shapes }}
         run: |
           mkdir -p spikes/out-rust
           {
@@ -94,13 +98,13 @@ jobs:
           } 2>&1 | tee spikes/out-rust/s10.txt
         continue-on-error: true
       - name: S7 Netlink (nlink) against tc
-        if: ${{ !inputs.only_new }}
+        if: ${{ !inputs.only_new && !inputs.only_shapes }}
         run: |
           mkdir -p spikes/out-rust
           bash spikes/rust-netlink/run.sh 2>&1 | tee spikes/out-rust/s7.txt
         continue-on-error: true
       - name: S9 PyO3 and maturin
-        if: ${{ !inputs.only_new }}
+        if: ${{ !inputs.only_new && !inputs.only_shapes }}
         run: |
           mkdir -p spikes/out-rust
           bash spikes/rust-pyo3/run.sh 2>&1 | tee spikes/out-rust/s9.txt
@@ -108,7 +112,7 @@ jobs:
       # The engine series pins three cores; on a runner with fewer than four it is skipped. A shared virtual
       # machine is noisier than a development machine, which is the point of running it here as well.
       - name: S8 Packet engine
-        if: ${{ !inputs.only_new }}
+        if: ${{ !inputs.only_new && !inputs.only_shapes }}
         run: |
           mkdir -p spikes/out-rust
           if [ "$(nproc)" -lt 4 ]; then
@@ -120,18 +124,21 @@ jobs:
       # S11 to S14 (release 0.2). They use `netem ... seed`, which the tc of the images does not know, so they run
       # with the tc built above, as the runner user (the AppArmor restriction was relaxed by an earlier step).
       - name: S11 Timeline precision
+        if: ${{ !inputs.only_shapes }}
         timeout-minutes: 30
         run: |
           mkdir -p spikes/out-rust
           PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s11" bash spikes/rust-timeline/run.sh 2>&1 | tee spikes/out-rust/s11.txt
         continue-on-error: true
       - name: S12 The netem models against their theory
+        if: ${{ !inputs.only_shapes }}
         timeout-minutes: 20
         run: |
           mkdir -p spikes/out-rust
           PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s12" bash spikes/s12-netem-models.sh 2>&1 | tee spikes/out-rust/s12.txt
         continue-on-error: true
       - name: S13 Capture
+        if: ${{ !inputs.only_shapes }}
         timeout-minutes: 10
         run: |
           mkdir -p spikes/out-rust
@@ -155,6 +162,7 @@ jobs:
           rm -f "$f"
         continue-on-error: true
       - name: S13b Corruption accounting
+        if: ${{ !inputs.only_shapes }}
         timeout-minutes: 5
         run: |
           mkdir -p spikes/out-rust
@@ -162,16 +170,43 @@ jobs:
           cat spikes/out-rust/s13b.txt
         continue-on-error: true
       - name: S15 A duplicating netem in a tree with another netem
+        if: ${{ !inputs.only_shapes }}
         timeout-minutes: 3
         run: |
           mkdir -p spikes/out-rust
           PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s15" bash spikes/s15-duplicate-in-tree.sh 2>&1 | tee spikes/out-rust/s15.txt
         continue-on-error: true
       - name: S14 A program as a node
+        if: ${{ !inputs.only_shapes }}
         timeout-minutes: 5
         run: |
           mkdir -p spikes/out-rust
           SPIKE_OUT="$PWD/spikes/out-rust/s14" bash spikes/s14-program-node.sh 2>&1 | tee spikes/out-rust/s14.txt
+        continue-on-error: true
+      # S16 to S19 (release 0.3): many nodes, queue disciplines, TCP, the steps of a trace. They use the tc built above.
+      - name: S16 Many nodes
+        timeout-minutes: 10
+        run: |
+          mkdir -p spikes/out-rust
+          PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s16" bash spikes/s16-many-nodes.sh 2>&1 | tee spikes/out-rust/s16.txt
+        continue-on-error: true
+      - name: S17 The queue lab
+        timeout-minutes: 15
+        run: |
+          mkdir -p spikes/out-rust
+          PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s17" bash spikes/s17-queue-lab.sh 2>&1 | tee spikes/out-rust/s17.txt
+        continue-on-error: true
+      - name: S18 TCP
+        timeout-minutes: 20
+        run: |
+          mkdir -p spikes/out-rust
+          PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s18" bash spikes/s18-tcp.sh 2>&1 | tee spikes/out-rust/s18.txt
+        continue-on-error: true
+      - name: S19 The steps of a trace
+        timeout-minutes: 15
+        run: |
+          mkdir -p spikes/out-rust
+          PATH="$RUNNER_TEMP/iproute2/tc:$PATH" SPIKE_OUT="$PWD/spikes/out-rust/s19" bash spikes/s19-trace-steps.sh 2>&1 | tee spikes/out-rust/s19.txt
         continue-on-error: true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
