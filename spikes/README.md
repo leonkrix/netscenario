@@ -62,7 +62,7 @@ Paste `spikes/out/summary.md` into the issue or the conversation that asked for 
 - S2 uses `ping` and therefore counts ICMP packets; ARP and IPv6 traffic are suppressed as well as possible, but a different count of packets before the test can still shift the pattern. The test says so when the result is not valid.
 - S4 and S5 measure one machine at one moment. They are for orders of magnitude, not for exact figures; the fidelity tests that come later (QA-06) repeat and publish properly.
 
-Five more are for release 0.3 and are about networks of many nodes, queue disciplines, TCP, the steps of a trace and a link built through a fabric namespace. They build labs of several namespaces with `lab.sh` and measure with `flow.py` (UDP), `tcpflow.py` (TCP) and `trace_steps.py`. Run them on a machine with `netem` for the whole picture; without it the parts that need it are skipped and say so. The workflow `Spikes` has the input `only_shapes` to run just these.
+Five more are for release 0.3 and are about networks of many nodes, queue disciplines, TCP, the steps of a trace and a link built through a fabric namespace. They build labs of several namespaces with `lab.sh` and measure with `flow.py` (UDP), `tcpflow.py` (TCP) and `trace_steps.py`. Run them on a machine with `netem` for the whole picture; without it the parts that need it are skipped and say so. The workflow `Spikes` has the inputs `only_shapes` to run just these and `only_fabric` to run just S20.
 
 | Spike | Question | Decides | Run |
 | --- | --- | --- | --- |
