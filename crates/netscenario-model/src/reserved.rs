@@ -6,19 +6,27 @@ use crate::source::{self, Kind, SourceIndex};
 
 /// Keys by the path of the mapping they stand in (indices as `[]`): key and the release.
 const RESERVED_KEYS: &[(&str, &str, &str)] = &[
-    ("", "repetitions", "0.2"),
     ("", "allow-limited", "0.3"),
     ("", "expect", "0.3"),
     ("", "params", "0.3"),
     ("", "include", "0.3"),
     ("", "matrix", "0.5"),
     ("", "mobility", "0.6"),
-    ("topology.links[]", "model", "0.2 and 0.3"),
+    ("topology.links[]", "model", "0.3"),
     ("topology.links[]", "address", "a later release"),
     ("topology.links[].forward", "queue", "0.3"),
     ("topology.links[].reverse", "queue", "0.3"),
     ("topology.links[].both", "queue", "0.3"),
 ];
+
+/// Keys that look like keys of the scenario and are not: they are options of a run, which is what makes a run of the scenario
+/// comparable with another one (the hash of the scenario is the same). Parent, key, what is wrong and what to do.
+const OPTIONS_OF_A_RUN: &[(&str, &str, &str, &str)] = &[(
+    "",
+    "repetitions",
+    "`repetitions` is an option of a run and not a key of the scenario",
+    "run the scenario several times with `netscenario run --repetitions n`, or `run(..., repetitions=n)` in Python (docs/STATISTICS.md)",
+)];
 
 /// Values by the generic path of the key they belong to: the value and the release.
 const RESERVED_VALUES: &[(&str, &str, &str)] = &[
@@ -63,6 +71,22 @@ pub(crate) fn check(index: &SourceIndex) -> Vec<Problem> {
                     Problem::new(planned(&format!("`{key}`"), release))
                         .at_path(path.clone())
                         .at_location(key_at, key_len),
+                );
+            }
+        }
+        // An option of a run that was written as a key
+        if let Some((key_at, key_len)) = entry.key {
+            let parent = source::generic(source::parent(path));
+            let key = path.rsplit(['.', ']']).next().unwrap_or("");
+            if let Some((_, _, message, help)) = OPTIONS_OF_A_RUN
+                .iter()
+                .find(|(p, k, _, _)| *p == parent && *k == key)
+            {
+                problems.push(
+                    Problem::new((*message).to_owned())
+                        .at_path(path.clone())
+                        .at_location(key_at, key_len)
+                        .with_help((*help).to_owned()),
                 );
             }
         }

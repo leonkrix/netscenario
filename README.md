@@ -12,9 +12,9 @@
 [![PyPI](https://img.shields.io/pypi/v/netscenario?label=PyPI)](https://pypi.org/project/netscenario/)
 [![crates.io](https://img.shields.io/crates/v/netscenario-cli?label=crates.io)](https://crates.io/crates/netscenario-cli)
 
-Describe a network, send traffic through it, measure what happens, and assert on it. In a test, in your CI, or on your laptop. (Running your own program inside the network comes with release 0.2.)
+Describe a network, send traffic through it, measure what happens, and assert on it. In a test, in your CI, or on your laptop.
 
-> **Status: pre-alpha, release 0.1.** The Kernel backend, the command line, the Python package and the pytest plugin work on Linux: you describe a point-to-point link in a file, run it in network namespaces, and get loss, delay percentiles and throughput back, with the seed and the versions that produced them. What is not there yet is listed under "What 0.1 does not do". The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
+> **Status: pre-alpha, release 0.2.** The Kernel backend, the command line, the Python package and the pytest plugin work on Linux: you describe a point-to-point link in a file, with burst loss, reordering, duplication, corruption, outages and changes over time, run it in network namespaces with a stream or **your own program** in the nodes, and get loss, delay percentiles, throughput and a series over time back, with the seed and the versions that produced them. Repeat a run with derived seeds to get **confidence intervals**, replay a run from its directory, and make reports as Markdown, JUnit and HTML. What is not there yet is listed under "What 0.2 does not do". The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
 
 ## Why
 
@@ -22,10 +22,10 @@ Code that talks over a network behaves differently on a good link and on a bad o
 
 netscenario is meant to make this a normal, repeatable test:
 
-- **A scenario is data.** Nodes, links, delay, jitter, loss, rate, written in a short file or built in code. (Bursty loss, queues and changes over time come in the next releases.)
-- **Results are numbers with provenance.** Loss, delay percentiles, throughput, together with the seed, the kernel and the tool versions that produced them.
-- **It fits the tools you have.** A command line, a Python package, a `pytest` plugin, and a CI that does not need a special machine.
-- **Later in the plan:** your own program or container as a node, assertions that understand noise (repetitions, confidence intervals, baselines), and reports as JUnit and HTML.
+- **A scenario is data.** Nodes, links, delay, jitter, loss (also in bursts), reordering, duplication, corruption, a rate, outages and changes over time, written in a short file or built in code. (Queues and more than two nodes come in the next release.)
+- **Results are numbers with provenance.** Loss, delay percentiles, throughput, the series over time and the time to recover after an event, together with the seed, the kernel and the tool versions that produced them. Several runs give intervals, and a run can be replayed.
+- **It fits the tools you have.** A command line, a Python package, a `pytest` plugin, reports for a CI (Markdown for the summary of a job, JUnit, one HTML file), and a CI that does not need a special machine.
+- **Later in the plan:** more than two nodes, TCP, queue disciplines, baselines and regression detection, containers as nodes, and backends that need no root.
 
 ## Install
 
@@ -106,55 +106,51 @@ error: `both` cannot be combined with `forward` or `reverse`
   = help: use `both` for the same values in both directions, or `forward` and `reverse` for different ones
 ```
 
-The commands are `run`, `validate`, `schema`, `doctor` and `clean` ([docs/CLI.md](docs/CLI.md)); the result is described field by field in [docs/RESULTS.md](docs/RESULTS.md). If something does not work, [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) starts from the message.
+The commands are `run`, `replay`, `report`, `validate`, `schema`, `doctor` and `clean` ([docs/CLI.md](docs/CLI.md)); the result is described field by field in [docs/RESULTS.md](docs/RESULTS.md). If something does not work, [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) starts from the message.
 
-## What 0.1 does and does not do
+## Time, noise and your own program
 
-| Does | Does not do yet |
-| --- | --- |
-| Two nodes and one link, IPv4 | More than two nodes (a star, a chain, a dumbbell: 0.3), IPv6 (0.3) |
-| Delay, jitter (uniform, normal), independent loss, a rate, different values per direction | Bursty loss, reordering, duplication, outages (0.2), queue disciplines (0.3) |
-| Constant-rate UDP streams, measured per packet: loss, one-way delay percentiles, throughput | Your own program or container as a node (0.2) |
-| Seeds, and the same lost packets for the same seed on the same kernel and `tc` (one stream in each direction) | Changes over time: a rate that drops, an outage (0.2) |
-| Results as JSON with the versions and the seed that made them | Reports as JUnit and HTML, repetitions and confidence intervals (0.2) |
-| A command line, a Python package, a pytest plugin | Backends other than the Linux kernel (0.4 and 0.5) |
-
-A scenario that asks for something that is not in the left column is refused with an error that names the release in which it is planned; it is never approximated silently.
-
-## How it is going to work
-
-A sketch of release 0.2, **not implemented**: a timeline, a bursty loss model, and assertions with repetitions. The real format of release 0.1 is described in [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md).
+**A link that changes while a stream runs** ([scenarios/bandwidth-drop-and-outage.yaml](scenarios/bandwidth-drop-and-outage.yaml)): the rate drops, the link goes quiet for two seconds, and the limit is taken away again.
 
 ```yaml
-# scenarios/lte-burst-loss.yaml
-version: 0
-name: lte-burst-loss
-seed: 42
-duration: 30s
-topology:
-  nodes: [client, server]
-  links:
-    - id: access
-      between: [client, server]
-      forward:
-        delay: 40ms
-        jitter: 5ms
-        rate: 10mbit
-        loss: { model: gilbert-elliott, p: 0.02, r: 0.3 }
-      reverse: { delay: 40ms, rate: 20mbit }
 timeline:
-  - { at: 10s, link: access, set: { forward.rate: 2mbit } }
-workloads:
-  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200 }
+  - { at: 10s, link: access, set: { both: { rate: 2mbit } } }
+  - { at: 20s, link: access, outage: 2s }
+  - { at: 25s, link: access, set: { both: { rate: null } } }
+```
+
+The result has the series by second in two views (what was sent in each second and what arrived in it), how late each step was, and how long each workload took to be back at its level after each event ([docs/RESULTS.md](docs/RESULTS.md); [examples/timeline/](examples/timeline/)).
+
+**One run is one sample.** Run it several times with seeds derived from one seed and assert on an interval ([docs/STATISTICS.md](docs/STATISTICS.md)):
+
+```bash
+netscenario run scenarios/lte-like.yaml --repetitions 10 --out results/lte    # ten runs of 30 s, an interval for each metric
+netscenario report results/lte --format md >> "$GITHUB_STEP_SUMMARY"           # the summary of a CI job
+netscenario replay results/lte/run-003                                         # the same seed, the same lost packets?
 ```
 
 ```python
-# test_media.py  (sketch)
-def test_media_survives_burst_loss(netscenario):
-    run = netscenario.run("scenarios/lte-burst-loss.yaml", repetitions=10)
-    assert run.metric("media.delivered_ratio").ci95_low > 0.97
-    assert run.metric("media.delay").p99 < 0.150  # seconds
+runs = ns.run("scenarios/lte-like.yaml", repetitions=10)
+assert runs.metric("media.loss_ratio").ci95_high < 0.05     # the upper end of the 95 % interval of the mean
+assert runs.metric("media.delay.p99").ci95_high < 0.150     # seconds
 ```
+
+**Your own program in the network**: a node can run a server, a client or the program that you build, started in order, waited for, supervised, with the addresses of the other nodes in its environment, and with the metrics it prints as lines of JSON in the result ([docs/PROGRAMS.md](docs/PROGRAMS.md); [examples/echo-server/](examples/echo-server/)). **Reports** ([docs/REPORTS.md](docs/REPORTS.md)) are made from a result directory: Markdown, JUnit with one test case for each workload, and one HTML file with charts and nothing to fetch ([sample](docs/sample-report/report.html)).
+
+## What 0.2 does and does not do
+
+| Does | Does not do yet |
+| --- | --- |
+| Two nodes and one link, IPv4; a link that goes down and up | More than two nodes (a star, a chain, a dumbbell: 0.3), nodes that join and leave (0.6), IPv6 (0.3) |
+| Delay, jitter (uniform, normal), loss at random and in bursts (Gilbert-Elliott, four states), reordering, duplication, corruption, a rate, outages, different values per direction | Queue limits and disciplines, other jitter distributions, traces (0.3) |
+| Changes over time: steps that set any of these, links down and up, outages, done so that the same seed gives the same lost packets | Mobility and geometry (0.6) |
+| UDP streams, constant, Poisson, on/off and bursty, also without the checksum, measured per packet: loss, one-way delay, throughput, reordering, jitter, loss runs, the series over time and the time to recover | TCP and request/response workloads (0.3), a container as a node (0.5) |
+| Your own program as a node, with readiness, supervision, logs and metrics; packet capture of a link as pcap | Baselines and regression detection (0.7) |
+| Seeds, and the same lost packets for the same seed on the same kernel and `tc`; repetitions with confidence intervals; replay of a run | Backends other than the Linux kernel (0.4 and 0.5) |
+| Results as JSON with the versions and the seed; reports as Markdown, JUnit and HTML | A user guide (0.8) |
+| A command line, a Python package, a pytest plugin | |
+
+A scenario that asks for something that is not in the left column is refused with an error that names the release in which it is planned; it is never approximated silently. **Release 0.2 changes the format of the scenario file and of the result** (version 0 of both, which may change in a minor release): the [changelog](CHANGELOG.md) names what breaks.
 
 ## Principles
 
@@ -174,14 +170,18 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [docs/COVERAGE.md](docs/COVERAGE.md): what is faithful on which backend.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the parts and how they fit.
 - [docs/PYTEST.md](docs/PYTEST.md): the pytest plugin: the fixture, the marker, the guard for machines that cannot run scenarios, the report.
-- [docs/PYTHON.md](docs/PYTHON.md): the Python package: scenarios, builder, results in SI units, errors, observing and stopping a run.
-- [docs/CLI.md](docs/CLI.md): the commands, their options, the exit codes and the JSON they print.
+- [docs/PYTHON.md](docs/PYTHON.md): the Python package: scenarios, builder, results in SI units, repetitions, reports, replay, errors, observing and stopping a run.
+- [docs/CLI.md](docs/CLI.md): the commands (`run`, `replay`, `report`, ...), their options, the exit codes and the JSON they print.
 - [docs/FIDELITY.md](docs/FIDELITY.md): how close the Kernel backend is to what a scenario says, measured, and what it does that you may not expect.
 - [docs/RESULTS.md](docs/RESULTS.md): the result of a run, field by field.
 - [docs/AGENT.md](docs/AGENT.md): the agent in the nodes: the packet, the record file, the command line.
 - [docs/PERMISSIONS.md](docs/PERMISSIONS.md): the ways to get the right to create namespaces, on a laptop, in a container and in a CI.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): from a message or a symptom to the cause and the fix.
-- [examples/](examples/): a UDP protocol on the command line, and a pytest test, with their output.
+- [examples/](examples/): a UDP protocol on the command line, your own program over a bad link, a pytest test with a confidence interval, and a link that changes during a run, with their output.
+- [docs/STATISTICS.md](docs/STATISTICS.md): repetitions and confidence intervals: the method, its coverage, and what "stable" means.
+- [docs/PROGRAMS.md](docs/PROGRAMS.md): your own program as a node: order, readiness, supervision, logs, metrics.
+- [docs/REPORTS.md](docs/REPORTS.md): Markdown, JUnit and HTML from a result directory, with a CI example and a [sample](docs/sample-report/).
+- [scenarios/](scenarios/): example scenarios, checked by the tests.
 - [docs/DOCTOR.md](docs/DOCTOR.md): `netscenario doctor` and `netscenario clean`: what they check, what they print, their exit codes.
 - [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md): the scenario file, version 0: every key, every unit, every error.
 - [docs/PRIOR-ART.md](docs/PRIOR-ART.md): what exists, and where netscenario differs.

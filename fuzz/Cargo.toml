@@ -57,3 +57,24 @@ path = "fuzz_targets/result.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "metrics"
+path = "fuzz_targets/metrics.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runset"
+path = "fuzz_targets/runset.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "report"
+path = "fuzz_targets/report.rs"
+test = false
+doc = false
+bench = false

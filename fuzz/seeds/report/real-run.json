@@ -1,0 +1,102 @@
+{
+  "format": "netscenario-result",
+  "version": 0,
+  "scenario": {
+    "name": "seed",
+    "hash": "sha256:7c257611ebcbe284aad7beed09e5393954ecbd7dbf8e8e8fdbb2e0df7670d29d"
+  },
+  "provenance": {
+    "netscenario": "0.1.0",
+    "started_at": "2026-11-01T00:16:14Z",
+    "backend": "kernel",
+    "backend_details": {
+      "rights": "user namespace",
+      "tc": "iproute2 6.15.0"
+    },
+    "kernel": "6.12.0-seed",
+    "cpu_model": "Seed CPU",
+    "cpus": 16
+  },
+  "seed": {
+    "value": 1,
+    "drawn": false,
+    "loss_reproducible": true,
+    "queue_checks": [
+      {
+        "link": "l",
+        "direction": "forward",
+        "expected": 125,
+        "counted": 125
+      },
+      {
+        "link": "l",
+        "direction": "reverse",
+        "expected": 0,
+        "counted": 0
+      }
+    ]
+  },
+  "accepted_restrictions": [],
+  "addresses": [
+    {
+      "node": "a",
+      "link": "l",
+      "address": "10.100.0.1"
+    },
+    {
+      "node": "b",
+      "link": "l",
+      "address": "10.100.0.2"
+    }
+  ],
+  "timing": {
+    "duration_ns": 2000000000,
+    "settle_ns": 1010000000
+  },
+  "workloads": [
+    {
+      "id": "w",
+      "kind": "udp-cbr",
+      "from": "a",
+      "to": "b",
+      "from_address": "10.100.0.1",
+      "to_address": "10.100.0.2:5000",
+      "rate_bits_per_second": 100000,
+      "packet_size_bytes": 200,
+      "start_ns": 0,
+      "duration_ns": 2000000000,
+      "sent": 125,
+      "received": 110,
+      "lost": 15,
+      "loss_ratio": 0.12,
+      "duplicates": 0,
+      "reordered": 0,
+      "unexpected": 0,
+      "delay": {
+        "min_ns": 5014168,
+        "mean_ns": 5023008,
+        "p50_ns": 5018320,
+        "p90_ns": 5031398,
+        "p95_ns": 5034690,
+        "p99_ns": 5050948,
+        "p999_ns": 5166328,
+        "max_ns": 5166328
+      },
+      "throughput": {
+        "bin_ns": 1000000000,
+        "bits_per_second": [
+          88000.0,
+          88000.0
+        ]
+      },
+      "sender": {
+        "max_lateness_ns": 93953,
+        "send_errors": 0,
+        "first_error": null
+      },
+      "foreign_datagrams": 0,
+      "records_file": "flow-0.records",
+      "packets_file": null
+    }
+  ]
+}

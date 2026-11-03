@@ -315,18 +315,19 @@ A port is read from outside, so the program needs no help and a UDP port (which 
 
 ## Keys that are reserved
 
-These keys are not part of version 0 in release 0.1. A scenario that uses one is refused with the message "`<key>` is planned for release X (see FEATURES.md)", not with "unknown key".
+These keys are not part of version 0 in release 0.2. A scenario that uses one is refused with the message "`<key>` is planned for release X (see FEATURES.md)", not with "unknown key".
 
 | Key | Planned in | Meaning |
 | --- | --- | --- |
-| `repetitions` | 0.2 | Repeated runs. |
 | `allow-limited`, `expect`, `params`, `include` | 0.3 | Accepted restrictions, assertions in the file, parameters and includes. |
 | `matrix` | 0.5 | Sweeps. |
 | `mobility` | 0.6 | Positions over time. |
-| `model` (in a link) | 0.2 and 0.3 | Link models: steps, trace, Markov, periodic. |
+| `model` (in a link) | 0.3 | Link models: trace, Markov, periodic (the steps over time are the `timeline`, 0.2). |
 | `queue` (in a direction) | 0.3 | Queue limit and discipline. |
 | `address` (node, link) | later | Fixed addresses. |
 | `kind` other than `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty` and `command` | 0.3 and later | `tcp-bulk`, `request-response`, `trace-replay` and more. |
+
+**`repetitions` is not a key of the scenario, and it is not planned as one**: how often a scenario is run is an option of a run (`netscenario run --repetitions n`, `run(..., repetitions=n)`; D-042, D-074), so that the file stays what is run and the hash of the scenario is the same for one run and for a set. A scenario that has the key is refused with a message that says so.
 
 ## Errors
 
@@ -364,13 +365,13 @@ error: the node 'sever' does not exist
   = path: topology.links[0].between[1]
   = help: did you mean 'server'? the nodes are: client, server
 
-error: `timeline` is planned for release 0.2 (see FEATURES.md)
-  --> access.yaml:18:1
+error: `queue` is planned for release 0.3 (see FEATURES.md)
+  --> access.yaml:11:9
    |
-17 |     packet-size: 1200b
-18 | timeline:
-   | ^^^^^^^^
-   = path: timeline
+10 |         delay: 40ms
+11 |         queue: { limit: 100 }
+   |         ^^^^^
+   = path: topology.links[0].forward.queue
 ```
 
 The messages for syntax, types, unknown and duplicate keys come from the YAML library and are shown in the words of this format; the others come from the checks of the model (D-020). The scenarios in `scenarios/invalid/` are faulty on purpose, one fault per file (and one with several), and their messages are held in snapshots, so a change in a message is a change in a test (QA-01).
