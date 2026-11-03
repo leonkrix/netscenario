@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import socket
+import statistics
 import struct
 import sys
 import time
@@ -33,6 +34,13 @@ def percentile(values, fraction):
     if not values:
         return None
     return values[min(len(values) - 1, int(round(fraction * (len(values) - 1))))]
+
+
+def tail_stdev(seen):
+    """The standard deviation of the delays of the second half of the packets (by sequence number)."""
+    ordered = [seen[n] for n in sorted(seen)]
+    tail = ordered[len(ordered) // 2 :]
+    return statistics.pstdev(tail) if len(tail) > 1 else None
 
 
 def server(fam, address, port, count, wait):
@@ -81,6 +89,7 @@ def server(fam, address, port, count, wait):
                 "missing_hash": hashlib.sha256(",".join(map(str, missing)).encode()).hexdigest()[:16],
                 "missing_first": missing[:20],
                 "reordered": reordered,
+                "stdev_tail_ms": tail_stdev(seen),
                 "bins": bins,
                 "delay_max_ms": delays[-1] if delays else None,
                 "delay_ms": {
