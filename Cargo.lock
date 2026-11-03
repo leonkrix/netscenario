@@ -581,6 +581,7 @@ dependencies = [
 name = "netscenario-core"
 version = "0.1.0"
 dependencies = [
+ "insta",
  "netscenario-agent",
  "netscenario-model",
  "serde",

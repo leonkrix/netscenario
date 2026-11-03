@@ -69,6 +69,7 @@ mod programs;
 mod provision;
 pub mod recovery;
 mod replay;
+pub mod report;
 mod result;
 mod run;
 mod runset;

@@ -798,11 +798,11 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A result as `netscenario run` writes it, reduced to one workload.
-    const RESULT: &str = r#"{
+    pub(crate) const RESULT: &str = r#"{
       "format": "netscenario-result", "version": 0,
       "scenario": {"name": "lte-like-link", "hash": "sha256:00"},
       "provenance": {"netscenario": "0.0.0", "started_at": "2026-10-30T12:27:30Z", "backend": "kernel",

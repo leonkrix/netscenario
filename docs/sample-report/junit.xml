@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="netscenario" tests="1" failures="0" errors="0" time="10.000">
+  <testsuite name="lte-like-link" tests="1" failures="0" errors="0" skipped="0" time="10.000" timestamp="2026-11-03T10:00:00Z">
+    <properties>
+      <property name="netscenario.version" value="0.2.0"/>
+      <property name="netscenario.backend" value="kernel"/>
+      <property name="netscenario.scenario_hash" value="sha256:6771b8f9c6e4a4503da551740c3f9c375a478d5c67908b7b0f28e73da9dca1a9"/>
+      <property name="netscenario.loss_reproducible" value="true"/>
+      <property name="netscenario.seed" value="42"/>
+    </properties>
+    <testcase classname="lte-like-link" name="media" time="10.000">
+      <properties>
+        <property name="netscenario.lte-like-link.media.sent" value="2083"/>
+        <property name="netscenario.lte-like-link.media.received" value="2003"/>
+        <property name="netscenario.lte-like-link.media.lost" value="80"/>
+        <property name="netscenario.lte-like-link.media.loss_ratio" value="0.03840614498319731"/>
+        <property name="netscenario.lte-like-link.media.reordered" value="5"/>
+        <property name="netscenario.lte-like-link.media.duplicates" value="0"/>
+        <property name="netscenario.lte-like-link.media.delay_min_s" value="0.035312393"/>
+        <property name="netscenario.lte-like-link.media.delay_p50_s" value="0.042805601"/>
+        <property name="netscenario.lte-like-link.media.delay_p95_s" value="0.161802491"/>
+        <property name="netscenario.lte-like-link.media.delay_p99_s" value="0.179467983"/>
+        <property name="netscenario.lte-like-link.media.delay_max_s" value="0.191645523"/>
+        <property name="netscenario.lte-like-link.media.jitter_mean_s" value="0.001375803"/>
+        <property name="netscenario.lte-like-link.media.throughput_mean_bps" value="1922880"/>
+        <property name="netscenario.lte-like-link.media.loss_runs_longest" value="63"/>
+      </properties>
+      <system-out>client -&gt; server: sent 2083, received 2003, lost 80 (3.84 %), delay p50 42.81 ms, p99 179.47 ms</system-out>
+    </testcase>
+  </testsuite>
+</testsuites>

@@ -22,7 +22,7 @@ They are part of the interface. A script can rely on them.
 
 | Code | Meaning |
 | --- | --- |
-| 0 | The command did what was asked (`run`: the run finished; `replay`: the same packets were lost, or the loss was not promised to repeat; `validate`: the scenario is valid; `doctor`: scenarios can run here). |
+| 0 | The command did what was asked (`run`: the run finished; `replay`: the same packets were lost, or the loss was not promised to repeat; `report`: the report was made; `validate`: the scenario is valid; `doctor`: scenarios can run here). |
 | 1 | A check that the command was asked to make did not hold. `replay`: the replay lost other packets than the original, although the loss repeats from the seed. Assertions on a result (the `expect` section) will return it too. |
 | 2 | The command line or the scenario is wrong: an unknown option, a file that cannot be read, a scenario with problems, or a scenario that asks for something the backend cannot reproduce exactly (the message names the feature, the backend and the way out). |
 | 3 | The machine does not allow the run: a tool or a permission is missing (`doctor` fails, the agent is not next to the program, the namespaces cannot be created). Run `netscenario doctor`. |
@@ -93,6 +93,14 @@ The summary sets the replay against the original:
 The programs of your own (`kind: command`) run in the directory where `replay` is run, because the directory of the original is not recorded.
 
 Exit codes: 0, 1 (not reproduced), 2 (the directory, the file or the options are wrong), 3, 4 and 130 or 143 as for `run`.
+
+## `report`
+
+```text
+netscenario report <dir> [--format md|html|junit] [--out <file>]
+```
+
+Makes a report from a result directory: a run (`--out` of `run`) or a set of runs (`--repetitions`). `--format md` (the default) is the summary for a CI job, `junit` one test case for each workload with the metrics as properties, `html` one file with inline charts and nothing to fetch. The report goes to standard output, or to `--out <file>`. Exit code 0 when the report was made (the failures of a JUnit report are in the report), 2 for a directory that is not a result or a file that cannot be read. The formats, the failure rules and a CI example are in [REPORTS.md](REPORTS.md) ([D-076](decisions/D-076.md)).
 
 ## `validate`
 

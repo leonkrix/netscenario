@@ -1,0 +1,50 @@
+---
+source: crates/netscenario-core/src/report/tests.rs
+expression: junit(&a_set())
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="netscenario" tests="6" failures="0" errors="0" time="0.000">
+  <testsuite name="t" tests="6" failures="0" errors="0" skipped="0" time="0.000" timestamp="2026-01-01T00:00:00Z">
+    <properties>
+      <property name="netscenario.t.repetitions" value="6"/>
+      <property name="netscenario.t.confidence" value="0.95"/>
+      <property name="netscenario.t.seed" value="7"/>
+      <property name="netscenario.t.w.loss_ratio.mean" value="0.07"/>
+      <property name="netscenario.t.w.loss_ratio.low" value="0.03333333333333333"/>
+      <property name="netscenario.t.w.loss_ratio.high" value="0.10666666666666667"/>
+      <property name="netscenario.t.w.throughput.mean.mean" value="7999999999999.999"/>
+      <property name="netscenario.t.w.throughput.mean.low" value="7999999999999.999"/>
+      <property name="netscenario.t.w.throughput.mean.high" value="7999999999999.999"/>
+    </properties>
+    <testcase classname="t" name="run-001" time="0.000">
+      <properties>
+        <property name="netscenario.t.run-001.seed" value="13836799946177249161"/>
+      </properties>
+    </testcase>
+    <testcase classname="t" name="run-002" time="0.000">
+      <properties>
+        <property name="netscenario.t.run-002.seed" value="4750671471871937387"/>
+      </properties>
+    </testcase>
+    <testcase classname="t" name="run-003" time="0.000">
+      <properties>
+        <property name="netscenario.t.run-003.seed" value="18150273063603234735"/>
+      </properties>
+    </testcase>
+    <testcase classname="t" name="run-004" time="0.000">
+      <properties>
+        <property name="netscenario.t.run-004.seed" value="3529771608138395119"/>
+      </properties>
+    </testcase>
+    <testcase classname="t" name="run-005" time="0.000">
+      <properties>
+        <property name="netscenario.t.run-005.seed" value="5542523133318148084"/>
+      </properties>
+    </testcase>
+    <testcase classname="t" name="run-006" time="0.000">
+      <properties>
+        <property name="netscenario.t.run-006.seed" value="382815278662272371"/>
+      </properties>
+    </testcase>
+  </testsuite>
+</testsuites>

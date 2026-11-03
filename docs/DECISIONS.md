@@ -81,3 +81,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-073](decisions/D-073.md) | What is measured is in the scenario, an option of a run replaces a key, and a capture takes both ends of a link | Accepted 2026-11-02 |
 | [D-074](decisions/D-074.md) | A set of runs has its own seeds, a named list of metrics, an expanded percentile interval for the mean, and ends with the first failure | Accepted 2026-11-02 |
 | [D-075](decisions/D-075.md) | A run records its scenario, and a replay runs it with the recorded seed and compares the lost packets and the machine | Accepted 2026-11-03 |
+| [D-076](decisions/D-076.md) | A report is made from a result directory and nothing else, in three formats, and the JUnit failures are the ones a result can know | Accepted 2026-11-03 |

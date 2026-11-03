@@ -12,6 +12,7 @@ A run writes a directory (`--out`, or the `out_dir` of `RunOptions`) with these 
 | `program-<id>.stdout.log`, `program-<id>.stderr.log` | For a program of your own (`kind: command`): the first megabyte of its standard output and of its standard error ([PROGRAMS.md](PROGRAMS.md)). |
 | `metrics-<id>.jsonl` | For a program that reported metrics: one line `{"t_ns", "metric", "value", "unit"}` for each reading, `t_ns` in nanoseconds from the start of the measured phase (negative before it). |
 | `runset.json` | Only for `--repetitions`, in the directory of the set, with a directory `run-001`, `run-002`, ... for each run: the values of every metric in every run and an interval for each. It is described in [STATISTICS.md](STATISTICS.md). |
+| `report.html`, ... | Not written by a run: `netscenario report <dir>` makes Markdown, JUnit and HTML from these files ([REPORTS.md](REPORTS.md)). |
 | `packets-<id>.jsonl` | Only if asked for (`export_packets`): one JSON line for each packet of workload `<id>`, described below. |
 
 The result is JSON, indented, with a line feed at the end. `format` is always `netscenario-result` and `version` is the version of this format (RPT-01, ENV-06): **0** until 1.0, which means that a field may change its meaning in a minor release and the changelog says so. A new field does not change the version. A program that reads results should refuse a `version` it does not know; `netscenario_core::RunResult::from_json` does.
