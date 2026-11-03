@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/topology-no-path.yaml
+---
+error: 'client' has no route to 'server'
+  --> topology-no-path.yaml:13:9
+   |
+12 |     from: client
+13 |     to: server
+   |         ^^^^^^
+   = path: workloads[0].to
+   = help: no chain of links joins 'client' and 'server': add a link, or list a route

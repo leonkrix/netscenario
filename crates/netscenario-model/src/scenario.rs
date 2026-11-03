@@ -12,6 +12,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::generators::{Generator, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
 use crate::measure::Measure;
+use crate::topology::Topology;
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
 /// The version of the scenario format that this crate reads: the integer `0`.
@@ -125,7 +126,7 @@ pub struct Scenario {
     /// The backend. `auto` (the default) or `kernel`.
     #[serde(default, skip_serializing_if = "Backend::is_default")]
     pub backend: Backend,
-    /// The nodes and the link between them.
+    /// The nodes, the links between them and the routes.
     pub topology: Topology,
     /// What sends traffic. At least one.
     pub workloads: Vec<Workload>,
@@ -138,24 +139,18 @@ pub struct Scenario {
     pub measure: Measure,
 }
 
-/// The nodes and the links. In release 0.1: two nodes and one link (point to point).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Topology {
-    /// The names of the nodes.
-    pub nodes: Vec<Name>,
-    /// The links between the nodes.
-    pub links: Vec<Link>,
-}
-
 /// A link between two nodes, with the impairments of each direction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Link {
     /// The name of the link.
     pub id: Name,
     /// The two nodes. `forward` is the direction from the first to the second.
     pub between: [Name; 2],
+    /// What the link costs the automatic routing: the shortest path is the smallest sum. 1 by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<u32>,
     /// The impairments from the first node to the second.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forward: Option<Impairments>,
@@ -165,6 +160,27 @@ pub struct Link {
     /// The same impairments in both directions. Cannot be combined with `forward` or `reverse`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub both: Option<Impairments>,
+}
+
+impl Link {
+    /// A link between two nodes, without impairments.
+    #[must_use]
+    pub fn new(id: Name, between: [Name; 2]) -> Self {
+        Self {
+            id,
+            between,
+            cost: None,
+            forward: None,
+            reverse: None,
+            both: None,
+        }
+    }
+
+    /// The cost, with the default if none is written.
+    #[must_use]
+    pub fn cost(&self) -> u32 {
+        self.cost.unwrap_or(1)
+    }
 }
 
 /// What a direction of a link does to the packets. Everything that is not set is not impaired.

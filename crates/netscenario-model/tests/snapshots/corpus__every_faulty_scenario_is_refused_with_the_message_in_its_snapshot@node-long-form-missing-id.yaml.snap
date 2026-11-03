@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/node-long-form-missing-id.yaml
+---
+error: the key `id` is missing
+ --> node-long-form-missing-id.yaml:5:19
+  |
+4 | topology:
+5 |   nodes: [client, {role: router}, server]
+  |                   ^
+  = path: topology.nodes[1]
+  = help: add `id:` to this mapping

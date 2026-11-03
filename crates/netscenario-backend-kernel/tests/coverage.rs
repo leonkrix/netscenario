@@ -49,9 +49,9 @@ fn what_is_exact_here_is_a_check_mark_there() {
                 "'{}' is limited in the code, but the page says '{cell}'",
                 feature.label()
             ),
-            // Planned: the format has it, the backend gets it in release 0.2
+            // Planned: the format has it, the backend gets it in release 0.3
             Support::Unsupported { reason, .. } => assert!(
-                cell.starts_with("✔ 0.2") && reason.contains("release 0.2"),
+                cell.starts_with("✔ 0.3") && reason.contains("release 0.3"),
                 "'{}' is unsupported on a complete machine, but the page says '{cell}': {reason}",
                 feature.label()
             ),

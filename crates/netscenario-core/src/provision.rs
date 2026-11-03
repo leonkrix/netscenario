@@ -113,8 +113,8 @@ fn build(
     seed: Option<u64>,
 ) -> Result<Built, Error> {
     let mut nodes = Vec::new();
-    for name in &scenario.topology.nodes {
-        nodes.push((name.clone(), backend.create_node(name)?));
+    for node in &scenario.topology.nodes {
+        nodes.push((node.id.clone(), backend.create_node(&node.id)?));
     }
     let node = |name: &Name| {
         nodes

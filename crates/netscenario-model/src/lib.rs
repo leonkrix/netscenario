@@ -30,6 +30,7 @@ mod command;
 mod decimal;
 pub mod error;
 mod generators;
+mod graph;
 mod measure;
 mod read;
 mod required;
@@ -38,6 +39,7 @@ mod scenario;
 mod schema;
 mod source;
 mod suggest;
+mod topology;
 pub mod units;
 mod validate;
 
@@ -45,6 +47,7 @@ pub use builder::ScenarioBuilder;
 pub use command::{MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ENV_ENTRIES, RESERVED_ENV_PREFIX};
 pub use error::{Error, Location, Problem};
 pub use generators::{Generator, Pattern, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
+pub use graph::{Destination, Path, PathError, RouteEntry, Routes};
 pub use measure::{
     MAX_BINS, MIN_BIN, Measure, MeasureOverrides, RecoveryBasis, RecoverySettings, SeriesSettings,
 };
@@ -52,11 +55,15 @@ pub use read::MAX_FILE_BYTES;
 pub use scenario::{
     Backend, Change, Command, Direction, Edit, Event, FormatVersion, Impairments,
     ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, OnExit, Ready, Reorder, Scenario,
-    Shutdown, Signal, Topology, True, UdpCbr, UdpChecksum, Workload, WorkloadKind,
+    Shutdown, Signal, True, UdpCbr, UdpChecksum, Workload, WorkloadKind,
 };
 pub use schema::json_schema;
+pub use topology::{
+    DEFAULT_DESTINATION, DEFAULT_METRIC, MAX_LINKS, MAX_NODES, MAX_ROUTES, Node, Role, Route,
+    Routing, Topology,
+};
 pub use units::{Duration, Name, Probability, Rate, Size, ValueError};
 pub use validate::{
-    MAX_BURST_PACKETS, MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE,
-    MIN_PACKET_SIZE_WITHOUT_CHECKSUM,
+    MAX_BURST_PACKETS, MAX_COST, MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MAX_WEIGHT,
+    MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM,
 };

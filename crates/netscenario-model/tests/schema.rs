@@ -97,6 +97,10 @@ fn the_schema_refuses_faults_of_the_shape() {
         "wrong-version",
         "missing-required-key",
         "missing-loss-probability",
+        "node-long-form-misspelled-key",
+        "node-long-form-missing-id",
+        "node-role-unknown",
+        "routes-missing-via",
     ] {
         let text =
             fs::read_to_string(root().join(format!("scenarios/invalid/{name}.yaml"))).unwrap();

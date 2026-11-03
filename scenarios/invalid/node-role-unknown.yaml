@@ -2,12 +2,10 @@ version: 0
 name: t
 duration: 10s
 topology:
-  nodes: [client, server, extra]
+  nodes: [client, {id: r1, role: switch}, server]
   links:
-    - id: access
-      between: [client, server]
-      forward:
-        delay: 40ms
+    - { id: access, between: [client, r1] }
+    - { id: core, between: [r1, server] }
 workloads:
   - id: media
     kind: udp-cbr

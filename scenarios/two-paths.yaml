@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Two routers join a client and a server: a fast path (metric 10) and a slow one (metric 20). The routes are listed, so the
+# metrics decide; at 8 s the fast path goes down at the client and the packets take the slow one, at 14 s it comes back.
+# `ignore_routes_with_linkdown` is set by the Kernel backend where a node has more than one route.
+version: 0
+name: two-paths
+duration: 20s
+topology:
+  routing: manual
+  nodes:
+    - client
+    - { id: fast, role: router }
+    - { id: slow, role: router }
+    - server
+  links:
+    - { id: client-fast, between: [client, fast], both: { delay: 5ms } }
+    - { id: fast-server, between: [fast, server], both: { delay: 5ms } }
+    - { id: client-slow, between: [client, slow], both: { delay: 20ms } }
+    - { id: slow-server, between: [slow, server], both: { delay: 20ms } }
+  routes:
+    - { node: client, to: server, via: client-fast, metric: 10 }
+    - { node: client, to: server, via: client-slow, metric: 20 }
+    - { node: fast, to: server, via: fast-server }
+    - { node: slow, to: server, via: slow-server }
+    - { node: server, to: client, via: fast-server, metric: 10 }
+    - { node: server, to: client, via: slow-server, metric: 20 }
+    - { node: fast, to: client, via: client-fast }
+    - { node: slow, to: client, via: client-slow }
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 2mbit
+    packet-size: 1200b
+timeline:
+  - { at: 8s, link: client-fast, down: true }
+  - { at: 14s, link: client-fast, up: true }

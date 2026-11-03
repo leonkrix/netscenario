@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/routes-missing-via.yaml
+---
+error: the key `via` is missing
+  --> routes-missing-via.yaml:10:7
+   |
+ 9 |   routes:
+10 |     - { node: client, to: server }
+   |       ^
+   = path: topology.routes[0]
+   = help: add `via:` to this mapping

@@ -46,8 +46,8 @@ const NEEDS_TC: &[Feature] = &[
 
 /// The features that the Kernel backend gets in later steps of a release: the format knows them, the backend does not
 /// apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says `✔` and the
-/// release for them. None at the moment (the programs of your own were the last, D-072).
-const PLANNED: &[Feature] = &[];
+/// release for them. Networks of several nodes and their routes (D-078) are built in the next piece of release 0.3.
+const PLANNED: &[Feature] = &[Feature::MultipleNodes, Feature::StaticRoutes];
 
 /// What the probe of `doctor` found out about the kernel and `tc` of this machine (D-068): for each thing a scenario
 /// can need, whether it was accepted or what was answered. The version of `tc` says what it should know; the probe says
@@ -194,7 +194,7 @@ fn by_version(environment: &Environment) -> Capabilities {
         capabilities = capabilities.with(
             *feature,
             Support::Unsupported {
-                reason: "the Kernel backend applies this from release 0.2, and this build does not yet"
+                reason: "the Kernel backend applies this from release 0.3, and this build does not yet"
                     .to_owned(),
                 fix: "leave it out of the scenario for now (see docs/COVERAGE.md for the release that has it)"
                     .to_owned(),
@@ -389,7 +389,7 @@ mod tests {
             else {
                 panic!("{feature:?} is not built yet");
             };
-            assert!(reason.contains("release 0.2"), "{reason}");
+            assert!(reason.contains("release 0.3"), "{reason}");
             assert!(fix.contains("COVERAGE.md"), "{fix}");
         }
     }

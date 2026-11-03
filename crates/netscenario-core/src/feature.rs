@@ -53,6 +53,12 @@ pub enum Feature {
     /// The capture of the interfaces of a link as pcap files (`measure.capture`, PRB-09). Last in the list because it was added
     /// last.
     PacketCapture,
+    /// A network of more than two nodes or more than one link: routers, several senders and receivers, several paths
+    /// (D-078). Last in the list because it was added last.
+    MultipleNodes,
+    /// Routes the scenario takes a hand in: a node that is a router, listed routes, manual routing, a link `cost` or
+    /// `ecmp` (D-078). Last in the list because it was added last.
+    StaticRoutes,
 }
 
 impl Feature {
@@ -78,6 +84,8 @@ impl Feature {
         Feature::SeededLoss,
         Feature::TrafficPatterns,
         Feature::PacketCapture,
+        Feature::MultipleNodes,
+        Feature::StaticRoutes,
     ];
 
     /// A short stable name, for results and logs.
@@ -104,6 +112,8 @@ impl Feature {
             Feature::SeededLoss => "seeded-loss",
             Feature::TrafficPatterns => "traffic-patterns",
             Feature::PacketCapture => "packet-capture",
+            Feature::MultipleNodes => "multiple-nodes",
+            Feature::StaticRoutes => "static-routes",
         }
     }
 
@@ -131,6 +141,8 @@ impl Feature {
             Feature::SeededLoss => "Same seed, same loss pattern",
             Feature::TrafficPatterns => "UDP traffic patterns (Poisson, on/off, bursts)",
             Feature::PacketCapture => "Packet capture",
+            Feature::MultipleNodes => "Several nodes and links",
+            Feature::StaticRoutes => "Routers and routes",
         }
     }
 }
@@ -182,7 +194,30 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             found.push(Requirement { feature, path });
         }
     };
-    need(Feature::PointToPoint, "topology".to_owned());
+    if scenario.topology.nodes.len() == 2 && scenario.topology.links.len() == 1 {
+        need(Feature::PointToPoint, "topology".to_owned());
+    } else {
+        need(Feature::MultipleNodes, "topology".to_owned());
+    }
+    let topology = &scenario.topology;
+    if let Some(index) = topology
+        .nodes
+        .iter()
+        .position(|node| node.role == netscenario_model::Role::Router)
+    {
+        need(Feature::StaticRoutes, format!("topology.nodes[{index}]"));
+    } else if !topology.routes.is_empty() {
+        need(Feature::StaticRoutes, "topology.routes".to_owned());
+    } else if topology.routing == netscenario_model::Routing::Manual {
+        need(Feature::StaticRoutes, "topology.routing".to_owned());
+    } else if topology.ecmp {
+        need(Feature::StaticRoutes, "topology.ecmp".to_owned());
+    } else if let Some(index) = topology.links.iter().position(|link| link.cost.is_some()) {
+        need(
+            Feature::StaticRoutes,
+            format!("topology.links[{index}].cost"),
+        );
+    }
     need(Feature::Ipv4, "topology".to_owned());
     for (index, link) in scenario.topology.links.iter().enumerate() {
         let base = format!("topology.links[{index}]");
@@ -273,6 +308,48 @@ mod tests {
 
     fn features(scenario: &Scenario) -> Vec<Feature> {
         requirements(scenario).iter().map(|r| r.feature).collect()
+    }
+
+    /// A network of more than two nodes needs `MultipleNodes` and not `PointToPoint`; routers, listed routes, manual routing, a
+    /// cost and `ecmp` each need `StaticRoutes`, and a plain network needs none of them (so a backend without routing still
+    /// runs the scenarios of the earlier releases).
+    #[test]
+    fn a_network_of_several_nodes_and_its_routes_ask_for_their_features() {
+        let network = |topology: &str| {
+            scenario(&format!(
+                "{HEAD}topology:\n{topology}workloads:\n  - {{ id: w, kind: udp-cbr, from: a, to: c, rate: 1mbit, packet-size: 1200b }}\n"
+            ))
+        };
+        let chain = "  nodes: [a, { id: b, role: router }, c]\n  links:\n    - { id: ab, between: [a, b] }\n    - { id: bc, between: [b, c] }\n";
+        let found = features(&network(chain));
+        assert!(found.contains(&Feature::MultipleNodes) && !found.contains(&Feature::PointToPoint));
+        assert!(found.contains(&Feature::StaticRoutes));
+        let at = requirements(&network(chain))
+            .into_iter()
+            .find(|r| r.feature == Feature::StaticRoutes)
+            .unwrap();
+        assert_eq!(at.path, "topology.nodes[1]");
+        // Hosts only, computed routes: several nodes, but no routing of its own to ask for. (A host in the middle does not
+        // forward, so this needs a path that does not pass one: two links from one host.)
+        let star = "  nodes: [a, b, c]\n  links:\n    - { id: ac, between: [a, c] }\n    - { id: bc, between: [b, c] }\n";
+        let found = features(&network(star));
+        assert!(found.contains(&Feature::MultipleNodes) && !found.contains(&Feature::StaticRoutes));
+        for (extra, path) in [
+            (
+                "  routing: manual\n  routes:\n    - { node: a, to: c, via: ac }\n",
+                "topology.routes",
+            ),
+            ("  ecmp: true\n", "topology.ecmp"),
+        ] {
+            let found = requirements(&network(&format!("{star}{extra}")));
+            let asked = found.iter().find(|r| r.feature == Feature::StaticRoutes);
+            assert_eq!(asked.map(|r| r.path.as_str()), Some(path), "{extra}");
+        }
+        // Canary: a plain link is a point to point network and asks for neither
+        let plain = features(&with_link("", ""));
+        assert!(
+            !plain.contains(&Feature::MultipleNodes) && !plain.contains(&Feature::StaticRoutes)
+        );
     }
 
     #[test]

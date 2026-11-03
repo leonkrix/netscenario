@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/topology-node-without-link.yaml
+---
+error: the node 'spare' has no link
+ --> topology-node-without-link.yaml:5:27
+  |
+4 | topology:
+5 |   nodes: [client, server, spare]
+  |                           ^^^^^
+  = path: topology.nodes[2]
+  = help: add a link to it, or remove the node

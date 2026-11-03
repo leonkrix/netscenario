@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A chain of two routers between a client and a server: three links, each with its own values. The routes are computed (the
+# shortest path); a router is a node with `role: router`, a host does not forward.
+version: 0
+name: three-hops
+seed: 7
+duration: 20s
+topology:
+  nodes:
+    - client
+    - { id: edge, role: router }
+    - { id: core, role: router }
+    - server
+  links:
+    - id: access
+      between: [client, edge]
+      both: { delay: 5ms, rate: 20mbit }
+    - id: backbone
+      between: [edge, core]
+      both: { delay: 15ms, loss: { model: random, p: 0.1% } }
+    - id: delivery
+      between: [core, server]
+      both: { delay: 5ms, rate: 100mbit }
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: client
+    to: server
+    rate: 2mbit
+    packet-size: 1200b

@@ -7,7 +7,7 @@
 use netscenario_model::{
     Backend, Change, Command, Direction, Duration, Edit, Event, FormatVersion, Impairments,
     ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, MAX_PACKET_SIZE,
-    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM, Measure, Name,
+    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM, Measure, Name, Node,
     OnExit, Probability, Rate, Ready, RecoveryBasis, RecoverySettings, Reorder, Scenario,
     SeriesSettings, Shutdown, Signal, Size, Topology, UdpCbr, UdpChecksum, Workload,
 };
@@ -295,15 +295,21 @@ fn valid_scenario() -> impl Strategy<Value = Scenario> {
                     } else {
                         Backend::Auto
                     },
-                    topology: Topology {
-                        nodes: vec![Name::new("a").unwrap(), Name::new("b").unwrap()],
-                        links: vec![Link {
-                            id: Name::new("link").unwrap(),
-                            between: [Name::new("a").unwrap(), Name::new("b").unwrap()],
-                            forward,
-                            reverse,
-                            both,
-                        }],
+                    topology: {
+                        let mut link = Link::new(
+                            Name::new("link").unwrap(),
+                            [Name::new("a").unwrap(), Name::new("b").unwrap()],
+                        );
+                        link.forward = forward;
+                        link.reverse = reverse;
+                        link.both = both;
+                        Topology::new(
+                            vec![
+                                Node::host(Name::new("a").unwrap()),
+                                Node::host(Name::new("b").unwrap()),
+                            ],
+                            vec![link],
+                        )
                     },
                     workloads,
                     timeline: timeline(duration, &steps),

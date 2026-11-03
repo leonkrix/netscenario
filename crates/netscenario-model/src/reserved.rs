@@ -103,15 +103,6 @@ pub(crate) fn check(index: &SourceIndex) -> Vec<Problem> {
                     .at_location(entry.value.0, entry.value.1),
             );
         }
-        // A node written as a mapping (the longer form with a role)
-        if generic == "topology.nodes[]" && entry.kind == Kind::Mapping {
-            problems.push(
-                Problem::new(planned("a node written as a mapping, with a role,", "0.3"))
-                    .at_path(path.clone())
-                    .at_location(entry.value.0, entry.value.1)
-                    .with_help("write the node as its name"),
-            );
-        }
     }
     problems
 }

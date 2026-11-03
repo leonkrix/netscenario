@@ -477,6 +477,15 @@
           ],
           "description": "The same impairments in both directions. Cannot be combined with `forward` or `reverse`."
         },
+        "cost": {
+          "description": "What the link costs the automatic routing: the shortest path is the smallest sum. 1 by default.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "forward": {
           "anyOf": [
             {
@@ -654,6 +663,36 @@
       ],
       "pattern": "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$",
       "type": "string"
+    },
+    "Node": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Name"
+        },
+        {
+          "$ref": "#/$defs/NodeLong"
+        }
+      ],
+      "description": "A node: its name (a host), or a mapping with the name and a role."
+    },
+    "NodeLong": {
+      "additionalProperties": false,
+      "description": "The long form of a node in the schema.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the node."
+        },
+        "role": {
+          "$ref": "#/$defs/Role",
+          "default": "host",
+          "description": "What the node does with packets that are not for it. A host by default."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
     },
     "OnExit": {
       "description": "What the run does when a program ends by itself before the end of the run, with an exit code other than 0 or by a\nsignal (D-072).",
@@ -861,6 +900,78 @@
       ],
       "type": "object"
     },
+    "Role": {
+      "description": "What a node does with packets that are not for it.",
+      "oneOf": [
+        {
+          "const": "host",
+          "description": "An end system: it sends and receives, and does not forward. The default.",
+          "type": "string"
+        },
+        {
+          "const": "router",
+          "description": "It forwards packets between its links.",
+          "type": "string"
+        }
+      ]
+    },
+    "Route": {
+      "additionalProperties": false,
+      "description": "A route of a node: to a destination, out of one of its links. Several routes of the same node and destination form a\nfailover (different metrics: the smallest is used while its link is up) or a multipath (the same metric, shared by\n`weight`).",
+      "properties": {
+        "metric": {
+          "description": "The preference: the smaller is used first. 100 by default.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "node": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that has the route."
+        },
+        "to": {
+          "$ref": "#/$defs/Name",
+          "description": "The destination: a node (its address on the loopback of the node) or `default` for every destination that has no\nroute of its own."
+        },
+        "via": {
+          "$ref": "#/$defs/Name",
+          "description": "The link that the packets leave by; the node at its other end is the next hop. A link and not a neighbour, so that\ntwo links between the same nodes are told apart."
+        },
+        "weight": {
+          "description": "The share of a multipath route, 1 by default. Routes with the same metric share the packets by their weights.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "node",
+        "to",
+        "via"
+      ],
+      "type": "object"
+    },
+    "Routing": {
+      "description": "How the routes of the nodes come about.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "The tool computes a route from every node to every node by the shortest path (the sum of the `cost` of the links,\n1 by default), and the routes that are listed add to those or replace the routes of the same node and\ndestination. The default.",
+          "type": "string"
+        },
+        {
+          "const": "manual",
+          "description": "Only the listed routes exist.",
+          "type": "string"
+        }
+      ]
+    },
     "SeriesSettings": {
       "additionalProperties": false,
       "description": "The series of each workload by time bin.",
@@ -953,21 +1064,36 @@
     },
     "Topology": {
       "additionalProperties": false,
-      "description": "The nodes and the links. In release 0.1: two nodes and one link (point to point).",
+      "description": "The nodes, the links and the routes of a scenario.",
       "properties": {
+        "ecmp": {
+          "description": "With `auto`: install every equally short path as a multipath route, not only the first. Off by default.",
+          "type": "boolean"
+        },
         "links": {
-          "description": "The links between the nodes.",
+          "description": "The links between the nodes. Two nodes may have several.",
           "items": {
             "$ref": "#/$defs/Link"
           },
           "type": "array"
         },
         "nodes": {
-          "description": "The names of the nodes.",
+          "description": "The nodes: a name for a host, or `{ id, role }`.",
           "items": {
-            "$ref": "#/$defs/Name"
+            "$ref": "#/$defs/Node"
           },
           "type": "array"
+        },
+        "routes": {
+          "description": "Routes of single nodes: they add to the automatic routes, or replace those of the same node and destination, or\n(with `routing: manual`) are the only ones.",
+          "items": {
+            "$ref": "#/$defs/Route"
+          },
+          "type": "array"
+        },
+        "routing": {
+          "$ref": "#/$defs/Routing",
+          "description": "How the routes come about: `auto` (the default) or `manual`."
         }
       },
       "required": [
@@ -1340,7 +1466,7 @@
     },
     "topology": {
       "$ref": "#/$defs/Topology",
-      "description": "The nodes and the link between them."
+      "description": "The nodes, the links between them and the routes."
     },
     "version": {
       "$ref": "#/$defs/FormatVersion",
