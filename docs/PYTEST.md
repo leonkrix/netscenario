@@ -20,7 +20,7 @@ def test_with_the_marker(netscenario_result):           # the result of the scen
     assert netscenario_result["media"].sent > 0
 ```
 
-Assertions are plain `assert` on the numbers of the [result](RESULTS.md), which are in SI units (seconds, bits per second, ratios from 0 to 1). The `expect` section of a scenario file and statistical assertions (confidence intervals, baselines) come in later releases.
+Assertions are plain `assert` on the numbers of the [result](RESULTS.md), which are in SI units (seconds, bits per second, ratios from 0 to 1). The `expect` section of a scenario file and baselines come in later releases.
 
 ## The fixture `netscenario`
 
@@ -30,7 +30,8 @@ It gives a `Runner` for the test.
 | --- | --- |
 | `netscenario.run(scenario, ...)` | Runs a scenario and returns the `netscenario.Result`. `scenario` is a `Scenario` or the name of a file. The options are those of `netscenario.run`: `seed`, `settle`, `observer`, `cancel` and `out` for the directory, and the arguments that replace a key of the section `measure` of the scenario for this run (`bin`, `recovery_basis`, `recovery_baseline`, `recovery_window`, `recovery_fraction`, `capture`, `packets`; [SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#what-is-measured)). |
 | `netscenario.load(name)` | Reads and checks a scenario file and returns the `Scenario`, without running it. This works on any machine. |
-| `netscenario.results` | The results of the runs of this test so far. |
+| `netscenario.run(scenario, repetitions=n, ...)` | Runs the scenario `n` times (5 to 1000) with derived seeds and returns a `netscenario.RunSet` with an interval for each metric, see [PYTHON.md](PYTHON.md#repetitions-and-confidence-intervals) and [STATISTICS.md](STATISTICS.md). `statistic` (`"mean"` or `"median"`) and `confidence` (0.95) go with it. |
+| `netscenario.results` | The results of the runs of this test so far (a set is one entry). |
 
 **Scenario files** are looked for in this order: next to the test file, in the directories of the ini option `netscenario_scenarios` (relative to the ini file), and in the root directory of the project. An absolute path is taken as it is. A file that is not found raises `FileNotFoundError` that lists the places it looked in.
 
@@ -38,9 +39,17 @@ It gives a `Runner` for the test.
 
 A run can be interrupted: Ctrl-C and `pytest-timeout` stop it, the network is torn down first, and the interrupt is raised afterwards.
 
-## The marker `netscenario` and the fixture `netscenario_result`
+## The marker `netscenario` and the fixtures `netscenario_result` and `netscenario_runs`
 
 `@pytest.mark.netscenario("file.yaml", seed=None, settle=None, packets=False)` names a scenario file for the test, and `netscenario_result` runs it and gives the result. The marker takes exactly one argument and the options `seed`, `settle`, and those that replace a key of `measure` (`packets`, `capture`, `bin`, `recovery_basis`, `recovery_baseline`, `recovery_window`, `recovery_fraction`; [RESULTS.md](RESULTS.md)); anything else is an error of the test with a message that says what is wrong.
+
+With `repetitions` (and optionally `statistic` and `confidence`) in the marker the scenario is run as a set, and the fixture `netscenario_runs` gives the `netscenario.RunSet`; `netscenario_result` is then an error that says so, and `netscenario_runs` without `repetitions` is one too:
+
+```python
+@pytest.mark.netscenario("lte-like.yaml", repetitions=10, seed=42)
+def test_the_loss_is_low(netscenario_runs):
+    assert netscenario_runs.metric("media.loss_ratio").ci95_high < 0.05
+```
 
 ## A machine that cannot run scenarios
 
@@ -56,8 +65,8 @@ The rule behind `auto` is the one of the project's own tests: on a laptop withou
 
 ## The report
 
-- **Failing tests** show a section `netscenario` with the numbers of every run of the test (the scenario, the backend, the seed, and for each workload the packets, the loss, the reordering and the delay) and the path of `result.json`. Run with `-rA` to see it for passing tests too.
-- **JUnit files** (`--junitxml`) get the numbers as properties of the test: `netscenario.<scenario>.<workload>.sent`, `received`, `lost`, `loss_ratio`, `reordered`, `delay_p50_s` and `delay_p99_s`. A CI that reads JUnit can chart them.
+- **Failing tests** show a section `netscenario` with the numbers of every run of the test (the scenario, the backend, the seed, and for each workload the packets, the loss, the reordering and the delay) and the path of `result.json`; for a set the headline metrics with their intervals and the path of `runset.json`. Run with `-rA` to see it for passing tests too.
+- **JUnit files** (`--junitxml`) get the numbers as properties of the test: `netscenario.<scenario>.<workload>.sent`, `received`, `lost`, `loss_ratio`, `reordered`, `delay_p50_s` and `delay_p99_s`. A CI that reads JUnit can chart them. For a set of runs they are `netscenario.<scenario>.<metric>.mean`, `.low` and `.high` for the loss, the delay percentiles 50, 95 and 99 and the throughput, and `netscenario.<scenario>.repetitions` and `.confidence`.
 - The header of the session names the version of netscenario.
 
 A run that drew its own seed says so (`seed 123 (drawn)`), and a test can repeat it with `netscenario.run(..., seed=result.seed.value)`.
@@ -71,4 +80,4 @@ A run that drew its own seed says so (`seed 123 (drawn)`), and a test can repeat
 
 ## Not yet
 
-Parallel tests with `pytest-xdist` work in principle (every run owns its namespaces, and the names include the process), but are not tested before release 0.5 (PYT-07). Repetitions and confidence intervals come with 0.2.
+Parallel tests with `pytest-xdist` work in principle (every run owns its namespaces, and the names include the process), but are not tested before release 0.5 (PYT-07).

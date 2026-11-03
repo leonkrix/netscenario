@@ -88,6 +88,20 @@ py-fmt: py-sync
     uv run ruff check --fix python examples
     uv run ruff format python examples
 
+# The stability criterion of release 0.2: the acceptance test of the confidence interval (python/netscenario/tests/test_acceptance.py)
+# run many times, each time with a seed of its own. It fails if any run fails. One round takes about 40 seconds, so a hundred take
+# more than an hour; .github/workflows/stability.yml runs it once a week.
+stability runs="100": py-sync py-programs
+    #!/usr/bin/env bash
+    set -uo pipefail
+    failed=0
+    for i in $(seq 1 {{runs}}); do
+        echo "--- round $i of {{runs}}"
+        uv run pytest python/netscenario/tests/test_acceptance.py -q -p no:cacheprovider || failed=$((failed + 1))
+    done
+    echo "$failed of {{runs}} rounds failed"
+    [ "$failed" -eq 0 ]
+
 # Run the Python tests with the lowest supported Python (3.11, uv fetches it)
 py-test-min:
     uv run --python 3.11 --isolated --with-editable python/netscenario --with-editable python/pytest-netscenario --with pytest pytest

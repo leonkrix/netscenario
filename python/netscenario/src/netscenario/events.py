@@ -6,6 +6,9 @@ The events come in this order: :class:`Provisioned`, :class:`ReceiversReady`, :c
 step of the timeline comes between :class:`Started` and :class:`Settling`. :class:`TearingDown`
 also comes after an error or a cancel; :class:`Finished` only after a run that succeeded. All
 times are in seconds.
+
+A run of a set of repetitions (``run(..., repetitions=n)``) reports :class:`RepetitionStarted`
+before the events of each of its runs.
 """
 
 from __future__ import annotations
@@ -82,6 +85,20 @@ class StepDone:
     """How late the step was, in seconds: from the moment the file gives to its end."""
 
 
+@dataclass(frozen=True)
+class RepetitionStarted:
+    """A run of a set of repetitions begins. Not reported for a single run.
+
+    It comes last in this module because it was added after the others (the order of the events of
+    one run is above); within a set it comes first in each run.
+    """
+
+    index: int
+    """The number of the run in the set, from 0."""
+    total: int
+    """How many runs the set has."""
+
+
 RunEvent = (
     Provisioned
     | ReceiversReady
@@ -92,6 +109,7 @@ RunEvent = (
     | TearingDown
     | Finished
     | StepDone
+    | RepetitionStarted
 )
 """Any of the events of a run."""
 
@@ -117,6 +135,8 @@ def make_event(kind: str, fields: dict[str, float]) -> RunEvent | None:
             return Finished()
         case "step_done":
             return StepDone(event=int(fields["event"]), lateness=fields["lateness"])
+        case "repetition_started":
+            return RepetitionStarted(index=int(fields["index"]), total=int(fields["total"]))
         case _:
             # An event of a newer core than this package knows: it is not passed on
             return None

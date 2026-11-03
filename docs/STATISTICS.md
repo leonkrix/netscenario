@@ -6,6 +6,8 @@ A single run is one sample: the same scenario with another seed loses other pack
 netscenario run scenarios/lte-like.yaml --repetitions 10 --out results/lte
 ```
 
+In Python the same is `ns.run(scenario, repetitions=10)`, which returns a `RunSet` ([PYTHON.md](PYTHON.md#repetitions-and-confidence-intervals)), and in pytest the marker `repetitions=` with the fixture `netscenario_runs` ([PYTEST.md](PYTEST.md)).
+
 ## What is written
 
 ```text

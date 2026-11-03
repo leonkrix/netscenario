@@ -350,3 +350,35 @@ def test_the_doctor_reports_this_machine() -> None:
     assert report.explain() == ""
     ids = {check.id for check in report.checks}
     assert {"tool-tc", "can-create-namespaces", "netem"} <= ids
+
+
+def test_a_set_of_repetitions_has_derived_seeds_and_an_interval_for_each_metric(
+    tmp_path: Path,
+) -> None:
+    # 1 s at 2 mbit/s with 1200 byte payloads is 208 packets; at 10 % loss the lost packets of a
+    # run have the mean 20.8 and the standard deviation 4.3, so the five runs are all alike with a
+    # probability far below 1e-5
+    lossy = scenario(duration="1s", link=ns.Impairments(delay="5ms", loss="10%"), seed=7)
+    heard: list[RunEvent] = []
+    runs = ns.run(lossy, repetitions=5, out=tmp_path / "set", settle=0.3, observer=heard.append)
+    assert isinstance(runs, ns.RunSet)
+    assert (runs.seed.value, runs.seed.drawn, runs.repetitions) == (7, False, 5)
+    assert runs.out_dir == tmp_path / "set"
+    assert (runs.out_dir / "runset.json").is_file()
+    # Every run is a whole result in a directory of its own, with the seed the set derived for it
+    results = runs.results
+    assert [result.seed.value for result in results] == [run.seed for run in runs.runs]
+    assert len({run.seed for run in runs.runs}) == 5
+    lost = runs.metric("media.lost")
+    assert lost.values == tuple(float(result["media"].lost) for result in results)
+    assert len(set(lost.values)) >= 2, "five runs with different seeds lost the same number"
+    assert lost.interval.low <= lost.mean <= lost.interval.high
+    assert 0 < runs.metric("media.loss_ratio").ci95_high < 0.5
+    # The observer heard each repetition begin, before the events of its run
+    started = [e for e in heard if isinstance(e, ns.events.RepetitionStarted)]
+    assert [(e.index, e.total) for e in started] == [(i, 5) for i in range(5)]
+    assert isinstance(heard[0], ns.events.RepetitionStarted)
+    # The same seed gives the same set: the lost packets, run by run
+    again = ns.run(lossy, repetitions=5, out=tmp_path / "again", settle=0.3)
+    assert again.metric("media.lost").values == lost.values
+    assert [run.seed for run in again.runs] == [run.seed for run in runs.runs]

@@ -21,3 +21,15 @@ Every release of the [ledger](../FEATURES.md) has criteria that all have to hold
 - **Containers, other CI systems, Fedora, Arch, Alpine.** [PERMISSIONS.md](PERMISSIONS.md) says what is measured and what is not.
 - **Platforms of the release.** Only Linux has wheels and a backend; the candidates were installed and run on one machine (Debian 13, x86_64) by the maintainer. The Arm wheel is installed and run only by the CI.
 - **What a person would call "complete".** The ledger lists what 0.1 contains; the README says what it does not do yet. Round trip time, your own program as a node, a timeline, bursty loss and reports are later releases.
+
+## Release 0.2 "Time and noise" (in progress)
+
+The section is completed with the release. What is proven so far:
+
+| Criterion | Proof | Where |
+| --- | --- | --- |
+| An assertion with a confidence interval is stable over 100 CI runs | The acceptance test runs a scenario eight times with derived seeds and asserts on the upper end of the interval of the loss, as a user would, and a canary shows that a claim that is false for the link fails. The bounds are derived from the exact binomial tails (the stable claim fails with a probability of 6.6e-11 per call). The workflow `stability.yml` runs the test 100 times, each with a new seed, once a week and on request. The test also runs once in every `just py-check`. | [`test_acceptance.py`](../python/netscenario/tests/test_acceptance.py), [`stability.yml`](../.github/workflows/stability.yml), [STATISTICS.md](STATISTICS.md) |
+
+**The first full run of the 100 rounds is not recorded yet**: it is entered here, with the date, the runner image and the number of rounds that failed, when the workflow has run.
+
+What the proof does not cover: the interval is about the mean of a metric over runs on one machine ([STATISTICS.md](STATISTICS.md#what-the-interval-promises-and-what-it-does-not)); a machine with a busy neighbour can change the delay of a whole set, and the test asserts on the loss, which the seed fixes and the load of the machine does not move. The coverage of the interval for few runs of a skewed metric is below the level and is measured in the same page.

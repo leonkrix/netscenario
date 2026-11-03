@@ -11,9 +11,10 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import overload
 
 import netscenario as ns
-from netscenario import CancelToken, Result, Scenario
+from netscenario import CancelToken, Result, RunSet, Scenario
 from netscenario.events import RunEvent
 
 doctor = ns.doctor
@@ -59,14 +60,14 @@ class Runner:
         out_root: Path,
         search: Sequence[Path],
         guard: Callable[[], None],
-        record: Callable[[Result], None],
+        record: Callable[[Result | RunSet], None],
     ) -> None:
         """Make the runner of a test (the plugin does this; use the fixture)."""
         self._out_root = out_root
         self._search = list(search)
         self._guard = guard
         self._record = record
-        self._results: list[Result] = []
+        self._results: list[Result | RunSet] = []
 
     def load(self, scenario: str | os.PathLike[str]) -> Scenario:
         """Read a scenario file, looked for next to the test file and in the ini directories.
@@ -80,39 +81,96 @@ class Runner:
         """
         return Scenario.load(find_scenario_file(scenario, self._search))
 
+    @overload
     def run(
         self,
         scenario: Scenario | str | os.PathLike[str],
         *,
+        repetitions: None = None,
+        statistic: None = None,
+        confidence: None = None,
+        out: str | os.PathLike[str] | None = None,
         seed: int | None = None,
         settle: float | None = None,
         packets: bool | None = None,
         capture: Sequence[str] | None = None,
         observer: Callable[[RunEvent], None] | None = None,
         cancel: CancelToken | None = None,
-        out: str | os.PathLike[str] | None = None,
         bin: float | None = None,
         recovery_basis: str | None = None,
         recovery_baseline: int | None = None,
         recovery_window: int | None = None,
         recovery_fraction: float | None = None,
-    ) -> Result:
+    ) -> Result: ...
+
+    @overload
+    def run(
+        self,
+        scenario: Scenario | str | os.PathLike[str],
+        *,
+        repetitions: int,
+        statistic: str | None = None,
+        confidence: float | None = None,
+        out: str | os.PathLike[str] | None = None,
+        seed: int | None = None,
+        settle: float | None = None,
+        packets: bool | None = None,
+        capture: Sequence[str] | None = None,
+        observer: Callable[[RunEvent], None] | None = None,
+        cancel: CancelToken | None = None,
+        bin: float | None = None,
+        recovery_basis: str | None = None,
+        recovery_baseline: int | None = None,
+        recovery_window: int | None = None,
+        recovery_fraction: float | None = None,
+    ) -> RunSet: ...
+
+    def run(
+        self,
+        scenario: Scenario | str | os.PathLike[str],
+        *,
+        repetitions: int | None = None,
+        statistic: str | None = None,
+        confidence: float | None = None,
+        out: str | os.PathLike[str] | None = None,
+        seed: int | None = None,
+        settle: float | None = None,
+        packets: bool | None = None,
+        capture: Sequence[str] | None = None,
+        observer: Callable[[RunEvent], None] | None = None,
+        cancel: CancelToken | None = None,
+        bin: float | None = None,
+        recovery_basis: str | None = None,
+        recovery_baseline: int | None = None,
+        recovery_window: int | None = None,
+        recovery_fraction: float | None = None,
+    ) -> Result | RunSet:
         """Run a scenario and return its :class:`netscenario.Result`.
 
+        With ``repetitions`` the scenario is run that many times with derived seeds and the call
+        returns a :class:`netscenario.RunSet` with an interval for each metric
+        (``docs/STATISTICS.md``).
+
         The result goes into the report of the test: a section with the numbers is shown when the
-        test fails, and the counts and the delays are properties of the test in a JUnit file.
+        test fails, and the counts and the delays are properties of the test in a JUnit file. For a
+        set the section has the headline metrics with their intervals, and the properties are the
+        mean and the ends of the interval of those metrics.
 
         Args:
             scenario: A :class:`netscenario.Scenario`, or the name of a scenario file (see
                 :meth:`load`).
-            seed: Use this seed and not the one in the scenario.
+            repetitions: Run the scenario this many times, from 5 to 1000.
+            statistic: With ``repetitions``: ``"mean"`` (default) or ``"median"``.
+            confidence: With ``repetitions``: the level of the intervals, above 0 and below 1
+                (default 0.95).
+            seed: Use this seed and not the one in the scenario (for a set: the seed of the set).
             settle: How long to wait for the packets still in the network, in seconds.
             packets: ``True``: also write the JSON Lines file with a line for each packet.
             capture: The links to capture as pcap files, at both ends.
             observer: Called with each :class:`netscenario.events.RunEvent`.
             cancel: A :class:`netscenario.CancelToken` that stops the run.
-            out: The directory for the result. Default: a new one in the temporary directory of the
-                test.
+            out: The directory for the result (for a set: of the set). Default: a new one in the
+                temporary directory of the test.
             bin: The width of a bin of the series, in seconds (see :func:`netscenario.run`).
             recovery_basis: ``"send"`` or ``"arrival"``: the view of the time to recover.
             recovery_baseline: How many bins make the baseline of the recovery.
@@ -123,6 +181,9 @@ class Runner:
             Skipped: The machine cannot run scenarios (locally; on the CI that is a failure).
             netscenario.NetscenarioError: Any error of :func:`netscenario.run`.
         """
+        if repetitions is None and (statistic is not None or confidence is not None):
+            message = "statistic and confidence need repetitions"
+            raise ValueError(message)
         loaded = scenario if isinstance(scenario, Scenario) else self.load(scenario)
         self._guard()
         directory = (
@@ -130,29 +191,120 @@ class Runner:
             if out is not None
             else self._out_root / f"run-{len(self._results) + 1}-{loaded.name}"
         )
-        result = ns.run(
-            loaded,
-            out=directory,
-            seed=seed,
-            settle=settle,
-            packets=packets,
-            capture=capture,
-            observer=observer,
-            cancel=cancel,
-            bin=bin,
-            recovery_basis=recovery_basis,
-            recovery_baseline=recovery_baseline,
-            recovery_window=recovery_window,
-            recovery_fraction=recovery_fraction,
-        )
+        result: Result | RunSet
+        if repetitions is None:
+            result = ns.run(
+                loaded,
+                out=directory,
+                seed=seed,
+                settle=settle,
+                packets=packets,
+                capture=capture,
+                observer=observer,
+                cancel=cancel,
+                bin=bin,
+                recovery_basis=recovery_basis,
+                recovery_baseline=recovery_baseline,
+                recovery_window=recovery_window,
+                recovery_fraction=recovery_fraction,
+            )
+        else:
+            result = ns.run(
+                loaded,
+                repetitions=repetitions,
+                statistic=statistic,
+                confidence=confidence,
+                out=directory,
+                seed=seed,
+                settle=settle,
+                packets=packets,
+                capture=capture,
+                observer=observer,
+                cancel=cancel,
+                bin=bin,
+                recovery_basis=recovery_basis,
+                recovery_baseline=recovery_baseline,
+                recovery_window=recovery_window,
+                recovery_fraction=recovery_fraction,
+            )
         self._results.append(result)
         self._record(result)
         return result
 
     @property
-    def results(self) -> tuple[Result, ...]:
-        """The results of the runs of this test so far, in order."""
+    def results(self) -> tuple[Result | RunSet, ...]:
+        """The results of the runs of this test so far, in order (a set is one entry)."""
         return tuple(self._results)
+
+
+_HEADLINE = ("loss_ratio", "delay.p50", "delay.p95", "delay.p99", "throughput.mean")
+"""The metrics of a workload that the report and the JUnit file of a set show."""
+
+
+def _show(name: str, value: float) -> str:
+    """A value of a metric as text, in the unit that reads best."""
+    if name.endswith("loss_ratio"):
+        return f"{value:.2%}"
+    if ".delay." in name:
+        return f"{value * 1000:.3f} ms"
+    if name.endswith("throughput.mean"):
+        return f"{value / 1e6:.3f} mbit/s"
+    return f"{value:g}"
+
+
+def describe_set(runs: RunSet) -> str:
+    """The numbers of a set of runs as text for the report of a test."""
+    seed = f"seed {runs.seed.value}" + (" (drawn)" if runs.seed.drawn else "")
+    confidence = runs.confidence
+    lines = [
+        f"{runs.scenario_name}: {runs.repetitions} repetitions, {seed}; interval of the "
+        f"{confidence.statistic}, {confidence.level:.0%}, {confidence.method}"
+    ]
+    unreproducible = sum(1 for run in runs.runs if not run.loss_reproducible)
+    if unreproducible:
+        lines.append(
+            f"  warning: the loss of {unreproducible} of the runs cannot be repeated from its seed"
+        )
+    for metric in runs:
+        if not metric.name.endswith(_HEADLINE):
+            continue
+        interval = metric.interval
+        lines.append(
+            f"  {metric.name}: {_show(metric.name, interval.estimate)} "
+            f"[{_show(metric.name, interval.low)} to {_show(metric.name, interval.high)}], "
+            f"spread {_show(metric.name, metric.stddev)}"
+        )
+    if runs.partial:
+        names = ", ".join(p.name for p in runs.partial[:3])
+        lines.append(
+            f"  {len(runs.partial)} metrics are missing in some runs, no interval: {names}"
+        )
+    lines.append(f"  set: {runs.out_dir / 'runset.json'}")
+    return "\n".join(lines)
+
+
+def set_properties(runs: RunSet) -> list[tuple[str, object]]:
+    """The headline numbers of a set as properties of the test, for a JUnit file.
+
+    The names are ``netscenario.<scenario>.<metric>.<mean|low|high>`` for the metrics of
+    :func:`describe_set`, and ``netscenario.<scenario>.repetitions`` and ``.confidence``. Times are
+    in seconds.
+    """
+    prefix = f"netscenario.{runs.scenario_name}"
+    found: list[tuple[str, object]] = [
+        (f"{prefix}.repetitions", runs.repetitions),
+        (f"{prefix}.confidence", runs.confidence.level),
+    ]
+    for metric in runs:
+        if metric.name.endswith(_HEADLINE):
+            found.extend(
+                [
+                    (f"{prefix}.{metric.name}.mean", metric.mean),
+                    (f"{prefix}.{metric.name}.low", metric.interval.low),
+                    (f"{prefix}.{metric.name}.high", metric.interval.high),
+                ]
+            )
+    return found
 
 
 def describe(result: Result) -> str:

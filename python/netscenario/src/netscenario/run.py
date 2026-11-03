@@ -8,11 +8,13 @@ import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import overload
 
 from netscenario import _binaries, _native
 from netscenario.errors import BackendError
 from netscenario.events import RunEvent, make_event
 from netscenario.results import Result
+from netscenario.runset import RunSet
 from netscenario.scenario import Scenario
 
 CancelToken = _native.CancelToken
@@ -23,9 +25,13 @@ raises :class:`netscenario.Cancelled`.
 """
 
 
+@overload
 def run(
     scenario: Scenario | str | os.PathLike[str],
     *,
+    repetitions: None = None,
+    statistic: None = None,
+    confidence: None = None,
     out: str | os.PathLike[str] | None = None,
     seed: int | None = None,
     settle: float | None = None,
@@ -39,8 +45,53 @@ def run(
     recovery_window: int | None = None,
     recovery_fraction: float | None = None,
     working_dir: str | os.PathLike[str] | None = None,
-) -> Result:
-    """Run a scenario in network namespaces and return the result.
+) -> Result: ...
+
+
+@overload
+def run(
+    scenario: Scenario | str | os.PathLike[str],
+    *,
+    repetitions: int,
+    statistic: str | None = None,
+    confidence: float | None = None,
+    out: str | os.PathLike[str] | None = None,
+    seed: int | None = None,
+    settle: float | None = None,
+    packets: bool | None = None,
+    capture: Sequence[str] | None = None,
+    observer: Callable[[RunEvent], None] | None = None,
+    cancel: _native.CancelToken | None = None,
+    bin: float | None = None,
+    recovery_basis: str | None = None,
+    recovery_baseline: int | None = None,
+    recovery_window: int | None = None,
+    recovery_fraction: float | None = None,
+    working_dir: str | os.PathLike[str] | None = None,
+) -> RunSet: ...
+
+
+def run(
+    scenario: Scenario | str | os.PathLike[str],
+    *,
+    repetitions: int | None = None,
+    statistic: str | None = None,
+    confidence: float | None = None,
+    out: str | os.PathLike[str] | None = None,
+    seed: int | None = None,
+    settle: float | None = None,
+    packets: bool | None = None,
+    capture: Sequence[str] | None = None,
+    observer: Callable[[RunEvent], None] | None = None,
+    cancel: _native.CancelToken | None = None,
+    bin: float | None = None,
+    recovery_basis: str | None = None,
+    recovery_baseline: int | None = None,
+    recovery_window: int | None = None,
+    recovery_fraction: float | None = None,
+    working_dir: str | os.PathLike[str] | None = None,
+) -> Result | RunSet:
+    """Run a scenario in network namespaces and return the result, or a set of results.
 
     The network is built, the agents start in the nodes, the workloads run for the duration of the
     scenario and everything is removed again, also after an error. Nothing outside the namespaces
@@ -51,12 +102,27 @@ def run(
     ``measure`` of the scenario (``docs/SCENARIO-FORMAT.md``) and replace them for this run; the
     result records what was used.
 
+    With ``repetitions`` the scenario is run that many times, one after the other, with seeds
+    derived from one seed, and the call returns a :class:`netscenario.RunSet` with an interval for
+    each metric instead of a :class:`Result` (``docs/STATISTICS.md``). A set ends with the first run
+    that fails.
+
     Args:
         scenario: A :class:`Scenario`, or the path of a scenario file.
-        out: The directory for the result and the files that belong to it. Default: a new directory
-            in the temporary directory of the system (``result.out_dir`` says which).
+        repetitions: Run the scenario this many times, from 5 to 1000: fewer runs say too little
+            about the spread for an interval. Run ``i`` uses the seed derived from the seed of the
+            set and ``i``, so the runs draw unrelated loss patterns and the set can be repeated
+            with ``seed``.
+        statistic: With ``repetitions``: what the intervals are around, ``"mean"`` (default) or
+            ``"median"``.
+        confidence: With ``repetitions``: the level of the intervals, above 0 and below 1.
+            Default 0.95.
+        out: The directory for the result and the files that belong to it (for a set: the directory
+            of the set, with ``runset.json`` and a directory for each run). Default: a new
+            directory in the temporary directory of the system (``result.out_dir`` or
+            ``runs.out_dir`` says which).
         seed: Use this seed and not the one in the scenario. This is how a run that drew its own
-            seed is repeated.
+            seed is repeated. For a set it is the seed of the set.
         settle: How long to wait after the last packet for the packets still in the network, in
             seconds. Default: until the queues of the links are empty and 0.3 s more.
         packets: ``True``: also write one line of JSON for each packet of each workload
@@ -82,7 +148,7 @@ def run(
             scenario file, or the current directory for a scenario that was not read from a file.
 
     Returns:
-        The :class:`Result`.
+        The :class:`Result`, or with ``repetitions`` the :class:`netscenario.RunSet`.
 
     Raises:
         ScenarioError: The scenario is not valid.
@@ -92,7 +158,8 @@ def run(
         RunError: The run failed after it started.
         Cancelled: ``cancel`` was cancelled.
         KeyboardInterrupt: The run was interrupted.
-        ValueError: An option of the series or the recovery makes no sense.
+        ValueError: An option of the series or the recovery, or the number of repetitions, the
+            statistic or the level, makes no sense.
     """
     loaded = scenario if isinstance(scenario, Scenario) else Scenario.load(scenario)
     try:
@@ -124,8 +191,13 @@ def run(
         working_dir=str(_working_dir(loaded, working_dir)),
         capture=None if capture is None else list(capture),
         packets=packets,
+        repetitions=repetitions,
+        statistic=statistic,
+        confidence=confidence,
     )
-    return Result.from_json(text, directory)
+    if repetitions is None:
+        return Result.from_json(text, directory)
+    return RunSet.from_json(text, directory)
 
 
 def _working_dir(scenario: Scenario, given: str | os.PathLike[str] | None) -> Path:

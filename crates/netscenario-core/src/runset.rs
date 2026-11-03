@@ -849,6 +849,71 @@ mod tests {
         assert!(matches!(cut, Err(Error::Cancelled)));
     }
 
+    /// The set that the Python tests read (`python/netscenario/tests/fixtures/runset.json`) is what the set writes today, so that
+    /// a change of the format fails here and not in the field. The file is rewritten with `UPDATE_FIXTURE=1`. The probability
+    /// left out at each end (`tail`) is compared to 9 digits: it is made with `exp` and `ln` of the maths library of the machine.
+    #[test]
+    fn the_fixture_that_python_reads_is_what_the_set_writes() {
+        fn rounded(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, inner) in map.iter_mut() {
+                        if key == "tail" {
+                            if let Some(tail) = inner.as_f64() {
+                                *inner = serde_json::json!((tail * 1e9).round() / 1e9);
+                            }
+                        } else {
+                            rounded(inner);
+                        }
+                    }
+                }
+                serde_json::Value::Array(items) => items.iter_mut().for_each(rounded),
+                _ => {}
+            }
+        }
+        let mut place = 0_usize;
+        let set = run_set(
+            &scenario(Some(7)),
+            &options("fixture"),
+            &RunSetOptions::new(6),
+            &mut |scenario, _| {
+                place += 1;
+                let steps = u32::try_from(place).unwrap();
+                let mut result = result_with(0.02 * f64::from(steps), 3 + u64::from(steps));
+                result.seed.value = scenario.seed;
+                // The delay is missing in the third run: its metrics are listed as partial
+                if place == 3 {
+                    result.workloads[0].stats.delay = None;
+                }
+                Ok(result)
+            },
+            &mut |_| {},
+        )
+        .unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../python/netscenario/tests/fixtures/runset.json");
+        if std::env::var_os("UPDATE_FIXTURE").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, set.to_json()).unwrap();
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "{}: {error} (write it with UPDATE_FIXTURE=1)",
+                path.display()
+            )
+        });
+        let (mut written, mut wanted): (serde_json::Value, serde_json::Value) = (
+            serde_json::from_str(&text).unwrap(),
+            serde_json::from_str(&set.to_json()).unwrap(),
+        );
+        rounded(&mut written);
+        rounded(&mut wanted);
+        assert_eq!(
+            written, wanted,
+            "run `UPDATE_FIXTURE=1 cargo test -p netscenario-core --lib runset` and read the diff"
+        );
+    }
+
     #[test]
     fn the_format_is_checked_when_a_set_is_read() {
         let (result, ..) = run_it("format", Some(1), &RunSetOptions::new(5));

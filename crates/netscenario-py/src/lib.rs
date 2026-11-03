@@ -54,13 +54,14 @@ fn doctor(py: Python<'_>) -> String {
     py.detach(|| netscenario_backend_kernel::doctor::diagnose().to_json())
 }
 
-/// Runs a scenario and returns the text of `result.json`.
+/// Runs a scenario and returns the text of `result.json`; with `repetitions`, runs it that many times and returns the text of
+/// `runset.json` (ASR-02, ASR-03).
 ///
 /// `source` is the scenario as it was written (the lines of errors refer to it); `supervisor` is the
 /// `netscenario` program and `agent` the `netscenario-agent` program. `observer` is called as `observer(kind,
 /// fields)` for each event of the run.
 #[pyfunction]
-#[pyo3(signature = (source, source_name, supervisor, agent, out_dir, seed=None, settle=None, observer=None, cancel=None, bin=None, recovery_basis=None, recovery_baseline=None, recovery_window=None, recovery_fraction=None, working_dir=None, capture=None, packets=None))]
+#[pyo3(signature = (source, source_name, supervisor, agent, out_dir, seed=None, settle=None, observer=None, cancel=None, bin=None, recovery_basis=None, recovery_baseline=None, recovery_window=None, recovery_fraction=None, working_dir=None, capture=None, packets=None, repetitions=None, statistic=None, confidence=None))]
 #[allow(clippy::too_many_arguments)] // the arguments of one call from Python, all of them by name
 fn run_scenario(
     py: Python<'_>,
@@ -81,7 +82,11 @@ fn run_scenario(
     working_dir: Option<String>,
     capture: Option<Vec<String>>,
     packets: Option<bool>,
+    repetitions: Option<u32>,
+    statistic: Option<&str>,
+    confidence: Option<f64>,
 ) -> PyResult<String> {
+    let set = run::set_options(repetitions, statistic, confidence)?;
     run::execute(
         py,
         Request {
@@ -104,6 +109,7 @@ fn run_scenario(
                 capture,
                 packets,
             },
+            set,
         },
     )
 }

@@ -46,5 +46,8 @@ def run_scenario(
     working_dir: str | None = None,
     capture: list[str] | None = None,
     packets: bool | None = None,
+    repetitions: int | None = None,
+    statistic: str | None = None,
+    confidence: float | None = None,
 ) -> str:
-    """Run a scenario; return the text of ``result.json``."""
+    """Run a scenario; return ``result.json``, or with ``repetitions`` the ``runset.json`` text."""

@@ -54,6 +54,15 @@ from netscenario.results import (
     Workload,
 )
 from netscenario.run import CancelToken, Check, DoctorReport, doctor, run
+from netscenario.runset import (
+    Confidence,
+    Interval,
+    PartialMetric,
+    RunSet,
+    SetMetric,
+    SetRun,
+    SetSeed,
+)
 from netscenario.scenario import Impairments, Jitter, Loss, Scenario, ScenarioBuilder
 
 __version__: str = pep440(_native.version())
@@ -74,12 +83,14 @@ __all__ = [
     "CapabilityError",
     "Capture",
     "Check",
+    "Confidence",
     "Delay",
     "DirectionTally",
     "DoctorReport",
     "Extent",
     "Impairments",
     "InterarrivalJitter",
+    "Interval",
     "Jitter",
     "LateTime",
     "Loss",
@@ -87,6 +98,7 @@ __all__ = [
     "LossRuns",
     "Metric",
     "NetscenarioError",
+    "PartialMetric",
     "Program",
     "ProgramOutput",
     "Provenance",
@@ -97,6 +109,7 @@ __all__ = [
     "Restriction",
     "Result",
     "RunError",
+    "RunSet",
     "Scenario",
     "ScenarioBuilder",
     "ScenarioError",
@@ -104,6 +117,9 @@ __all__ = [
     "SeedInfo",
     "Sender",
     "Series",
+    "SetMetric",
+    "SetRun",
+    "SetSeed",
     "Throughput",
     "TimelineStep",
     "Workload",

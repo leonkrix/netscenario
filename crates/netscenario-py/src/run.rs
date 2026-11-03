@@ -10,7 +10,9 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
-use netscenario_core::{CancelToken, Error, RunEvent, RunOptions, RunResult, run};
+use netscenario_core::{
+    CancelToken, Error, Repetition, RunEvent, RunOptions, RunSetOptions, run, run_set,
+};
 use netscenario_model::{MeasureOverrides, Name, Probability, RecoveryBasis, Scenario};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -58,10 +60,34 @@ type Outcome = Arc<(Mutex<Option<Finished>>, Condvar)>;
 
 /// How the thread of the run ended.
 enum Finished {
-    /// It returned this.
-    Returned(Box<Result<RunResult, Error>>),
+    /// It returned this: the text of `result.json`, or of `runset.json` for a set of runs.
+    Returned(Box<Result<String, Error>>),
     /// It panicked: the text of the panic.
     Panicked(String),
+}
+
+/// The Python callable that is told about the events of a run. What goes wrong in it is kept (the first error) and cancels
+/// the run; it is raised when the run has ended.
+struct Observer {
+    callable: Py<PyAny>,
+    error: Arc<Mutex<Option<PyErr>>>,
+    cancel: CancelToken,
+}
+
+impl Observer {
+    fn call(&self, py: Python<'_>, kind: &str, fields: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.callable.call1(py, (kind, fields)).map(drop)
+    }
+
+    fn keep(&self, called: PyResult<()>) {
+        if let Err(error) = called {
+            let mut slot = self.error.lock().unwrap_or_else(PoisonError::into_inner);
+            if slot.is_none() {
+                *slot = Some(error);
+            }
+            self.cancel.cancel();
+        }
+    }
 }
 
 /// The event as the name of its kind and its numbers (seconds as floats), for the Python side to make an
@@ -198,6 +224,42 @@ impl Series {
     }
 }
 
+/// The options of a set of runs, or none for a single run. `statistic` and `confidence` mean nothing without `repetitions`,
+/// and saying so is better than ignoring them.
+///
+/// # Errors
+///
+/// `ValueError` for a number of repetitions, a statistic or a level that makes no sense.
+pub(crate) fn set_options(
+    repetitions: Option<u32>,
+    statistic: Option<&str>,
+    confidence: Option<f64>,
+) -> PyResult<Option<RunSetOptions>> {
+    let invalid = |text: String| pyo3::exceptions::PyValueError::new_err(text);
+    let Some(repetitions) = repetitions else {
+        if statistic.is_some() || confidence.is_some() {
+            return Err(invalid(
+                "statistic and confidence need repetitions".to_owned(),
+            ));
+        }
+        return Ok(None);
+    };
+    let mut set = RunSetOptions::new(repetitions);
+    if let Some(word) = statistic {
+        set.statistic = word
+            .parse()
+            .map_err(|message: String| invalid(format!("statistic: {message}")))?;
+    }
+    if let Some(level) = confidence {
+        set.level = level;
+    }
+    set.check().map_err(|error| match error {
+        Error::Run { message, .. } => invalid(message),
+        other => invalid(other.to_string()),
+    })?;
+    Ok(Some(set))
+}
+
 /// What the Python call asks for.
 pub(crate) struct Request {
     pub(crate) source: String,
@@ -211,17 +273,41 @@ pub(crate) struct Request {
     pub(crate) cancel: Option<CancelToken>,
     pub(crate) working_dir: Option<String>,
     pub(crate) series: Series,
+    /// Repetitions: run the scenario several times and return the text of `runset.json` (ASR-02, ASR-03).
+    pub(crate) set: Option<RunSetOptions>,
 }
 
-/// Starts the run on a thread of its own. The outcome appears in the slot that is returned.
-fn start_worker(scenario: Scenario, supervisor: String, options: RunOptions) -> Outcome {
+/// Starts the run on a thread of its own. The outcome appears in the slot that is returned. A set of runs is run one
+/// after the other on that thread; `before` is told about each repetition before it starts.
+fn start_worker(
+    scenario: Scenario,
+    supervisor: String,
+    options: RunOptions,
+    set: Option<RunSetOptions>,
+    before: Box<dyn FnMut(&Repetition) + Send>,
+) -> Outcome {
     let outcome: Outcome = Arc::new((Mutex::new(None), Condvar::new()));
     let worker_outcome = Arc::clone(&outcome);
     std::thread::spawn(move || {
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut before = before;
+            if let Some(set) = set {
+                return run_set(
+                    &scenario,
+                    &options,
+                    &set,
+                    &mut |scenario, run_options| {
+                        let mut backend =
+                            KernelBackend::new(KernelOptions::for_scenario(&supervisor, scenario))?;
+                        run(&mut backend, scenario, run_options)
+                    },
+                    &mut *before,
+                )
+                .map(|result| result.to_json());
+            }
             let mut backend =
                 KernelBackend::new(KernelOptions::for_scenario(&supervisor, &scenario))?;
-            run(&mut backend, &scenario, &options)
+            run(&mut backend, &scenario, &options).map(|result| result.to_json())
         }));
         let finished = match ran {
             Ok(result) => Finished::Returned(Box::new(result)),
@@ -279,6 +365,7 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
         cancel,
         working_dir,
         series,
+        set,
     } = request;
     let mut scenario =
         Scenario::from_yaml(&source, &source_name).map_err(|error| errors::scenario(py, &error))?;
@@ -293,25 +380,35 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
     let mut options = RunOptions::new(&agent, &out_dir).with_cancel(token.clone());
     options.settle = settle.map(Duration::from_secs_f64);
     options.working_dir = working_dir.map(std::path::PathBuf::from);
+    // The observer is called for the events of every run, and for the start of each repetition of a set
+    let mut before: Box<dyn FnMut(&Repetition) + Send> = Box::new(|_| {});
     if let Some(callable) = observer {
-        let (error_slot, cancel_on_error) = (Arc::clone(&callback_error), token.clone());
-        let notify = move |event: &RunEvent| {
+        let observer = Arc::new(Observer {
+            callable,
+            error: Arc::clone(&callback_error),
+            cancel: token.clone(),
+        });
+        let for_events = Arc::clone(&observer);
+        options = options.with_observer(Arc::new(move |event: &RunEvent| {
             Python::attach(|py| {
                 let called = event_to_python(py, event)
-                    .and_then(|(kind, fields)| callable.call1(py, (kind, fields)));
-                if let Err(error) = called {
-                    let mut slot = error_slot.lock().unwrap_or_else(PoisonError::into_inner);
-                    if slot.is_none() {
-                        *slot = Some(error);
-                    }
-                    cancel_on_error.cancel();
-                }
+                    .and_then(|(kind, fields)| for_events.call(py, kind, &fields));
+                for_events.keep(called);
             });
-        };
-        options = options.with_observer(Arc::new(notify));
+        }));
+        before = Box::new(move |repetition: &Repetition| {
+            Python::attach(|py| {
+                let fields = PyDict::new(py);
+                let called = fields
+                    .set_item("index", repetition.index)
+                    .and_then(|()| fields.set_item("total", repetition.total))
+                    .and_then(|()| observer.call(py, "repetition_started", &fields));
+                observer.keep(called);
+            });
+        });
     }
 
-    let outcome = start_worker(scenario, supervisor, options);
+    let outcome = start_worker(scenario, supervisor, options, set, before);
     let (finished, interrupt) = wait_for(py, &outcome, &token);
 
     if let Some(error) = interrupt {
@@ -326,7 +423,7 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
     }
     match finished {
         Finished::Returned(returned) => match *returned {
-            Ok(result) => Ok(result.to_json()),
+            Ok(text) => Ok(text),
             Err(error) => Err(errors::core(py, &error, &source_name, &source)),
         },
         Finished::Panicked(text) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
