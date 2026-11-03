@@ -1,0 +1,34 @@
+## netscenario: lte-like-link
+
+| | |
+| --- | --- |
+| Backend | kernel (iproute2 6.15.0) |
+| Seed | 42 |
+| Duration | 10 s, then 1.12 s for the packets in the network |
+| Run | 2026-11-03T10:00:00Z |
+| Machine | 6.12.1, Example CPU |
+
+### Workloads
+
+| | media |
+| --- | ---: |
+| Flow | client → server |
+| Sent | 2083 |
+| Received | 2003 |
+| Lost | 80 (3.84 %) |
+| Reordered | 5 |
+| Duplicates | 0 |
+| Delay p50 | 42.81 ms |
+| Delay p95 | 161.80 ms |
+| Delay p99 | 179.47 ms |
+| Delay max | 191.65 ms |
+| Jitter (RFC 3550) | 1.38 ms |
+| Throughput (mean) | 1.92 mbit/s |
+| Longest loss run | 63 packets |
+
+### Timeline
+
+| At | Link | Direction | Step | Done |
+| ---: | --- | --- | --- | --- |
+| 4 s | access | forward | set | 1.80 ms late |
+| 8 s | access | forward | outage-start | 2.10 ms late |

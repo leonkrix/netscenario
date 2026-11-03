@@ -9,6 +9,7 @@ mod args;
 mod interrupt;
 mod render;
 mod replay_cmd;
+mod report_cmd;
 mod run_cmd;
 mod validate;
 
@@ -40,6 +41,7 @@ Usage: netscenario <command> [options]
 Commands:
   run <file>       run a scenario and write its result
   replay <dir>     run a recorded run again and compare the lost packets
+  report <dir>     make Markdown, JUnit or HTML from a result directory
   validate <file>  check a scenario file without running it
   schema           print the JSON Schema of the scenario format
   doctor           report what this machine can do (--json for machines)
@@ -111,6 +113,7 @@ where
         }
         "run" => run_cmd::run_command(rest, out, err),
         "replay" => replay_cmd::replay_command(rest, out, err),
+        "report" => report_cmd::report_command(rest, out, err),
         "validate" => validate::validate(rest, out, err),
         "schema" => validate::schema(rest, out, err),
         "doctor" => doctor(rest, out, err),
@@ -240,6 +243,7 @@ mod tests {
         for word in [
             "run",
             "replay",
+            "report",
             "validate",
             "doctor",
             "clean",
@@ -321,6 +325,12 @@ mod tests {
                 "--capture: 'bad name'",
             ),
             (&["replay"][..], "the directory of a run is missing"),
+            (&["report"][..], "the result directory is missing"),
+            (
+                &["report", "d", "--format", "pdf"][..],
+                "--format: the format is md, html or junit, not 'pdf'",
+            ),
+            (&["report", "a", "b"][..], "unexpected extra argument 'b'"),
             (&["replay", "a", "b"][..], "unexpected extra argument 'b'"),
             (
                 &["run", "a.yaml", "--repetitions", "x"][..],

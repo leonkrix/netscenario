@@ -197,7 +197,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | CLI-01 | `run`, `validate`, `doctor`, `clean` | M | 0.1 | done ([CLI.md](docs/CLI.md), `tests/binary.rs`) |
-| CLI-02 | `report`: HTML and Markdown from result files | M | 0.2 | planned |
+| CLI-02 | `report`: HTML and Markdown from result files | M | 0.2 | done (`netscenario report <dir> --format md\|html\|junit`: [REPORTS.md](docs/REPORTS.md), D-076) |
 | CLI-03 | `profiles` and `capabilities`: what exists, what a backend can do | S | 0.3 | planned |
 | CLI-04 | `schema`: print the JSON Schema | S | 0.1 | done (`netscenario schema`) |
 | CLI-05 | Shell completions and man pages | S | 0.8 | planned |
@@ -228,9 +228,9 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | RPT-01 | Results as JSON, per-packet data as JSON Lines | M | 0.1 | done (`result.json`, `--packets`; [RESULTS.md](docs/RESULTS.md)) |
-| RPT-02 | JUnit XML | M | 0.2 | planned |
-| RPT-03 | HTML report with time series and distributions | M | 0.2 | planned |
-| RPT-04 | Markdown for the summary of a CI run | S | 0.2 | planned |
+| RPT-02 | JUnit XML | M | 0.2 | done ([REPORTS.md](docs/REPORTS.md#junit---format-junit-rpt-02); [`tests.rs`](crates/netscenario-core/src/report/tests.rs)) |
+| RPT-03 | HTML report with time series and distributions | M | 0.2 | done (one file, inline SVG, no external reference: [REPORTS.md](docs/REPORTS.md#html---format-html-rpt-03), [`sample-report/`](docs/sample-report/)) |
+| RPT-04 | Markdown for the summary of a CI run | S | 0.2 | done ([REPORTS.md](docs/REPORTS.md#in-a-ci-job)) |
 | RPT-05 | Comparison of two runs or two backends | S | 0.7 | planned |
 | RPT-06 | OpenMetrics export | C | 0.8 | idea |
 | RPT-07 | Trends over many runs | C | 1.x | idea |
@@ -251,7 +251,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | QA-01 | Unit tests and property tests | M | 0.1 | done for 0.1 (unit tests in every crate, property tests of the units in `netscenario-model`; it grows with every release) |
 | QA-02 | Integration tests inside namespaces, on the CI | M | 0.1 | done (the CI creates real namespaces on `ubuntu-22.04` and `ubuntu-24.04`, as a user and as root) |
 | QA-03 | Fuzzing of the parsers that read input that is not trusted: the scenario, the packets and records of the agent, the metrics of a program | S | 0.2 | in progress (the five targets and the weekly workflow `fuzz.yml` are there: the scenario, the values, a datagram, a file of records, a result file; the metrics of a program and the replay file follow with the supervisor of programs and the replay file; brought forward from 0.3, because release 0.2 adds parsers of such input; ClusterFuzzLite and a 24-hour run stay in 0.8) |
-| QA-04 | Snapshot tests for reports and the schema | S | 0.2 | planned |
+| QA-04 | Snapshot tests for reports and the schema | S | 0.2 | done (the Markdown, the JUnit and each drawing, and a sample report that a test makes again: [`tests.rs`](crates/netscenario-core/src/report/tests.rs); the schema: [`schema.rs`](crates/netscenario-model/tests/schema.rs)) |
 | QA-05 | Benchmarks of the engine (throughput, added delay) | S | 0.4 | planned |
 | QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `tests/fidelity.rs`: delay, loss, rate, both jitters, jitter with a rate; three canaries; CI numbers per runner as artifacts) |
 | QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | done (the Rust version is checked on the CI with 1.89; `cargo-semver-checks` compares the public API of `netscenario-model` and `netscenario-core` with `main` in every pull request and with the last release in a release, D-037) |

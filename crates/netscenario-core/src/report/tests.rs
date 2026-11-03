@@ -1,0 +1,638 @@
+//! Tests of the reports: a fixed run is built from synthetic records, and each format is compared with a snapshot (QA-04).
+//!
+//! The run is made without a machine: records from a small generator, the series from the library function that a real run
+//! uses, the statistics from `stats::analyse`. The snapshots are in `snapshots/` (`INSTA_UPDATE=always` rewrites them; read
+//! the diff first). The sample report in `docs/sample-report/` is what the code writes for this run
+//! (`UPDATE_SAMPLE=1 cargo test -p netscenario-core --lib report` rewrites it).
+
+use std::path::{Path, PathBuf};
+
+use netscenario_agent::records::{Record, Writer};
+use netscenario_agent::schedule::{Schedule, Stream};
+
+use super::*;
+use crate::result::tests::example;
+use crate::result::{EventRecord, MetricSummary, ProgramOutput, ProgramResult, SeriesInfo};
+use crate::series::{self, Input};
+use crate::stats;
+
+const RATE: u64 = 2_000_000;
+const SIZE: u64 = 1200;
+const ORIGIN: u64 = 5_000_000_000;
+const SECOND: u64 = 1_000_000_000;
+
+/// A small deterministic generator (a linear congruential one): the same numbers on every machine.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.0 >> 33
+    }
+}
+
+/// The arrivals of 10 s at 2 mbit/s: a delay of 40 ms and up to 4 ms more (less than a gap, so the packets keep their order), a queue that builds up while the rate drops
+/// from 4 s to 6 s, an outage at 8 s for 300 ms, and 1 % loss at random.
+fn arrivals() -> (u64, Vec<Record>) {
+    let schedule = Stream {
+        bits_per_second: RATE,
+        packet_size: SIZE,
+    };
+    let gap = SIZE * 8 * SECOND / RATE;
+    let slots = 10 * SECOND / gap;
+    let mut random = Lcg(42);
+    let mut records = Vec::new();
+    for n in 0..slots {
+        let slot = schedule.offset_ns(n);
+        let mut delay = 40_000_000 + random.next() % 4_000_000;
+        let lost_at_random = random.next().is_multiple_of(100);
+        // The queue builds up while the rate is low and drains in the second after it: the delay rises and falls by
+        // less than a gap a packet, so the packets keep their order
+        if (4 * SECOND..6 * SECOND).contains(&slot) {
+            delay += (slot - 4 * SECOND) / 14;
+        } else if (6 * SECOND..7 * SECOND).contains(&slot) {
+            delay += (7 * SECOND - slot) / 7;
+        }
+        if (8 * SECOND..8 * SECOND + 300_000_000).contains(&slot) || lost_at_random {
+            continue;
+        }
+        records.push(Record {
+            sequence: n,
+            send_ns: ORIGIN + slot,
+            receive_ns: ORIGIN + slot + delay,
+        });
+    }
+    // The packets that leave the queue are not in the order of their numbers: swap a few neighbours
+    for place in (50..records.len() - 1).step_by(397) {
+        let (a, b) = (records[place].receive_ns, records[place + 1].receive_ns);
+        records[place].receive_ns = b;
+        records[place + 1].receive_ns = a;
+    }
+    records.sort_by_key(|r| r.receive_ns);
+    (slots, records)
+}
+
+/// The run of the snapshots, written to a directory: `result.json`, the series and the records.
+pub(super) fn sample_run(dir: &Path) -> RunResult {
+    std::fs::create_dir_all(dir).unwrap();
+    let (slots, records) = arrivals();
+    let mut writer = Writer::new(
+        std::fs::File::create(dir.join("flow-0.records")).unwrap(),
+        0,
+    )
+    .unwrap();
+    for record in &records {
+        writer.write(record).unwrap();
+    }
+    writer.finish().unwrap();
+    let bins = series::bins(
+        &Input {
+            schedule: Schedule::Cbr(Stream {
+                bits_per_second: RATE,
+                packet_size: SIZE,
+            }),
+            start_ns: 0,
+            origin_ns: ORIGIN,
+            slots,
+            refused: &[],
+            records: &records,
+        },
+        SECOND,
+    );
+    let mut file = std::fs::File::create(dir.join("series-media.jsonl")).unwrap();
+    series::write_series(&mut file, "media", &bins).unwrap();
+
+    let mut result = example();
+    result.scenario.name = "lte-like-link".to_owned();
+    result.scenario.hash =
+        "sha256:6771b8f9c6e4a4503da551740c3f9c375a478d5c67908b7b0f28e73da9dca1a9".to_owned();
+    result.provenance.netscenario = "0.2.0".to_owned();
+    result.provenance.started_at = "2026-11-03T10:00:00Z".to_owned();
+    result.provenance.backend_details =
+        std::collections::BTreeMap::from([("tc".to_owned(), "iproute2 6.15.0".to_owned())]);
+    result.provenance.kernel = Some("6.12.1".to_owned());
+    result.provenance.cpu_model = Some("Example CPU".to_owned());
+    result.seed.value = Some(42);
+    result.seed.drawn = false;
+    result.timing.duration_ns = 10 * SECOND;
+    result.timing.settle_ns = 1_120_000_000;
+    let workload = &mut result.workloads[0];
+    workload.id = "media".to_owned();
+    workload.from = "client".to_owned();
+    workload.to = "server".to_owned();
+    workload.rate_bits_per_second = RATE;
+    workload.packet_size_bytes = SIZE;
+    workload.duration_ns = 10 * SECOND;
+    workload.stats = stats::analyse(slots, &records, SIZE, ORIGIN);
+    workload.records_file = "flow-0.records".to_owned();
+    workload.sender.send_errors = 0;
+    workload.sender.first_error = None;
+    workload.sender.refused = Vec::new();
+    workload.series = Some(SeriesInfo {
+        bin_ns: SECOND,
+        bins: bins.len() as u64,
+        file: "series-media.jsonl".to_owned(),
+    });
+    let mut drop = EventRecord::new(0, 4 * SECOND, 4 * SECOND, 4 * SECOND + 1_800_000);
+    drop.link = "access".to_owned();
+    let mut outage = EventRecord::new(1, 8 * SECOND, 8 * SECOND, 8 * SECOND + 2_100_000);
+    outage.link = "access".to_owned();
+    outage.kind = "outage-start".to_owned();
+    result.events = vec![drop, outage];
+    result.notes = Vec::new();
+    std::fs::write(dir.join("result.json"), result.to_json()).unwrap();
+    result
+}
+
+fn directory(name: &str) -> PathBuf {
+    let dir =
+        std::env::temp_dir().join(format!("netscenario-report-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+fn load(name: &str, detail: bool) -> Report {
+    let dir = directory(name);
+    sample_run(&dir);
+    Report::load(&dir, detail).unwrap()
+}
+
+// ---- the sample run itself ----
+
+#[test]
+fn the_sample_run_has_the_events_it_was_made_with() {
+    let Report::Run(run) = load("sample", true) else {
+        panic!("a run")
+    };
+    let stats = &run.result.workloads[0].stats;
+    // 10 s at 2 mbit/s with 1200 byte payloads: a packet every 4.8 ms
+    assert_eq!(stats.sent, 2083);
+    // The outage of 300 ms (62 packets at 4.8 ms) and the loss at random took packets, but not all
+    assert!((60..200).contains(&stats.lost), "{}", stats.lost);
+    assert!(stats.reordered > 0, "the swapped neighbours are reordered");
+    assert!(
+        stats.reordered < 40,
+        "the queue drains without reordering: {}",
+        stats.reordered
+    );
+    let detail = &run.details[0];
+    assert_eq!(
+        detail.bins.len(),
+        11,
+        "ten bins of the run and one for the last arrivals"
+    );
+    assert_eq!(detail.delays_ns.len() as u64, stats.received);
+    // The outage is in the bin of 8 s: nothing was lost before, and the loss there is in the order of 300 ms of 1 s
+    assert!(
+        detail.bins[8].by_send.lost >= 60,
+        "{:?}",
+        detail.bins[8].by_send
+    );
+}
+
+// ---- Markdown ----
+
+#[test]
+fn the_markdown_of_a_run() {
+    insta::assert_snapshot!(markdown(&load("md", false)));
+}
+
+#[test]
+fn markdown_warns_where_a_run_was_cut_short_or_cannot_repeat() {
+    let Report::Run(mut run) = load("md-warn", false) else {
+        panic!("a run")
+    };
+    run.result.timing.interrupted_ns = Some(4 * SECOND);
+    run.result.seed.loss_reproducible = false;
+    run.result.seed.not_reproducible_because = vec!["the scenario has an outage".to_owned()];
+    let text = markdown(&Report::Run(run));
+    assert!(
+        text.contains("> **Interrupted** after 4 s of 10 s"),
+        "{text}"
+    );
+    assert!(text.contains("> **Warning:** the loss of this run does not repeat from its seed: the scenario has an outage"), "{text}");
+    assert!(
+        text.contains("> **media:** the run was interrupted"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_pipe_in_a_name_does_not_end_the_cell_of_a_markdown_table() {
+    let Report::Run(mut run) = load("md-pipe", false) else {
+        panic!("a run")
+    };
+    run.result.workloads[0].id = "a|b".to_owned();
+    let text = markdown(&Report::Run(run));
+    assert!(text.contains("a\\|b"), "{text}");
+}
+
+/// A program of your own that reported one metric.
+fn a_program() -> ProgramResult {
+    ProgramResult {
+        id: "app".to_owned(),
+        node: "server".to_owned(),
+        run: vec!["./app".to_owned()],
+        started_ns: -500_000_000,
+        ready_ns: -400_000_000,
+        ended_ns: 10_100_000_000,
+        ended: "stopped".to_owned(),
+        exit_code: Some(0),
+        exit_signal: None,
+        stdout_file: "program-app.stdout.log".to_owned(),
+        stderr_file: "program-app.stderr.log".to_owned(),
+        output: ProgramOutput {
+            stdout_bytes: 10,
+            stdout_dropped_bytes: 0,
+            stderr_bytes: 0,
+            stderr_dropped_bytes: 0,
+            long_lines: 0,
+        },
+        lines_dropped: false,
+        metrics: vec![MetricSummary {
+            name: "frames".to_owned(),
+            unit: Some("1/s".to_owned()),
+            count: 10,
+            first: 29.0,
+            last: 29.7,
+            min: 28.0,
+            max: 30.0,
+        }],
+        metrics_file: None,
+        metric_readings: 10,
+        bad_metric_lines: 0,
+        bad_metric_examples: Vec::new(),
+    }
+}
+
+// ---- JUnit ----
+
+#[test]
+fn the_junit_of_a_run() {
+    insta::assert_snapshot!(junit(&load("junit", false)));
+}
+
+/// The XML is well formed: every tag is closed and the names and values of the properties are escaped.
+#[test]
+fn junit_escapes_what_a_name_may_contain() {
+    let Report::Run(mut run) = load("junit-escape", false) else {
+        panic!("a run")
+    };
+    run.result.scenario.name = "a<b&\"c\"".to_owned();
+    run.result.workloads[0].id = "w'<>".to_owned();
+    let text = junit(&Report::Run(run));
+    assert!(!text.contains("a<b"), "{text}");
+    assert!(text.contains("a&lt;b&amp;&quot;c&quot;"), "{text}");
+    assert!(text.contains("w&#39;&lt;&gt;"), "{text}");
+    let opening = text.matches("<testcase ").count();
+    assert_eq!(opening, text.matches("</testcase>").count());
+}
+
+/// A case fails if the run was interrupted, or if the kernel refused packets and no link was shut on purpose; the canaries
+/// are the same run without the cause, which passes.
+#[test]
+fn a_junit_case_fails_only_for_the_reasons_of_the_decision() {
+    let fails = |run: &RunReport| junit(&Report::Run(Box::new(run.clone()))).contains("<failure ");
+    let Report::Run(run) = load("junit-fail", false) else {
+        panic!("a run")
+    };
+    assert!(!fails(&run), "a clean run passes");
+
+    let mut interrupted = (*run).clone();
+    interrupted.result.timing.interrupted_ns = Some(3 * SECOND);
+    assert!(fails(&interrupted));
+    assert!(
+        junit(&Report::Run(Box::new(interrupted)))
+            .contains("the run was interrupted after 3 s of 10 s")
+    );
+
+    let mut refused = (*run).clone();
+    refused.result.workloads[0].sender.send_errors = 5;
+    refused.result.workloads[0].sender.first_error = Some("Network is unreachable".to_owned());
+    assert!(fails(&refused), "refused packets without a down step fail");
+    assert!(
+        junit(&Report::Run(Box::new(refused.clone()))).contains("the kernel refused 5 packets")
+    );
+
+    // The same refusals while a link is shut on purpose are what the step is for
+    let mut down = refused;
+    down.result.events[0].kind = "down".to_owned();
+    assert!(!fails(&down));
+    assert!(junit(&Report::Run(Box::new(down))).contains("while a link was shut on purpose"));
+
+    // A warning about reproducibility is no failure
+    let mut warned = (*run).clone();
+    warned.result.seed.loss_reproducible = false;
+    warned.result.seed.not_reproducible_because = vec!["an outage".to_owned()];
+    assert!(!fails(&warned));
+}
+
+#[test]
+fn the_properties_have_the_names_of_the_plugin() {
+    let text = junit(&load("junit-names", false));
+    for name in [
+        "netscenario.lte-like-link.media.sent",
+        "netscenario.lte-like-link.media.received",
+        "netscenario.lte-like-link.media.lost",
+        "netscenario.lte-like-link.media.loss_ratio",
+        "netscenario.lte-like-link.media.reordered",
+        "netscenario.lte-like-link.media.delay_p50_s",
+        "netscenario.lte-like-link.media.delay_p99_s",
+    ] {
+        assert!(
+            text.contains(&format!("name=\"{name}\"")),
+            "{name} is not in\n{text}"
+        );
+    }
+}
+
+#[test]
+fn a_program_is_a_case_with_its_metrics_as_properties() {
+    let Report::Run(mut run) = load("junit-program", false) else {
+        panic!("a run")
+    };
+    run.result.programs = vec![a_program()];
+    let text = junit(&Report::Run(run));
+    assert!(
+        text.contains("<testcase classname=\"lte-like-link\" name=\"app\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("name=\"netscenario.lte-like-link.app.frames\""),
+        "{text}"
+    );
+}
+
+// ---- HTML ----
+
+#[test]
+fn the_charts_of_a_run() {
+    let Report::Run(run) = load("charts", true) else {
+        panic!("a run")
+    };
+    let page = html(&Report::Run(run)).unwrap();
+    // Each drawing alone is a snapshot, so that a change of one shows as a diff of that drawing
+    let drawings: Vec<&str> = page
+        .split("<svg ")
+        .skip(1)
+        .map(|part| part.split("</svg>").next().unwrap())
+        .collect();
+    assert_eq!(
+        drawings.len(),
+        4,
+        "throughput, delay, loss and the distribution of the delays"
+    );
+    for (name, drawing) in ["throughput", "delay", "loss", "distribution"]
+        .iter()
+        .zip(&drawings)
+    {
+        insta::assert_snapshot!(*name, format!("<svg {drawing}</svg>"));
+    }
+}
+
+/// The page is one file with nothing to fetch (RPT-03): no address, no script, no link, no image, no import, no font.
+#[test]
+fn the_html_has_no_external_reference() {
+    let Report::Run(run) = load("html-offline", true) else {
+        panic!("a run")
+    };
+    let page = html(&Report::Run(run)).unwrap();
+    assert_no_external_reference(&page);
+    // The check can fail: a page with a reference is found
+    for bad in [
+        "<img src=\"x.png\">",
+        "<script>1</script>",
+        "<link rel=\"stylesheet\" href=\"a.css\">",
+        "<a href=\"https://example.org\">",
+        "<style>@import url(a.css);</style>",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\">",
+        "<iframe></iframe>",
+    ] {
+        let found = std::panic::catch_unwind(|| assert_no_external_reference(bad));
+        assert!(found.is_err(), "{bad} should have been found");
+    }
+}
+
+fn assert_no_external_reference(page: &str) {
+    for needle in [
+        "http://",
+        "https://",
+        "//cdn",
+        "src=",
+        "href=",
+        "<script",
+        "<link",
+        "<img",
+        "<iframe",
+        "@import",
+        "url(",
+        "@font-face",
+        "<object",
+        "<embed",
+    ] {
+        assert!(!page.contains(needle), "the page contains '{needle}'");
+    }
+}
+
+#[test]
+fn the_html_of_a_run_loaded_without_detail_is_refused() {
+    let error = html(&load("html-nodetail", false)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("needs the series and the records"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_html_names_the_events_and_the_warnings() {
+    let Report::Run(mut run) = load("html-text", true) else {
+        panic!("a run")
+    };
+    run.result.seed.loss_reproducible = false;
+    run.result.seed.not_reproducible_because = vec!["the scenario has an outage".to_owned()];
+    let page = html(&Report::Run(run)).unwrap();
+    for expected in [
+        "<h1>netscenario: lte-like-link</h1>",
+        "<h2>media</h2>",
+        "<h2>Timeline</h2>",
+        "outage-start",
+        "the loss of this run does not repeat from its seed: the scenario has an outage",
+        "prefers-color-scheme:dark",
+    ] {
+        assert!(page.contains(expected), "{expected} is not in the page");
+    }
+}
+
+#[test]
+fn text_in_the_html_is_escaped() {
+    let Report::Run(mut run) = load("html-escape", true) else {
+        panic!("a run")
+    };
+    run.result.scenario.name = "<b>x</b>".to_owned();
+    run.result.workloads[0].from = "a&b".to_owned();
+    let page = html(&Report::Run(run)).unwrap();
+    assert!(!page.contains("<b>x</b>"));
+    assert!(page.contains("&lt;b&gt;x&lt;/b&gt;"));
+    assert!(page.contains("a&amp;b"));
+}
+
+#[test]
+fn a_result_without_a_series_has_the_page_without_the_charts_over_time() {
+    let Report::Run(mut run) = load("html-noseries", true) else {
+        panic!("a run")
+    };
+    run.details[0].bins.clear();
+    let page = html(&Report::Run(run)).unwrap();
+    assert!(page.contains("has no series by time bin"), "{page}");
+    assert_eq!(
+        page.matches("<svg ").count(),
+        1,
+        "only the distribution of the delays"
+    );
+}
+
+// ---- sets ----
+
+fn a_set() -> Report {
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../python/netscenario/tests/fixtures/runset.json"),
+    )
+    .unwrap();
+    Report::Set(
+        Box::new(RunSetResult::from_json(&text).unwrap()),
+        PathBuf::from("set"),
+    )
+}
+
+#[test]
+fn the_markdown_of_a_set() {
+    insta::assert_snapshot!(markdown(&a_set()));
+}
+
+#[test]
+fn the_junit_of_a_set() {
+    insta::assert_snapshot!(junit(&a_set()));
+}
+
+#[test]
+fn the_html_of_a_set_draws_the_runs_against_the_interval_and_has_no_external_reference() {
+    let page = html(&a_set()).unwrap();
+    assert_no_external_reference(&page);
+    assert!(
+        page.contains("<h1>netscenario: t, 6 repetitions</h1>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("Without an interval"),
+        "a metric that some runs lack is listed"
+    );
+    // One drawing for each headline metric that every run has: the loss and the throughput
+    assert_eq!(page.matches("<svg ").count(), 2, "{page}");
+    assert_eq!(
+        page.matches("class=\"run\"").count(),
+        2 * 6,
+        "a dot for every run"
+    );
+    let Report::Set(set, _) = a_set() else {
+        panic!("a set")
+    };
+    let loss = set.metric("w.loss_ratio").unwrap();
+    let plot = svg::interval_plot(&svg::IntervalPlot {
+        title: "w.loss_ratio",
+        description: String::new(),
+        values: &loss.values,
+        estimate: loss.interval.estimate,
+        interval: (loss.interval.low, loss.interval.high),
+        format: &|v| tick_for_test(v),
+    });
+    insta::assert_snapshot!("interval_plot", plot);
+}
+
+fn tick_for_test(value: f64) -> String {
+    svg::tick(value)
+}
+
+// ---- the directory ----
+
+#[test]
+fn a_directory_that_is_no_result_is_refused_and_a_set_is_found() {
+    let nothing = directory("nothing");
+    std::fs::create_dir_all(&nothing).unwrap();
+    assert!(matches!(
+        Report::load(&nothing, false),
+        Err(ReportError::NotAResult(_))
+    ));
+    let set = directory("set-dir");
+    std::fs::create_dir_all(&set).unwrap();
+    std::fs::write(set.join("runset.json"), "{}").unwrap();
+    assert!(
+        matches!(Report::load(&set, false), Err(ReportError::Bad { .. })),
+        "a set that cannot be read is named"
+    );
+    let broken = directory("broken");
+    sample_run(&broken);
+    std::fs::write(broken.join("result.json"), "{}").unwrap();
+    let error = Report::load(&broken, false).unwrap_err();
+    assert!(error.to_string().contains("result.json"), "{error}");
+    let truncated = directory("truncated");
+    sample_run(&truncated);
+    std::fs::write(truncated.join("series-media.jsonl"), "{\"bin\": 0\n").unwrap();
+    let error = Report::load(&truncated, true).unwrap_err();
+    assert!(
+        error.to_string().contains("series-media.jsonl: line 1"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_formats_are_read_from_their_names() {
+    use std::str::FromStr;
+    assert_eq!(Format::from_str("md"), Ok(Format::Markdown));
+    assert_eq!(Format::from_str("markdown"), Ok(Format::Markdown));
+    assert_eq!(Format::from_str("junit"), Ok(Format::Junit));
+    assert_eq!(Format::from_str("html"), Ok(Format::Html));
+    assert!(
+        Format::from_str("pdf")
+            .unwrap_err()
+            .contains("md, html or junit")
+    );
+}
+
+// ---- the sample report in the repository ----
+
+/// `docs/sample-report/` is what the code writes for the sample run. Rewrite it with `UPDATE_SAMPLE=1`.
+#[test]
+fn the_sample_report_in_the_repository_is_what_the_code_writes() {
+    let dir = directory("sample-report");
+    sample_run(&dir);
+    let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/sample-report");
+    for (format, file) in [
+        (Format::Markdown, "report.md"),
+        (Format::Junit, "junit.xml"),
+        (Format::Html, "report.html"),
+    ] {
+        let written = report(&dir, format).unwrap();
+        let path = target.join(file);
+        if std::env::var_os("UPDATE_SAMPLE").is_some() {
+            std::fs::create_dir_all(&target).unwrap();
+            std::fs::write(&path, &written).unwrap();
+        }
+        let found = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "{}: {error} (write it with UPDATE_SAMPLE=1)",
+                path.display()
+            )
+        });
+        assert!(
+            found == written,
+            "{} is not what the code writes: run `UPDATE_SAMPLE=1 cargo test -p netscenario-core --lib report` and read the diff",
+            path.display()
+        );
+    }
+}

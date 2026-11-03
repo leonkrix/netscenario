@@ -448,6 +448,55 @@ fn a_changed_record_is_refused_and_another_seed_is_a_failed_replay() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// The three reports of a real run (CLI-02, RPT-02, RPT-03, RPT-04): the Markdown for a CI summary, the `JUnit` with the
+/// metrics of the plugin as properties, and the HTML with its charts and nothing to fetch.
+#[test]
+fn the_reports_of_a_real_run_are_made_from_its_directory() {
+    if !can_run("the_reports_of_a_real_run_are_made_from_its_directory") {
+        return;
+    }
+    let dir = work_dir("report");
+    let (_, first) = first_run(&dir);
+    let first_text = first.to_str().unwrap();
+    let report = |format: &str| {
+        let output = netscenario_in(&dir, &["report", first_text, "--format", format]).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let markdown = report("md");
+    assert!(
+        markdown.starts_with("## netscenario: cli-set\n"),
+        "{markdown}"
+    );
+    assert!(markdown.contains("| Sent | 209 |"), "{markdown}");
+    let junit = report("junit");
+    assert!(
+        junit.contains("<testcase classname=\"cli-set\" name=\"media\""),
+        "{junit}"
+    );
+    assert!(
+        junit.contains("name=\"netscenario.cli-set.media.delay_p50_s\""),
+        "{junit}"
+    );
+    assert!(!junit.contains("<failure"), "{junit}");
+    let html = report("html");
+    assert!(
+        html.contains("<h1>netscenario: cli-set</h1>") && html.contains("<svg "),
+        "{html}"
+    );
+    for needle in ["http://", "https://", "<script", "src=", "href=", "url("] {
+        assert!(!html.contains(needle), "the page contains '{needle}'");
+    }
+    // The same directory gives the same bytes
+    assert_eq!(report("html"), html);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// Too few repetitions is a wrong command line: exit code 2 and nothing runs, with or without namespaces.
 #[test]
 fn too_few_repetitions_are_refused_before_anything_runs() {

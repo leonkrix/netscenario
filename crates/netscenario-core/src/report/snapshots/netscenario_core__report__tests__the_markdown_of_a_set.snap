@@ -1,0 +1,58 @@
+---
+source: crates/netscenario-core/src/report/tests.rs
+expression: markdown(&a_set())
+---
+## netscenario: t, 6 repetitions
+
+| | |
+| --- | --- |
+| Backend | kernel |
+| Seed | 7 |
+| Intervals | around the mean, 95 %, 10000 draws, expanded percentile |
+
+### Headline metrics
+
+| Metric | Mean | Interval | Spread (stddev) |
+| --- | ---: | ---: | ---: |
+| w.loss_ratio | 7.00 % | 3.33 % to 10.67 % | 3.74 % |
+| w.throughput.mean | 8000 gbit/s | 8000 gbit/s to 8000 gbit/s | 0 bit/s |
+
+<details><summary>All 9 metrics</summary>
+
+| Metric | Mean | Median | Min | Max | Interval |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| w.duplicates | 0 | 0 | 0 | 0 | 0 to 0 |
+| w.loss_ratio | 7.00 % | 7.00 % | 2.00 % | 12.00 % | 3.33 % to 10.67 % |
+| w.loss_runs.longest | 0 | 0 | 0 | 0 | 0 to 0 |
+| w.loss_runs.mean | 0 | 0 | 0 | 0 | 0 to 0 |
+| w.lost | 1 | 1 | 1 | 1 | 1 to 1 |
+| w.received | 1 | 1 | 1 | 1 | 1 to 1 |
+| w.reordered | 0 | 0 | 0 | 0 | 0 to 0 |
+| w.sent | 2 | 2 | 2 | 2 | 2 to 2 |
+| w.throughput.mean | 8000 gbit/s | 8000 gbit/s | 8000 gbit/s | 8000 gbit/s | 8000 gbit/s to 8000 gbit/s |
+
+</details>
+
+### Without an interval
+
+These metrics are missing in some runs, so an interval from the others would be a made-up number:
+
+- `w.delay.max`: in 5 of 6 runs
+- `w.delay.mean`: in 5 of 6 runs
+- `w.delay.min`: in 5 of 6 runs
+- `w.delay.p50`: in 5 of 6 runs
+- `w.delay.p90`: in 5 of 6 runs
+- `w.delay.p95`: in 5 of 6 runs
+- `w.delay.p99`: in 5 of 6 runs
+- `w.delay.p999`: in 5 of 6 runs
+
+### Runs
+
+| Run | Seed | Loss repeats from the seed |
+| --- | ---: | --- |
+| run-001 | 13836799946177249161 | yes |
+| run-002 | 4750671471871937387 | yes |
+| run-003 | 18150273063603234735 | yes |
+| run-004 | 3529771608138395119 | yes |
+| run-005 | 5542523133318148084 | yes |
+| run-006 | 382815278662272371 | yes |

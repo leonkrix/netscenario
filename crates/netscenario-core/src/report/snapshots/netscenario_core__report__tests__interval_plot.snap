@@ -1,0 +1,5 @@
+---
+source: crates/netscenario-core/src/report/tests.rs
+expression: plot
+---
+<svg viewBox="0 0 720.0 96.0" role="img" aria-label="w.loss_ratio"><title>w.loss_ratio</title><desc></desc><line class="axis" x1="66.0" y1="68.0" x2="706.0" y2="68.0"/><line class="axis" x1="275.7" y1="68.0" x2="275.7" y2="72.0"/><text class="tick" x="275.7" y="84.0" text-anchor="middle">0.05</text><line class="axis" x1="551.5" y1="68.0" x2="551.5" y2="72.0"/><text class="tick" x="551.5" y="84.0" text-anchor="middle">0.1</text><rect class="interval" x="183.7" y="36.0" width="404.6" height="12"/><line class="estimate" x1="386.0" y1="30.0" x2="386.0" y2="54.0"/><circle class="run" cx="110.1" cy="42.0" r="3.5"/><circle class="run" cx="220.5" cy="42.0" r="3.5"/><circle class="run" cx="330.8" cy="42.0" r="3.5"/><circle class="run" cx="441.2" cy="42.0" r="3.5"/><circle class="run" cx="551.5" cy="42.0" r="3.5"/><circle class="run" cx="661.9" cy="42.0" r="3.5"/></svg>
