@@ -12,6 +12,7 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::scenario::Link;
+use crate::shortcut::{Chain, Dumbbell, Multipath, Star};
 use crate::units::Name;
 
 /// The most nodes a scenario may have. The Kernel backend refuses fewer by default (the doctor says why); this is the
@@ -239,8 +240,12 @@ impl Route {
 }
 
 /// The nodes, the links and the routes of a scenario.
+///
+/// In a file the nodes and links are written out, or given as one of the shortcuts `chain`, `star`, `dumbbell` and
+/// `multipath` (D-078), which are expanded when the file is read: what is held and written again is always the long form.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "TopologyForm")]
+#[schemars(with = "TopologyForm")]
 #[non_exhaustive]
 pub struct Topology {
     /// The nodes: a name for a host, or `{ id, role }`.
@@ -257,6 +262,104 @@ pub struct Topology {
     /// (with `routing: manual`) are the only ones.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub routes: Vec<Route>,
+}
+
+/// The topology as a file writes it: nodes and links, or one shortcut, and the routing.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "Topology")]
+struct TopologyForm {
+    /// The nodes: a name for a host, or `{ id, role }`. Not together with a shortcut.
+    #[serde(default)]
+    nodes: Option<Vec<Node>>,
+    /// The links between the nodes. Two nodes may have several. Not together with a shortcut.
+    #[serde(default)]
+    links: Option<Vec<Link>>,
+    /// A line of nodes: hosts at the ends, routers between.
+    #[serde(default)]
+    chain: Option<Chain>,
+    /// A router with hosts around it.
+    #[serde(default)]
+    star: Option<Star>,
+    /// Hosts on two sides of a link between two routers.
+    #[serde(default)]
+    dumbbell: Option<Dumbbell>,
+    /// Two hosts joined by several paths over routers of their own.
+    #[serde(default)]
+    multipath: Option<Multipath>,
+    /// How the routes come about: `auto` (the default) or `manual`.
+    #[serde(default)]
+    routing: Routing,
+    /// With `auto`: install every equally short path as a multipath route, not only the first. Off by default.
+    #[serde(default)]
+    ecmp: bool,
+    /// Routes of single nodes.
+    #[serde(default)]
+    routes: Vec<Route>,
+}
+
+impl TryFrom<TopologyForm> for Topology {
+    type Error = String;
+
+    fn try_from(form: TopologyForm) -> Result<Self, String> {
+        let shortcuts: Vec<&str> = [
+            ("chain", form.chain.is_some()),
+            ("star", form.star.is_some()),
+            ("dumbbell", form.dumbbell.is_some()),
+            ("multipath", form.multipath.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(name, present)| present.then_some(name))
+        .collect();
+        let (nodes, links) = if shortcuts.is_empty() {
+            match (form.nodes, form.links) {
+                (Some(nodes), Some(links)) => (nodes, links),
+                (None, _) => {
+                    return Err(
+                        "a topology needs `nodes` and `links`, or one of the shortcuts `chain`, `star`, `dumbbell` and `multipath`"
+                            .to_owned(),
+                    );
+                }
+                (Some(_), None) => {
+                    return Err("a topology with `nodes` needs `links` as well".to_owned());
+                }
+            }
+        } else {
+            if shortcuts.len() > 1 {
+                return Err(format!(
+                    "a topology is one shortcut, found {}: {}",
+                    shortcuts.len(),
+                    shortcuts.join(", ")
+                ));
+            }
+            if form.nodes.is_some() || form.links.is_some() {
+                return Err(format!(
+                    "`{}` cannot be combined with `nodes` or `links`: it makes them; to change what it makes, write the long form (`netscenario expand` prints it)",
+                    shortcuts[0]
+                ));
+            }
+            let made = if let Some(chain) = &form.chain {
+                chain.make()?
+            } else if let Some(star) = &form.star {
+                star.make()?
+            } else if let Some(dumbbell) = &form.dumbbell {
+                dumbbell.make()?
+            } else if let Some(multipath) = &form.multipath {
+                multipath.make()?
+            } else {
+                unreachable!("one shortcut is present")
+            };
+            crate::shortcut::check_made(&made, shortcuts[0])?;
+            made
+        };
+        Ok(Self {
+            nodes,
+            links,
+            routing: form.routing,
+            ecmp: form.ecmp,
+            routes: form.routes,
+        })
+    }
 }
 
 impl Topology {

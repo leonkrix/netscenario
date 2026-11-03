@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/shortcut-link-jitter-without-amount.yaml
+---
+error: the key `amount` is missing
+ --> shortcut-link-jitter-without-amount.yaml:7:41
+  |
+6 |     nodes: [a, r, b]
+7 |     link: { both: { delay: 5ms, jitter: { distribution: normal } } }
+  |                                         ^
+  = path: topology.chain.link.both.jitter
+  = help: add `amount:` to this mapping

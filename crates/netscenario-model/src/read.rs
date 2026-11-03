@@ -92,6 +92,18 @@ impl Scenario {
     }
 }
 
+impl Scenario {
+    /// Writes the scenario as YAML in its canonical long form: a shortcut of the topology is written as the nodes and links
+    /// it made. [`Scenario::from_yaml`] reads the text back into an equal scenario. Comments of the original are not kept.
+    ///
+    /// # Errors
+    ///
+    /// The sentence of the YAML writer if the scenario cannot be written (it can always be, for a valid scenario).
+    pub fn to_yaml(&self) -> Result<String, String> {
+        serde_saphyr::to_string(self).map_err(|error| error.to_string())
+    }
+}
+
 impl Error {
     /// Problems that were found after the file was read, such as a feature that a backend cannot reproduce,
     /// with the place in `source` of the path of each: the same kind of error as the reading of a file gives.
@@ -111,7 +123,15 @@ impl Error {
 }
 
 /// Puts a problem about the contents at the place of its path in the file.
-fn locate(problem: Problem, index: &SourceIndex) -> Problem {
+fn locate(mut problem: Problem, index: &SourceIndex) -> Problem {
+    // A node or a link that a shortcut made is shown at the shortcut, with the path in the file
+    if let Some(source) = problem
+        .path
+        .as_deref()
+        .and_then(|path| index.source_path(path))
+    {
+        problem.path = Some(source);
+    }
     let found = problem.path.as_deref().and_then(|path| index.locate(path));
     match found {
         Some((location, length)) => problem.at_location(location, length),
@@ -125,6 +145,9 @@ fn sorted(mut problems: Vec<Problem>) -> Vec<Problem> {
         let (line, column) = problem.location.map_or((0, 0), |l| (l.line, l.column));
         (line, column, problem.message.clone())
     });
+    // The links of a shortcut share the place of their values, so the same fault is found once for each link
+    problems
+        .dedup_by(|a, b| a.path == b.path && a.location == b.location && a.message == b.message);
     problems
 }
 

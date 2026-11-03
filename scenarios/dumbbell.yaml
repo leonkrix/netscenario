@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# The classic dumbbell: two senders on the left, two receivers on the right, and one bottleneck between two routers that they
+# share. The shortcut makes the routers `router-left` and `router-right`, the link `bottleneck` and a link from each host to its
+# router; `netscenario expand` prints the long form. The bottleneck is 10 mbit with a delay of 20 ms each way.
+version: 0
+name: dumbbell
+seed: 3
+duration: 30s
+topology:
+  dumbbell:
+    left: [alice, bob]
+    right: [carol, dave]
+    access:
+      both: { delay: 2ms, rate: 100mbit }
+    bottleneck:
+      both: { delay: 20ms, rate: 10mbit }
+workloads:
+  - { id: first, kind: udp-cbr, from: alice, to: carol, rate: 6mbit, packet-size: 1200b }
+  - { id: second, kind: udp-cbr, from: bob, to: dave, rate: 6mbit, packet-size: 1200b }

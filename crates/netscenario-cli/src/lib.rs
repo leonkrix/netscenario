@@ -11,6 +11,7 @@ mod render;
 mod replay_cmd;
 mod report_cmd;
 mod run_cmd;
+mod show_cmd;
 mod validate;
 
 use std::io::Write;
@@ -43,6 +44,8 @@ Commands:
   replay <dir>     run a recorded run again and compare the lost packets
   report <dir>     make Markdown, JUnit or HTML from a result directory
   validate <file>  check a scenario file without running it
+  expand <file>    print a scenario in its long form (a shortcut becomes nodes and links)
+  show <file>      show the network: nodes, links, routes and the path of each workload
   schema           print the JSON Schema of the scenario format
   doctor           report what this machine can do (--json for machines)
   clean            end what a run without a supervisor left behind (--dry-run, --json)
@@ -115,6 +118,8 @@ where
         "replay" => replay_cmd::replay_command(rest, out, err),
         "report" => report_cmd::report_command(rest, out, err),
         "validate" => validate::validate(rest, out, err),
+        "expand" => show_cmd::expand(rest, out, err),
+        "show" => show_cmd::show(rest, out, err),
         "schema" => validate::schema(rest, out, err),
         "doctor" => doctor(rest, out, err),
         "clean" => clean(rest, out, err),
@@ -414,6 +419,69 @@ mod tests {
                 .iter()
                 .any(|f| f == "jitter")
         );
+    }
+
+    /// `expand` writes the long form of a shortcut: read back it is the same scenario, and it names what the shortcut made.
+    #[test]
+    fn expand_writes_the_long_form_of_a_shortcut_that_reads_back_the_same() {
+        let path = scenarios().join("dumbbell.yaml");
+        let path = path.to_str().unwrap();
+        let (code, out, err) = call(&["netscenario", "expand", path]);
+        assert_eq!((code, err.as_str()), (exit::OK, ""));
+        assert!(!out.contains("dumbbell:"), "{out}");
+        assert!(
+            out.contains("router-left") && out.contains("bottleneck"),
+            "{out}"
+        );
+        let original = netscenario_model::Scenario::from_yaml(
+            &std::fs::read_to_string(path).unwrap(),
+            "original",
+        )
+        .unwrap();
+        let again = netscenario_model::Scenario::from_yaml(&out, "expanded").unwrap();
+        assert_eq!(original, again);
+        let (code, json, _) = call(&["netscenario", "expand", path, "--json"]);
+        assert_eq!(code, exit::OK);
+        let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(json["topology"]["links"].as_array().unwrap().len(), 5);
+    }
+
+    /// `show` lists the nodes, the links, the routes and the path of each workload; as Graphviz and as JSON too.
+    #[test]
+    fn show_lists_the_network_the_routes_and_the_paths() {
+        let path = scenarios().join("two-paths.yaml");
+        let path = path.to_str().unwrap();
+        let (code, out, err) = call(&["netscenario", "show", path]);
+        assert_eq!((code, err.as_str()), (exit::OK, ""));
+        assert!(out.contains("fast") && out.contains("router"), "{out}");
+        assert!(
+            out.contains("media: client -[client-fast]-> fast -[fast-server]-> server"),
+            "{out}"
+        );
+        assert!(
+            out.contains("metric 10 *") && out.contains("metric 20 *"),
+            "{out}"
+        );
+        let (_, dot, _) = call(&["netscenario", "show", path, "--format", "dot"]);
+        assert!(
+            dot.starts_with("graph netscenario {") && dot.contains("\"fast\" [shape=ellipse]"),
+            "{dot}"
+        );
+        let (_, json, _) = call(&["netscenario", "show", path, "--format=json"]);
+        let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            json["paths"][0]["links"],
+            serde_json::json!(["client-fast", "fast-server"])
+        );
+        assert_eq!(json["routes"][0]["given"], true);
+        // Canary: a format that does not exist, and a file that is not a scenario, are refused
+        let (code, _, err) = call(&["netscenario", "show", path, "--format", "svg"]);
+        assert_eq!(code, exit::USAGE);
+        assert!(err.contains("text, dot, json"), "{err}");
+        let invalid = scenarios().join("invalid/routes-loop.yaml");
+        let (code, _, err) = call(&["netscenario", "show", invalid.to_str().unwrap()]);
+        assert_eq!(code, exit::USAGE);
+        assert!(err.contains("lead in a circle"), "{err}");
     }
 
     /// Canary: validation can fail. Every faulty file of the corpus is refused with exit code 2 and a message

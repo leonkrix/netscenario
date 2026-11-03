@@ -1,0 +1,13 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  chain:
+    nodez: [a, r, b]
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: a
+    to: b
+    rate: 1mbit
+    packet-size: 1200b

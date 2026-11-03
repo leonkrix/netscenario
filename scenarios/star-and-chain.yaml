@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A star: three hosts around a hub (a router) with their own values, and a stream from one to another through the hub.
+# A chain would be `chain: { nodes: [client, edge, core, server] }`, a multipath
+# `multipath: { from: client, to: server, paths: [{ routers: [fast] }, { routers: [slow] }] }`.
+version: 0
+name: star
+duration: 15s
+topology:
+  star:
+    hub: hub
+    leaves: [phone, laptop, server]
+    links:
+      - both: { delay: 30ms, jitter: { amount: 5ms, distribution: normal }, rate: 20mbit }
+      - both: { delay: 3ms, rate: 100mbit }
+      - both: { delay: 1ms }
+workloads:
+  - { id: call, kind: udp-cbr, from: phone, to: server, rate: 1mbit, packet-size: 800b }

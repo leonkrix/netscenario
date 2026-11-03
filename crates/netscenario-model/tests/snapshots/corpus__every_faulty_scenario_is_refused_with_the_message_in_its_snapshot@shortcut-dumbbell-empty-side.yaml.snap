@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/shortcut-dumbbell-empty-side.yaml
+---
+error: a dumbbell needs at least one host on each side
+ --> shortcut-dumbbell-empty-side.yaml:5:3
+  |
+4 | topology:
+5 |   dumbbell: { left: [a], right: [] }
+  |   ^^^^^^^^

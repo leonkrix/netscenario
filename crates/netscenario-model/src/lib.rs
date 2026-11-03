@@ -37,6 +37,7 @@ mod required;
 mod reserved;
 mod scenario;
 mod schema;
+mod shortcut;
 mod source;
 mod suggest;
 mod topology;
@@ -58,6 +59,9 @@ pub use scenario::{
     Shutdown, Signal, True, UdpCbr, UdpChecksum, Workload, WorkloadKind,
 };
 pub use schema::json_schema;
+pub use shortcut::{
+    BOTTLENECK, Chain, Dumbbell, LinkSpec, Multipath, PathSpec, ROUTER_LEFT, ROUTER_RIGHT, Star,
+};
 pub use topology::{
     DEFAULT_DESTINATION, DEFAULT_METRIC, MAX_LINKS, MAX_NODES, MAX_ROUTES, Node, Role, Route,
     Routing, Topology,

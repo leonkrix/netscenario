@@ -124,12 +124,22 @@ pub(crate) fn validate<S: AsRef<str>>(
             } else {
                 let _ = writeln!(
                     out,
-                    "ok: {} ({})\n  {} nodes, {} link, {} workload, duration {duration}\n  needs: {}",
+                    "ok: {} ({})\n  {} nodes, {} {}, {} {}, duration {duration}\n  needs: {}",
                     scenario.name,
                     loaded.name,
                     scenario.topology.nodes.len(),
                     scenario.topology.links.len(),
+                    if scenario.topology.links.len() == 1 {
+                        "link"
+                    } else {
+                        "links"
+                    },
                     scenario.workloads.len(),
+                    if scenario.workloads.len() == 1 {
+                        "workload"
+                    } else {
+                        "workloads"
+                    },
                     features.join(", ")
                 );
             }

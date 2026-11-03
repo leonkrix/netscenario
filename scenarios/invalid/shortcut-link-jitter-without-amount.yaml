@@ -1,0 +1,14 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  chain:
+    nodes: [a, r, b]
+    link: { both: { delay: 5ms, jitter: { distribution: normal } } }
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: a
+    to: b
+    rate: 1mbit
+    packet-size: 1200b
