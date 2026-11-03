@@ -19,6 +19,7 @@ results/lte/
 ```
 
 - **The seeds.** Run number `i` (from 0) uses the seed `derive_repetition_seed(set seed, i)`. The seed of the set is the `seed` of the scenario or `--seed`; without either the set draws one and prints it (`repeat the set with --seed 42`). The derivation is pinned like the seeds of the links, so a published set can be repeated by any later version. The runs of one set do not repeat each other's loss patterns.
+- **Every run of the set can be replayed** with `netscenario replay results/lte/run-003` (each directory has its `scenario.json`, [CLI.md](CLI.md#replay)).
 - **The runs are one after the other.** They share the machine, and a run beside another would measure the other.
 - **A set ends with the first failure** (a run that fails, Ctrl-C, a run that was cut short). The finished runs stay in their directories and there is no `runset.json`: an interval from fewer runs than were asked for would be a made-up number.
 

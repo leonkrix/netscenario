@@ -68,6 +68,7 @@ pub mod patterns;
 mod programs;
 mod provision;
 pub mod recovery;
+mod replay;
 mod result;
 mod run;
 mod runset;
@@ -92,6 +93,10 @@ pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering};
 pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
 pub use recovery::{Basis, Recovery, RecoveryOptions};
+pub use replay::{
+    Comparison, Difference, LISTED_SEQUENCES, Recorded, ReplayError, SCENARIO_FILE, Verdict,
+    WorkloadComparison, compare, scenario_diff, scenario_hash, scenario_json,
+};
 pub use result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, MetricSummary,
     ProgramOutput, ProgramResult, QueueCheck, RESULT_FORMAT, RESULT_VERSION, RunResult,

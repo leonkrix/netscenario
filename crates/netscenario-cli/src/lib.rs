@@ -8,6 +8,7 @@
 mod args;
 mod interrupt;
 mod render;
+mod replay_cmd;
 mod run_cmd;
 mod validate;
 
@@ -22,6 +23,9 @@ pub mod exit {
     /// A run finished, and an assertion about its result failed. (Assertions come with release 0.1's
     /// `expect` and the Python layer; no command returns this yet.)
     pub const ASSERTION_FAILED: u8 = 1;
+    /// A replay lost other packets than the original, although the loss repeats from its seed (`replay`). It is the
+    /// same number as [`ASSERTION_FAILED`]: a check that the command was asked to make did not hold.
+    pub const NOT_REPRODUCED: u8 = 1;
     /// The command line or the scenario is wrong, or the backend cannot reproduce what the scenario asks for.
     pub const USAGE: u8 = 2;
     /// The environment does not allow the run: a missing tool or permission.
@@ -35,6 +39,7 @@ Usage: netscenario <command> [options]
 
 Commands:
   run <file>       run a scenario and write its result
+  replay <dir>     run a recorded run again and compare the lost packets
   validate <file>  check a scenario file without running it
   schema           print the JSON Schema of the scenario format
   doctor           report what this machine can do (--json for machines)
@@ -44,7 +49,7 @@ Options:
   -h, --help     print this help (also after a command, for its options)
   -V, --version  print the version
 
-Exit codes: 0 ok, 1 assertion failed, 2 usage or scenario error,
+Exit codes: 0 ok, 1 assertion failed or a replay not reproduced, 2 usage or scenario error,
 3 environment or permission error, 4 run failed.
 ";
 
@@ -105,6 +110,7 @@ where
             exit::OK
         }
         "run" => run_cmd::run_command(rest, out, err),
+        "replay" => replay_cmd::replay_command(rest, out, err),
         "validate" => validate::validate(rest, out, err),
         "schema" => validate::schema(rest, out, err),
         "doctor" => doctor(rest, out, err),
@@ -207,11 +213,39 @@ mod tests {
         assert_eq!(err, "");
     }
 
+    /// A directory that is not a run is a wrong input, not a wrong command line: exit 2 with the reason and no help.
+    #[test]
+    fn a_directory_that_cannot_be_replayed_is_exit_2_with_the_reason() {
+        let dir =
+            std::env::temp_dir().join(format!("netscenario-cli-replay-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (code, _, err) = call(&["netscenario", "replay", dir.to_str().unwrap()]);
+        assert_eq!(code, exit::USAGE);
+        assert!(
+            err.contains("has no result.json: it is not the directory of a run"),
+            "{err}"
+        );
+        assert!(!err.contains("Usage:"), "{err}");
+        std::fs::write(dir.join("runset.json"), "{}").unwrap();
+        let (code, _, err) = call(&["netscenario", "replay", dir.to_str().unwrap()]);
+        assert_eq!(code, exit::USAGE);
+        assert!(err.contains("is the directory of a set of runs"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn help_lists_the_commands_and_the_exit_codes() {
         let (code, out, _) = call(&["netscenario", "-h"]);
         assert_eq!(code, exit::OK);
-        for word in ["run", "validate", "doctor", "clean", "schema", "Exit codes"] {
+        for word in [
+            "run",
+            "replay",
+            "validate",
+            "doctor",
+            "clean",
+            "schema",
+            "Exit codes",
+        ] {
             assert!(out.contains(word), "help does not mention {word}");
         }
         assert!(
@@ -286,6 +320,8 @@ mod tests {
                 &["run", "a.yaml", "--capture", "bad name"][..],
                 "--capture: 'bad name'",
             ),
+            (&["replay"][..], "the directory of a run is missing"),
+            (&["replay", "a", "b"][..], "unexpected extra argument 'b'"),
             (
                 &["run", "a.yaml", "--repetitions", "x"][..],
                 "--repetitions needs a whole number",

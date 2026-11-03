@@ -80,3 +80,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-072](decisions/D-072.md) | A program of your own is started in order, waited for, watched, stopped as a group, and reported with its output and metrics | Accepted 2026-11-02 |
 | [D-073](decisions/D-073.md) | What is measured is in the scenario, an option of a run replaces a key, and a capture takes both ends of a link | Accepted 2026-11-02 |
 | [D-074](decisions/D-074.md) | A set of runs has its own seeds, a named list of metrics, an expanded percentile interval for the mean, and ends with the first failure | Accepted 2026-11-02 |
+| [D-075](decisions/D-075.md) | A run records its scenario, and a replay runs it with the recorded seed and compares the lost packets and the machine | Accepted 2026-11-03 |

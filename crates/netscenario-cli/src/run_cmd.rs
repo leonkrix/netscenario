@@ -212,7 +212,7 @@ fn scenario_directory(path: &str) -> Option<PathBuf> {
     std::fs::canonicalize(directory).ok()
 }
 
-fn default_out(name: &str) -> PathBuf {
+pub(crate) fn default_out(name: &str) -> PathBuf {
     let seconds = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -250,17 +250,17 @@ fn describe(event: &RunEvent) -> Option<String> {
 }
 
 /// The progress line on a terminal: one line that is written over again (D-031).
-struct ProgressLine;
+pub(crate) struct ProgressLine;
 
 impl ProgressLine {
     /// Erases the line, so that the summary or the error starts at the beginning of a line.
-    fn clear() {
+    pub(crate) fn clear() {
         let mut err = std::io::stderr().lock();
         let _ = write!(err, "\r\x1b[2K");
         let _ = err.flush();
     }
 
-    fn show(text: &str) {
+    pub(crate) fn show(text: &str) {
         let mut err = std::io::stderr().lock();
         let _ = write!(err, "\r\x1b[2K  {text}");
         let _ = err.flush();
@@ -276,7 +276,7 @@ impl RunObserver for ProgressLine {
 }
 
 /// Writes what went wrong and returns the exit code that fits.
-fn report(error: &Error, loaded: &Loaded, err: &mut impl Write) -> u8 {
+pub(crate) fn report(error: &Error, loaded: &Loaded, err: &mut impl Write) -> u8 {
     match error {
         Error::Capability(capability) => {
             let rendered = capability.render(&loaded.name, &loaded.text);

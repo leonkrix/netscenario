@@ -282,6 +282,172 @@ fn a_set_of_repetitions_derives_its_seeds_and_repeats_from_the_seed() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Runs `LOSSY` with the seed 7 into `dir/first` and returns the path of the scenario file and the directory.
+fn first_run(dir: &Path) -> (String, PathBuf) {
+    let file = write_scenario(dir, LOSSY);
+    let first = dir.join("first");
+    let output = netscenario_in(
+        dir,
+        &[
+            "run",
+            &file,
+            "--out",
+            first.to_str().unwrap(),
+            "--seed",
+            "7",
+            "--settle",
+            "300ms",
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (file, first)
+}
+
+/// ENV-03 with the real program: a run records its scenario, a replay with the recorded seed loses the same packets, and a
+/// scenario file that differs from the recorded scenario is refused with the fields.
+#[test]
+fn a_replay_loses_the_same_packets_and_a_file_that_differs_is_refused() {
+    if !can_run("a_replay_loses_the_same_packets_and_a_file_that_differs_is_refused") {
+        return;
+    }
+    let dir = work_dir("replay");
+    let (file, first) = first_run(&dir);
+    assert!(
+        first.join("scenario.json").is_file(),
+        "the run records its scenario"
+    );
+    let first_text = first.to_str().unwrap();
+
+    // The replay: the same seed, the same lost packets, exit 0
+    let again = dir.join("again");
+    let output = netscenario_in(
+        &dir,
+        &["replay", first_text, "--out", again.to_str().unwrap()],
+    )
+    .unwrap();
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(output.status.code(), Some(0), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("replaying cli-set for 1s (seed 7)"),
+        "{stderr}"
+    );
+    for expected in [
+        "netscenario replay: cli-set",
+        "machine: the same as the original",
+        "the same ones",
+        "result: the replay lost the same packets as the original.",
+    ] {
+        assert!(stdout.contains(expected), "{expected}\n{stdout}");
+    }
+    let replayed =
+        RunResult::from_json(&std::fs::read_to_string(again.join("result.json")).unwrap()).unwrap();
+    assert_eq!(replayed.seed.value, Some(7));
+    // The wait of the original is the wait of the replay
+    assert_eq!(replayed.timing.settle_ns, 300_000_000);
+
+    // The file without a seed is not the scenario of a run that was given the seed 7 with --seed
+    let refused = dir.join("refused");
+    let compare = |file: &str| {
+        let output = netscenario_in(
+            &dir,
+            &[
+                "replay",
+                first_text,
+                "--out",
+                refused.to_str().unwrap(),
+                "--scenario",
+                file,
+            ],
+        )
+        .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stderr) = compare(&file);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("seed: the run had 7, the file has (none)"),
+        "{stderr}"
+    );
+    // The file with the seed of the run in it is the recorded scenario: the replay runs
+    let with_seed = LOSSY.replace("name: cli-set", "name: cli-set\nseed: 7");
+    std::fs::write(&file, &with_seed).unwrap();
+    let (code, stderr) = compare(&file);
+    assert_eq!(code, Some(0), "{stderr}");
+    let _ = std::fs::remove_dir_all(&refused);
+    // A file with another rate: the field is named with both values, and nothing runs
+    std::fs::write(&file, with_seed.replace("rate: 2mbit", "rate: 3mbit")).unwrap();
+    let (code, stderr) = compare(&file);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("workloads[0].rate: the run had 2mbit, the file has 3mbit"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("nothing is replayed"), "{stderr}");
+    assert!(!refused.exists());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A scenario.json that was changed after the run is refused by its fingerprint, and (the canary of the comparison) a replay
+/// with another recorded seed loses other packets and is told as failed, with exit code 1.
+#[test]
+fn a_changed_record_is_refused_and_another_seed_is_a_failed_replay() {
+    if !can_run("a_changed_record_is_refused_and_another_seed_is_a_failed_replay") {
+        return;
+    }
+    let dir = work_dir("replay-canary");
+    let (_, first) = first_run(&dir);
+    let first_text = first.to_str().unwrap();
+    let out = dir.join("out");
+    let replay = || {
+        netscenario_in(
+            &dir,
+            &["replay", first_text, "--out", out.to_str().unwrap()],
+        )
+        .unwrap()
+    };
+
+    let scenario_file = first.join("scenario.json");
+    let original = std::fs::read_to_string(&scenario_file).unwrap();
+    std::fs::write(
+        &scenario_file,
+        original.replace("\"duration\": \"1s\"", "\"duration\": \"2s\""),
+    )
+    .unwrap();
+    let output = replay();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("is not the scenario that this run was made with"),
+        "{stderr}"
+    );
+    assert!(!out.exists(), "nothing is replayed");
+    std::fs::write(&scenario_file, original).unwrap();
+
+    let result_file = first.join("result.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&result_file).unwrap()).unwrap();
+    value["seed"]["value"] = serde_json::json!(8);
+    std::fs::write(&result_file, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+    let output = replay();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("NOT REPRODUCED"), "{stdout}");
+    assert!(stdout.contains("lost only in the replay"), "{stdout}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// Too few repetitions is a wrong command line: exit code 2 and nothing runs, with or without namespaces.
 #[test]
 fn too_few_repetitions_are_refused_before_anything_runs() {
