@@ -3,9 +3,9 @@
 Every release of netscenario, newest first. The lines are the titles of the pull requests; the rules for what
 a version may change are in [docs/VERSIONING.md](docs/VERSIONING.md).
 
-## 0.2.0-rc.1 (2026-11-03)
+## 0.2.0 (2026-11-03)
 
-The first release candidate of 0.2 "Time and noise". It exists to try the packages and the release itself, with the provenance of the release files, before `0.2.0`; between the candidate and the release only the notes that say it is a candidate go away.
+Release 0.2 "Time and noise". This is the state of `0.2.0-rc.1`; the release only removes the notes that say it is a candidate.
 
 A link can change while a run goes (a rate that drops, an outage, a link that goes down and up), and the same seed still gives the same lost packets. There are more impairments: burst loss (Gilbert-Elliott and four states), reordering, duplication and corruption, and a stream can be sent without the UDP checksum so that a damaged packet arrives and is counted. There is more traffic: Poisson, on/off and bursty streams. A node can run **your own program**, started in order, waited for, supervised, with its output and its metrics in the result, and a link can be captured as pcap files. A result has more statistics (the extent of reordering, the interarrival jitter, the runs of lost packets), a series by time bin in two views (what was sent and what arrived) and the time to recover after each event. Several runs with seeds derived from one seed give confidence intervals (a seeded bootstrap with its measured coverage, [docs/STATISTICS.md](https://github.com/leonkrix/netscenario/blob/main/docs/STATISTICS.md)), a run can be replayed from its directory, and reports are made as Markdown, JUnit and one HTML file ([docs/REPORTS.md](https://github.com/leonkrix/netscenario/blob/main/docs/REPORTS.md)). All of it works from the command line, from Python and as pytest tests. The release files carry an attestation of their provenance, and the parsers of input that is not trusted are fuzzed every week. The [README](https://github.com/leonkrix/netscenario#readme) says what 0.2 does and does not do yet, and [docs/ACCEPTANCE.md](https://github.com/leonkrix/netscenario/blob/main/docs/ACCEPTANCE.md) how each criterion of the release is proven.
 
@@ -51,6 +51,10 @@ In Python the arguments `bin`, `recovery_*`, `capture` and `packets` of `run` no
 
 - Wait for the queues of the links to empty before the receivers stop, so that packets in a queue do not count as lost ([#72](https://github.com/leonkrix/netscenario/pull/72))
 - Refuse what the kernel refuses before the network is built, by declaring the features from the probe of the machine and not from the version of tc alone ([#73](https://github.com/leonkrix/netscenario/pull/73))
+
+## 0.2.0-rc.1 (2026-11-03)
+
+The first release candidate of 0.2. It tried the packages and the release itself, with the provenance of the release files, before `0.2.0`. The changes are those of `0.2.0` above.
 
 ## 0.1.0 (2026-10-31)
 
