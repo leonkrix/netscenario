@@ -54,7 +54,7 @@ The releases before the attestation was added (0.1.0 and its candidates) have no
 
 ## A rehearsal
 
-**Actions, Release, Run workflow**, on any branch, does steps 1 (without the checks about the tag), 2 and 3 and stops before the publishing: it needs no tag and no approval. The attestation of step 6 is not part of it: it runs for the first time with a real tag. Do this once before the first real release, and again when `wheels.yml`, `release.yml` or the packaging changed. For a rehearsal that includes the publishing, use a pre-release version (`0.1.0-rc.1`): crates.io and PyPI keep it, but nobody gets it by default.
+**Actions, Release, Run workflow**, on any branch, does steps 1 (without the checks about the tag), 2 and 3 and stops before the publishing: it needs no tag and no approval. The publishing (steps 4 and 5) and the attestation (step 6) are not part of it: they run only with a real tag. Do the rehearsal when `wheels.yml`, `release.yml` or the packaging changed. Together with `just publish-dry-run` (which the pull request of a release runs as the job *Packages*) it covers everything that can fail before the point of no return.
 
 ## When something goes wrong
 
@@ -63,6 +63,16 @@ The releases before the attestation was added (0.1.0 and its candidates) have no
 - **The GitHub release job fails** (after both registries have the version): run the job again; it attests again and creates the release. If the release exists already, delete it on GitHub first, or add the missing files with `gh release upload`.
 - **The PyPI job fails**: run the failed job again. Files that are already there are skipped, so if the wheels are out and the plugin is not, the repeat uploads only the plugin.
 - **A release is faulty**: **yank** it (`cargo yank --version X.Y.Z <crate>` for each crate, and *Yank* in the project's release page on pypi.org). A yanked version stays installable for those who pinned it. Fix with a patch release; a version number is never reused.
+
+## Release candidates
+
+A candidate (`0.3.0-rc.1`) is a release that nobody should depend on: crates.io and PyPI keep it, but nobody gets it by default. It rehearses the part of a release that cannot be undone, because a version is never reused. It does not test the code, which the CI has tested already.
+
+- **Not for an ordinary release before 1.0**, patch or minor. The code is the code of `main`, and the way of publishing has been through a real release.
+- **Yes when the release machinery changed** in a way that only a real tag runs: `release.yml` (the jobs of publishing, the attestation, the GitHub release), the trusted publishers or the environments, the packaging (the tags of the wheels, the files of a release, the crates that are published), or a registry that is new. Then make a candidate first and look at it as a stranger would (below). A change that the rehearsal covers (the checks, the builds and the installs in clean environments) does not need one.
+- **Yes for 1.0**, which promises stability: at least one candidate.
+
+`0.1.0` had two candidates, because the whole machinery was new; `0.2.0` had one, for the attestation. After the release of `0.2.0` the attestation, the publishing to both registries and the GitHub release have each run for real.
 
 ## One-time setup
 
@@ -99,7 +109,7 @@ Trusted publishing exists only for a crate that has been published once, by hand
 
 ### Then
 
-Rehearse (above), and release a candidate (`0.1.0-rc.1`, `-rc.2`, ...) and then `0.1.0`.
+Rehearse (above), and release a candidate first (`0.1.0-rc.1`, `-rc.2`, ...): the first release of a new setup is a change of the machinery (see [Release candidates](#release-candidates)).
 
 ## After a release: look at it as a stranger would
 
