@@ -379,3 +379,91 @@ fn when_the_first_link_goes_down_the_route_of_the_next_metric_takes_over() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A link that goes down takes the routes through it with it, and the kernel does not bring them back when it comes up
+/// again. The chain loses the packets of the second from 1 s to 2 s and carries them again afterwards: with the routes lost
+/// for good it would lose everything after 1 s (375 of 500). A packet leaves every 8 ms and is lost if it reaches the router
+/// while the link is down, so the lost ones are those sent from the moment the step is done until the moment the next is,
+/// give or take the lateness of the sender and a packet at each edge.
+#[test]
+fn a_link_that_comes_back_carries_the_routes_again() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("network-comes-back");
+    let mut backend = backend(|_| {});
+    let mut chain = scenario(CHAIN, FLOW);
+    chain.duration = "4s".parse().unwrap();
+    chain.timeline = vec![
+        serde_json::from_str(r#"{ "at": "1s", "link": "l2", "down": true }"#).unwrap(),
+        serde_json::from_str(r#"{ "at": "2s", "link": "l2", "up": true }"#).unwrap(),
+    ];
+    let result = run(&mut backend, &chain, &options(&dir)).unwrap();
+    let media = only_workload(&result);
+    assert_eq!(media.stats.sent, 500);
+    let (down, up) = (&result.events[0], &result.events[1]);
+    let gap = 8_000_000_u64;
+    let late = media.sender.max_lateness_ns;
+    let most = (up.applied_ns + late).saturating_sub(down.started_ns) / gap + 2;
+    let least = (up.started_ns.saturating_sub(late)).saturating_sub(down.applied_ns) / gap;
+    assert!(
+        media.stats.lost >= least.saturating_sub(2) && media.stats.lost <= most,
+        "{} packets lost, expected {least} to {most}: {:?}",
+        media.stats.lost,
+        result.events
+    );
+    assert!(
+        media.stats.received > 340,
+        "the packets after the link came back: {} received",
+        media.stats.received
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The failover and the way back: the packets go to the slow path while the fast link is down, and to the fast one again
+/// when it is back, because the route of the smaller metric is added again. Without that they would stay on the slow path.
+#[test]
+fn when_the_first_link_is_back_the_route_of_the_smaller_metric_is_used_again() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("network-way-back");
+    let mut backend = backend(|_| {});
+    let mut failover = scenario(
+        &two_paths(
+            "  routes:\n    - { node: client, to: server, via: fast-in, metric: 10 }\n    - { node: client, to: server, via: slow-in, metric: 20 }\n",
+        ),
+        FLOW,
+    );
+    failover.duration = "4s".parse().unwrap();
+    failover.timeline = vec![
+        serde_json::from_str(r#"{ "at": "1s", "link": "fast-in", "down": true }"#).unwrap(),
+        serde_json::from_str(r#"{ "at": "2s", "link": "fast-in", "up": true }"#).unwrap(),
+    ];
+    let result = run(
+        &mut backend,
+        &with_capture(&failover, &["fast-in", "slow-in"]),
+        &options(&dir),
+    )
+    .unwrap();
+    let media = only_workload(&result);
+    assert_eq!(media.stats.sent, 500);
+    assert!(media.stats.lost <= 1, "{} lost", media.stats.lost);
+    let (down, up) = (&result.events[0], &result.events[1]);
+    let gap = 8_000_000_u64;
+    let late = media.sender.max_lateness_ns;
+    // The packets sent between the two steps take the slow path, and only those
+    let most = (up.applied_ns + late).saturating_sub(down.started_ns) / gap + 2;
+    let least = (up.started_ns.saturating_sub(late)).saturating_sub(down.applied_ns) / gap;
+    let (fast, slow) = (
+        frames(&result, "fast-in", "client"),
+        frames(&result, "slow-in", "client"),
+    );
+    assert_eq!(fast + slow, 500, "{fast} and {slow}");
+    assert!(
+        (least.saturating_sub(2)..=most).contains(&slow),
+        "{slow} packets took the slow path, expected {least} to {most}: {:?}",
+        result.events
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

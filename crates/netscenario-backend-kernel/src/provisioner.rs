@@ -73,14 +73,25 @@ struct Node {
     pid: u32,
 }
 
-/// One end of a link: the node and the name of the interface in it.
+/// One end of a link: the node and the name of the interface in it, and the fixed neighbour on it (the address and the
+/// hardware address of the other end), which the kernel removes when the interface goes down.
 struct End {
     node: usize,
     interface: String,
+    neighbour: [String; 2],
 }
 
 struct Link {
     ends: [End; 2],
+}
+
+/// A route that was added to a node (D-078), kept so that it can be added again: the kernel removes the routes that lead out
+/// of an interface when the interface goes down, and does not bring them back when it comes up.
+struct Route {
+    node: u32,
+    destination: Option<String>,
+    metric: u32,
+    next_hops: Vec<crate::protocol::WireHop>,
 }
 
 /// How long a program that has ended may take to deliver the rest of its output, if a process that it started
@@ -125,6 +136,9 @@ pub(crate) struct Provisioner {
     failpoints: Failpoints,
     nodes: Vec<Node>,
     links: Vec<Link>,
+    /// The routes of the nodes, in the order they were added, and the links that are down at the moment.
+    routes: Vec<Route>,
+    down: std::collections::HashSet<u32>,
     programs: Vec<RunningProgram>,
     /// The queues planned for the directions that change in the run (D-059), by link and direction.
     layouts: std::collections::HashMap<(u32, Way), netem::Layout>,
@@ -158,6 +172,8 @@ impl Provisioner {
             failpoints,
             nodes: Vec::new(),
             links: Vec::new(),
+            routes: Vec::new(),
+            down: std::collections::HashSet::new(),
             programs: Vec::new(),
             layouts: std::collections::HashMap::new(),
             built: std::collections::HashSet::new(),
@@ -342,10 +358,12 @@ impl Provisioner {
                 End {
                     node: first,
                     interface: inside.clone(),
+                    neighbour: [addresses[1].clone(), macs[1].clone()],
                 },
                 End {
                     node: second,
                     interface: inside,
+                    neighbour: [addresses[0].clone(), macs[0].clone()],
                 },
             ],
         });
@@ -392,13 +410,37 @@ impl Provisioner {
         metric: u32,
         next_hops: &[crate::protocol::WireHop],
     ) -> Result<(), String> {
+        let route = Route {
+            node,
+            destination: destination.map(str::to_owned),
+            metric,
+            next_hops: next_hops.to_vec(),
+        };
+        self.install(&route, "add", &route.next_hops)?;
+        self.routes.push(route);
+        Ok(())
+    }
+
+    /// Runs `ip route <verb>` for a route with the given ways out (all of its own, or those that are up).
+    fn install(
+        &self,
+        route: &Route,
+        verb: &str,
+        next_hops: &[crate::protocol::WireHop],
+    ) -> Result<(), String> {
+        let node = route.node;
         let pid = self.node_pid(node)?;
         if next_hops.is_empty() {
             return Err("a route needs a way out".to_owned());
         }
-        let mut arguments: Vec<String> = vec!["route".into(), "add".into()];
-        arguments.push(destination.map_or_else(|| "default".to_owned(), |a| format!("{a}/32")));
-        arguments.extend(["metric".to_owned(), metric.to_string()]);
+        let mut arguments: Vec<String> = vec!["route".into(), verb.into()];
+        arguments.push(
+            route
+                .destination
+                .as_ref()
+                .map_or_else(|| "default".to_owned(), |a| format!("{a}/32")),
+        );
+        arguments.extend(["metric".to_owned(), route.metric.to_string()]);
         for hop in next_hops {
             let link = self
                 .links
@@ -443,6 +485,27 @@ impl Provisioner {
             )?;
         }
         self.in_node(pid, &self.tools.ip, &words).map(|_| ())
+    }
+
+    /// Puts the routes back that lead out of a link that came up. The kernel removed them when the interface went down (the
+    /// address and the route to the other end of the link it keeps), and a route is put back with the ways out that are up
+    /// now: the link that is still down of a multipath route comes with its own `up`.
+    fn restore_routes(&self, link: u32) -> Result<(), String> {
+        for route in &self.routes {
+            if !route.next_hops.iter().any(|hop| hop.link == link) {
+                continue;
+            }
+            let ways: Vec<crate::protocol::WireHop> = route
+                .next_hops
+                .iter()
+                .filter(|hop| !self.down.contains(&hop.link))
+                .copied()
+                .collect();
+            if !ways.is_empty() {
+                self.install(route, "replace", &ways)?;
+            }
+        }
+        Ok(())
     }
 
     fn node_pid(&self, node: u32) -> Result<u32, String> {
@@ -585,22 +648,55 @@ impl Provisioner {
 
     /// Takes both interfaces of a link down or brings them up (D-064). Down is the state of the interface, not the
     /// loss of the carrier: a sender on either side gets an error from the kernel while it lasts, and the addresses,
-    /// the neighbours (they are fixed, not learned) and the queues stay as they are. The packets in the queues are
+    /// the queues stay as they are. The neighbours (they are fixed, not learned) and the routes that lead out of the interface
+    /// do not: the kernel removes them, so they are put back when the link comes up (D-064, D-078). The packets in the queues are
     /// dropped by the kernel when the interface goes down.
     pub(crate) fn set_link(&mut self, link: u32, up: bool) -> Result<(), String> {
+        let link_index = link;
         let link = self
             .links
             .get(link as usize)
             .ok_or_else(|| format!("the link {link} does not exist in this run"))?;
         let state = if up { "up" } else { "down" };
-        let ends: Vec<(u32, String)> = link
+        let ends: Vec<(u32, String, [String; 2])> = link
             .ends
             .iter()
-            .map(|end| (self.nodes[end.node].pid, end.interface.clone()))
+            .map(|end| {
+                (
+                    self.nodes[end.node].pid,
+                    end.interface.clone(),
+                    end.neighbour.clone(),
+                )
+            })
             .collect();
         // One end after the other: for a moment a sender on the first side is refused and one on the second is not
-        for (pid, interface) in &ends {
+        for (pid, interface, _) in &ends {
             self.in_node(*pid, &self.tools.ip, &["link", "set", interface, state])?;
+        }
+        if up {
+            // The kernel removed the fixed neighbours with the down (a fixed one as well as a learned one); without them the
+            // first packet in each direction waits for an ARP exchange that crosses the impaired link
+            for (pid, interface, [address, mac]) in &ends {
+                self.in_node(
+                    *pid,
+                    &self.tools.ip,
+                    &[
+                        "neigh",
+                        "replace",
+                        address,
+                        "lladdr",
+                        mac,
+                        "dev",
+                        interface,
+                        "nud",
+                        "permanent",
+                    ],
+                )?;
+            }
+            self.down.remove(&link_index);
+            self.restore_routes(link_index)?;
+        } else {
+            self.down.insert(link_index);
         }
         Ok(())
     }
