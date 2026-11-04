@@ -327,3 +327,39 @@ def test_samples_that_make_no_table_are_a_problem_at_the_file(tmp_path: Path) ->
         ns.Scenario.from_yaml(TABLE.replace("FILE", "few.txt"), base_dir=tmp_path)
     assert "3 samples are too few" in str(raised.value)
     assert raised.value.problems[0].path == "topology.links[0].forward.jitter.table.file"
+
+
+TRACE = """\
+version: 0
+name: t
+duration: 5s
+topology:
+  nodes: [a, b]
+  links:
+    - id: l
+      between: [a, b]
+workloads:
+  - { id: call, kind: trace-replay, from: a, to: b, trace: { file: call.csv } }
+"""
+
+
+def test_a_trace_next_to_the_scenario_becomes_its_packets(tmp_path: Path) -> None:
+    rows = "".join(f"{i * 20}ms,{60 + (i % 5) * 100}b\n" for i in range(50))
+    (tmp_path / "call.csv").write_text("time,size\n" + rows, encoding="utf-8")
+    file = tmp_path / "call.yaml"
+    file.write_text(TRACE, encoding="utf-8")
+    scenario = ns.Scenario.load(file)
+    trace = scenario.data["workloads"][0]["trace"]
+    assert trace["file"] == "call.csv"
+    assert len(trace["sha256"]) == 64
+    assert trace["packets"]
+    assert "trace-replay" in scenario.needs()
+    # The scenario holds the packets, so a copy needs no file
+    again = ns.Scenario.from_yaml(scenario.to_json())
+    assert again.data["workloads"][0]["trace"]["packets"] == trace["packets"]
+    # A faulty file is a problem at the file, with the line
+    (tmp_path / "call.csv").write_text("0ms,100b\n5,100b\n", encoding="utf-8")
+    with pytest.raises(ns.ScenarioError) as raised:
+        ns.Scenario.load(file)
+    assert "line 2: the time" in str(raised.value)
+    assert raised.value.problems[0].path == "workloads[0].trace.file"

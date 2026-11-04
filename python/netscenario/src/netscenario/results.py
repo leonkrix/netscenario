@@ -343,6 +343,27 @@ class Throughput:
 
 
 @dataclass(frozen=True)
+class TraceInfo:
+    """The trace a ``trace-replay`` workload replayed."""
+
+    file: str | None
+    """The file the trace was read from, as the scenario names it."""
+    sha256: str | None
+    """The SHA-256 of that file."""
+    packets: int
+    """How many packets the trace has (the ones that the window of the workload cuts off are
+    among them)."""
+    padded: int
+    """The packets of a capture that were raised to the smallest payload (0 for a CSV file)."""
+    smallest: int
+    """The smallest payload in the trace, in bytes."""
+    largest: int
+    """The largest payload in the trace, in bytes."""
+    span: float
+    """The moment of the last packet, in seconds from the start of the workload."""
+
+
+@dataclass(frozen=True)
 class Sender:
     """What the sending side did."""
 
@@ -371,7 +392,8 @@ class Workload:
     id: str
     """The name in the scenario."""
     kind: str
-    """The kind: ``"udp-cbr"``, ``"udp-poisson"``, ``"udp-onoff"`` or ``"udp-bursty"``."""
+    """The kind: ``"udp-cbr"``, ``"udp-poisson"``, ``"udp-onoff"``, ``"udp-bursty"`` or
+    ``"trace-replay"``."""
     from_node: str
     """The sending node."""
     to_node: str
@@ -384,7 +406,7 @@ class Workload:
     """The rate of the payload in bits per second: the one in the scenario for ``udp-cbr``, and the
     mean rate for the other kinds (over the on and off phases, or the bursts and their pauses)."""
     packet_size: int
-    """The payload of a packet in bytes."""
+    """The payload of a packet in bytes; for a trace, the largest."""
     start: float
     """When the workload started, from the start of the measured phase, in seconds."""
     duration: float
@@ -444,6 +466,12 @@ class Workload:
     recoveries: tuple[Recovery, ...] = ()
     """How long the workload took to be back at its level after each event that concerns it, in the
     order of the events."""
+    trace: TraceInfo | None = None
+    """The trace of a ``trace-replay`` workload, or ``None`` for the other kinds."""
+    received_bytes: int = 0
+    """The payload of the packets that arrived, in bytes: ``received`` times ``packet_size``, or for
+    a trace the sum of their sizes. 0 in a result of release 0.2 or earlier, which has ``received``
+    and ``packet_size``."""
 
     @property
     def delivery_ratio(self) -> float:
@@ -1128,6 +1156,20 @@ def _recovery(data: dict[str, Any]) -> Recovery:
     )
 
 
+def _trace(data: dict[str, Any] | None) -> TraceInfo | None:
+    if data is None:
+        return None
+    return TraceInfo(
+        file=data.get("file"),
+        sha256=data.get("sha256"),
+        packets=int(data["packets"]),
+        padded=int(data["padded"]),
+        smallest=int(data["smallest_bytes"]),
+        largest=int(data["largest_bytes"]),
+        span=_seconds(data["span_ns"]),
+    )
+
+
 def _workload(entry: dict[str, Any], directory: Path) -> Workload:
     series = entry.get("series")
     delay = entry["delay"]
@@ -1193,4 +1235,6 @@ def _workload(entry: dict[str, Any], directory: Path) -> Workload:
             file=directory / series["file"],
         ),
         recoveries=tuple(_recovery(r) for r in entry.get("recoveries", ())),
+        trace=_trace(entry.get("trace")),
+        received_bytes=int(entry.get("received_bytes", 0)),
     )

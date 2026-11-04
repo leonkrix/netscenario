@@ -16,7 +16,7 @@ The format is versioned with the line `version: 0`. **Version 0 is the series be
 
 The format is YAML 1.2; JSON is accepted because it is a subset. In addition:
 
-- One document per file, UTF-8, at most 1 MiB, nesting at most 32 levels deep. An empty file is an error.
+- One document per file, UTF-8, at most 4 MiB (the expanded form of a scenario with a trace or a table holds their packets or entries), nesting at most 32 levels deep. An empty file is an error.
 - Keys are unique inside a mapping.
 - **Anchors, aliases, merge keys (`<<`) and tags are refused.** A scenario reads the same from top to bottom. Reuse is designed on purpose in release 0.3 (parameters, includes, templates), and not through YAML features.
 - Comments are free.
@@ -296,12 +296,12 @@ workloads:
     stop: 30s
 ```
 
-A workload has a `kind`. `udp-cbr` (WRK-01) is UDP at a constant bit rate, sent by the agent in `from`, received by the agent in `to`. `udp-poisson`, `udp-onoff` and `udp-bursty` (WRK-02) send UDP packets in the same way at moments that are drawn from the seed or follow a pattern, see [Traffic patterns](#traffic-patterns). `command` (WRK-06, release 0.2) is a program of your own that runs in a node, see [A program of your own](#a-program-of-your-own). The keys of one kind are refused in the other (`rate` in a `command`), each at its own line.
+A workload has a `kind`. `udp-cbr` (WRK-01) is UDP at a constant bit rate, sent by the agent in `from`, received by the agent in `to`. `udp-poisson`, `udp-onoff` and `udp-bursty` (WRK-02) send UDP packets in the same way at moments that are drawn from the seed or follow a pattern, see [Traffic patterns](#traffic-patterns). `trace-replay` (WRK-03) sends the packets of a recorded trace at its moments and with its sizes, see [Replaying a trace](#replaying-a-trace). `command` (WRK-06, release 0.2) is a program of your own that runs in a node, see [A program of your own](#a-program-of-your-own). The keys of one kind are refused in the other (`rate` in a `command`), each at its own line.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `id` | yes | A Name, unique among workloads. Metrics are named after it (`media.delay.p99`). |
-| `kind` | yes | `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty` or `command`. |
+| `kind` | yes | `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty`, `trace-replay` or `command`. |
 | `from`, `to` | yes | Two different nodes from `nodes`. |
 | `rate` | yes (not for `udp-bursty`) | A Rate. **The rate of the payload**: the number of payload bits per second. The packets per second follow from it and `packet-size`. For `udp-poisson` it is the mean rate, for `udp-onoff` the rate while on. |
 | `packet-size` | yes | A Size: the payload of one packet. From the size of the header of the agent (16 bytes, 20 with `udp-checksum: false`) to 1472 bytes, the largest payload that fits the MTU of 1500 without fragmentation. If a link on the path says its `mtu`, a packet up to 65,507 bytes is allowed, and one that does not fit the MTU of the first link is cut into fragments (D-081); `frames_per_packet` in the result says how many. |
@@ -335,6 +335,30 @@ workloads:
 `on`, `off` and `pause` are Durations above zero. `distribution` is `fixed` (the default: every phase lasts exactly the time given, nothing is drawn, and the pattern is one you can work out by hand) or `exponential` (the lengths are drawn, with the time given as their mean: a Markov source). `burst-packets` is from 1 to 100,000. The packets of a burst are at most 100,000 a second like everything else, so a `gap` is at least 10 us (with one packet in a burst it is not used). A Poisson source can send a few packets closer together than that now and then; they leave a little late, and `sender.max_lateness_ns` in the result says by how much.
 
 The result has the **mean** rate of the payload in `rate_bits_per_second` for these kinds (the rate of the scenario for `udp-poisson`), and the command line says `on average`. The series ([RESULTS.md](RESULTS.md)) shows the pattern in time: a bin in an off phase is empty, a burst is a bin that holds ten packets.
+
+## Replaying a trace
+
+`trace-replay` (WRK-03, D-085) sends the packets of a recorded flow: packet `n` leaves at the `n`th moment of the trace, from the start of the workload, and carries the `n`th payload. A call, a game, a video stream: the shape of real traffic, which no rate describes. It takes the keys `id`, `from`, `to`, `start`, `stop`, `udp-checksum`, `ip` and `dont-fragment` like the other senders, and `trace` instead of `rate` and `packet-size`.
+
+```yaml
+workloads:
+  - { id: call, kind: trace-replay, from: client, to: server, trace: { file: call.csv } }
+```
+
+| Key of `trace` | Meaning |
+| --- | --- |
+| `file` | The file, a path relative to the directory of the scenario file, read when the scenario is loaded (D-083: only inside that directory, at most 16 MiB). |
+| `format` | `csv` or `pcap`. Left out it is taken from the name: `.csv`, `.txt` are CSV; `.pcap`, `.pcapng`, `.cap` are captures. |
+| `select` | For a capture with more than one flow: `src`, `dst`, `src-port`, `dst-port`, `protocol` (`udp` or `tcp`). The flow is the packets that go from one endpoint to the other. Not for CSV. |
+| `sha256` | The fingerprint of the file. Written by the loader; if it is written, the file must have that content. |
+
+**CSV.** One packet on each line: the time since the start of the workload and the payload of the UDP packet, each with its unit (a number without one is refused, like everywhere in the format), separated by a comma: `12.5ms,1200b`. A first line `time,size`, lines that start with `#` and empty lines are skipped. The times must not fall (packets at the same moment are sent one after the other), a size is from 16 bytes (20 for `udp-checksum: false`), the packet carries the header of the agent, and a smaller one is refused with its line. At most 100,000 packets.
+
+**Capture.** A `pcap` (microseconds or nanoseconds, any byte order) or `pcapng` file of Ethernet (with VLAN tags), raw IP, Linux cooked or BSD loopback. The trace is the packets of **one flow**: the UDP or TCP packets from one source to one destination, with the **transport payload** as the size (a TCP segment without data has none) and the time of the capture, since the first packet of the flow, as the moment. A capture with one flow needs no `select`; with several it is refused with the list of the flows (the packets of each) and the keys that pick one. Packets that are not UDP or TCP over IP, and fragments after the first, are no flow. A packet below the smallest payload (an acknowledgement has no data) is **raised** to it, and the result counts how many (`padded`): the trace is sent as UDP, and the packet has to carry the header of the agent. A capture of the run of netscenario itself (`measure: { capture: ... }`) is a trace of the next one.
+
+The packets are read when the scenario is loaded and kept in the scenario (D-083), as the table of a jitter is: `netscenario expand` shows the trace as `packets`, the packed moments and sizes, with the `sha256` of the file and `padded`, so a recorded scenario replays without the file and another file is another scenario. The window works as for any sender: with `stop` the packets from that moment on are not sent, and the moments count from `start`.
+
+The packets of a trace differ in size, so the result counts **bytes**: `received_bytes` is the payload that arrived, the throughput of a bin the bytes of the packets that arrived in it, `bits` in the series the payload sent and arrived in each bin. `packet_size_bytes` is the largest payload and `rate_bits_per_second` the mean over the span of the trace. A packet larger than the MTU of the first link is cut like any other (D-081), and the frames of a trace are counted for each packet. The largest packet must fit the path as for any sender (`mtu`), and a trace is refused with the place of its largest packet.
 
 ## What is measured
 
@@ -418,7 +442,7 @@ These keys are not part of version 0 in release 0.2. A scenario that uses one is
 | `mobility` | 0.6 | Positions over time. |
 | `model` (in a link) | 0.3 | Link models: trace, Markov, periodic (the steps over time are the `timeline`, 0.2). |
 | `address` (node, link) | later | Fixed addresses. |
-| `kind` other than `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty` and `command` | 0.3 and later | `tcp-bulk`, `request-response`, `trace-replay` and more. |
+| `kind` other than `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty`, `trace-replay` and `command` | 0.3 and later | `tcp-bulk`, `request-response` and more. |
 
 **`repetitions` is not a key of the scenario, and it is not planned as one**: how often a scenario is run is an option of a run (`netscenario run --repetitions n`, `run(..., repetitions=n)`; D-042, D-074), so that the file stays what is run and the hash of the scenario is the same for one run and for a set. A scenario that has the key is refused with a message that says so.
 

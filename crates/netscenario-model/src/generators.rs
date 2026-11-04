@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::ip::IpFamily;
 use crate::scenario::{UdpCbr, UdpChecksum, WorkloadKind, checksum_is_on};
+use crate::trace::PacketTrace;
 use crate::units::{Duration, Name, Rate, Size};
 
 /// Whether the lengths of the phases of an on/off source, and the pauses between bursts, are exactly what the file says
@@ -217,6 +218,53 @@ impl UdpBursty {
     }
 }
 
+/// A workload that sends UDP packets at the moments, and with the sizes, of a recorded trace (WRK-03, D-085): a call, a video
+/// stream or any flow that was captured or written down. The trace is a file named in the scenario, read when the scenario is
+/// loaded (D-083).
+///
+/// New keys are added to this type in later releases: use [`TraceReplay::new`] or read a file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TraceReplay {
+    /// The name of the workload. Metrics are named after it.
+    pub id: Name,
+    /// The node that sends.
+    pub from: Name,
+    /// The node that receives.
+    pub to: Name,
+    /// The packets: moments and sizes.
+    pub trace: PacketTrace,
+    /// When the workload starts, from the start of the measured phase. Default `0s`. The moments of the trace count from here.
+    pub start: Option<Duration>,
+    /// When the workload stops. Default: the end of the measured phase; the packets of the trace after it are not sent.
+    pub stop: Option<Duration>,
+    /// Whether the packets carry the UDP checksum. Default: on.
+    pub udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network, `v4` in a `dual` one.
+    pub ip: Option<IpFamily>,
+    /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
+    /// Default: off.
+    pub dont_fragment: bool,
+}
+
+impl TraceReplay {
+    /// A workload with the default window and the UDP checksum on.
+    #[must_use]
+    pub fn new(id: Name, from: Name, to: Name, trace: PacketTrace) -> Self {
+        Self {
+            id,
+            from,
+            to,
+            trace,
+            start: None,
+            stop: None,
+            udp_checksum: UdpChecksum::On,
+            ip: None,
+            dont_fragment: false,
+        }
+    }
+}
+
 /// When the packets of a [`Generator`] leave.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -253,6 +301,9 @@ pub enum Pattern {
         /// Whether the pauses are exact or drawn.
         distribution: PhaseDistribution,
     },
+    /// The moments of a recorded trace; the trace is [`Generator::trace`]. After the others because the patterns are listed in
+    /// the order they were added.
+    Trace,
 }
 
 impl Pattern {
@@ -265,7 +316,7 @@ impl Pattern {
             Self::OnOff { distribution, .. } | Self::Bursty { distribution, .. } => {
                 *distribution == PhaseDistribution::Exponential
             }
-            Self::Cbr { .. } => false,
+            Self::Cbr { .. } | Self::Trace => false,
         }
     }
 }
@@ -298,6 +349,18 @@ pub struct Generator<'a> {
     pub dont_fragment: bool,
     /// When the packets leave.
     pub pattern: Pattern,
+    /// The trace of a `trace-replay` workload; `packet_size` is then its largest payload.
+    pub trace: Option<&'a PacketTrace>,
+}
+
+impl Generator<'_> {
+    /// The smallest payload of any packet: the size of the packets for all patterns but a trace.
+    #[must_use]
+    pub fn smallest_packet(&self) -> Size {
+        self.trace
+            .and_then(|trace| trace.packets.as_ref())
+            .map_or(self.packet_size, |data| Size::from_bytes(data.smallest()))
+    }
 }
 
 impl<'a> From<&'a UdpCbr> for Generator<'a> {
@@ -316,6 +379,7 @@ impl<'a> From<&'a UdpCbr> for Generator<'a> {
             pattern: Pattern::Cbr {
                 rate: workload.rate,
             },
+            trace: None,
         }
     }
 }
@@ -336,6 +400,7 @@ impl<'a> From<&'a UdpPoisson> for Generator<'a> {
             pattern: Pattern::Poisson {
                 rate: workload.rate,
             },
+            trace: None,
         }
     }
 }
@@ -359,6 +424,7 @@ impl<'a> From<&'a UdpOnOff> for Generator<'a> {
                 off: workload.off,
                 distribution: workload.distribution,
             },
+            trace: None,
         }
     }
 }
@@ -382,6 +448,36 @@ impl<'a> From<&'a UdpBursty> for Generator<'a> {
                 pause: workload.pause,
                 distribution: workload.distribution,
             },
+            trace: None,
+        }
+    }
+}
+
+impl<'a> From<&'a TraceReplay> for Generator<'a> {
+    fn from(workload: &'a TraceReplay) -> Self {
+        Self {
+            kind: WorkloadKind::TraceReplay,
+            id: &workload.id,
+            from: &workload.from,
+            to: &workload.to,
+            // The largest packet; until the file is read there is no trace and the smallest payload stands in for it
+            packet_size: Size::from_bytes(workload.trace.packets.as_ref().map_or_else(
+                || {
+                    if workload.udp_checksum.is_on() {
+                        crate::MIN_PACKET_SIZE
+                    } else {
+                        crate::MIN_PACKET_SIZE_WITHOUT_CHECKSUM
+                    }
+                },
+                crate::trace::TraceData::largest,
+            )),
+            start: workload.start,
+            stop: workload.stop,
+            udp_checksum: workload.udp_checksum,
+            ip: workload.ip,
+            dont_fragment: workload.dont_fragment,
+            pattern: Pattern::Trace,
+            trace: Some(&workload.trace),
         }
     }
 }
@@ -404,6 +500,50 @@ enum OnOffKind {
 #[serde(rename_all = "kebab-case")]
 enum BurstyKind {
     UdpBursty,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+enum TraceReplayKind {
+    TraceReplay,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename = "TraceReplay")]
+struct TraceReplayFile<'a> {
+    /// The name of the workload. Metrics are named after it.
+    id: &'a Name,
+    /// `trace-replay`: UDP packets at the moments and with the sizes of a recorded trace.
+    kind: TraceReplayKind,
+    /// The node that sends.
+    from: &'a Name,
+    /// The node that receives.
+    to: &'a Name,
+    /// The packets: a file of a trace (CSV or a capture), read when the scenario is loaded.
+    trace: &'a PacketTrace,
+    /// When the workload starts, from the start of the measured phase. Default `0s`. The moments of the trace count from here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start: &'a Option<Duration>,
+    /// When the workload stops. Default: the end of the measured phase.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: &'a Option<Duration>,
+    /// `false`: the packets are sent without the UDP checksum and carry a CRC-32 (D-040). Default `true`.
+    #[serde(
+        default,
+        rename = "udp-checksum",
+        skip_serializing_if = "checksum_is_on"
+    )]
+    udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: &'a Option<IpFamily>,
+    /// `true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.
+    #[serde(
+        default,
+        rename = "dont-fragment",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    dont_fragment: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -604,6 +744,34 @@ impl Serialize for UdpBursty {
             dont_fragment: self.dont_fragment,
         }
         .serialize(serializer)
+    }
+}
+
+impl Serialize for TraceReplay {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        TraceReplayFile {
+            id: &self.id,
+            kind: TraceReplayKind::TraceReplay,
+            from: &self.from,
+            to: &self.to,
+            trace: &self.trace,
+            start: &self.start,
+            stop: &self.stop,
+            udp_checksum: self.udp_checksum,
+            ip: &self.ip,
+            dont_fragment: self.dont_fragment,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl JsonSchema for TraceReplay {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "TraceReplay".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        TraceReplayFile::json_schema(generator)
     }
 }
 

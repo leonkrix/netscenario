@@ -50,7 +50,7 @@ A file that ends inside a record is an error when it is read, not a shorter file
 
 ```text
 netscenario-agent send --to <addr> --size <bytes> --duration-ns <ns> [--rate <bits/s>]
-                       [--pattern cbr|poisson|onoff|bursty] [--seed <n>] [--distribution fixed|exponential]
+                       [--pattern cbr|poisson|onoff|bursty|trace] [--trace <file>] [--seed <n>] [--distribution fixed|exponential]
                        [--on-ns <ns> --off-ns <ns>] [--burst-packets <n> --gap-ns <ns> --pause-ns <ns>]
                        [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
 netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
@@ -101,6 +101,8 @@ Packet `n` leaves at `start + n × size × 8 / rate`, computed in integers from 
 | `poisson` | `--rate`, `--seed` | Packet `n` at the floor of `S_n`, where `S_n` is the sum of `n + 1` exponential gaps with the mean `size × 8 × 10^9 / rate` ns, each drawn from the generator. |
 | `onoff` | `--rate`, `--on-ns`, `--off-ns`, `--seed` (if drawn) | Phase `k` of the on phases starts at the floor of `P_k`, where `P_0 = 0` and `P_{k+1} = P_k + on_k + off_k`. In it packet `i` leaves at `floor(P_k) + i × size × 8 × 10^9 / rate` (integer division) while that is less than `on_k`. |
 | `bursty` | `--burst-packets`, `--gap-ns`, `--pause-ns`, `--seed` (if drawn) | Burst `k` starts at the floor of `B_k`, where `B_0 = 0` and `B_{k+1} = B_k + (n - 1) × gap + pause_k`. Packet `i` of it leaves at `floor(B_k) + i × gap`. |
+
+`--pattern trace` (WRK-03, D-085) needs `--trace <file>` and no `--rate` or `--size`: packet `n` leaves at the `n`th moment of the file and has the `n`th size. The file is text: a first line `# netscenario trace v1: offset in nanoseconds, payload in bytes`, then one line `<offset> <size>` for each packet (at most 100,000, the offsets not falling, a size from the smallest payload to the largest datagram). The run writes it as `flow-<n>.trace` in the directory of the result, from the packets in the scenario. A size below 16 bytes (20 without the checksum) or above the largest UDP payload is refused before a packet leaves.
 
 `--distribution fixed` (the default) uses `--on-ns`, `--off-ns` and `--pause-ns` as they are; with `exponential` each length is drawn from an exponential distribution with that mean. The order of the draws is part of the definition: for `onoff`, `on_0`, then `off_0`, `on_1`, `off_1` and so on; for `bursty`, `pause_0`, `pause_1` and so on; for `poisson`, one gap per packet. A moment is the floor of a sum that is kept as a double, so that rounding does not pile up. A moment at or after `--duration-ns` ends the stream.
 

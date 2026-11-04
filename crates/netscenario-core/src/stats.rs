@@ -87,6 +87,10 @@ pub struct FlowStats {
     pub loss_runs: LossRuns,
     /// The payload that arrived in each second.
     pub throughput: Throughput,
+    /// The payload of the packets that arrived (the first arrival of each), in bytes: `received` times the packet size, or, for a
+    /// trace, the sum of their sizes. 0 in a result of release 0.2 or earlier, which has `received` and the packet size.
+    #[serde(default)]
+    pub received_bytes: u64,
 }
 
 /// The packets that were seen on the wire of the receiving node and never delivered intact: the sequence numbers in
@@ -146,7 +150,7 @@ pub(crate) fn nearest_rank(sorted: &[u64], permille: u64) -> u64 {
 /// clock of the records, from which the throughput bins are counted.
 #[must_use]
 pub fn analyse(sent: u64, records: &[Record], packet_size: u64, start_ns: u64) -> FlowStats {
-    analyse_refused(sent, &[], records, packet_size, start_ns)
+    analyse_refused(sent, &[], records, &|_| packet_size, start_ns)
 }
 
 /// As [`analyse`], for a sender that used `slots` sequence numbers of which the kernel refused those in `refused`
@@ -157,7 +161,7 @@ pub fn analyse_refused(
     slots: u64,
     refused: &[[u64; 2]],
     records: &[Record],
-    packet_size: u64,
+    size_of: &dyn Fn(u64) -> u64,
     start_ns: u64,
 ) -> FlowStats {
     let sent = patterns::sent_between(refused, 0, slots);
@@ -169,7 +173,9 @@ pub fn analyse_refused(
     };
     let mut seen = HashSet::with_capacity(records.len());
     let mut delays = Vec::with_capacity(records.len());
+    // The payload that arrived in each bin of the throughput, in bytes: the packets of a trace differ in size
     let mut bins: Vec<u64> = Vec::new();
+    let mut received_bytes = 0_u64;
     let (mut duplicates, mut unexpected, mut reordered) = (0_u64, 0_u64, 0_u64);
     let mut highest: Option<u64> = None;
     for record in records {
@@ -191,7 +197,8 @@ pub fn analyse_refused(
         if bins.len() <= bin {
             bins.resize(bin + 1, 0);
         }
-        bins[bin] += 1;
+        bins[bin] += size_of(record.sequence);
+        received_bytes += size_of(record.sequence);
     }
     let received = delays.len() as u64;
     let lost = sent - received;
@@ -235,9 +242,10 @@ pub fn analyse_refused(
             bin_ns: THROUGHPUT_BIN_NS,
             bits_per_second: bins
                 .iter()
-                .map(|&count| (count * packet_size * 8) as f64 / seconds)
+                .map(|&bytes| (bytes * 8) as f64 / seconds)
                 .collect(),
         },
+        received_bytes,
     }
 }
 
@@ -351,7 +359,7 @@ mod tests {
             .into_iter()
             .map(|sequence| arrival(sequence, sequence * 10, sequence * 10 + 5))
             .collect();
-        let stats = analyse_refused(10, &[[4, 6]], &records, 100, 0);
+        let stats = analyse_refused(10, &[[4, 6]], &records, &|_| 100, 0);
         assert_eq!((stats.sent, stats.received, stats.lost), (7, 5, 2));
         assert!((stats.loss_ratio - 2.0 / 7.0).abs() < 1e-12);
         assert_eq!(stats.unexpected, 0);
@@ -368,7 +376,7 @@ mod tests {
             .collect();
         let wrong = analyse(7, &records, 100, 0);
         assert_eq!((wrong.unexpected, wrong.lost), (2, 4));
-        let right = analyse_refused(10, &[[4, 6]], &records, 100, 0);
+        let right = analyse_refused(10, &[[4, 6]], &records, &|_| 100, 0);
         assert_ne!(
             (wrong.unexpected, wrong.lost),
             (right.unexpected, right.lost)
@@ -383,7 +391,7 @@ mod tests {
             8,
             &[[3, 4]],
             &[arrival(4, 0, 5), arrival(0, 0, 5), arrival(7, 0, 5)],
-            100,
+            &|_| 100,
             0,
         );
         assert_eq!(stats.unexpected, 1);
@@ -558,5 +566,42 @@ mod tests {
         let stats = analyse(4, &records, 1000, start);
         assert_eq!(stats.throughput.bits_per_second, [24_000.0, 0.0, 8_000.0]);
         assert_eq!(stats.throughput.bin_ns, 1_000_000_000);
+    }
+
+    /// The throughput of a trace is the bytes that arrived, not the packets times one size, and the sum is in the statistics.
+    /// Canary: the same arrivals with a constant size give another sum.
+    #[test]
+    fn the_throughput_of_a_trace_is_the_bytes_that_arrived() {
+        let sizes = [100_u64, 1000, 500, 200];
+        let records = [
+            arrival(0, 0, 5),
+            arrival(1, 0, 5),
+            arrival(3, 1_500_000_000, 5),
+        ];
+        let stats = analyse_refused(
+            4,
+            &[],
+            &records,
+            &|sequence| sizes[usize::try_from(sequence).unwrap()],
+            0,
+        );
+        // Packets 0 and 1 arrive in the first second, packet 3 in the second
+        assert_eq!(stats.received_bytes, 100 + 1000 + 200);
+        assert_eq!(
+            stats.throughput.bits_per_second,
+            [1100.0 * 8.0, 200.0 * 8.0]
+        );
+        let constant = analyse_refused(4, &[], &records, &|_| 1000, 0);
+        assert_eq!(constant.received_bytes, 3000);
+        assert_ne!(
+            constant.throughput.bits_per_second,
+            stats.throughput.bits_per_second
+        );
+        // A duplicate is not counted twice
+        let twice = [arrival(0, 0, 5), arrival(0, 1, 5)];
+        assert_eq!(
+            analyse_refused(4, &[], &twice, &|_| 100, 0).received_bytes,
+            100
+        );
     }
 }

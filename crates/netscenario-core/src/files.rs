@@ -1,7 +1,7 @@
 //! The files that a scenario refers to (D-083): where they may be, how large they may be, and how they are read.
 //!
 //! A scenario names a file by a path relative to the directory of the scenario file. The files are read when the scenario is
-//! loaded, and what they hold (the table made from a file of samples, with the SHA-256 of the file) becomes part of the
+//! loaded, and what they hold (the table made from a file of samples, the packets of a trace, each with the SHA-256 of the file) becomes part of the
 //! scenario, so the canonical form and its hash cover the content and a recorded scenario needs no file. A scenario from
 //! elsewhere must not read what is not next to it, so a path that leads out of the directory is refused, symbolic links
 //! included, unless the caller says it is wanted.
@@ -29,7 +29,7 @@ pub fn resolve_files(
     allow_outside: bool,
 ) -> Result<(), ModelError> {
     let problems =
-        scenario.resolve_tables(|reference| read_referenced(base, reference, allow_outside));
+        scenario.resolve_files(|reference| read_referenced(base, reference, allow_outside));
     match ModelError::in_source(source_name, text, problems) {
         Some(error) => Err(error),
         None => Ok(()),
@@ -214,7 +214,7 @@ mod tests {
         let text = "version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { delay: 100ms, jitter: { amount: 20ms, distribution: table, table: { file: delays.txt } } }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\n";
         let mut scenario = Scenario::from_yaml(text, "t.yaml").unwrap();
         resolve_files(&mut scenario, "t.yaml", text, &base, false).unwrap();
-        assert_eq!(scenario.unresolved_table_files(), Vec::<String>::new());
+        assert_eq!(scenario.unresolved_files(), Vec::<String>::new());
         // A file that is not there is an error at the table, with its line
         fs::remove_file(base.join("delays.txt")).unwrap();
         let mut again = Scenario::from_yaml(text, "t.yaml").unwrap();

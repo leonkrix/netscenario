@@ -526,6 +526,12 @@ impl Scenario {
         problems: &mut Vec<Problem>,
     ) {
         let size = workload.packet_size.bytes();
+        // A trace has a largest packet, which is the one that is checked here, and says where it is in the file
+        let key = if workload.trace.is_some() {
+            "trace"
+        } else {
+            "packet-size"
+        };
         // Without a link that says its MTU a packet that does not fit 1500 is a mistake; with one, a larger packet is
         // the way to ask for fragmentation
         let largest = match (sets_mtu, family) {
@@ -539,7 +545,7 @@ impl Scenario {
                 Problem::new(format!(
                     "the packet size {size} bytes is outside {MIN_PACKET_SIZE} to {largest} bytes"
                 ))
-                .at_path(format!("{base}.packet-size"))
+                .at_path(format!("{base}.{key}"))
                 .with_help(if sets_mtu {
                     format!(
                         "the smallest payload is the header of the agent ({MIN_PACKET_SIZE} bytes); the largest is the biggest UDP datagram ({largest} bytes), which the sender cuts into fragments where it does not fit the MTU of the first link"
@@ -566,7 +572,7 @@ impl Scenario {
                     "a packet of {size} bytes of payload would be cut by a router: {why} ('{}')",
                     links[at]
                 ))
-                .at_path(format!("{base}.packet-size"))
+                .at_path(format!("{base}.{key}"))
                 .with_help("a router that cuts a packet makes frames in sizes the run cannot account for; make the packet smaller, raise the MTU of that link, or put the smallest MTU first on the path (the sender cuts the packet to the MTU of the first link, and the later links carry the fragments whole)"),
             );
         } else if !workload.udp_checksum.is_on() && size < MIN_PACKET_SIZE_WITHOUT_CHECKSUM {
@@ -574,7 +580,7 @@ impl Scenario {
                 Problem::new(format!(
                     "the packet size {size} bytes is too small for `udp-checksum: false`: the packet then carries a CRC-32, and the smallest payload is {MIN_PACKET_SIZE_WITHOUT_CHECKSUM} bytes"
                 ))
-                .at_path(format!("{base}.packet-size"))
+                .at_path(format!("{base}.{key}"))
                 .with_help(format!(
                     "use a payload of {MIN_PACKET_SIZE_WITHOUT_CHECKSUM} bytes or more, or leave `udp-checksum` out (the checksum of UDP is then on, and the smallest payload is {MIN_PACKET_SIZE} bytes)"
                 )),
@@ -641,10 +647,77 @@ impl Scenario {
                 base,
                 problems,
             );
+            check_trace(workload, base, problems);
             check_pattern(workload, size, base, problems);
             if !self.duration.is_zero() {
                 check_window(self.duration, workload.start, workload.stop, base, problems);
             }
+        }
+    }
+}
+
+/// The rules of the trace of a `trace-replay` workload (D-085): it names a file of a format that can be told, the selection of a flow
+/// is for a capture, and, once the file is read, no packet is smaller than the agent's header allows.
+fn check_trace(workload: &Generator<'_>, base: &str, problems: &mut Vec<Problem>) {
+    let Some(trace) = workload.trace else {
+        return;
+    };
+    let path = format!("{base}.trace");
+    if trace.file.is_none() && trace.packets.is_none() {
+        problems.push(
+            Problem::new("a trace needs a `file`")
+                .at_path(path.clone())
+                .with_help(
+                    "write `trace: { file: call.csv }`, a path relative to the scenario file",
+                ),
+        );
+    }
+    if let Some(file) = &trace.file {
+        if let Some(why) = crate::table::path_problem(file) {
+            problems.push(Problem::new(why).at_path(format!("{path}.file")));
+        } else if trace.format_of_file().is_none() {
+            problems.push(
+                Problem::new(format!("the format of '{file}' cannot be told from its name"))
+                    .at_path(format!("{path}.file"))
+                    .with_help("write `format: csv` or `format: pcap` next to `file`, or name the file `.csv`, `.pcap` or `.pcapng`"),
+            );
+        }
+    }
+    if trace.select.is_some()
+        && trace.file.is_some()
+        && trace.format_of_file() == Some(crate::TraceFormat::Csv)
+    {
+        problems.push(
+            Problem::new(
+                "`select` picks a flow out of a capture, and a CSV file is one flow already",
+            )
+            .at_path(format!("{path}.select"))
+            .with_help("take `select` away, or use `format: pcap`"),
+        );
+    }
+    if let Some(hash) = &trace.sha256
+        && !(hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        problems.push(
+            Problem::new("`sha256` is 64 hexadecimal digits").at_path(format!("{path}.sha256")),
+        );
+    }
+    if let Some(data) = &trace.packets {
+        let smallest = data.smallest();
+        let least = if workload.udp_checksum.is_on() {
+            MIN_PACKET_SIZE
+        } else {
+            MIN_PACKET_SIZE_WITHOUT_CHECKSUM
+        };
+        if smallest < least {
+            problems.push(
+                Problem::new(format!(
+                    "the trace has a packet of {smallest} bytes, below the smallest payload of {least} bytes{}",
+                    if workload.udp_checksum.is_on() { "" } else { " for `udp-checksum: false`" }
+                ))
+                .at_path(path)
+                .with_help("the packet carries the header of the agent; a capture is read with the packets raised to that size, a CSV file with a smaller one is refused"),
+            );
         }
     }
 }
@@ -690,6 +763,8 @@ fn check_pattern(workload: &Generator<'_>, size: u64, base: &str, problems: &mut
             must_be_more_than_zero("on", on, problems);
             must_be_more_than_zero("off", off, problems);
         }
+        // The moments and the sizes of a trace are checked with the trace
+        Pattern::Trace => {}
         Pattern::Bursty {
             packets,
             gap,

@@ -521,6 +521,26 @@ pub struct SeriesInfo {
     pub file: String,
 }
 
+/// The trace a `trace-replay` workload replayed (D-085).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct TraceInfo {
+    /// The file the trace was read from, as the scenario names it.
+    pub file: Option<String>,
+    /// The SHA-256 of that file.
+    pub sha256: Option<String>,
+    /// How many packets the trace has (the ones that the window of the workload cuts off are among them).
+    pub packets: u64,
+    /// The packets of a capture that were raised to the smallest payload (0 for a CSV file).
+    pub padded: u64,
+    /// The smallest payload in the trace, in bytes.
+    pub smallest_bytes: u64,
+    /// The largest payload in the trace, in bytes.
+    pub largest_bytes: u64,
+    /// The moment of the last packet, in nanoseconds from the start of the workload.
+    pub span_ns: u64,
+}
+
 /// The result of one workload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -548,8 +568,11 @@ pub struct WorkloadResult {
     /// (for the second it is the mean), and the mean over the phases or the bursts for `udp-onoff` and `udp-bursty`, rounded
     /// down.
     pub rate_bits_per_second: u64,
-    /// The payload of a packet in bytes.
+    /// The payload of a packet in bytes; for a trace, the largest.
     pub packet_size_bytes: u64,
+    /// The trace of a `trace-replay` workload (D-085). Absent for the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<TraceInfo>,
     /// When the workload started, from the start of the measured phase, in nanoseconds.
     pub start_ns: u64,
     /// How long the workload sent, in nanoseconds.
@@ -597,6 +620,19 @@ pub struct WorkloadResult {
     /// timeline, and in a result of an older run.
     #[serde(default)]
     pub recoveries: Vec<crate::recovery::Recovery>,
+}
+
+impl WorkloadResult {
+    /// The payload of the packets that arrived, in bytes. A result of release 0.2 or earlier has no sum, and every packet had the
+    /// size `packet_size_bytes`.
+    #[must_use]
+    pub fn payload_received_bytes(&self) -> u64 {
+        if self.stats.received_bytes > 0 || self.stats.received == 0 {
+            self.stats.received_bytes
+        } else {
+            self.stats.received * self.packet_size_bytes
+        }
+    }
 }
 
 impl RunResult {
@@ -685,6 +721,7 @@ pub(crate) mod tests {
                 frames_per_packet: 1,
                 rate_bits_per_second: 1_000_000,
                 packet_size_bytes: 1000,
+                trace: None,
                 start_ns: 0,
                 duration_ns: 1,
                 stats: FlowStats {
@@ -703,6 +740,7 @@ pub(crate) mod tests {
                         bin_ns: 1_000_000_000,
                         bits_per_second: vec![8000.0],
                     },
+                    received_bytes: 1000,
                 },
                 sender: SenderInfo {
                     max_lateness_ns: 3,

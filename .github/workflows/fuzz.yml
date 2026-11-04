@@ -2,7 +2,7 @@ name: Fuzz
 
 # The parsers of input that is not trusted (D-045, QA-03): the scenario file, the values of the format, a datagram
 # that reaches a receiver, a file of records, a result file, the lines of metrics of a program, the file of a set of
-# runs, the reports made of a result file, and the files of delay samples. Each target runs for a few minutes once a week and
+# runs, the reports made of a result file, the files of delay samples, and the files of traces and captures. Each target runs for a few minutes once a week and
 # keeps its corpus from run to run; an input that crashes a target fails the run and is attached to it.
 # `fuzz/` is a crate of its own because libFuzzer needs a nightly Rust.
 on:
@@ -62,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [scenario, units, packet, records, result, metrics, runset, report, samples]
+        target: [scenario, units, packet, records, result, metrics, runset, report, samples, traces, captures]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -39,7 +39,7 @@ pub const USAGE: u8 = 2;
 const USAGE_TEXT: &str = "\
 Usage:
   netscenario-agent send --to <addr> --size <bytes> --duration-ns <ns> [--rate <bits/s>]
-                         [--pattern cbr|poisson|onoff|bursty] [--seed <n>] [--distribution fixed|exponential]
+                         [--pattern cbr|poisson|onoff|bursty|trace] [--trace <file>] [--seed <n>] [--distribution fixed|exponential]
                          [--on-ns <ns> --off-ns <ns>] [--burst-packets <n> --gap-ns <ns> --pause-ns <ns>]
                          [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>] [--dont-fragment]
                          [--barriers <packet>:<id>,...]
@@ -331,6 +331,7 @@ const SEND_OPTIONS: &[&str] = &[
     "start-at-ns",
     "udp-checksum",
     "barriers",
+    "trace",
 ];
 
 /// The schedule that the words after `send` describe, as the agent reads them. The run uses this to check that the words
@@ -348,8 +349,17 @@ fn schedule_of(options: &Options) -> Result<Schedule, String> {
     let pattern: String = options
         .optional("pattern")?
         .unwrap_or_else(|| "cbr".to_owned());
-    let packet_size: u64 = options.required("size")?;
     let seed: u64 = options.optional("seed")?.unwrap_or(0);
+    // A trace has a size for each packet; the other patterns have one size
+    if pattern == "trace" {
+        let path: String = options.required("trace")?;
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read the trace {path}: {error}"))?;
+        let trace =
+            crate::trace::Trace::from_text(&text).map_err(|why| format!("{path}: {why}"))?;
+        return Ok(Schedule::Trace(std::sync::Arc::new(trace)));
+    }
+    let packet_size: u64 = options.required("size")?;
     let distribution = match options.optional::<String>("distribution")?.as_deref() {
         None | Some("fixed") => Distribution::Fixed,
         Some("exponential") => Distribution::Exponential,
@@ -388,7 +398,7 @@ fn schedule_of(options: &Options) -> Result<Schedule, String> {
         },
         other => {
             return Err(format!(
-                "--pattern is cbr, poisson, onoff or bursty, not '{other}'"
+                "--pattern is cbr, poisson, onoff, bursty or trace, not '{other}'"
             ));
         }
     })
@@ -688,7 +698,7 @@ mod tests {
             ),
             (
                 &["--pattern", "wave", "--rate", "1", "--size", "125"][..],
-                "--pattern is cbr, poisson, onoff or bursty, not 'wave'",
+                "--pattern is cbr, poisson, onoff, bursty or trace, not 'wave'",
             ),
             (
                 &["--distribution", "normal", "--rate", "1", "--size", "125"][..],

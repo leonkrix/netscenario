@@ -38,7 +38,7 @@ fn parse_scenario(
 ) -> PyResult<String> {
     let mut scenario =
         Scenario::from_yaml(text, source_name).map_err(|error| errors::scenario(py, &error))?;
-    let wanted = scenario.unresolved_table_files();
+    let wanted = scenario.unresolved_files();
     if !wanted.is_empty() {
         if let Some(base) = base_dir {
             netscenario_core::resolve_files(

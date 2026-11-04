@@ -453,6 +453,75 @@
       ],
       "type": "object"
     },
+    "FlowProtocol": {
+      "description": "The transport protocol of a flow in a capture.",
+      "oneOf": [
+        {
+          "const": "udp",
+          "description": "UDP.",
+          "type": "string"
+        },
+        {
+          "const": "tcp",
+          "description": "TCP.",
+          "type": "string"
+        }
+      ]
+    },
+    "FlowSelection": {
+      "additionalProperties": false,
+      "description": "Which flow of a capture is the trace: the packets that go from `src` to `dst`. What is left out is not asked about. When the\ncapture has only one flow nothing needs to be said; when it has several, the message lists them.",
+      "properties": {
+        "dst": {
+          "description": "The address the packets go to.",
+          "format": "ip",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dst-port": {
+          "description": "The port the packets go to.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "protocol": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlowProtocol"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`udp` or `tcp`."
+        },
+        "src": {
+          "description": "The address the packets come from.",
+          "format": "ip",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "src-port": {
+          "description": "The port the packets come from.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "FormatVersion": {
       "const": 0,
       "description": "The version of the scenario format. Version 0 is the series before 1.0 and may change in any minor release.",
@@ -1042,6 +1111,69 @@
         "udp-onoff"
       ],
       "type": "string"
+    },
+    "PacketTrace": {
+      "additionalProperties": false,
+      "description": "The trace of a workload: the file it comes from, and, once the file is read, the packets.\n\nIn a scenario file only `file` is written (and `format` and `select` for a capture). When the scenario is loaded the rest is\nfilled in. `sha256` may be written as well: then the file must have exactly that content.",
+      "properties": {
+        "file": {
+          "description": "The file, a path relative to the directory of the scenario file. Read when the scenario is loaded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TraceFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`csv` or `pcap`. Left out, it is taken from the name of the file (`.csv`, `.txt`, `.pcap`, `.pcapng`, `.cap`)."
+        },
+        "packets": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TraceData"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The packets. Written by the loader; a scenario with them needs no file."
+        },
+        "padded": {
+          "description": "How many packets of a capture were raised to the smallest payload that a packet of the agent can have (it carries a\nheader), such as an acknowledgement without data. Written by the loader.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "select": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlowSelection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For a capture with more than one flow: which one is the trace."
+        },
+        "sha256": {
+          "description": "The SHA-256 of the file. Written by the loader; if it is in the file, the content must match it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
     },
     "PathSpec": {
       "additionalProperties": false,
@@ -1650,6 +1782,106 @@
       },
       "type": "object"
     },
+    "TraceData": {
+      "description": "The packets of a trace: for each packet the time since the packet before and the payload in bytes, each as a LEB128 number, written as hexadecimal. Written by the loader from the file of the trace.",
+      "pattern": "^([0-9a-fA-F]{2})+$",
+      "type": "string"
+    },
+    "TraceFormat": {
+      "description": "The format of the file of a trace.",
+      "oneOf": [
+        {
+          "const": "csv",
+          "description": "A text file with one packet on each line: the time since the start and the payload, each with its unit\n(`12.5ms,1200b`).",
+          "type": "string"
+        },
+        {
+          "const": "pcap",
+          "description": "A capture of the packets of a real flow (`pcap` or `pcapng`): the transport payload of the packets of one flow, at the\nmoments they were captured.",
+          "type": "string"
+        }
+      ]
+    },
+    "TraceReplay": {
+      "additionalProperties": false,
+      "properties": {
+        "dont-fragment": {
+          "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
+          "type": "boolean"
+        },
+        "from": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that sends."
+        },
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the workload. Metrics are named after it."
+        },
+        "ip": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IpFamily"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network."
+        },
+        "kind": {
+          "$ref": "#/$defs/TraceReplayKind",
+          "description": "`trace-replay`: UDP packets at the moments and with the sizes of a recorded trace."
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload starts, from the start of the measured phase. Default `0s`. The moments of the trace count from here."
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload stops. Default: the end of the measured phase."
+        },
+        "to": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that receives."
+        },
+        "trace": {
+          "$ref": "#/$defs/PacketTrace",
+          "description": "The packets: a file of a trace (CSV or a capture), read when the scenario is loaded."
+        },
+        "udp-checksum": {
+          "$ref": "#/$defs/UdpChecksum",
+          "description": "`false`: the packets are sent without the UDP checksum and carry a CRC-32 (D-040). Default `true`."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "from",
+        "to",
+        "trace"
+      ],
+      "type": "object"
+    },
+    "TraceReplayKind": {
+      "enum": [
+        "trace-replay"
+      ],
+      "type": "string"
+    },
     "True": {
       "const": true,
       "type": "boolean"
@@ -2031,6 +2263,10 @@
         {
           "$ref": "#/$defs/UdpBursty",
           "description": "UDP in bursts."
+        },
+        {
+          "$ref": "#/$defs/TraceReplay",
+          "description": "UDP at the moments and with the sizes of a recorded trace. After the others because the kinds are listed in the order\nthey were added."
         }
       ],
       "description": "A workload: something that runs in a node. Either a generator that sends traffic ([`UdpCbr`],\n[`UdpPoisson`], [`UdpOnOff`], [`UdpBursty`]), or the program that is being tested ([`Command`]).\n\nIt is read by hand (see `WorkloadFields`) for the reason that `Loss` is: the derived reader for a tagged\nenum reports an error in a value at the start of the mapping and not at the value.\n\nMore kinds come in later releases, so a `match` outside this crate needs a wildcard arm."

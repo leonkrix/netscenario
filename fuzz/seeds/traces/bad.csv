@@ -1,0 +1,4 @@
+# a trace with faults
+0ms,100b
+5,100b
+10ms,8b

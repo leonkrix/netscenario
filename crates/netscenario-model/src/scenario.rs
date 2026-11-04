@@ -10,11 +10,14 @@ use schemars::JsonSchema;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::generators::{Generator, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
+use crate::generators::{
+    Generator, PhaseDistribution, TraceReplay, UdpBursty, UdpOnOff, UdpPoisson,
+};
 use crate::ip::IpFamily;
 use crate::measure::Measure;
 use crate::table::DelayTable;
 use crate::topology::Topology;
+use crate::trace::PacketTrace;
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
 /// The version of the scenario format that this crate reads: the integer `0`.
@@ -707,6 +710,9 @@ pub enum Workload {
     UdpOnOff(UdpOnOff),
     /// UDP in bursts.
     UdpBursty(UdpBursty),
+    /// UDP at the moments and with the sizes of a recorded trace. After the others because the kinds are listed in the order
+    /// they were added.
+    TraceReplay(TraceReplay),
 }
 
 impl Workload {
@@ -719,6 +725,7 @@ impl Workload {
             Self::UdpPoisson(workload) => &workload.id,
             Self::UdpOnOff(workload) => &workload.id,
             Self::UdpBursty(workload) => &workload.id,
+            Self::TraceReplay(workload) => &workload.id,
         }
     }
 
@@ -731,6 +738,7 @@ impl Workload {
             Self::UdpPoisson(_) => WorkloadKind::UdpPoisson,
             Self::UdpOnOff(_) => WorkloadKind::UdpOnoff,
             Self::UdpBursty(_) => WorkloadKind::UdpBursty,
+            Self::TraceReplay(_) => WorkloadKind::TraceReplay,
         }
     }
 
@@ -742,6 +750,7 @@ impl Workload {
             Self::UdpPoisson(workload) => Some(workload.into()),
             Self::UdpOnOff(workload) => Some(workload.into()),
             Self::UdpBursty(workload) => Some(workload.into()),
+            Self::TraceReplay(workload) => Some(workload.into()),
             Self::Command(_) => None,
         }
     }
@@ -780,6 +789,9 @@ pub enum WorkloadKind {
     UdpOnoff,
     /// UDP in bursts.
     UdpBursty,
+    /// UDP at the moments and with the sizes of a recorded trace. After the others because the kinds are listed in the order
+    /// they were added.
+    TraceReplay,
 }
 
 impl WorkloadKind {
@@ -792,6 +804,7 @@ impl WorkloadKind {
             Self::UdpPoisson => "udp-poisson",
             Self::UdpOnoff => "udp-onoff",
             Self::UdpBursty => "udp-bursty",
+            Self::TraceReplay => "trace-replay",
         }
     }
 }
@@ -1177,6 +1190,7 @@ enum KindName {
     UdpPoisson,
     UdpOnoff,
     UdpBursty,
+    TraceReplay,
 }
 
 /// Every key that a workload can have, for the reader: which of them belong to the kind is checked after.
@@ -1206,6 +1220,7 @@ struct WorkloadFields {
     burst_packets: Option<u32>,
     gap: Option<Duration>,
     pause: Option<Duration>,
+    trace: Option<PacketTrace>,
 }
 
 /// The keys of a kind in the file: the ones that must be there, and the ones that may be.
@@ -1240,6 +1255,11 @@ impl KindName {
                     "ip",
                     "dont-fragment",
                 ],
+            },
+            Self::TraceReplay => Keys {
+                name: "trace-replay",
+                required: &["from", "to", "trace"],
+                optional: &WINDOW,
             },
             Self::UdpBursty => Keys {
                 name: "udp-bursty",
@@ -1290,6 +1310,7 @@ impl<'de> Deserialize<'de> for Workload {
             ("burst-packets", fields.burst_packets.is_some()),
             ("gap", fields.gap.is_some()),
             ("pause", fields.pause.is_some()),
+            ("trace", fields.trace.is_some()),
         ];
         let keys = fields.kind.keys();
         // A file is checked for both before it gets here, with the place of each key
@@ -1360,6 +1381,17 @@ impl<'de> Deserialize<'de> for Workload {
                 gap: fields.gap.ok_or_else(missing)?,
                 pause: fields.pause.ok_or_else(missing)?,
                 distribution,
+                start: fields.start,
+                stop: fields.stop,
+                udp_checksum: checksum,
+                ip: fields.ip,
+                dont_fragment: fields.dont_fragment.unwrap_or(false),
+            }),
+            KindName::TraceReplay => Self::TraceReplay(TraceReplay {
+                id: fields.id,
+                from: fields.from.ok_or_else(missing)?,
+                to: fields.to.ok_or_else(missing)?,
+                trace: fields.trace.ok_or_else(missing)?,
                 start: fields.start,
                 stop: fields.stop,
                 udp_checksum: checksum,

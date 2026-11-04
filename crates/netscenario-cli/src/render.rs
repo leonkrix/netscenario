@@ -717,10 +717,18 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
     } else {
         format!("{}, {stated} on average", workload.kind)
     };
+    // A trace has packets of different sizes
+    let sizes = match &workload.trace {
+        Some(trace) if trace.smallest_bytes != trace.largest_bytes => format!(
+            "{} packets of {} to {} bytes",
+            trace.packets, trace.smallest_bytes, trace.largest_bytes
+        ),
+        _ => format!("{} byte packets", workload.packet_size_bytes),
+    };
     let _ = writeln!(
         text,
-        "\nworkload {}  {} -> {}  {shape}, {} byte packets",
-        workload.id, workload.from, workload.to, workload.packet_size_bytes
+        "\nworkload {}  {} -> {}  {shape}, {sizes}",
+        workload.id, workload.from, workload.to
     );
     let reordered = if stats.reordered > 0 {
         format!("  reordered {}", stats.reordered)
@@ -770,8 +778,7 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
         let average = if workload.duration_ns == 0 {
             0.0
         } else {
-            (stats.received * workload.packet_size_bytes * 8) as f64 * 1e9
-                / workload.duration_ns as f64
+            (workload.payload_received_bytes() * 8) as f64 * 1e9 / workload.duration_ns as f64
         };
         let _ = writeln!(
             text,

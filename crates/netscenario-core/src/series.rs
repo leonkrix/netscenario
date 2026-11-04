@@ -54,6 +54,10 @@ pub struct BinDelay {
 pub struct BySend {
     /// How many packets were sent in the bin.
     pub sent: u64,
+    /// The payload of those packets in bits: the packets of a trace differ in size. 0 in a series of release 0.2 or earlier, where
+    /// every packet had the size of the workload.
+    #[serde(default)]
+    pub bits: u64,
     /// How many of them arrived (in the bin or later).
     pub received: u64,
     /// How many did not: `sent - received`.
@@ -91,7 +95,7 @@ pub struct Bin {
 }
 
 /// What the series is made from.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Input<'a> {
     /// When the packets of the workload leave and how large they are.
     pub schedule: Schedule,
@@ -125,7 +129,9 @@ pub fn bins(input: &Input<'_>, bin_ns: u64) -> Vec<Bin> {
         slots,
         refused,
         records,
-    } = *input;
+    } = input;
+    let (start_ns, origin_ns, slots) = (*start_ns, *origin_ns, *slots);
+    let (refused, records) = (*refused, *records);
     // The bin of each slot, walked once in order: a drawn schedule has no formula for packet `n` (there are at most a million
     // bins, so a bin fits in 32 bits)
     let slot_bins: Vec<u32> = schedule
@@ -144,6 +150,7 @@ pub fn bins(input: &Input<'_>, bin_ns: u64) -> Vec<Bin> {
     };
     // The packets that were sent, in the bin of their slot
     let mut sent: Vec<u64> = Vec::new();
+    let mut sent_bytes: Vec<u64> = Vec::new();
     for n in 0..slots {
         if was_refused(n) {
             continue;
@@ -151,14 +158,18 @@ pub fn bins(input: &Input<'_>, bin_ns: u64) -> Vec<Bin> {
         let bin = slot_bin(n);
         if sent.len() <= bin {
             sent.resize(bin + 1, 0);
+            sent_bytes.resize(bin + 1, 0);
         }
         sent[bin] += 1;
+        sent_bytes[bin] += schedule.size_of(n);
     }
     // The first arrival of each packet that was sent
     let mut seen = vec![false; usize::try_from(slots).unwrap_or(usize::MAX)];
     let mut received: Vec<u64> = vec![0; sent.len()];
     let mut send_delays: Vec<Vec<u64>> = vec![Vec::new(); sent.len()];
     let mut arrived: Vec<u64> = Vec::new();
+    // The payload that arrived in each bin: the packets of a trace differ in size
+    let mut arrived_bytes: Vec<u64> = Vec::new();
     let mut arrival_delays: Vec<Vec<u64>> = Vec::new();
     for record in records {
         if record.sequence >= slots || was_refused(record.sequence) {
@@ -176,9 +187,11 @@ pub fn bins(input: &Input<'_>, bin_ns: u64) -> Vec<Bin> {
             .unwrap_or(usize::MAX);
         if arrived.len() <= at {
             arrived.resize(at + 1, 0);
+            arrived_bytes.resize(at + 1, 0);
             arrival_delays.resize(at + 1, Vec::new());
         }
         arrived[at] += 1;
+        arrived_bytes[at] += schedule.size_of(record.sequence);
         arrival_delays[at].push(delay);
     }
     let count = sent.len().max(arrived.len());
@@ -187,11 +200,13 @@ pub fn bins(input: &Input<'_>, bin_ns: u64) -> Vec<Bin> {
             let sent_here = sent.get(index).copied().unwrap_or(0);
             let received_here = received.get(index).copied().unwrap_or(0);
             let arrived_here = arrived.get(index).copied().unwrap_or(0);
+            let bytes_here = arrived_bytes.get(index).copied().unwrap_or(0);
             Bin {
                 bin: index as u64,
                 start_ns: index as u64 * bin_ns,
                 by_send: BySend {
                     sent: sent_here,
+                    bits: sent_bytes.get(index).copied().unwrap_or(0) * 8,
                     received: received_here,
                     lost: sent_here - received_here,
                     delivered_ratio: (sent_here > 0)
@@ -200,7 +215,7 @@ pub fn bins(input: &Input<'_>, bin_ns: u64) -> Vec<Bin> {
                 },
                 by_arrival: ByArrival {
                     received: arrived_here,
-                    bits: arrived_here * schedule.packet_size() * 8,
+                    bits: bytes_here * 8,
                     delay: summarize(arrival_delays.get_mut(index)),
                 },
             }
@@ -450,5 +465,68 @@ mod tests {
         assert!(found.iter().all(|bin| bin.by_send.lost == 0));
         // Canary: a constant bit rate with the same mean puts 50 packets in every bin, and the drawn ones differ
         assert_ne!(by_hand, [50, 50, 50, 50]);
+    }
+
+    /// The packets of a trace differ in size, so the bits of a bin are the sizes of the packets, by their send bin and by their
+    /// arrival bin. A constant size would give other numbers: the canary is the same input with the schedule of the largest
+    /// packet.
+    #[test]
+    fn the_bits_of_a_bin_are_the_sizes_of_the_packets_of_a_trace() {
+        let trace = netscenario_agent::trace::Trace::new(
+            vec![0, 400_000_000, 900_000_000, 1_100_000_000, 1_900_000_000],
+            vec![100, 1000, 500, 200, 300],
+        )
+        .unwrap();
+        let schedule = Schedule::Trace(std::sync::Arc::new(trace));
+        // Each packet arrives 200 ms after it left: the third (sent at 900 ms) arrives in the second bin
+        let records: Vec<Record> = [0_u64, 400, 900, 1100, 1900]
+            .iter()
+            .enumerate()
+            .map(|(n, sent)| Record {
+                sequence: n as u64,
+                send_ns: sent * 1_000_000,
+                receive_ns: (sent + 200) * 1_000_000,
+            })
+            .collect();
+        let with = |schedule: Schedule| {
+            bins(
+                &Input {
+                    schedule,
+                    start_ns: 0,
+                    origin_ns: 0,
+                    slots: 5,
+                    refused: &[],
+                    records: &records,
+                },
+                1_000_000_000,
+            )
+        };
+        let found = with(schedule);
+        // Sent: 100 + 1000 + 500 bytes in the first second, 200 + 300 in the second, nothing in the third (a packet that is sent at
+        // 1.9 s arrives at 2.1 s)
+        assert_eq!(
+            found.iter().map(|bin| bin.by_send.bits).collect::<Vec<_>>(),
+            [1600 * 8, 500 * 8, 0]
+        );
+        // Arrived: 100 + 1000 bytes in the first second, 500 + 200 in the second, 300 in the third
+        assert_eq!(
+            found
+                .iter()
+                .map(|bin| bin.by_arrival.bits)
+                .collect::<Vec<_>>(),
+            [1100 * 8, 700 * 8, 300 * 8]
+        );
+        // Canary: with every packet as large as the largest the numbers are others
+        let constant = with(Schedule::Cbr(Stream {
+            bits_per_second: 8_000,
+            packet_size: 1000,
+        }));
+        assert_ne!(
+            constant
+                .iter()
+                .map(|bin| bin.by_arrival.bits)
+                .collect::<Vec<_>>(),
+            [1100 * 8, 700 * 8, 300 * 8]
+        );
     }
 }

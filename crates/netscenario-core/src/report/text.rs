@@ -118,10 +118,7 @@ pub(crate) fn workload_rows(workload: &WorkloadResult) -> Vec<(&'static str, Str
             .map_or_else(|| "n/a".to_owned(), |j| ms(j.mean_ns)),
     ));
     let throughput = if workload.duration_ns > 0 {
-        rate(
-            stats.received as f64 * workload.packet_size_bytes as f64 * 8.0
-                / (workload.duration_ns as f64 / 1e9),
-        )
+        rate(workload.payload_received_bytes() as f64 * 8.0 / (workload.duration_ns as f64 / 1e9))
     } else {
         "n/a".to_owned()
     };
@@ -429,7 +426,7 @@ fn workload_properties(scenario: &str, workload: &WorkloadResult) -> Vec<(String
         found.push((format!("{prefix}.jitter_mean_s"), secs(jitter.mean_ns)));
     }
     if workload.duration_ns > 0 {
-        let bits = stats.received as f64 * workload.packet_size_bytes as f64 * 8.0;
+        let bits = workload.payload_received_bytes() as f64 * 8.0;
         found.push((
             format!("{prefix}.throughput_mean_bps"),
             (bits / (workload.duration_ns as f64 / 1e9)).to_string(),

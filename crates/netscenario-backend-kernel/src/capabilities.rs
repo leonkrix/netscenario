@@ -252,7 +252,8 @@ fn by_version(environment: &Environment) -> Capabilities {
         .with(Feature::Ipv6, Support::Exact)
         .with(Feature::QueueLimit, Support::Exact)
         .with(Feature::QueueDisciplines, Support::Exact)
-        .with(Feature::UdpWithoutChecksum, Support::Exact);
+        .with(Feature::UdpWithoutChecksum, Support::Exact)
+        .with(Feature::TraceReplay, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
     }

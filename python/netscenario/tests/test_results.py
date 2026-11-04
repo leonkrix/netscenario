@@ -555,3 +555,33 @@ def test_canary_a_capture_that_lost_frames_or_could_not_check_itself_is_not_comp
     assert (lost_.missing, lost_.complete) == (12, False)
     assert (unchecked_.missing, unchecked_.complete) == (None, False)
     assert (empty_.first, empty_.last, empty_.complete) == (None, None, True)
+
+
+def test_the_trace_of_a_trace_replay_and_the_bytes_that_arrived() -> None:
+    media = result()["media"]
+    assert media.trace is None
+    assert media.received_bytes == 0
+    data = json.loads(json.dumps(RESULT))
+    data["workloads"][0]["kind"] = "trace-replay"
+    data["workloads"][0]["received_bytes"] = 410_000
+    data["workloads"][0]["trace"] = {
+        "file": "call.csv",
+        "sha256": "ab" * 32,
+        "packets": 625,
+        "padded": 12,
+        "smallest_bytes": 16,
+        "largest_bytes": 1472,
+        "span_ns": 12_340_000_000,
+    }
+    replayed = ns.Result.from_json(json.dumps(data), Path("/out"))["media"]
+    assert replayed.kind == "trace-replay"
+    assert replayed.received_bytes == 410_000
+    assert replayed.trace is not None
+    assert (replayed.trace.file, replayed.trace.packets, replayed.trace.padded) == (
+        "call.csv",
+        625,
+        12,
+    )
+    assert (replayed.trace.smallest, replayed.trace.largest) == (16, 1472)
+    assert replayed.trace.span == pytest.approx(12.34)
+    assert replayed.trace.sha256 == "ab" * 32

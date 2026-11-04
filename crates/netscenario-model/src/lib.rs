@@ -46,13 +46,17 @@ mod source;
 mod suggest;
 mod table;
 mod topology;
+mod trace;
+mod trace_pcap;
 pub mod units;
 mod validate;
 
 pub use builder::ScenarioBuilder;
 pub use command::{MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ENV_ENTRIES, RESERVED_ENV_PREFIX};
 pub use error::{Error, Location, Problem};
-pub use generators::{Generator, Pattern, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
+pub use generators::{
+    Generator, Pattern, PhaseDistribution, TraceReplay, UdpBursty, UdpOnOff, UdpPoisson,
+};
 pub use graph::{Destination, Path, PathError, RouteEntry, Routes};
 pub use hash::sha256_hex;
 pub use ip::{IpFamily, IpMode};
@@ -82,6 +86,11 @@ pub use topology::{
     DEFAULT_DESTINATION, DEFAULT_METRIC, MAX_LINKS, MAX_NODES, MAX_ROUTES, Node, Role, Route,
     Routing, Topology,
 };
+pub use trace::{
+    FlowProtocol, FlowSelection, MAX_TRACE_PACKETS, PacketTrace, ReadTrace, TraceData, TraceFormat,
+    read_csv,
+};
+pub use trace_pcap::read_capture;
 pub use units::{Duration, Name, Probability, Rate, Size, ValueError};
 pub use validate::{
     MAX_BURST_PACKETS, MAX_COST, MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MAX_QUEUE_BYTES,
