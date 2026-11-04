@@ -55,6 +55,8 @@ pub struct CaptureConfig {
 #[derive(Debug)]
 pub struct Capture {
     config: CaptureConfig,
+    /// The index of the interface, which the frames that are read are held to.
+    ifindex: usize,
     socket: OwnedFd,
     /// The size of the receive buffer that the kernel gave, in bytes.
     pub receive_buffer_bytes: u64,
@@ -142,8 +144,15 @@ impl Capture {
         // The socket is open before the counter is read: a frame between the two is captured and not counted, which is
         // harmless, whereas the other order could miss frames silently
         let counted_before = counter(&config.interface);
+        let ifindex = nix::net::if_::if_nametoindex(config.interface.as_str()).map_err(|error| {
+            failed(
+                &format!("there is no interface '{}'", config.interface),
+                error,
+            )
+        })? as usize;
         Ok(Self {
             config,
+            ifindex,
             socket,
             receive_buffer_bytes,
             counted_before,
@@ -182,6 +191,19 @@ impl Capture {
                 }
                 Err(error) => return Err(failed("cannot read the interface", error)),
             };
+            // A packet socket sees the frames of every interface of the node, whatever it is bound to by name: with several
+            // links in a node only the frames of the interface that is captured count (D-078)
+            if received
+                .address
+                .is_some_and(|address| address.ifindex() != self.ifindex)
+            {
+                if stop.load(Ordering::SeqCst)
+                    && Instant::now() >= *drain_until.get_or_insert_with(|| Instant::now() + DRAIN)
+                {
+                    break;
+                }
+                continue;
+            }
             let length = received.bytes;
             let mut stamp = None;
             if let Ok(messages) = received.cmsgs() {

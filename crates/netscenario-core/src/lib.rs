@@ -81,8 +81,9 @@ pub mod timeline;
 mod traffic;
 
 pub use backend::{
-    Backend, BackendInfo, Direction, LINE_LIMIT, LOG_LIMIT, LinkHandle, NodeCounts, NodeHandle,
-    OutputStats, PortKind, Program, ProgramExit, ProgramHandle, ProgramSignal, ProgramState,
+    Backend, BackendInfo, Direction, LINE_LIMIT, LOG_LIMIT, LinkHandle, NextHop, NodeCounts,
+    NodeHandle, NodeRoute, OutputStats, PortKind, Program, ProgramExit, ProgramHandle,
+    ProgramSignal, ProgramState,
 };
 pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, check};
 pub use error::Error;
@@ -92,7 +93,7 @@ pub use hash::sha256_hex;
 pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
 pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering};
-pub use provision::{NodeAddress, Provisioned, impairments_of, provision};
+pub use provision::{NodeAddress, Provisioned, impairments_of, node_address, provision};
 pub use recovery::{Basis, Recovery, RecoveryOptions};
 pub use replay::{
     Comparison, Difference, LISTED_SEQUENCES, Recorded, ReplayError, SCENARIO_FILE, Verdict,
@@ -100,8 +101,8 @@ pub use replay::{
 };
 pub use result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, MetricSummary,
-    ProgramOutput, ProgramResult, QueueCheck, RESULT_FORMAT, RESULT_VERSION, RunResult,
-    ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
+    NodeInfo, PathInfo, ProgramOutput, ProgramResult, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
+    RouteInfo, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
 pub use runset::{

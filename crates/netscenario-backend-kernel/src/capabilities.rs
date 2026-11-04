@@ -46,8 +46,8 @@ const NEEDS_TC: &[Feature] = &[
 
 /// The features that the Kernel backend gets in later steps of a release: the format knows them, the backend does not
 /// apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says `✔` and the
-/// release for them. Networks of several nodes and their routes (D-078) are built in the next piece of release 0.3.
-const PLANNED: &[Feature] = &[Feature::MultipleNodes, Feature::StaticRoutes];
+/// release for them. None at the moment (the networks of several nodes and their routes, D-078, were the last).
+const PLANNED: &[Feature] = &[];
 
 /// What the probe of `doctor` found out about the kernel and `tc` of this machine (D-068): for each thing a scenario
 /// can need, whether it was accepted or what was answered. The version of `tc` says what it should know; the probe says
@@ -115,13 +115,19 @@ pub fn capabilities_probed(environment: &Environment, probed: &Probed) -> Capabi
         fix: fix.to_owned(),
     };
     if let Some(why) = probed.veth_refused() {
-        capabilities = capabilities.with(
+        for feature in [
             Feature::PointToPoint,
-            unsupported(
-                format!("a virtual Ethernet pair cannot be created on this machine: {why}"),
-                &format!("the kernel needs the module `veth` (`sudo modprobe veth`), {ENGINE}"),
-            ),
-        );
+            Feature::MultipleNodes,
+            Feature::StaticRoutes,
+        ] {
+            capabilities = capabilities.with(
+                feature,
+                unsupported(
+                    format!("a virtual Ethernet pair cannot be created on this machine: {why}"),
+                    &format!("the kernel needs the module `veth` (`sudo modprobe veth`), {ENGINE}"),
+                ),
+            );
+        }
     }
     if let Some(why) = probed.refused("netem") {
         let support = unsupported(
@@ -186,6 +192,8 @@ fn by_version(environment: &Environment) -> Capabilities {
         .with(Feature::TrafficPatterns, Support::Exact)
         .with(Feature::Program, Support::Exact)
         .with(Feature::PacketCapture, Support::Exact)
+        .with(Feature::MultipleNodes, Support::Exact)
+        .with(Feature::StaticRoutes, Support::Exact)
         .with(Feature::UdpWithoutChecksum, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
@@ -308,15 +316,18 @@ mod tests {
         assert_eq!(no_netem.support(Feature::Ipv4), Support::Exact);
         assert_eq!(no_netem.support(Feature::UdpGenerators), Support::Exact);
 
-        let one = |step: &str, feature: Feature| {
+        let one = |step: &str, feature: Feature, with: &[Feature]| {
             let found = declared(&probed(&[(
                 step,
                 "Error: Specified qdisc kind is unknown.",
             )]));
             assert!(reason(&found, feature).contains("Specified qdisc kind is unknown"));
-            // And only that feature: the others are as they were
+            // And only that feature and the ones that are built from it: the others are as they were
             let by_version = capabilities(&Environment::complete());
-            for other in Feature::ALL.iter().filter(|other| **other != feature) {
+            for other in Feature::ALL
+                .iter()
+                .filter(|other| **other != feature && !with.contains(other))
+            {
                 assert_eq!(
                     found.support(*other),
                     by_version.support(*other),
@@ -324,13 +335,22 @@ mod tests {
                 );
             }
         };
-        one("burst", Feature::BurstLoss);
-        one("chain", Feature::BurstLoss);
-        one("reorder", Feature::Reordering);
-        one("duplicate", Feature::Duplication);
-        one("corrupt", Feature::Corruption);
-        one("seed", Feature::SeededLoss);
-        one("veth", Feature::PointToPoint);
+        one("burst", Feature::BurstLoss, &[]);
+        one("chain", Feature::BurstLoss, &[]);
+        one("reorder", Feature::Reordering, &[]);
+        one("duplicate", Feature::Duplication, &[]);
+        one("corrupt", Feature::Corruption, &[]);
+        one("seed", Feature::SeededLoss, &[]);
+        // Networks of several nodes are built from the same pairs, so they are refused with the same answer
+        let no_veth = [Feature::MultipleNodes, Feature::StaticRoutes];
+        one("veth", Feature::PointToPoint, &no_veth);
+        let found = declared(&probed(&[(
+            "veth",
+            "Error: Specified qdisc kind is unknown.",
+        )]));
+        for feature in no_veth {
+            assert!(reason(&found, feature).contains("virtual Ethernet pair"));
+        }
     }
 
     /// Canaries: when no pair could be created the later steps say nothing about `tc`, and a seed that the old `tc`

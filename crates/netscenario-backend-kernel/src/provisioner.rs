@@ -235,6 +235,22 @@ impl Provisioner {
             ));
         }
         self.in_node(pid, &self.tools.ip, &["link", "set", "lo", "up"])?;
+        // A route through an interface whose carrier is gone is not used (the other path takes over, D-078), and a packet is
+        // not dropped because it arrives on another interface than the one the reverse route leaves by
+        let namespace = format!("--net=/proc/{pid}/ns/net");
+        let exe = self.exe.to_string_lossy().into_owned();
+        run(
+            &self.tools.nsenter,
+            &[
+                namespace.as_str(),
+                "--",
+                exe.as_str(),
+                "sysctl",
+                "net.ipv4.conf.all.ignore_routes_with_linkdown=1",
+                "net.ipv4.conf.all.rp_filter=0",
+                "net.ipv4.conf.default.rp_filter=0",
+            ],
+        )?;
         self.failpoints.hit("node:end");
         id(self.nodes.len() - 1)
     }
@@ -335,6 +351,105 @@ impl Provisioner {
         });
         self.failpoints.hit("link:end");
         id(index)
+    }
+
+    /// Gives a node an address on its loopback (D-078): the address that the routes of the other nodes lead to.
+    pub(crate) fn set_node_address(&mut self, node: u32, address: &str) -> Result<(), String> {
+        let pid = self.node_pid(node)?;
+        self.in_node(
+            pid,
+            &self.tools.ip,
+            &["addr", "add", &format!("{address}/32"), "dev", "lo"],
+        )
+        .map(|_| ())
+    }
+
+    /// Makes a node forward packets between its links, or not (D-078).
+    pub(crate) fn set_forwarding(&mut self, node: u32, on: bool) -> Result<(), String> {
+        let pid = self.node_pid(node)?;
+        let setting = format!("net.ipv4.ip_forward={}", u8::from(on));
+        let namespace = format!("--net=/proc/{pid}/ns/net");
+        let exe = self.exe.to_string_lossy().into_owned();
+        run(
+            &self.tools.nsenter,
+            &[
+                namespace.as_str(),
+                "--",
+                exe.as_str(),
+                "sysctl",
+                setting.as_str(),
+            ],
+        )
+        .map(|_| ())
+    }
+
+    /// Adds a route to a node (D-078): to an address (or every address) out of one or several links, with the other end of
+    /// each link as the next hop. Several ways form a multipath route shared by their weights.
+    pub(crate) fn add_route(
+        &mut self,
+        node: u32,
+        destination: Option<&str>,
+        metric: u32,
+        next_hops: &[crate::protocol::WireHop],
+    ) -> Result<(), String> {
+        let pid = self.node_pid(node)?;
+        if next_hops.is_empty() {
+            return Err("a route needs a way out".to_owned());
+        }
+        let mut arguments: Vec<String> = vec!["route".into(), "add".into()];
+        arguments.push(destination.map_or_else(|| "default".to_owned(), |a| format!("{a}/32")));
+        arguments.extend(["metric".to_owned(), metric.to_string()]);
+        for hop in next_hops {
+            let link = self
+                .links
+                .get(hop.link as usize)
+                .ok_or_else(|| format!("the link {} does not exist in this run", hop.link))?;
+            let end = link
+                .ends
+                .get(hop.end)
+                .ok_or_else(|| format!("a link has two ends, not {}", hop.end + 1))?;
+            if end.node != node as usize {
+                return Err(format!("the link {} is not at the node {node}", hop.link));
+            }
+            let gateway = link_address(hop.link, 1 - hop.end).to_string();
+            if next_hops.len() > 1 {
+                arguments.push("nexthop".into());
+            }
+            arguments.extend([
+                "via".to_owned(),
+                gateway,
+                "dev".to_owned(),
+                end.interface.clone(),
+            ]);
+            if next_hops.len() > 1 {
+                arguments.extend(["weight".to_owned(), hop.weight.to_string()]);
+            }
+        }
+        let words: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        if next_hops.len() > 1 {
+            // The kernel chooses a way of a multipath route by the addresses only unless told to look at the ports as well,
+            // so every flow between two nodes would take the same way; with the ports the flows share the ways (D-078)
+            let namespace = format!("--net=/proc/{pid}/ns/net");
+            let exe = self.exe.to_string_lossy().into_owned();
+            run(
+                &self.tools.nsenter,
+                &[
+                    namespace.as_str(),
+                    "--",
+                    exe.as_str(),
+                    "sysctl",
+                    "net.ipv4.fib_multipath_hash_policy=1",
+                ],
+            )?;
+        }
+        self.in_node(pid, &self.tools.ip, &words).map(|_| ())
+    }
+
+    fn node_pid(&self, node: u32) -> Result<u32, String> {
+        self.nodes
+            .get(node as usize)
+            .map(|node| node.pid)
+            .ok_or_else(|| format!("the node {node} does not exist in this run"))
     }
 
     /// Plans the queues of a direction for every state it will have (D-059). It must come before `apply`, which

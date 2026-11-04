@@ -30,6 +30,14 @@ pub struct RunResult {
     pub accepted_restrictions: Vec<AcceptedRestriction>,
     /// The address of each end of each link.
     pub addresses: Vec<AddressInfo>,
+    /// Each node with its role and the address of its own, which the workloads and programs use (D-078). Empty in a result of
+    /// release 0.2 or earlier.
+    #[serde(default)]
+    pub nodes: Vec<NodeInfo>,
+    /// The routes of every node as the run had them: the automatic ones and the listed ones (D-078). Empty in a result of
+    /// release 0.2 or earlier.
+    #[serde(default)]
+    pub routes: Vec<RouteInfo>,
     /// The times of the run.
     pub timing: Timing,
     /// One entry for each workload, in the order of the scenario.
@@ -351,6 +359,51 @@ pub struct AddressInfo {
     pub address: String,
 }
 
+/// A node of the network: its role and the address of its own (D-078).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct NodeInfo {
+    /// The node.
+    pub node: String,
+    /// `host` or `router`.
+    pub role: String,
+    /// The address on its loopback.
+    pub address: String,
+}
+
+/// A route of a node (D-078).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RouteInfo {
+    /// The node that has the route.
+    pub node: String,
+    /// The destination: a node, or `default`.
+    pub to: String,
+    /// The link the packets leave by.
+    pub link: String,
+    /// The node at the other end of the link.
+    pub next_hop: String,
+    /// The preference: the smaller is used first.
+    pub metric: u32,
+    /// The share among the routes of the same metric.
+    pub weight: u32,
+    /// Whether the scenario lists it (`true`) or the tool computed it.
+    pub given: bool,
+}
+
+/// The nodes and the links that the packets of a workload pass (D-078).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct PathInfo {
+    /// The nodes from the sender to the receiver, both included.
+    pub nodes: Vec<String>,
+    /// The links between them: one fewer than the nodes.
+    pub links: Vec<String>,
+    /// Whether a node on the way shares the packets among several routes of the same metric (multipath): the path is then the
+    /// first of them by the order of the links.
+    pub shared: bool,
+}
+
 /// The times of a run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -415,6 +468,9 @@ pub struct WorkloadResult {
     pub from_address: String,
     /// The address the packets were sent to, and the port.
     pub to_address: String,
+    /// The nodes and links the packets pass (D-078). Absent in a result of release 0.2 or earlier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathInfo>,
     /// The rate of the payload that the schedule is meant to give: the rate of the scenario for `udp-cbr` and `udp-poisson`
     /// (for the second it is the mean), and the mean over the phases or the bursts for `udp-onoff` and `udp-bursty`, rounded
     /// down.
@@ -538,6 +594,8 @@ pub(crate) mod tests {
             },
             accepted_restrictions: Vec::new(),
             addresses: Vec::new(),
+            nodes: Vec::new(),
+            routes: Vec::new(),
             timing: Timing {
                 duration_ns: 1,
                 settle_ns: 2,
@@ -550,6 +608,7 @@ pub(crate) mod tests {
                 to: "b".to_owned(),
                 from_address: "10.100.0.1".to_owned(),
                 to_address: "10.100.0.2:5000".to_owned(),
+                path: None,
                 rate_bits_per_second: 1_000_000,
                 packet_size_bytes: 1000,
                 start_ns: 0,

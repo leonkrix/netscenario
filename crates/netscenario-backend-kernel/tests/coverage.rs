@@ -38,9 +38,9 @@ fn what_is_exact_here_is_a_check_mark_there() {
     for feature in Feature::ALL {
         let cell = kernel_cell(COVERAGE, feature.label()).expect("a row");
         match capabilities.support(*feature) {
-            // 0.1 or 0.2: the release in which the Kernel backend got it
+            // 0.1, 0.2 or 0.3: the release in which the Kernel backend got it
             Support::Exact => assert!(
-                cell.starts_with("✔ 0.1") || cell.starts_with("✔ 0.2"),
+                cell.starts_with("✔ 0.1") || cell.starts_with("✔ 0.2") || cell.starts_with("✔ 0.3"),
                 "'{}' is exact in the code, but the page says '{cell}'",
                 feature.label()
             ),
@@ -95,7 +95,7 @@ fn every_faithful_mark_of_the_kernel_links_to_a_test_that_exists() {
     for label in labels {
         let cell = kernel_cell(COVERAGE, label).unwrap_or_else(|| panic!("no row '{label}'"));
         assert!(
-            cell.starts_with("✔ 0.1") || cell.starts_with("✔ 0.2"),
+            cell.starts_with("✔ 0.1") || cell.starts_with("✔ 0.2") || cell.starts_with("✔ 0.3"),
             "'{label}': {cell}"
         );
         let target = link_in(&cell).unwrap_or_else(|| panic!("'{label}' has no link: {cell}"));

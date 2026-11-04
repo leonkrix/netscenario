@@ -28,7 +28,10 @@ pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
             Err(_) => fail(&format!("'{max_nodes}' is not a number of nodes")),
         },
         ["hold", _run_id] => hold(),
-        _ => fail("usage: supervise <run id> <most nodes> | hold <run id>"),
+        ["sysctl", settings @ ..] if !settings.is_empty() => sysctl(settings),
+        _ => {
+            fail("usage: supervise <run id> <most nodes> | hold <run id> | sysctl <name=value>...")
+        }
     }
 }
 
@@ -66,6 +69,33 @@ fn hold() -> ExitCode {
     loop {
         std::thread::park();
     }
+}
+
+/// Writes kernel settings of the network namespace this process is in: `net.ipv4.ip_forward=1` writes `1` to
+/// `/proc/sys/net/ipv4/ip_forward`. The backend starts it with `nsenter` in a node, because it has no shell and no
+/// `sysctl` to rely on (D-078). Only names of the networking tables are accepted.
+fn sysctl(settings: &[&str]) -> ExitCode {
+    for setting in settings {
+        let Some((name, value)) = setting.split_once('=') else {
+            return fail(&format!("'{setting}' is not name=value"));
+        };
+        if !name.starts_with("net.")
+            || name.split('.').any(|part| {
+                part.is_empty()
+                    || part == ".."
+                    || !part
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            })
+        {
+            return fail(&format!("'{name}' is not the name of a network setting"));
+        }
+        let path = format!("/proc/sys/{}", name.replace('.', "/"));
+        if let Err(error) = std::fs::write(&path, value) {
+            return fail(&format!("cannot write {value} to {path}: {error}"));
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 /// Puts the signals that a program may be sent (`TERM` by default, and the others of `shutdown`) back to what a program
@@ -126,6 +156,20 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
             Request::CreateLink { name, between } => {
                 provisioner.create_link(&name, between).map(Some)
             }
+            Request::SetNodeAddress { node, address } => {
+                provisioner.set_node_address(node, &address).map(|()| None)
+            }
+            Request::SetForwarding { node, on } => {
+                provisioner.set_forwarding(node, on).map(|()| None)
+            }
+            Request::AddRoute {
+                node,
+                destination,
+                metric,
+                next_hops,
+            } => provisioner
+                .add_route(node, destination.as_deref(), metric, &next_hops)
+                .map(|()| None),
             Request::Apply {
                 link,
                 direction,

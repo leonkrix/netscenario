@@ -25,6 +25,7 @@ pub struct NodeAddress {
 
 /// What was created for a scenario.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Provisioned {
     /// The nodes in the order of the scenario.
     pub nodes: Vec<(Name, NodeHandle)>,
@@ -32,6 +33,9 @@ pub struct Provisioned {
     pub links: Vec<(Name, LinkHandle)>,
     /// The address of each end of each link. The result records them (TOP-08).
     pub addresses: Vec<NodeAddress>,
+    /// The address of each node on its loopback, in the order of the scenario (D-078). Workloads and programs use it; the
+    /// routes lead to it.
+    pub node_addresses: Vec<(Name, Ipv4Addr)>,
     /// The restrictions that the scenario accepted. The result has to record them.
     pub accepted: Vec<Accepted>,
     /// The seed of the run: the one in the scenario, or one that was drawn, or none (see `loss_reproducible`).
@@ -84,10 +88,11 @@ pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provi
     // reordering): the same seed gives the same lost packets only if the backend can apply one
     let has_random = timeline::draws_random_numbers(scenario);
     match build(backend, scenario, queue_seed) {
-        Ok((nodes, links, addresses)) => Ok(Provisioned {
+        Ok((nodes, links, addresses, node_addresses)) => Ok(Provisioned {
             nodes,
             links,
             addresses,
+            node_addresses,
             accepted,
             seed,
             seed_drawn,
@@ -105,7 +110,21 @@ type Built = (
     Vec<(Name, NodeHandle)>,
     Vec<(Name, LinkHandle)>,
     Vec<NodeAddress>,
+    Vec<(Name, Ipv4Addr)>,
 );
+
+/// The address of the node number `index` (in the order of the scenario) on its loopback: `10.200.0.1`, `10.200.0.2`, and so
+/// on, up to the 256 nodes of a scenario (D-078). It is not on a link, so it does not change with the path.
+#[must_use]
+pub fn node_address(index: usize) -> Ipv4Addr {
+    let number = u32::try_from(index).unwrap_or(0) + 1;
+    Ipv4Addr::new(
+        10,
+        200,
+        u8::try_from(number >> 8).unwrap_or(0),
+        (number & 0xff) as u8,
+    )
+}
 
 fn build(
     backend: &mut dyn Backend,
@@ -170,7 +189,82 @@ fn build(
         }
         links.push((link.id.clone(), handle));
     }
-    Ok((nodes, links, addresses))
+    let node_addresses = routing(backend, scenario, &nodes, &links)?;
+    Ok((nodes, links, addresses, node_addresses))
+}
+
+/// Gives the nodes their addresses, makes the routers forward and installs the routes (D-078). Returns the addresses.
+fn routing(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    nodes: &[(Name, NodeHandle)],
+    links: &[(Name, LinkHandle)],
+) -> Result<Vec<(Name, Ipv4Addr)>, Error> {
+    let topology = &scenario.topology;
+    let addresses: Vec<(Name, Ipv4Addr)> = topology
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id.clone(), node_address(index)))
+        .collect();
+    let address_of = |name: &Name| addresses.iter().find(|(n, _)| n == name).map(|(_, a)| *a);
+    let handle_of = |name: &Name| nodes.iter().find(|(n, _)| n == name).map(|(_, h)| *h);
+    let missing = |what: &str, name: &Name| {
+        Error::InvalidScenario(vec![Problem::new(format!(
+            "the {what} '{name}' was not built, so a route cannot lead to it"
+        ))])
+    };
+    for (index, node) in topology.nodes.iter().enumerate() {
+        let handle = handle_of(&node.id).ok_or_else(|| missing("node", &node.id))?;
+        backend.set_node_address(handle, addresses[index].1)?;
+        if node.role == netscenario_model::Role::Router {
+            backend.set_forwarding(handle, true)?;
+        }
+    }
+    // The routes of a node with the same destination and metric are one route with several ways out
+    let routes = topology.routes();
+    let mut done: Vec<(Name, netscenario_model::Destination, u32)> = Vec::new();
+    for entry in &routes.entries {
+        let key = (entry.node.clone(), entry.to.clone(), entry.metric);
+        if done.contains(&key) {
+            continue;
+        }
+        done.push(key);
+        let handle = handle_of(&entry.node).ok_or_else(|| missing("node", &entry.node))?;
+        let destination = match &entry.to {
+            netscenario_model::Destination::Node(name) => {
+                Some(address_of(name).ok_or_else(|| missing("node", name))?)
+            }
+            netscenario_model::Destination::Default => None,
+        };
+        let mut next_hops = Vec::new();
+        for same in routes.entries.iter().filter(|other| {
+            other.node == entry.node && other.to == entry.to && other.metric == entry.metric
+        }) {
+            let link = topology
+                .link(&same.link)
+                .ok_or_else(|| missing("link", &same.link))?;
+            let link_handle = links
+                .iter()
+                .find(|(n, _)| *n == same.link)
+                .map(|(_, h)| *h)
+                .ok_or_else(|| missing("link", &same.link))?;
+            next_hops.push(crate::backend::NextHop {
+                link: link_handle,
+                end: usize::from(link.between[1] == entry.node),
+                weight: same.weight,
+            });
+        }
+        backend.add_route(
+            handle,
+            &crate::backend::NodeRoute {
+                destination,
+                metric: entry.metric,
+                next_hops,
+            },
+        )?;
+    }
+    Ok(addresses)
 }
 
 /// The impairments that apply to one direction of a link: `both` if it is written, else the direction's own.
@@ -192,6 +286,8 @@ mod tests {
     #[derive(Default)]
     struct Fake {
         calls: Vec<String>,
+        /// The addresses, the forwarding and the routes that were set, apart from the steps above.
+        routing: Vec<String>,
         fail_on: Option<&'static str>,
         support_everything: bool,
         /// Everything but the seed of the loss is supported.
@@ -268,6 +364,38 @@ mod tests {
             Ok(LinkHandle(u32::try_from(self.calls.len()).unwrap()))
         }
 
+        fn set_node_address(&mut self, node: NodeHandle, address: Ipv4Addr) -> Result<(), Error> {
+            self.routing.push(format!("address {} {address}", node.0));
+            Ok(())
+        }
+
+        fn set_forwarding(&mut self, node: NodeHandle, on: bool) -> Result<(), Error> {
+            self.routing.push(format!("forwarding {} {on}", node.0));
+            Ok(())
+        }
+
+        fn add_route(
+            &mut self,
+            node: NodeHandle,
+            route: &crate::backend::NodeRoute,
+        ) -> Result<(), Error> {
+            let ways: Vec<String> = route
+                .next_hops
+                .iter()
+                .map(|hop| format!("{}/{}x{}", hop.link.0, hop.end, hop.weight))
+                .collect();
+            self.routing.push(format!(
+                "route {} {} metric {} via {}",
+                node.0,
+                route
+                    .destination
+                    .map_or("default".to_owned(), |a| a.to_string()),
+                route.metric,
+                ways.join(",")
+            ));
+            Ok(())
+        }
+
         fn apply(
             &mut self,
             link: LinkHandle,
@@ -342,6 +470,81 @@ mod tests {
             "t.yaml",
         )
         .expect("valid")
+    }
+
+    fn network(topology: &str) -> Scenario {
+        Scenario::from_yaml(
+            &format!("version: 0\nname: t\nduration: 10s\ntopology:\n{topology}workloads:\n  - {{ id: w, kind: udp-cbr, from: a, to: c, rate: 1mbit, packet-size: 1200b }}\n"),
+            "t.yaml",
+        )
+        .expect("valid")
+    }
+
+    /// Every node gets an address of its own, a router forwards and the others do not, and every node has a route to every
+    /// other node out of the link that leads to it (D-078).
+    #[test]
+    fn nodes_get_addresses_routers_forward_and_the_routes_are_installed() {
+        let mut backend = Fake::new();
+        let done = provision(
+            &mut backend,
+            &network("  nodes: [a, { id: r, role: router }, c]\n  links:\n    - { id: x, between: [a, r] }\n    - { id: z, between: [r, c] }\n"),
+        )
+        .unwrap();
+        let shown: Vec<String> = done
+            .node_addresses
+            .iter()
+            .map(|(name, address)| format!("{name} {address}"))
+            .collect();
+        assert_eq!(shown, ["a 10.200.0.1", "r 10.200.0.2", "c 10.200.0.3"]);
+        let routing = backend.routing.join("\n");
+        // Only the router forwards
+        assert_eq!(routing.matches("forwarding").count(), 1, "{routing}");
+        assert!(
+            routing.contains("forwarding") && routing.contains("true"),
+            "{routing}"
+        );
+        // Six routes: each of the three nodes to each of the other two
+        assert_eq!(routing.matches("route ").count(), 6, "{routing}");
+        // `a` reaches `c` (10.200.0.3) out of the link x at its first end (`a` is the first node of the link)
+        assert!(
+            routing.contains(&format!(
+                "route {} 10.200.0.3 metric 100 via {}/0x1",
+                done.nodes[0].1.0, done.links[0].1.0
+            )),
+            "{routing}"
+        );
+        // `c` reaches `a` out of the link z at its second end
+        assert!(
+            routing.contains(&format!(
+                "route {} 10.200.0.1 metric 100 via {}/1x1",
+                done.nodes[2].1.0, done.links[1].1.0
+            )),
+            "{routing}"
+        );
+    }
+
+    /// Equally short paths with `ecmp` are one route with two ways, weighted; routes of different metrics are two routes.
+    #[test]
+    fn a_multipath_is_one_route_with_several_ways_and_a_failover_is_two_routes() {
+        let diamond = "  nodes: [a, { id: r1, role: router }, { id: r2, role: router }, c]\n  links:\n    - { id: ar1, between: [a, r1] }\n    - { id: r1c, between: [r1, c] }\n    - { id: ar2, between: [a, r2] }\n    - { id: r2c, between: [r2, c] }\n";
+        let mut backend = Fake::new();
+        provision(&mut backend, &network(&format!("{diamond}  ecmp: true\n"))).unwrap();
+        let routing = backend.routing.join("\n");
+        let to_c: Vec<&str> = routing
+            .lines()
+            .filter(|line| line.contains("10.200.0.4 metric 100") && line.contains(','))
+            .collect();
+        assert_eq!(to_c.len(), 1, "one route from a with two ways:\n{routing}");
+        // Failover: two listed routes with different metrics
+        let mut backend = Fake::new();
+        provision(
+            &mut backend,
+            &network(&format!("{diamond}  routes:\n    - {{ node: a, to: c, via: ar1, metric: 10 }}\n    - {{ node: a, to: c, via: ar2, metric: 20 }}\n")),
+        )
+        .unwrap();
+        let routing = backend.routing.join("\n");
+        assert!(routing.contains("10.200.0.4 metric 10 via"), "{routing}");
+        assert!(routing.contains("10.200.0.4 metric 20 via"), "{routing}");
     }
 
     #[test]

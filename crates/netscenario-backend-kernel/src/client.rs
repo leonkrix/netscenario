@@ -845,6 +845,61 @@ impl Backend for KernelBackend {
         .map(|_| ())
     }
 
+    fn set_node_address(
+        &mut self,
+        node: NodeHandle,
+        address: std::net::Ipv4Addr,
+    ) -> Result<(), Error> {
+        self.call(
+            &format!("give the node {} the address {address}", node.0),
+            &Request::SetNodeAddress {
+                node: node.0,
+                address: address.to_string(),
+            },
+        )
+        .map(|_| ())
+    }
+
+    fn set_forwarding(&mut self, node: NodeHandle, on: bool) -> Result<(), Error> {
+        self.call(
+            &format!(
+                "{} forwarding in the node {}",
+                if on { "switch on" } else { "switch off" },
+                node.0
+            ),
+            &Request::SetForwarding { node: node.0, on },
+        )
+        .map(|_| ())
+    }
+
+    fn add_route(
+        &mut self,
+        node: NodeHandle,
+        route: &netscenario_core::NodeRoute,
+    ) -> Result<(), Error> {
+        let to = route
+            .destination
+            .map_or_else(|| "every address".to_owned(), |a| a.to_string());
+        self.call(
+            &format!("add a route to {to} to the node {}", node.0),
+            &Request::AddRoute {
+                node: node.0,
+                destination: route.destination.map(|a| a.to_string()),
+                metric: route.metric,
+                next_hops: route
+                    .next_hops
+                    .iter()
+                    .map(|hop| crate::protocol::WireHop {
+                        link: hop.link.0,
+                        end: hop.end,
+                        weight: hop.weight,
+                    })
+                    .collect(),
+            },
+        )
+        .map(|_| ())
+    }
+
     fn set_link(&mut self, link: LinkHandle, up: bool) -> Result<(), Error> {
         let request = Request::SetLink { link: link.0, up };
         self.call(

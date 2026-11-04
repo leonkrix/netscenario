@@ -253,6 +253,29 @@ impl NodeCounts {
     }
 }
 
+/// One way out of a node for a route: a link, and the weight among the ways of the same metric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NextHop {
+    /// The link the packets leave by.
+    pub link: LinkHandle,
+    /// The end of the link that the node is at: 0 for the first node of `between`, 1 for the second. The next hop is the
+    /// address of the other end.
+    pub end: usize,
+    /// The share among the ways of the same route, 1 or more.
+    pub weight: u32,
+}
+
+/// A route of a node as the backend gets it (D-078): to a node by its address, or to every address, out of one or several links.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeRoute {
+    /// The address that the route leads to (a host route), or `None` for every address that has no route of its own.
+    pub destination: Option<Ipv4Addr>,
+    /// The preference: the smaller is used first.
+    pub metric: u32,
+    /// The ways out, one or several (a multipath route shares the packets among them by their weights).
+    pub next_hops: Vec<NextHop>,
+}
+
 /// A way to make a network real: it reports what it can reproduce and builds what a scenario describes.
 ///
 /// The methods are in the order of a run: create the nodes, connect them, apply the impairments, start
@@ -462,6 +485,47 @@ pub trait Backend {
         _direction: Direction,
     ) -> Result<Option<NodeCounts>, Error> {
         Ok(None)
+    }
+
+    /// Gives a node an address of its own that is not on a link (on its loopback, D-078): the address that other nodes route
+    /// to and that programs use for it. The default says that the backend cannot.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the node does not exist or the address cannot be set.
+    fn set_node_address(&mut self, _node: NodeHandle, _address: Ipv4Addr) -> Result<(), Error> {
+        Err(Error::Backend {
+            backend: self.name().to_owned(),
+            action: "give a node an address".to_owned(),
+            message: "this backend has no addresses of nodes".to_owned(),
+        })
+    }
+
+    /// Makes a node forward packets between its links (a router) or not (a host, the default). The default says that the
+    /// backend cannot.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the node does not exist or forwarding cannot be switched.
+    fn set_forwarding(&mut self, _node: NodeHandle, _on: bool) -> Result<(), Error> {
+        Err(Error::Backend {
+            backend: self.name().to_owned(),
+            action: "make a node forward packets".to_owned(),
+            message: "this backend has no routers".to_owned(),
+        })
+    }
+
+    /// Adds a route to a node. The links of its next hops are connected to the node. The default says that the backend cannot.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the node or a link does not exist, a link is not at the node, or the route is refused.
+    fn add_route(&mut self, _node: NodeHandle, _route: &NodeRoute) -> Result<(), Error> {
+        Err(Error::Backend {
+            backend: self.name().to_owned(),
+            action: "add a route".to_owned(),
+            message: "this backend has no routes".to_owned(),
+        })
     }
 
     /// The address of one end of a link, as the programs in the nodes use it. `end` is 0 for the first node of

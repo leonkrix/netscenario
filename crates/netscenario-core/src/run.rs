@@ -30,9 +30,9 @@ use crate::programs::Programs;
 use crate::provision::{Provisioned, impairments_of, provision};
 use crate::recovery::{self, Basis, Recovery, RecoveryOptions};
 use crate::result::{
-    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, ProgramResult,
-    QueueCheck, RESULT_FORMAT, RESULT_VERSION, RunResult, ScenarioInfo, SeedInfo, SenderInfo,
-    SeriesInfo, Timing, WorkloadResult,
+    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, NodeInfo,
+    PathInfo, ProgramResult, QueueCheck, RESULT_FORMAT, RESULT_VERSION, RouteInfo, RunResult,
+    ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
 };
 use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
@@ -280,6 +280,8 @@ struct Flow<'a> {
     from_node: NodeHandle,
     to_node: NodeHandle,
     to_address: String,
+    /// The nodes and links its packets pass (D-078).
+    path: netscenario_model::Path,
     records_file: PathBuf,
     /// Where the tap of the receiver writes the packets it sees on the wire, for a workload whose direction
     /// corrupts packets (they are named by sequence number, D-040).
@@ -418,6 +420,8 @@ pub fn run(
                 address: a.address.to_string(),
             })
             .collect(),
+        nodes: node_infos(scenario, &provisioned),
+        routes: route_infos(scenario),
         timing: Timing {
             duration_ns: nanos(Duration::from(scenario.duration)),
             settle_ns: nanos(settle),
@@ -446,6 +450,40 @@ pub fn run(
     Ok(result)
 }
 
+/// The nodes of the network with their roles and the addresses the workloads use for them (D-078).
+fn node_infos(scenario: &Scenario, provisioned: &Provisioned) -> Vec<NodeInfo> {
+    scenario
+        .topology
+        .nodes
+        .iter()
+        .zip(&provisioned.node_addresses)
+        .map(|(node, (_, address))| NodeInfo {
+            node: node.id.to_string(),
+            role: node.role.as_str().to_owned(),
+            address: address.to_string(),
+        })
+        .collect()
+}
+
+/// The routes the run used, the given ones and the ones it computed (D-078).
+fn route_infos(scenario: &Scenario) -> Vec<RouteInfo> {
+    scenario
+        .topology
+        .routes()
+        .entries
+        .iter()
+        .map(|entry| RouteInfo {
+            node: entry.node.to_string(),
+            to: entry.to.to_string(),
+            link: entry.link.to_string(),
+            next_hop: entry.next_hop.to_string(),
+            metric: entry.metric,
+            weight: entry.weight,
+            given: entry.given,
+        })
+        .collect()
+}
+
 /// Why the same seed may not give the same lost packets in this run, one sentence for each reason. The queues have
 /// counted the packets that drew a number for the loss: if one saw more or fewer than the workloads sent, the
 /// pattern of lost packets is not the one of this seed (ENV-07).
@@ -460,7 +498,10 @@ fn programs_into_random_queues(scenario: &Scenario) -> Vec<String> {
                 (Direction::Forward, "forward", &link.between[0]),
                 (Direction::Reverse, "reverse", &link.between[1]),
             ] {
-                if *from == command.node
+                // A program on the node at the start of the link sends into it; in a network of several nodes its packets can
+                // also reach any link on the way to another node
+                let can_reach = *from == command.node || scenario.topology.nodes.len() > 2;
+                if can_reach
                     && timeline::states_of(scenario, index, direction)
                         .iter()
                         .any(Impairments::is_random)
@@ -533,38 +574,54 @@ fn not_reproducible_because(
 }
 
 /// The directions that two or more workloads send into while their queue draws random numbers, one sentence for each
-/// (D-038, D-065). Which packet draws which number depends on the order in which the packets reach the queue, and with
-/// two senders that order is not fixed on a real kernel: their packets can be microseconds apart. The number of packets
-/// that are lost agrees, the packets do not.
+/// (D-038, D-065), and the workloads whose packets cross several links of which one draws random numbers. Which packet
+/// draws which number depends on the order in which the packets reach the queue, and with two senders that order is not
+/// fixed on a real kernel: their packets can be microseconds apart. The number of packets that are lost agrees, the packets
+/// do not. A packet that crosses several links is sent into the first only, so the queues after it cannot be held to the
+/// packets that were sent (the run does not check them).
 fn shared_directions(scenario: &Scenario) -> Vec<String> {
     let mut reasons = Vec::new();
+    let generators: Vec<Generator<'_>> = scenario
+        .workloads
+        .iter()
+        .filter_map(Workload::generator)
+        .collect();
+    let paths = paths_of(scenario);
     for (index, link) in scenario.topology.links.iter().enumerate() {
-        for (direction, word, from, to) in [
-            (
-                Direction::Forward,
-                "forward",
-                &link.between[0],
-                &link.between[1],
-            ),
-            (
-                Direction::Reverse,
-                "reverse",
-                &link.between[1],
-                &link.between[0],
-            ),
+        for (direction, word) in [
+            (Direction::Forward, "forward"),
+            (Direction::Reverse, "reverse"),
         ] {
-            let senders: Vec<String> = scenario
-                .workloads
+            if !timeline::states_of(scenario, index, direction)
                 .iter()
-                .filter_map(Workload::generator)
-                .filter(|workload| workload.from == from && workload.to == to)
-                .map(|workload| format!("'{}'", workload.id))
-                .collect();
-            if senders.len() > 1
-                && timeline::states_of(scenario, index, direction)
-                    .iter()
-                    .any(Impairments::is_random)
+                .any(Impairments::is_random)
             {
+                continue;
+            }
+            let crossing: Vec<(&Generator<'_>, &netscenario_model::Path)> = generators
+                .iter()
+                .zip(&paths)
+                .filter_map(|(workload, path)| Some((workload, path.as_ref()?)))
+                .filter(|(_, path)| way_keys(scenario, path).contains(&(index, direction)))
+                .collect();
+            let long: Vec<String> = crossing
+                .iter()
+                .filter(|(_, path)| path.links.len() > 1)
+                .map(|(workload, _)| format!("'{}'", workload.id))
+                .collect();
+            if !long.is_empty() {
+                reasons.push(format!(
+                    "the packets of {} cross several links and the queue of link '{}' ({word}) draws random numbers: the packets that enter it are those that the links before it let through, which the run does not count, so it cannot hold the queue to the packets that were sent and cannot say whether the lost packets are those of the seed",
+                    long.join(", "),
+                    link.id
+                ));
+                continue;
+            }
+            if crossing.len() > 1 {
+                let senders: Vec<String> = crossing
+                    .iter()
+                    .map(|(workload, _)| format!("'{}'", workload.id))
+                    .collect();
                 reasons.push(format!(
                     "the workloads {} send into link '{}' ({word}) and its queue draws random numbers: the order in which their packets reach the queue is not fixed on a real kernel, so which packet draws which number, and so which packets are lost, can differ from run to run with the same seed",
                     senders.join(", "),
@@ -612,32 +669,42 @@ fn series_of(
         .map_err(|error| failure("write the series", format!("{name}: {error}")))?;
     series::write_series(std::io::BufWriter::new(file), workload.id.as_str(), &bins)
         .map_err(|error| failure("write the series", format!("{name}: {error}")))?;
-    // The steps that act on the direction this workload sends in
-    let direction = scenario.topology.links.iter().find_map(|link| {
-        if link.between[0] == *workload.from && link.between[1] == *workload.to {
-            Some((link.id.to_string(), "forward"))
-        } else if link.between[1] == *workload.from && link.between[0] == *workload.to {
-            Some((link.id.to_string(), "reverse"))
-        } else {
-            None
-        }
-    });
-    let concerning: Vec<EventRecord> = direction
-        .map(|(link, word)| {
-            timeline
-                .events
-                .iter()
-                .filter(|event| {
-                    event.link == link
-                        && event
-                            .direction
-                            .as_deref()
-                            .is_none_or(|direction| direction == word)
+    // The steps that act on a direction this workload sends in, along its path
+    let on_the_way: Vec<(String, &'static str)> = paths_of(scenario)
+        .into_iter()
+        .flatten()
+        .find(|path| {
+            path.nodes.first() == Some(workload.from) && path.nodes.last() == Some(workload.to)
+        })
+        .map(|path| {
+            way_keys(scenario, &path)
+                .into_iter()
+                .map(|(index, direction)| {
+                    (
+                        scenario.topology.links[index].id.to_string(),
+                        match direction {
+                            Direction::Forward => "forward",
+                            Direction::Reverse => "reverse",
+                        },
+                    )
                 })
-                .cloned()
                 .collect()
         })
         .unwrap_or_default();
+    let concerning: Vec<EventRecord> = timeline
+        .events
+        .iter()
+        .filter(|event| {
+            on_the_way.iter().any(|(link, word)| {
+                event.link == *link
+                    && event
+                        .direction
+                        .as_deref()
+                        .is_none_or(|direction| direction == *word)
+            })
+        })
+        .cloned()
+        .collect();
     let recoveries = recovery::recoveries(&concerning, &bins, bin_ns, &recovery_options(scenario));
     Ok((
         SeriesInfo {
@@ -725,6 +792,15 @@ fn workload_result(
         to: workload.to.to_string(),
         from_address,
         to_address: format!("{to_address}:{}", port(index)),
+        path: paths_of(scenario)
+            .get(index)
+            .cloned()
+            .flatten()
+            .map(|path| PathInfo {
+                nodes: path.nodes.iter().map(ToString::to_string).collect(),
+                links: path.links.iter().map(ToString::to_string).collect(),
+                shared: path.shared,
+            }),
         rate_bits_per_second: schedule.mean_bits_per_second(),
         packet_size_bytes: workload.packet_size.bytes(),
         start_ns: nanos(start),
@@ -796,6 +872,44 @@ fn recovery_options(scenario: &Scenario) -> RecoveryOptions {
     options
 }
 
+/// The path of the packets of each workload that sends packets, in the order of the workloads (`None` where there is none,
+/// which the validation of the scenario has refused already).
+fn paths_of(scenario: &Scenario) -> Vec<Option<netscenario_model::Path>> {
+    let routes = scenario.topology.routes();
+    scenario
+        .workloads
+        .iter()
+        .filter_map(Workload::generator)
+        .map(|workload| {
+            scenario
+                .topology
+                .path(&routes, workload.from, workload.to)
+                .ok()
+        })
+        .collect()
+}
+
+/// The directions of the links along a path: the place of the link in the scenario and the direction the packets go in.
+fn way_keys(scenario: &Scenario, path: &netscenario_model::Path) -> Vec<(usize, Direction)> {
+    path.nodes
+        .windows(2)
+        .zip(&path.links)
+        .filter_map(|(pair, link_name)| {
+            let index = scenario
+                .topology
+                .links
+                .iter()
+                .position(|link| link.id == *link_name)?;
+            let direction = if scenario.topology.links[index].between[0] == pair[0] {
+                Direction::Forward
+            } else {
+                Direction::Reverse
+            };
+            Some((index, direction))
+        })
+        .collect()
+}
+
 fn nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
@@ -812,36 +926,33 @@ fn wire_name(index: usize) -> String {
     format!("flow-{index}.wire")
 }
 
-/// Whether the direction that `workload` sends through corrupts packets, so that the receiver reads the wire to name
-/// the damaged ones.
-fn corrupts_on_the_way(
-    scenario: &Scenario,
-    provisioned: &Provisioned,
-    workload: &Generator<'_>,
-) -> bool {
-    ways(scenario, provisioned).any(|way| {
-        way.from == workload.from
-            && way.to == workload.to
-            && impairments_of(&scenario.topology.links[way.index], way.direction)
+/// Whether a direction on the path of a workload corrupts packets, so that the receiver reads the wire to name the damaged
+/// ones.
+fn corrupts_on_the_way(scenario: &Scenario, path: &netscenario_model::Path) -> bool {
+    way_keys(scenario, path)
+        .into_iter()
+        .any(|(index, direction)| {
+            impairments_of(&scenario.topology.links[index], direction)
                 .is_some_and(|impairments| impairments.corrupt.is_some())
-    })
+        })
 }
 
-/// The address of the sending node and of the receiving node of a workload.
+/// The address of the sending node and of the receiving node of a workload: the addresses of the nodes on their loopbacks
+/// (D-078), which do not depend on the path.
 fn addresses_of(provisioned: &Provisioned, workload: &Generator<'_>) -> (String, String) {
     let address = |node: &netscenario_model::Name| {
         provisioned
-            .addresses
+            .node_addresses
             .iter()
-            .find(|a| &a.node == node)
-            .map(|a| a.address.to_string())
+            .find(|(name, _)| name == node)
+            .map(|(_, address)| address.to_string())
             .unwrap_or_default()
     };
     (address(workload.from), address(workload.to))
 }
 
 /// The longest time a packet can be held back by the links of the scenario: the delay and four times the
-/// jitter (a normal distribution has tails).
+/// jitter (a normal distribution has tails), added up along the path of each workload, and at least the worst link.
 fn longest_hold(scenario: &Scenario) -> Duration {
     let hold = |impairments: &Impairments| {
         let delay = impairments.delay.map_or(Duration::ZERO, Duration::from);
@@ -850,7 +961,7 @@ fn longest_hold(scenario: &Scenario) -> Duration {
             .map_or(Duration::ZERO, |j| Duration::from(j.amount) * 4);
         delay + jitter
     };
-    scenario
+    let worst_link = scenario
         .topology
         .links
         .iter()
@@ -863,7 +974,21 @@ fn longest_hold(scenario: &Scenario) -> Duration {
         .flatten()
         .map(hold)
         .max()
-        .unwrap_or(Duration::ZERO)
+        .unwrap_or(Duration::ZERO);
+    let worst_path = paths_of(scenario)
+        .into_iter()
+        .flatten()
+        .map(|path| {
+            way_keys(scenario, &path)
+                .into_iter()
+                .filter_map(|(index, direction)| {
+                    impairments_of(&scenario.topology.links[index], direction).map(hold)
+                })
+                .sum::<Duration>()
+        })
+        .max()
+        .unwrap_or(Duration::ZERO);
+    worst_link.max(worst_path)
 }
 
 fn plan<'a>(
@@ -879,12 +1004,22 @@ fn plan<'a>(
             .map(|(_, handle)| *handle)
             .ok_or_else(|| failure("find a node", format!("the node '{name}' was not built")))
     };
+    let paths = paths_of(scenario);
     scenario
         .workloads
         .iter()
         .filter_map(Workload::generator)
         .enumerate()
         .map(|(index, workload)| {
+            let path = paths.get(index).cloned().flatten().ok_or_else(|| {
+                failure(
+                    "find the path of a workload",
+                    format!(
+                        "there is no path from '{}' to '{}'",
+                        workload.from, workload.to
+                    ),
+                )
+            })?;
             let start = workload.start.map_or(Duration::ZERO, Duration::from);
             let stop = workload
                 .stop
@@ -902,8 +1037,9 @@ fn plan<'a>(
                 to_node: node(workload.to)?,
                 to_address: format!("{to_address}:{}", port(index)),
                 records_file: options.out_dir.join(records_name(index)),
-                wire_file: corrupts_on_the_way(scenario, provisioned, &workload)
+                wire_file: corrupts_on_the_way(scenario, &path)
                     .then(|| options.out_dir.join(wire_name(index))),
+                path,
                 start,
                 duration: stop.saturating_sub(start),
             })
@@ -1429,8 +1565,9 @@ fn refuse_names_after_buffer_drops(
         if !matches!(measured.naming, Naming::Named(_)) {
             continue;
         }
+        let on_the_way = way_keys(scenario, &flow.path);
         let overflowed = ways(scenario, provisioned)
-            .filter(|way| way.from == flow.workload.from && way.to == flow.workload.to)
+            .filter(|way| on_the_way.contains(&(way.index, way.direction)))
             .any(|way| {
                 directions.iter().any(|tally| {
                     tally.link == way.name.as_str()
@@ -1456,8 +1593,6 @@ struct Way<'a> {
     direction: Direction,
     /// `forward` or `reverse`, as the result says it.
     word: &'static str,
-    from: &'a netscenario_model::Name,
-    to: &'a netscenario_model::Name,
 }
 
 /// The directions of the links, in the order of the scenario: for each link the forward one, then the reverse.
@@ -1468,19 +1603,17 @@ fn ways<'a>(scenario: &'a Scenario, provisioned: &'a Provisioned) -> impl Iterat
         .iter()
         .zip(&provisioned.links)
         .enumerate()
-        .flat_map(|(index, (link, (name, handle)))| {
+        .flat_map(|(index, (_link, (name, handle)))| {
             [
-                (Direction::Forward, "forward", 0, 1),
-                (Direction::Reverse, "reverse", 1, 0),
+                (Direction::Forward, "forward"),
+                (Direction::Reverse, "reverse"),
             ]
-            .map(move |(direction, word, from, to)| Way {
+            .map(move |(direction, word)| Way {
                 index,
                 name,
                 handle: *handle,
                 direction,
                 word,
-                from: &link.between[from],
-                to: &link.between[to],
             })
         })
 }
@@ -1524,15 +1657,19 @@ fn tally_directions(
             continue;
         };
         let link = &scenario.topology.links[way.index];
-        let carried: Vec<&Measured> = flows
+        let crossing: Vec<(&Flow<'_>, &Measured)> = flows
             .iter()
             .zip(measured)
-            .filter(|(flow, _)| flow.workload.from == way.from && flow.workload.to == way.to)
-            .map(|(_, measured)| measured)
+            .filter(|(flow, _)| {
+                way_keys(scenario, &flow.path).contains(&(way.index, way.direction))
+            })
             .collect();
-        if carried.is_empty() {
+        // The tally sets what the workloads sent into a direction against what the node at its end counted; a packet that
+        // crosses several links is sent into the first only, so a direction that such a packet crosses has no tally of its own
+        if crossing.is_empty() || crossing.iter().any(|(flow, _)| flow.path.links.len() > 1) {
             continue;
         }
+        let carried: Vec<&Measured> = crossing.into_iter().map(|(_, measured)| measured).collect();
         let sent: u64 = carried.iter().map(|m| m.sent.packets).sum();
         let delivered: u64 = carried
             .iter()
@@ -1595,12 +1732,19 @@ fn check_queues(
         {
             continue;
         }
-        let expected = flows
+        let crossing: Vec<(&Flow<'_>, &SendSummary)> = flows
             .iter()
             .zip(sent)
-            .filter(|(flow, _)| flow.workload.from == way.from && flow.workload.to == way.to)
-            .map(|(_, summary)| summary.packets)
-            .sum();
+            .filter(|(flow, _)| {
+                way_keys(scenario, &flow.path).contains(&(way.index, way.direction))
+            })
+            .collect();
+        // A queue that packets of a longer path cross is not held to the packets that were sent: what enters it is what the
+        // links before it let through
+        if crossing.iter().any(|(flow, _)| flow.path.links.len() > 1) {
+            continue;
+        }
+        let expected = crossing.iter().map(|(_, summary)| summary.packets).sum();
         if let Some(counted) = backend.queue_packets(way.handle, way.direction)? {
             checks.push(QueueCheck {
                 link: way.name.to_string(),
@@ -1786,6 +1930,18 @@ mod tests {
         ) -> Result<LinkHandle, Error> {
             self.calls.push(format!("link {name}"));
             Ok(LinkHandle(0))
+        }
+
+        fn set_node_address(&mut self, _: NodeHandle, _: std::net::Ipv4Addr) -> Result<(), Error> {
+            Ok(())
+        }
+
+        fn set_forwarding(&mut self, _: NodeHandle, _: bool) -> Result<(), Error> {
+            Ok(())
+        }
+
+        fn add_route(&mut self, _: NodeHandle, _: &crate::backend::NodeRoute) -> Result<(), Error> {
+            Ok(())
         }
 
         fn apply(
@@ -2108,7 +2264,11 @@ mod tests {
         assert_eq!(result.addresses.len(), 2);
         assert!(result.scenario.hash.starts_with("sha256:") && result.scenario.hash.len() == 71);
         let workload = &result.workloads[0];
-        assert_eq!(workload.to_address, "10.100.0.2:5000");
+        // The address of the node on its loopback (D-078), the second node of the scenario
+        assert_eq!(workload.to_address, "10.200.0.2:5000");
+        assert_eq!(workload.path.as_ref().unwrap().links, ["l"]);
+        assert_eq!(result.nodes.len(), 2);
+        assert!(result.routes.iter().all(|route| !route.given));
         assert_eq!(
             (
                 workload.stats.sent,
