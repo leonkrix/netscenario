@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/ipv6-without-checksum.yaml
+---
+error: a stream without the UDP checksum is not possible over IPv6: the protocol requires the checksum
+  --> ipv6-without-checksum.yaml:12:106
+   |
+11 | workloads:
+12 |   - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b, udp-checksum: false }
+   |                                                                                                          ^^^^^
+   = path: workloads[0].udp-checksum
+   = help: leave `udp-checksum` out, or use `ip: v4` for a test of corruption without the checksum

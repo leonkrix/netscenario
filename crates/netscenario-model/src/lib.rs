@@ -31,6 +31,7 @@ mod decimal;
 pub mod error;
 mod generators;
 mod graph;
+mod ip;
 mod measure;
 mod mtu;
 mod read;
@@ -50,12 +51,13 @@ pub use command::{MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ENV_ENTRIES, RESERVED_E
 pub use error::{Error, Location, Problem};
 pub use generators::{Generator, Pattern, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
 pub use graph::{Destination, Path, PathError, RouteEntry, Routes};
+pub use ip::{IpFamily, IpMode};
 pub use measure::{
     MAX_BINS, MIN_BIN, Measure, MeasureOverrides, RecoveryBasis, RecoverySettings, SeriesSettings,
 };
 pub use mtu::{
-    DEFAULT_MTU, IpFamily, MAX_MTU, MAX_UDP_PAYLOAD_V4, MAX_UDP_PAYLOAD_V6, MIN_MTU, MIN_MTU_V6,
-    frames_per_packet, mtus_of, mtus_of_topology, path_problem,
+    DEFAULT_MTU, MAX_MTU, MAX_PACKET_SIZE_V6, MAX_UDP_PAYLOAD_V4, MAX_UDP_PAYLOAD_V6, MIN_MTU,
+    MIN_MTU_V6, frames_per_packet, mtus_of, mtus_of_topology, path_problem,
 };
 pub use read::MAX_FILE_BYTES;
 pub use scenario::{

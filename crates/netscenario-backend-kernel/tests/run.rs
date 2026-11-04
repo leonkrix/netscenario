@@ -514,10 +514,23 @@ impl netscenario_core::Backend for Disturbed {
     ) -> Result<netscenario_core::LinkHandle, Error> {
         self.0.create_link(name, between)
     }
+    fn set_ip_families(&mut self, v4: bool, v6: bool) -> Result<(), Error> {
+        self.0.set_ip_families(v4, v6)
+    }
+    fn finish_network(&mut self) -> Result<(), Error> {
+        self.0.finish_network()
+    }
+    fn address_v6(
+        &self,
+        link: netscenario_core::LinkHandle,
+        end: usize,
+    ) -> Result<std::net::Ipv6Addr, Error> {
+        self.0.address_v6(link, end)
+    }
     fn set_node_address(
         &mut self,
         node: netscenario_core::NodeHandle,
-        address: std::net::Ipv4Addr,
+        address: std::net::IpAddr,
     ) -> Result<(), Error> {
         self.0.set_node_address(node, address)
     }

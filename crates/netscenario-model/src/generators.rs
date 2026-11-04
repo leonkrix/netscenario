@@ -8,6 +8,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, Serializer};
 
+use crate::ip::IpFamily;
 use crate::scenario::{UdpCbr, UdpChecksum, WorkloadKind, checksum_is_on};
 use crate::units::{Duration, Name, Rate, Size};
 
@@ -58,6 +59,11 @@ pub struct UdpPoisson {
     pub stop: Option<Duration>,
     /// Whether the packets carry the UDP checksum. Default: on.
     pub udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network, `v4` in a `dual` one.
+    pub ip: Option<IpFamily>,
+    /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
+    /// Default: off.
+    pub dont_fragment: bool,
 }
 
 impl UdpPoisson {
@@ -73,6 +79,8 @@ impl UdpPoisson {
             start: None,
             stop: None,
             udp_checksum: UdpChecksum::On,
+            ip: None,
+            dont_fragment: false,
         }
     }
 }
@@ -106,6 +114,11 @@ pub struct UdpOnOff {
     pub stop: Option<Duration>,
     /// Whether the packets carry the UDP checksum. Default: on.
     pub udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network, `v4` in a `dual` one.
+    pub ip: Option<IpFamily>,
+    /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
+    /// Default: off.
+    pub dont_fragment: bool,
 }
 
 impl UdpOnOff {
@@ -132,6 +145,8 @@ impl UdpOnOff {
             start: None,
             stop: None,
             udp_checksum: UdpChecksum::On,
+            ip: None,
+            dont_fragment: false,
         }
     }
 }
@@ -165,6 +180,11 @@ pub struct UdpBursty {
     pub stop: Option<Duration>,
     /// Whether the packets carry the UDP checksum. Default: on.
     pub udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network, `v4` in a `dual` one.
+    pub ip: Option<IpFamily>,
+    /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
+    /// Default: off.
+    pub dont_fragment: bool,
 }
 
 impl UdpBursty {
@@ -191,6 +211,8 @@ impl UdpBursty {
             start: None,
             stop: None,
             udp_checksum: UdpChecksum::On,
+            ip: None,
+            dont_fragment: false,
         }
     }
 }
@@ -269,6 +291,11 @@ pub struct Generator<'a> {
     pub stop: Option<Duration>,
     /// Whether the packets carry the UDP checksum.
     pub udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network, `v4` in a `dual` one.
+    pub ip: Option<IpFamily>,
+    /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
+    /// Default: off.
+    pub dont_fragment: bool,
     /// When the packets leave.
     pub pattern: Pattern,
 }
@@ -284,6 +311,8 @@ impl<'a> From<&'a UdpCbr> for Generator<'a> {
             start: workload.start,
             stop: workload.stop,
             udp_checksum: workload.udp_checksum,
+            ip: workload.ip,
+            dont_fragment: workload.dont_fragment,
             pattern: Pattern::Cbr {
                 rate: workload.rate,
             },
@@ -302,6 +331,8 @@ impl<'a> From<&'a UdpPoisson> for Generator<'a> {
             start: workload.start,
             stop: workload.stop,
             udp_checksum: workload.udp_checksum,
+            ip: workload.ip,
+            dont_fragment: workload.dont_fragment,
             pattern: Pattern::Poisson {
                 rate: workload.rate,
             },
@@ -320,6 +351,8 @@ impl<'a> From<&'a UdpOnOff> for Generator<'a> {
             start: workload.start,
             stop: workload.stop,
             udp_checksum: workload.udp_checksum,
+            ip: workload.ip,
+            dont_fragment: workload.dont_fragment,
             pattern: Pattern::OnOff {
                 rate: workload.rate,
                 on: workload.on,
@@ -341,6 +374,8 @@ impl<'a> From<&'a UdpBursty> for Generator<'a> {
             start: workload.start,
             stop: workload.stop,
             udp_checksum: workload.udp_checksum,
+            ip: workload.ip,
+            dont_fragment: workload.dont_fragment,
             pattern: Pattern::Bursty {
                 packets: workload.burst_packets,
                 gap: workload.gap,
@@ -400,6 +435,16 @@ struct UdpPoissonFile<'a> {
         skip_serializing_if = "checksum_is_on"
     )]
     udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: &'a Option<IpFamily>,
+    /// `true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.
+    #[serde(
+        default,
+        rename = "dont-fragment",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    dont_fragment: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -438,6 +483,16 @@ struct UdpOnOffFile<'a> {
         skip_serializing_if = "checksum_is_on"
     )]
     udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: &'a Option<IpFamily>,
+    /// `true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.
+    #[serde(
+        default,
+        rename = "dont-fragment",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    dont_fragment: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -477,6 +532,16 @@ struct UdpBurstyFile<'a> {
         skip_serializing_if = "checksum_is_on"
     )]
     udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: &'a Option<IpFamily>,
+    /// `true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.
+    #[serde(
+        default,
+        rename = "dont-fragment",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    dont_fragment: bool,
 }
 
 impl Serialize for UdpPoisson {
@@ -491,6 +556,8 @@ impl Serialize for UdpPoisson {
             start: &self.start,
             stop: &self.stop,
             udp_checksum: self.udp_checksum,
+            ip: &self.ip,
+            dont_fragment: self.dont_fragment,
         }
         .serialize(serializer)
     }
@@ -511,6 +578,8 @@ impl Serialize for UdpOnOff {
             start: &self.start,
             stop: &self.stop,
             udp_checksum: self.udp_checksum,
+            ip: &self.ip,
+            dont_fragment: self.dont_fragment,
         }
         .serialize(serializer)
     }
@@ -531,6 +600,8 @@ impl Serialize for UdpBursty {
             start: &self.start,
             stop: &self.stop,
             udp_checksum: self.udp_checksum,
+            ip: &self.ip,
+            dont_fragment: self.dont_fragment,
         }
         .serialize(serializer)
     }

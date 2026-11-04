@@ -52,6 +52,7 @@ fn what_the_sender_sent_is_what_the_receiver_recorded() {
         duration_ns: 800_000_000,
         start_at_ns: None,
         udp_checksum: UdpChecksum::On,
+        dont_fragment: false,
         barriers: Vec::new(),
     })
     .unwrap();
@@ -216,6 +217,7 @@ fn a_sender_starts_at_the_moment_it_is_given() {
         duration_ns: 10_000_000,
         start_at_ns: Some(start),
         udp_checksum: UdpChecksum::On,
+        dont_fragment: false,
         barriers: Vec::new(),
     })
     .unwrap();

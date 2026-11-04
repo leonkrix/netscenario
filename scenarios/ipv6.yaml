@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A client and a server with a router between them, over IPv6 only (D-081): the links have addresses `fd00:100:<n>::/126`,
+# the nodes `fd00:200::<n>` on their loopbacks, and the packets of the workload go to the address of the server. The
+# network waits a second before the queues are built, because the interfaces of an IPv6 network send a few packets of
+# their own when they come up. The UDP checksum cannot be switched off over IPv6.
+version: 0
+name: ipv6
+seed: 5
+duration: 10s
+topology:
+  ip: v6
+  nodes: [client, { id: edge, role: router }, server]
+  links:
+    - id: access
+      between: [client, edge]
+      both: { delay: 10ms, loss: { model: random, p: 1% } }
+    - id: core
+      between: [edge, server]
+      both: { delay: 20ms }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }

@@ -208,6 +208,7 @@ pub struct ScenarioBuilder {
     nodes: Vec<Node>,
     routing: Routing,
     ecmp: bool,
+    ip: crate::IpMode,
     routes: Vec<Route>,
     links: Vec<Link>,
     workloads: Vec<Workload>,
@@ -228,6 +229,7 @@ impl Scenario {
             nodes: Vec::new(),
             routing: Routing::Auto,
             ecmp: false,
+            ip: crate::IpMode::V4,
             routes: Vec::new(),
             links: Vec::new(),
             workloads: Vec::new(),
@@ -362,6 +364,13 @@ impl ScenarioBuilder {
         if let Some(link) = self.links.last_mut() {
             link.cost = Some(cost);
         }
+        self
+    }
+
+    /// The addresses of the network: IPv4 (the default), IPv6 or both (D-081).
+    #[must_use]
+    pub fn ip(mut self, mode: crate::IpMode) -> Self {
+        self.ip = mode;
         self
     }
 
@@ -670,6 +679,7 @@ impl ScenarioBuilder {
                 let mut topology = Topology::new(self.nodes, self.links);
                 topology.routing = self.routing;
                 topology.ecmp = self.ecmp;
+                topology.ip = self.ip;
                 topology.routes = self.routes;
                 topology
             },

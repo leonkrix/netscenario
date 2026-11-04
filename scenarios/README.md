@@ -16,6 +16,8 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [noisy-radio.yaml](noisy-radio.yaml) | Bursts of loss (both models), reordering, duplication and corruption |
 | [three-hops.yaml](three-hops.yaml) | A chain of two routers between a client and a server: three links with their own values, the routes computed by the shortest path (D-078) |
 | [fragments.yaml](fragments.yaml) | A link with an MTU of 1000 and packets of 1,400 bytes: the sender cuts them into fragments, a lost fragment loses the packet (D-081) |
+| [ipv6.yaml](ipv6.yaml) | A client, a router and a server over IPv6 only: addresses `fd00:100:<n>::/126` on the links, `fd00:200::<n>` on the nodes, a wait of a second before the queues (D-081) |
+| [dual-stack.yaml](dual-stack.yaml) | Both families in one network, a flow of each, and a flow with `dont-fragment` that the sender refuses where it does not fit the MTU (D-081) |
 | [two-paths.yaml](two-paths.yaml) | Two paths with listed routes and metrics, `routing: manual`, and a link of the fast path that goes down and comes back |
 | [manual-routes.yaml](manual-routes.yaml) | Two parallel links with a `cost`, and one route set by hand over the computed ones |
 | [dumbbell.yaml](dumbbell.yaml) | The `dumbbell` shortcut: two senders and two receivers share a bottleneck between two routers |

@@ -93,7 +93,9 @@ pub use hash::sha256_hex;
 pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
 pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering};
-pub use provision::{NodeAddress, Provisioned, impairments_of, node_address, provision};
+pub use provision::{
+    NodeAddress, NodeIps, Provisioned, impairments_of, node_address, node_address_v6, provision,
+};
 pub use recovery::{Basis, Recovery, RecoveryOptions};
 pub use replay::{
     Comparison, Difference, LISTED_SEQUENCES, Recorded, ReplayError, SCENARIO_FILE, Verdict,

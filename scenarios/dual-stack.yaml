@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A network with both families (D-081): every link and every node has an IPv4 and an IPv6 address, and each workload picks its
+# own. Without `ip` a workload uses IPv4 in a dual-stack network. `dont-fragment` makes the sender refuse a packet that does not
+# fit the MTU of the link instead of cutting it into fragments.
+version: 0
+name: dual-stack
+seed: 9
+duration: 10s
+topology:
+  ip: dual
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      mtu: 1400
+      both: { delay: 15ms }
+workloads:
+  - { id: v4-flow, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b }
+  - { id: v6-flow, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b, ip: v6 }
+  - { id: probe, kind: udp-cbr, from: client, to: server, rate: 100kbit, packet-size: 1400b, dont-fragment: true, start: 2s, stop: 4s }

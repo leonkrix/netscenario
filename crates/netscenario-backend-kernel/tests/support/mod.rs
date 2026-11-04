@@ -225,3 +225,12 @@ pub(crate) fn is_root() -> bool {
         .and_then(|ids| ids.split_whitespace().nth(1).map(|euid| euid == "0"))
         .unwrap_or(false)
 }
+
+/// Whether this kernel has IPv6. Where it has not (the sandbox of the assistant), the tests of networks with IPv6 skip with a
+/// reason, and they must run on the CI (D-081).
+pub(crate) fn ipv6_available() -> bool {
+    if std::path::Path::new("/proc/sys/net/ipv6/conf").exists() {
+        return true;
+    }
+    unavailable("the kernel has no IPv6 (/proc/sys/net/ipv6 is missing)")
+}

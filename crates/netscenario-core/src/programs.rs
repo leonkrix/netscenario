@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -42,7 +42,7 @@ const READY_POLL: Duration = Duration::from_millis(10);
 
 /// Replaces `{node.addr}` by the address of the node in `text`; `{{` and `}}` are the braces themselves. The model has
 /// refused every other use of a brace when the file was read, so anything else is left as it is.
-pub(crate) fn substitute(text: &str, addresses: &BTreeMap<String, Ipv4Addr>) -> String {
+pub(crate) fn substitute(text: &str, addresses: &BTreeMap<String, IpAddr>) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find(['{', '}']) {
@@ -72,7 +72,7 @@ pub(crate) fn substitute(text: &str, addresses: &BTreeMap<String, Ipv4Addr>) -> 
 /// `NETSCENARIO_ADDR_<NODE>` for every node (the name in capitals, `-` as `_`).
 pub(crate) fn environment(
     command: &Command,
-    addresses: &BTreeMap<String, Ipv4Addr>,
+    addresses: &BTreeMap<String, IpAddr>,
     run_dir: &Path,
     seed: Option<u64>,
 ) -> Vec<(String, String)> {
@@ -106,12 +106,13 @@ pub(crate) fn environment(
     env
 }
 
-/// The address of each node: the one of its own on its loopback, which does not depend on the link or the path (D-078).
-fn node_addresses(provisioned: &Provisioned) -> BTreeMap<String, Ipv4Addr> {
+/// The address of each node: the one of its own on its loopback, which does not depend on the link or the path (D-078), in
+/// the family the network has (IPv4 where it has both, D-081).
+fn node_addresses(provisioned: &Provisioned) -> BTreeMap<String, IpAddr> {
     provisioned
         .node_addresses
         .iter()
-        .map(|(name, address)| (name.to_string(), *address))
+        .filter_map(|(name, ips)| Some((name.to_string(), ips.primary()?)))
         .collect()
 }
 
@@ -616,10 +617,10 @@ mod tests {
 
     use super::*;
 
-    fn addresses() -> BTreeMap<String, Ipv4Addr> {
+    fn addresses() -> BTreeMap<String, IpAddr> {
         BTreeMap::from([
-            ("client".to_owned(), Ipv4Addr::new(10, 100, 0, 1)),
-            ("edge-1".to_owned(), Ipv4Addr::new(10, 100, 1, 2)),
+            ("client".to_owned(), IpAddr::from([10, 100, 0, 1])),
+            ("edge-1".to_owned(), IpAddr::from([10, 100, 1, 2])),
         ])
     }
 

@@ -1,9 +1,9 @@
 //! Steps 2 to 4 of the life of a run (`docs/ARCHITECTURE.md`): check the capabilities, create the nodes and
 //! links, and apply the impairments of time zero.
 
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use netscenario_model::{Impairments, Link, Name, Problem, Scenario, Workload};
+use netscenario_model::{Impairments, IpFamily, Link, Name, Problem, Scenario, Workload};
 
 use crate::backend::{Backend, Direction, LinkHandle, NodeHandle};
 use crate::capability::{Accepted, Support, check};
@@ -19,8 +19,35 @@ pub struct NodeAddress {
     pub node: Name,
     /// The link it is on.
     pub link: Name,
-    /// The address of its end of the link.
-    pub address: Ipv4Addr,
+    /// The address of its end of the link, of one family (a dual-stack link has an entry for each).
+    pub address: IpAddr,
+}
+
+/// The addresses of a node on its loopback, one for each family the network has (D-078, D-081).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct NodeIps {
+    /// The IPv4 address, when the network has IPv4.
+    pub v4: Option<Ipv4Addr>,
+    /// The IPv6 address, when the network has IPv6.
+    pub v6: Option<Ipv6Addr>,
+}
+
+impl NodeIps {
+    /// The address of the family, if the node has one.
+    #[must_use]
+    pub fn of(&self, family: IpFamily) -> Option<IpAddr> {
+        match family {
+            IpFamily::V4 => self.v4.map(IpAddr::V4),
+            IpFamily::V6 => self.v6.map(IpAddr::V6),
+        }
+    }
+
+    /// The address that stands for the node where a single one is needed: the IPv4 one if it has it.
+    #[must_use]
+    pub fn primary(&self) -> Option<IpAddr> {
+        self.of(IpFamily::V4).or_else(|| self.of(IpFamily::V6))
+    }
 }
 
 /// What was created for a scenario.
@@ -35,7 +62,7 @@ pub struct Provisioned {
     pub addresses: Vec<NodeAddress>,
     /// The address of each node on its loopback, in the order of the scenario (D-078). Workloads and programs use it; the
     /// routes lead to it.
-    pub node_addresses: Vec<(Name, Ipv4Addr)>,
+    pub node_addresses: Vec<(Name, NodeIps)>,
     /// The restrictions that the scenario accepted. The result has to record them.
     pub accepted: Vec<Accepted>,
     /// The seed of the run: the one in the scenario, or one that was drawn, or none (see `loss_reproducible`).
@@ -110,7 +137,7 @@ type Built = (
     Vec<(Name, NodeHandle)>,
     Vec<(Name, LinkHandle)>,
     Vec<NodeAddress>,
-    Vec<(Name, Ipv4Addr)>,
+    Vec<(Name, NodeIps)>,
 );
 
 /// The address of the node number `index` (in the order of the scenario) on its loopback: `10.200.0.1`, `10.200.0.2`, and so
@@ -126,11 +153,21 @@ pub fn node_address(index: usize) -> Ipv4Addr {
     )
 }
 
+/// The IPv6 address of the node number `index` on its loopback: `fd00:200::1`, `fd00:200::2`, and so on (D-081). A unique-local
+/// address, as the IPv6 addresses of the links are (`fd00:100:<n>::/126`).
+#[must_use]
+pub fn node_address_v6(index: usize) -> Ipv6Addr {
+    let number = u16::try_from(index + 1).unwrap_or(u16::MAX);
+    Ipv6Addr::new(0xfd00, 0x200, 0, 0, 0, 0, 0, number)
+}
+
 fn build(
     backend: &mut dyn Backend,
     scenario: &Scenario,
     seed: Option<u64>,
 ) -> Result<Built, Error> {
+    let mode = scenario.topology.ip;
+    backend.set_ip_families(mode.has(IpFamily::V4), mode.has(IpFamily::V6))?;
     let mut nodes = Vec::new();
     for node in &scenario.topology.nodes {
         nodes.push((node.id.clone(), backend.create_node(&node.id)?));
@@ -141,10 +178,12 @@ fn build(
             .find(|(candidate, _)| candidate == name)
             .map(|(_, handle)| *handle)
     };
+    // The links first, then the addresses and the routes, then the queues: the interfaces of a network with IPv6 send packets of
+    // their own while they come up, and the backend lets them pass (`finish_network`) before the first queue exists, so that no
+    // queue counts a packet that no workload sent
     let mut links = Vec::new();
     let mut addresses = Vec::new();
-    let outages = timeline::outage_directions(scenario);
-    for (index, link) in scenario.topology.links.iter().enumerate() {
+    for link in &scenario.topology.links {
         let (Some(first), Some(second)) = (node(&link.between[0]), node(&link.between[1])) else {
             // `validate` has checked this, so it only happens if that check and this code disagree
             return Err(Error::InvalidScenario(vec![
@@ -159,6 +198,29 @@ fn build(
         if let Some(mtu) = link.mtu {
             backend.set_link_mtu(handle, mtu)?;
         }
+        for (end, node) in link.between.iter().enumerate() {
+            if mode.has(IpFamily::V4) {
+                addresses.push(NodeAddress {
+                    node: node.clone(),
+                    link: link.id.clone(),
+                    address: IpAddr::V4(backend.address(handle, end)?),
+                });
+            }
+            if mode.has(IpFamily::V6) {
+                addresses.push(NodeAddress {
+                    node: node.clone(),
+                    link: link.id.clone(),
+                    address: IpAddr::V6(backend.address_v6(handle, end)?),
+                });
+            }
+        }
+        links.push((link.id.clone(), handle));
+    }
+    let node_addresses = routing(backend, scenario, &nodes, &links)?;
+    backend.finish_network()?;
+    let outages = timeline::outage_directions(scenario);
+    for (index, (link, (_, handle))) in scenario.topology.links.iter().zip(&links).enumerate() {
+        let handle = *handle;
         for direction in [Direction::Forward, Direction::Reverse] {
             // The states the timeline leads the direction through, the one it starts with first. A direction
             // that the timeline does not touch has only that one.
@@ -183,43 +245,53 @@ fn build(
                 backend.apply(handle, direction, &Impairments::default(), seed)?;
             }
         }
-        for (end, node) in link.between.iter().enumerate() {
-            addresses.push(NodeAddress {
-                node: node.clone(),
-                link: link.id.clone(),
-                address: backend.address(handle, end)?,
-            });
-        }
-        links.push((link.id.clone(), handle));
     }
-    let node_addresses = routing(backend, scenario, &nodes, &links)?;
     Ok((nodes, links, addresses, node_addresses))
 }
 
-/// Gives the nodes their addresses, makes the routers forward and installs the routes (D-078). Returns the addresses.
+/// Gives the nodes their addresses, makes the routers forward and installs the routes (D-078), for each family the network has
+/// (D-081). Returns the addresses.
 fn routing(
     backend: &mut dyn Backend,
     scenario: &Scenario,
     nodes: &[(Name, NodeHandle)],
     links: &[(Name, LinkHandle)],
-) -> Result<Vec<(Name, Ipv4Addr)>, Error> {
+) -> Result<Vec<(Name, NodeIps)>, Error> {
     let topology = &scenario.topology;
-    let addresses: Vec<(Name, Ipv4Addr)> = topology
+    let mode = topology.ip;
+    let addresses: Vec<(Name, NodeIps)> = topology
         .nodes
         .iter()
         .enumerate()
-        .map(|(index, node)| (node.id.clone(), node_address(index)))
+        .map(|(index, node)| {
+            (
+                node.id.clone(),
+                NodeIps {
+                    v4: mode.has(IpFamily::V4).then(|| node_address(index)),
+                    v6: mode.has(IpFamily::V6).then(|| node_address_v6(index)),
+                },
+            )
+        })
         .collect();
-    let address_of = |name: &Name| addresses.iter().find(|(n, _)| n == name).map(|(_, a)| *a);
+    let address_of = |name: &Name, family: IpFamily| {
+        addresses
+            .iter()
+            .find(|(n, _)| n == name)
+            .and_then(|(_, ips)| ips.of(family))
+    };
     let handle_of = |name: &Name| nodes.iter().find(|(n, _)| n == name).map(|(_, h)| *h);
     let missing = |what: &str, name: &Name| {
         Error::InvalidScenario(vec![Problem::new(format!(
             "the {what} '{name}' was not built, so a route cannot lead to it"
         ))])
     };
-    for (index, node) in topology.nodes.iter().enumerate() {
+    for (node, (_, ips)) in topology.nodes.iter().zip(&addresses) {
         let handle = handle_of(&node.id).ok_or_else(|| missing("node", &node.id))?;
-        backend.set_node_address(handle, addresses[index].1)?;
+        for family in [IpFamily::V4, IpFamily::V6] {
+            if let Some(address) = ips.of(family) {
+                backend.set_node_address(handle, address)?;
+            }
+        }
         // Set on every node and not only on routers: a new network namespace inherits `ip_forward` from the machine, so
         // on a machine that forwards (Docker sets it) a host in the middle of a chain would carry packets that only a router
         // may carry
@@ -235,12 +307,6 @@ fn routing(
         }
         done.push(key);
         let handle = handle_of(&entry.node).ok_or_else(|| missing("node", &entry.node))?;
-        let destination = match &entry.to {
-            netscenario_model::Destination::Node(name) => {
-                Some(address_of(name).ok_or_else(|| missing("node", name))?)
-            }
-            netscenario_model::Destination::Default => None,
-        };
         let mut next_hops = Vec::new();
         for same in routes.entries.iter().filter(|other| {
             other.node == entry.node && other.to == entry.to && other.metric == entry.metric
@@ -259,14 +325,27 @@ fn routing(
                 weight: same.weight,
             });
         }
-        backend.add_route(
-            handle,
-            &crate::backend::NodeRoute {
-                destination,
-                metric: entry.metric,
-                next_hops,
-            },
-        )?;
+        // The same route in each family the network has: the next hops are the other ends of the same links
+        for family in [IpFamily::V4, IpFamily::V6] {
+            if !mode.has(family) {
+                continue;
+            }
+            let destination = match &entry.to {
+                netscenario_model::Destination::Node(name) => {
+                    Some(address_of(name, family).ok_or_else(|| missing("node", name))?)
+                }
+                netscenario_model::Destination::Default => None,
+            };
+            backend.add_route(
+                handle,
+                &crate::backend::NodeRoute {
+                    family,
+                    destination,
+                    metric: entry.metric,
+                    next_hops: next_hops.clone(),
+                },
+            )?;
+        }
     }
     Ok(addresses)
 }
@@ -368,7 +447,30 @@ mod tests {
             Ok(LinkHandle(u32::try_from(self.calls.len()).unwrap()))
         }
 
-        fn set_node_address(&mut self, node: NodeHandle, address: Ipv4Addr) -> Result<(), Error> {
+        fn set_ip_families(&mut self, v4: bool, v6: bool) -> Result<(), Error> {
+            self.routing.push(format!("families {v4} {v6}"));
+            Ok(())
+        }
+
+        fn finish_network(&mut self) -> Result<(), Error> {
+            self.routing.push("finish".to_owned());
+            Ok(())
+        }
+
+        fn address_v6(&self, link: LinkHandle, end: usize) -> Result<Ipv6Addr, Error> {
+            Ok(Ipv6Addr::new(
+                0xfd00,
+                0x100,
+                u16::try_from(link.0).unwrap(),
+                0,
+                0,
+                0,
+                0,
+                1 + u16::try_from(end).unwrap(),
+            ))
+        }
+
+        fn set_node_address(&mut self, node: NodeHandle, address: IpAddr) -> Result<(), Error> {
             self.routing.push(format!("address {} {address}", node.0));
             Ok(())
         }
@@ -502,7 +604,7 @@ mod tests {
         let shown: Vec<String> = done
             .node_addresses
             .iter()
-            .map(|(name, address)| format!("{name} {address}"))
+            .map(|(name, ips)| format!("{name} {}", ips.primary().unwrap()))
             .collect();
         assert_eq!(shown, ["a 10.200.0.1", "r 10.200.0.2", "c 10.200.0.3"]);
         let routing = backend.routing.join("\n");
@@ -584,6 +686,67 @@ mod tests {
                 format!("b on l: 10.100.{link}.2")
             ]
         );
+    }
+
+    /// A network with both families (D-081): the backend is told before anything is made, every link and node gets an address
+    /// of each family, every route is there twice, and the network is finished (the wait for the quiet) before the first
+    /// queue is built.
+    #[test]
+    fn a_dual_stack_network_has_both_families_and_waits_before_the_first_queue() {
+        let mut backend = Fake::new();
+        let done = provision(
+            &mut backend,
+            &network("  ip: dual\n  nodes: [a, { id: r, role: router }, c]\n  links:\n    - { id: x, between: [a, r], mtu: 1400, forward: { delay: 5ms } }\n    - { id: z, between: [r, c] }\n"),
+        )
+        .unwrap();
+        let routing = backend.routing.join("\n");
+        assert!(routing.starts_with("families true true"), "{routing}");
+        // The link x is 0 + 1 = first link: its MTU is set, and the queue comes after the routes and the wait
+        assert!(routing.contains("mtu"), "{routing}");
+        let finish = routing.find("finish").unwrap();
+        assert!(routing.rfind("route ").unwrap() < finish, "{routing}");
+        let apply = backend
+            .calls
+            .iter()
+            .position(|call| call.starts_with("apply"))
+            .unwrap();
+        assert_eq!(backend.calls[..apply].len(), apply);
+        // Four addresses for each link: an end of each family
+        assert_eq!(done.addresses.len(), 8);
+        assert_eq!(
+            done.addresses
+                .iter()
+                .filter(|a| a.address.is_ipv6())
+                .count(),
+            4
+        );
+        // The node addresses of both families, and six routes in each
+        let (name, ips) = &done.node_addresses[2];
+        assert_eq!(name.as_str(), "c");
+        assert_eq!(ips.v4.unwrap().to_string(), "10.200.0.3");
+        assert_eq!(ips.v6.unwrap().to_string(), "fd00:200::3");
+        assert_eq!(routing.matches("route ").count(), 12, "{routing}");
+        assert!(routing.contains("fd00:200::3 metric 100"), "{routing}");
+        // The address of a node where only one is needed is the IPv4 one
+        assert_eq!(ips.primary().unwrap().to_string(), "10.200.0.3");
+    }
+
+    /// An IPv6 network has no IPv4 address anywhere, and an IPv4 network has no IPv6 address anywhere.
+    #[test]
+    fn a_network_has_the_addresses_of_its_family_only() {
+        let topology = "  nodes: [a, { id: r, role: router }, c]\n  links:\n    - { id: x, between: [a, r] }\n    - { id: z, between: [r, c] }\n";
+        let mut v6 = Fake::new();
+        let done = provision(&mut v6, &network(&format!("  ip: v6\n{topology}"))).unwrap();
+        assert!(done.addresses.iter().all(|a| a.address.is_ipv6()));
+        assert!(done.node_addresses.iter().all(|(_, ips)| ips.v4.is_none()));
+        let routing = v6.routing.join("\n");
+        assert!(routing.starts_with("families false true"), "{routing}");
+        assert!(!routing.contains("10.200"), "{routing}");
+        let mut v4 = Fake::new();
+        let done = provision(&mut v4, &network(topology)).unwrap();
+        assert!(done.addresses.iter().all(|a| a.address.is_ipv4()));
+        assert!(done.node_addresses.iter().all(|(_, ips)| ips.v6.is_none()));
+        assert!(v4.routing.join("\n").starts_with("families true false"));
     }
 
     #[test]

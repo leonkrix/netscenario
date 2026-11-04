@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! netscenario-agent send --to <addr> --rate <bits/s> --size <bytes> --duration-ns <ns>
-//!                        [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
+//!                        [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>] [--dont-fragment]
 //!                        [--barriers <packet>:<id>,...]
 //! netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
 //!                        [--udp-checksum <on|off>] [--wire-out <file>]
@@ -41,7 +41,7 @@ Usage:
   netscenario-agent send --to <addr> --size <bytes> --duration-ns <ns> [--rate <bits/s>]
                          [--pattern cbr|poisson|onoff|bursty] [--seed <n>] [--distribution fixed|exponential]
                          [--on-ns <ns> --off-ns <ns>] [--burst-packets <n> --gap-ns <ns> --pause-ns <ns>]
-                         [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
+                         [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>] [--dont-fragment]
                          [--barriers <packet>:<id>,...]
   netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
                          [--udp-checksum <on|off>] [--wire-out <file>]
@@ -134,7 +134,7 @@ where
             let _ = write!(out, "{USAGE_TEXT}");
             return OK;
         }
-        "send" => Options::parse(rest, SEND_OPTIONS, &[])
+        "send" => Options::parse(rest, SEND_OPTIONS, &["dont-fragment"])
             .map_err(Problem::Usage)
             .and_then(|options| send_command(&options, stdin, out)),
         "recv" => Options::parse(
@@ -411,6 +411,7 @@ fn send_command(
         duration_ns: options.required("duration-ns")?,
         start_at_ns: options.optional("start-at-ns")?,
         udp_checksum: options.optional("udp-checksum")?.unwrap_or_default(),
+        dont_fragment: options.has("dont-fragment"),
         barriers,
     };
     // The standard input is read for the answers to the barriers and for `stop`, also by a stream without barriers

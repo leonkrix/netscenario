@@ -1,0 +1,12 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  ip: dual
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      mtu: 1000
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 500b }

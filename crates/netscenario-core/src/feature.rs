@@ -62,6 +62,9 @@ pub enum Feature {
     /// The `mtu` of a link, and the fragments a datagram that does not fit the first link makes (D-081). Last in the list
     /// because it was added last.
     LinkMtu,
+    /// IPv6 addresses on the links and the nodes (`topology.ip`, `ip` on a workload, D-081). Last in the list because it was
+    /// added last.
+    Ipv6,
 }
 
 impl Feature {
@@ -90,6 +93,7 @@ impl Feature {
         Feature::MultipleNodes,
         Feature::StaticRoutes,
         Feature::LinkMtu,
+        Feature::Ipv6,
     ];
 
     /// A short stable name, for results and logs.
@@ -119,6 +123,7 @@ impl Feature {
             Feature::MultipleNodes => "multiple-nodes",
             Feature::StaticRoutes => "static-routes",
             Feature::LinkMtu => "link-mtu",
+            Feature::Ipv6 => "ipv6",
         }
     }
 
@@ -149,6 +154,7 @@ impl Feature {
             Feature::MultipleNodes => "Several nodes and links",
             Feature::StaticRoutes => "Routers and routes",
             Feature::LinkMtu => "MTU, fragmentation",
+            Feature::Ipv6 => "IPv6",
         }
     }
 }
@@ -193,6 +199,8 @@ fn needs_of(impairments: &Impairments, path: &str, need: &mut dyn FnMut(Feature,
 
 /// The features that `scenario` needs, each once, in the order of their first use.
 #[must_use]
+// A list of the things a scenario can ask for, one check after the other
+#[allow(clippy::too_many_lines)]
 pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
     let mut found = Vec::new();
     let mut need = |feature: Feature, path: String| {
@@ -224,7 +232,12 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             format!("topology.links[{index}].cost"),
         );
     }
-    need(Feature::Ipv4, "topology".to_owned());
+    if scenario.topology.ip != netscenario_model::IpMode::V4 {
+        need(Feature::Ipv6, "topology.ip".to_owned());
+    }
+    if scenario.topology.ip != netscenario_model::IpMode::V6 {
+        need(Feature::Ipv4, "topology".to_owned());
+    }
     for (index, link) in scenario.topology.links.iter().enumerate() {
         let base = format!("topology.links[{index}]");
         if link.mtu.is_some() {
@@ -278,6 +291,17 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
                 need(Feature::TrafficPatterns, format!("workloads[{index}]"));
             }
             _ => {}
+        }
+        if let Some(generator) = workload.generator() {
+            if generator.dont_fragment {
+                need(
+                    Feature::LinkMtu,
+                    format!("workloads[{index}].dont-fragment"),
+                );
+            }
+            if generator.ip == Some(netscenario_model::IpFamily::V6) {
+                need(Feature::Ipv6, format!("workloads[{index}].ip"));
+            }
         }
         if workload
             .generator()

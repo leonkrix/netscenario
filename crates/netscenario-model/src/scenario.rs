@@ -11,6 +11,7 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::generators::{Generator, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
+use crate::ip::IpFamily;
 use crate::measure::Measure;
 use crate::topology::Topology;
 use crate::units::{Duration, Name, Probability, Rate, Size};
@@ -777,6 +778,11 @@ pub struct UdpCbr {
     pub stop: Option<Duration>,
     /// Whether the packets carry the UDP checksum. Default: on.
     pub udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network, `v4` in a `dual` one.
+    pub ip: Option<IpFamily>,
+    /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
+    /// Default: off.
+    pub dont_fragment: bool,
 }
 
 impl UdpCbr {
@@ -792,6 +798,8 @@ impl UdpCbr {
             start: None,
             stop: None,
             udp_checksum: UdpChecksum::On,
+            ip: None,
+            dont_fragment: false,
         }
     }
 }
@@ -973,6 +981,16 @@ struct UdpCbrFile<'a> {
         skip_serializing_if = "checksum_is_on"
     )]
     udp_checksum: UdpChecksum,
+    /// The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: &'a Option<IpFamily>,
+    /// `true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.
+    #[serde(
+        default,
+        rename = "dont-fragment",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    dont_fragment: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -1027,6 +1045,8 @@ impl Serialize for UdpCbr {
             start: &self.start,
             stop: &self.stop,
             udp_checksum: self.udp_checksum,
+            ip: &self.ip,
+            dont_fragment: self.dont_fragment,
         }
         .serialize(serializer)
     }
@@ -1092,6 +1112,8 @@ struct WorkloadFields {
     start: Option<Duration>,
     stop: Option<Duration>,
     udp_checksum: Option<UdpChecksum>,
+    ip: Option<IpFamily>,
+    dont_fragment: Option<bool>,
     node: Option<Name>,
     run: Option<Vec<String>>,
     env: Option<BTreeMap<String, String>>,
@@ -1115,7 +1137,7 @@ struct Keys {
 
 impl KindName {
     fn keys(&self) -> Keys {
-        const WINDOW: [&str; 3] = ["start", "stop", "udp-checksum"];
+        const WINDOW: [&str; 5] = ["start", "stop", "udp-checksum", "ip", "dont-fragment"];
         match self {
             Self::UdpCbr => Keys {
                 name: "udp-cbr",
@@ -1130,12 +1152,26 @@ impl KindName {
             Self::UdpOnoff => Keys {
                 name: "udp-onoff",
                 required: &["from", "to", "rate", "packet-size", "on", "off"],
-                optional: &["distribution", "start", "stop", "udp-checksum"],
+                optional: &[
+                    "distribution",
+                    "start",
+                    "stop",
+                    "udp-checksum",
+                    "ip",
+                    "dont-fragment",
+                ],
             },
             Self::UdpBursty => Keys {
                 name: "udp-bursty",
                 required: &["from", "to", "packet-size", "burst-packets", "gap", "pause"],
-                optional: &["distribution", "start", "stop", "udp-checksum"],
+                optional: &[
+                    "distribution",
+                    "start",
+                    "stop",
+                    "udp-checksum",
+                    "ip",
+                    "dont-fragment",
+                ],
             },
             Self::Command => Keys {
                 name: "command",
@@ -1147,6 +1183,8 @@ impl KindName {
 }
 
 impl<'de> Deserialize<'de> for Workload {
+    // One list of the keys of every kind, and one construction for each
+    #[allow(clippy::too_many_lines)]
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use de::Error;
         let fields = WorkloadFields::deserialize(deserializer)?;
@@ -1158,6 +1196,8 @@ impl<'de> Deserialize<'de> for Workload {
             ("start", fields.start.is_some()),
             ("stop", fields.stop.is_some()),
             ("udp-checksum", fields.udp_checksum.is_some()),
+            ("ip", fields.ip.is_some()),
+            ("dont-fragment", fields.dont_fragment.is_some()),
             ("node", fields.node.is_some()),
             ("run", fields.run.is_some()),
             ("env", fields.env.is_some()),
@@ -1201,6 +1241,8 @@ impl<'de> Deserialize<'de> for Workload {
                 start: fields.start,
                 stop: fields.stop,
                 udp_checksum: checksum,
+                ip: fields.ip,
+                dont_fragment: fields.dont_fragment.unwrap_or(false),
             }),
             KindName::UdpPoisson => Self::UdpPoisson(UdpPoisson {
                 id: fields.id,
@@ -1211,6 +1253,8 @@ impl<'de> Deserialize<'de> for Workload {
                 start: fields.start,
                 stop: fields.stop,
                 udp_checksum: checksum,
+                ip: fields.ip,
+                dont_fragment: fields.dont_fragment.unwrap_or(false),
             }),
             KindName::UdpOnoff => Self::UdpOnOff(UdpOnOff {
                 id: fields.id,
@@ -1224,6 +1268,8 @@ impl<'de> Deserialize<'de> for Workload {
                 start: fields.start,
                 stop: fields.stop,
                 udp_checksum: checksum,
+                ip: fields.ip,
+                dont_fragment: fields.dont_fragment.unwrap_or(false),
             }),
             KindName::UdpBursty => Self::UdpBursty(UdpBursty {
                 id: fields.id,
@@ -1237,6 +1283,8 @@ impl<'de> Deserialize<'de> for Workload {
                 start: fields.start,
                 stop: fields.stop,
                 udp_checksum: checksum,
+                ip: fields.ip,
+                dont_fragment: fields.dont_fragment.unwrap_or(false),
             }),
             KindName::Command => Self::Command(Command {
                 id: fields.id,
