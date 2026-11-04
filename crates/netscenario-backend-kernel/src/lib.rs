@@ -12,6 +12,7 @@ pub mod clean;
 mod client;
 mod command;
 pub mod doctor;
+mod fabric;
 mod netem;
 mod programs;
 mod protocol;

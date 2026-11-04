@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A bottleneck of 5 mbit with a deep queue, and the same bottleneck with CoDel (D-082): the queue of a direction is the packets
+# that wait for the rate, and its discipline decides what is dropped. A link with a `queue` is built through the fabric of the
+# run (D-079): the queue is a queue of its own, and the delay of the link comes after it, so a deep queue adds its waiting time to
+# the 20 ms. Run it with `netscenario run` and look at `queues` in the result for the drops of each queue.
+version: 0
+name: queues
+seed: 4
+duration: 20s
+topology:
+  nodes: [client, { id: edge, role: router }, server]
+  links:
+    - id: access
+      between: [client, edge]
+      both: { delay: 2ms }
+    - id: bottleneck
+      between: [edge, server]
+      forward:
+        delay: 20ms
+        rate: 5mbit
+        queue: { discipline: codel, limit: 200p, target: 5ms, interval: 100ms }
+      reverse: { delay: 20ms }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 8mbit, packet-size: 1200b }

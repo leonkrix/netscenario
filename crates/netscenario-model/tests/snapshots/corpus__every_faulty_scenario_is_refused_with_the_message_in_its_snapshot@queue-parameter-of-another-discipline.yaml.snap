@@ -1,0 +1,22 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/queue-parameter-of-another-discipline.yaml
+---
+error: `interval` is not a parameter of the discipline `fifo`
+  --> queue-parameter-of-another-discipline.yaml:11:46
+   |
+10 |         rate: 2mbit
+11 |         queue: { discipline: fifo, interval: 100ms, flows: 64 }
+   |                                              ^^^^^
+   = path: topology.links[0].forward.queue.interval
+   = help: `interval` belongs to `codel` and `fq-codel`
+
+error: `flows` is not a parameter of the discipline `fifo`
+  --> queue-parameter-of-another-discipline.yaml:11:60
+   |
+10 |         rate: 2mbit
+11 |         queue: { discipline: fifo, interval: 100ms, flows: 64 }
+   |                                                            ^^
+   = path: topology.links[0].forward.queue.flows
+   = help: `flows` and `quantum` belong to `fq-codel`

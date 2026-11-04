@@ -140,7 +140,7 @@ fn percent(micro_percent: u32) -> String {
 }
 
 /// The arguments of the delay with its jitter: `delay D J [distribution normal]`.
-fn delay_arguments(impairments: &Impairments) -> Result<Vec<String>, String> {
+pub(crate) fn delay_arguments(impairments: &Impairments) -> Result<Vec<String>, String> {
     let mut arguments = Vec::new();
     if let Some(delay) = impairments.delay {
         arguments.push("delay".to_owned());
@@ -165,7 +165,7 @@ fn probability(value: Probability) -> String {
 /// 1-h 1-k`, whose third argument is the loss in the bad state and the fourth the loss in the good state
 /// (measured in S12, D-048: the letters suggest the complements, the kernel does not); the four-state model
 /// is `loss state p13 p31 p32 p23 p14`.
-fn loss_arguments(impairments: &Impairments) -> Vec<String> {
+pub(crate) fn loss_arguments(impairments: &Impairments) -> Vec<String> {
     let words = |words: &[&str]| {
         words
             .iter()
@@ -204,7 +204,7 @@ fn loss_arguments(impairments: &Impairments) -> Vec<String> {
 }
 
 /// The arguments of the duplication: `duplicate P%`.
-fn duplicate_arguments(impairments: &Impairments) -> Vec<String> {
+pub(crate) fn duplicate_arguments(impairments: &Impairments) -> Vec<String> {
     impairments
         .duplicate
         .map_or_else(Vec::new, |p| vec!["duplicate".to_owned(), probability(p)])
@@ -212,7 +212,7 @@ fn duplicate_arguments(impairments: &Impairments) -> Vec<String> {
 
 /// The arguments of the corruption: `corrupt P%`. `netem` flips one bit of one byte of the frame, the Ethernet
 /// header included (S13b, D-040), so the share of the packets that a receiver drops is less than `P`.
-fn corrupt_arguments(impairments: &Impairments) -> Vec<String> {
+pub(crate) fn corrupt_arguments(impairments: &Impairments) -> Vec<String> {
     impairments
         .corrupt
         .map_or_else(Vec::new, |p| vec!["corrupt".to_owned(), probability(p)])
@@ -220,7 +220,7 @@ fn corrupt_arguments(impairments: &Impairments) -> Vec<String> {
 
 /// The arguments of the reordering: `reorder P% [gap G]`. `P` is the share of the packets that are sent on at
 /// once (measured, D-048).
-fn reorder_arguments(impairments: &Impairments) -> Vec<String> {
+pub(crate) fn reorder_arguments(impairments: &Impairments) -> Vec<String> {
     impairments
         .reorder
         .map_or_else(Vec::new, |Reorder { share, gap }| {
@@ -234,7 +234,7 @@ fn reorder_arguments(impairments: &Impairments) -> Vec<String> {
 }
 
 /// `seed S`, if there is a seed.
-fn seed_arguments(seed: Option<u64>) -> Vec<String> {
+pub(crate) fn seed_arguments(seed: Option<u64>) -> Vec<String> {
     seed.map_or_else(Vec::new, |seed| vec!["seed".to_owned(), seed.to_string()])
 }
 

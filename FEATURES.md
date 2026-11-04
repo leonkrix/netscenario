@@ -71,7 +71,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | LNK-06 | Duplication | S | 0.2 | done (the Kernel backend since D-054; `tests/fidelity.rs`: 20 %, with loss, and in a tree of two queues) |
 | LNK-07 | Corruption | S | 0.2 | done (format done with D-049; the Kernel backend applies it since D-055, with the account of D-040 per direction: lost in the queue, dropped by the node, delivered; `tests/fidelity.rs`: 10 % at three payload sizes and with a loss; `udp-checksum: false` is WRK-11; the corrupted packets are named by sequence number since D-057) |
 | LNK-08 | Rate limit (token bucket) | M | 0.1 | done (`fidelity.rs`: `a_rate_limit_counts_ethernet_frames`) |
-| LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M | 0.3 | planned |
+| LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M | 0.3 | done (the Kernel backend builds a link with a queue through the fabric, D-079; the key and its checks, D-082; `crates/netscenario-backend-kernel/tests/queues.rs`) |
 | LNK-10 | MTU and fragmentation | S | 0.3 | done (`mtu` on a link, the sender cuts a packet that does not fit, a router never cuts, the account is by frames, `dont-fragment` makes the sender refuse, [D-081](docs/decisions/D-081.md); `tests/network.rs`, `tests/fidelity.rs`: a lost fragment loses the packet) |
 | LNK-11 | Different values per direction | M | 0.1 | done (`tests/provision.rs`: `the_impairments_are_in_the_queues_of_the_right_interfaces`; `tests/agent.rs`) |
 | LNK-12 | Outages (windows without any delivery, also of the packets on their way) | M | 0.2 | done (format with D-050; the Kernel backend since D-064; `tests/timeline.rs`: nothing arrives in the window and the packets in flight are dropped; the edges are placed by the clock) |
@@ -140,7 +140,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PRB-07 | Time to recover after an event | M | 0.2 | done (a series by time bin for each workload in `series-<id>.jsonl`, sent and arrived side by side, and `recoveries` for each event of the timeline with explicit parameters; unit tests on series with known answers and canaries in `recovery.rs` and `series.rs`, a real run with a drop in the rate and an outage in [timeline.rs](crates/netscenario-backend-kernel/tests/timeline.rs); [RESULTS.md](docs/RESULTS.md), D-070) |
 | PRB-08 | Metrics from your program (JSON on stdout, exit code) | M | 0.2 | done (`{"metric", "value", "unit"}` lines with the time they were read, a summary and a file of readings, invalid lines counted and shown, the exit code and signal in the result; D-072) |
 | PRB-09 | Packet capture per link | M | 0.2 | done (`measure.capture`: both interfaces of a link as `capture-<link>-<node>.pcap`, nanosecond timestamps, checked against the counter of the interface; [capture.rs](crates/netscenario-backend-kernel/tests/capture.rs): read by `tcpdump`, lost packets absent and duplicates present, timestamps against the records, a capture cut short refused, a receive buffer that overflows reported; D-047, D-073) |
-| PRB-10 | Queue occupancy and drops from the kernel | S | 0.3 | planned |
+| PRB-10 | Queue occupancy and drops from the kernel | S | 0.3 | done (`queues` in the result: the counters at the end and a sample each second, D-082; `crates/netscenario-backend-kernel/tests/queues.rs`) |
 | PRB-11 | CPU and memory of the program under test | C | 0.8 | idea |
 | PRB-12 | Round trip time with percentiles (needs the echo of WRK-05) | M | 0.3 | planned |
 

@@ -253,6 +253,43 @@ impl NodeCounts {
     }
 }
 
+/// What the kernel counted in the queue of one direction (PRB-10, D-082): the leaf of the shaper, where the discipline drops.
+/// The numbers are those of `tc -s` at the end of the run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct QueueStats {
+    /// The discipline the queue has, as the kernel names it: `pfifo`, `bfifo`, `codel`, `fq_codel`, `pie`.
+    pub kind: String,
+    /// The packets that left the queue (were sent on).
+    pub packets: u64,
+    /// The bytes of those packets.
+    pub bytes: u64,
+    /// The packets the queue dropped: by its limit, by its discipline, and the ones it marked instead are not here.
+    pub drops: u64,
+    /// The packets that were over the limit of the queue (the kernel counts them with the drops).
+    pub overlimits: u64,
+    /// The packets that were put back for another try.
+    pub requeues: u64,
+    /// The packets waiting in the queue at the end.
+    pub backlog_packets: u64,
+    /// The bytes waiting in the queue at the end.
+    pub backlog_bytes: u64,
+    /// The counters that are special to the discipline, by the name the kernel gives them (`ecn_mark`, `drop_overlimit`,
+    /// `maxpacket`, `new_flow_count`, ...).
+    pub details: BTreeMap<String, u64>,
+}
+
+impl QueueStats {
+    /// Statistics of a queue of the kind `kind` with the counters of the common part.
+    #[must_use]
+    pub fn new(kind: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            ..Self::default()
+        }
+    }
+}
+
 /// One way out of a node for a route: a link, and the weight among the ways of the same metric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NextHop {
@@ -530,6 +567,39 @@ pub trait Backend {
             action: "give a node an address".to_owned(),
             message: "this backend has no addresses of nodes".to_owned(),
         })
+    }
+
+    /// Connects two nodes through the fabric of the run (D-079): the link a direction with a `queue` needs, with a queue of its own
+    /// that holds the packets for the rate, and the delay behind it. Everything else about the link is as for
+    /// [`Backend::create_link`]. The default says that the backend cannot.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the nodes do not exist or the link cannot be made.
+    fn create_link_through_fabric(
+        &mut self,
+        _name: &Name,
+        _between: [NodeHandle; 2],
+    ) -> Result<LinkHandle, Error> {
+        Err(Error::Backend {
+            backend: self.name().to_owned(),
+            action: "create a link with a queue".to_owned(),
+            message: "this backend has no queues of its own".to_owned(),
+        })
+    }
+
+    /// What the kernel counted in the queue that a direction of a link has (PRB-10): `None` for a direction without a `queue`,
+    /// and for a backend that cannot say, which is the default.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist or the counters cannot be read.
+    fn queue_stats(
+        &mut self,
+        _link: LinkHandle,
+        _direction: Direction,
+    ) -> Result<Option<QueueStats>, Error> {
+        Ok(None)
     }
 
     /// Sets the MTU of the interfaces at both ends of a link, in bytes (D-081). The default says that the backend cannot.

@@ -1,0 +1,13 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward:
+        rate: 2mbit
+        queue: { discipline: codel, limit: 64kb }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b }

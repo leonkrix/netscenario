@@ -194,7 +194,12 @@ fn build(
                 .at_path("topology.links"),
             ]));
         };
-        let handle = backend.create_link(&link.id, [first, second])?;
+        // A direction with a queue needs the fabric (D-079); the other links keep the direct build
+        let handle = if has_queue(link) {
+            backend.create_link_through_fabric(&link.id, [first, second])?
+        } else {
+            backend.create_link(&link.id, [first, second])?
+        };
         if let Some(mtu) = link.mtu {
             backend.set_link_mtu(handle, mtu)?;
         }
@@ -350,6 +355,15 @@ fn routing(
     Ok(addresses)
 }
 
+/// Whether a direction of the link has a `queue`, which makes the Kernel backend build it through the fabric (D-079).
+#[must_use]
+pub fn has_queue(link: &Link) -> bool {
+    [&link.forward, &link.reverse, &link.both]
+        .into_iter()
+        .flatten()
+        .any(|impairments| impairments.queue.is_some())
+}
+
 /// The impairments that apply to one direction of a link: `both` if it is written, else the direction's own.
 #[must_use]
 pub fn impairments_of(link: &Link, direction: Direction) -> Option<&Impairments> {
@@ -442,6 +456,18 @@ mod tests {
         ) -> Result<LinkHandle, Error> {
             self.step(
                 format!("link {name} {}-{}", between[0].0, between[1].0),
+                "create_link",
+            )?;
+            Ok(LinkHandle(u32::try_from(self.calls.len()).unwrap()))
+        }
+
+        fn create_link_through_fabric(
+            &mut self,
+            name: &Name,
+            between: [NodeHandle; 2],
+        ) -> Result<LinkHandle, Error> {
+            self.step(
+                format!("fabric link {name} {}-{}", between[0].0, between[1].0),
                 "create_link",
             )?;
             Ok(LinkHandle(u32::try_from(self.calls.len()).unwrap()))
@@ -747,6 +773,30 @@ mod tests {
         assert!(done.addresses.iter().all(|a| a.address.is_ipv4()));
         assert!(done.node_addresses.iter().all(|(_, ips)| ips.v6.is_none()));
         assert!(v4.routing.join("\n").starts_with("families true false"));
+    }
+
+    /// A link with a `queue` in a direction is built through the fabric (D-079); a link without one is built as before.
+    #[test]
+    fn a_link_with_a_queue_is_made_through_the_fabric_and_the_others_directly() {
+        let mut backend = Fake::new();
+        provision(
+            &mut backend,
+            &network("  nodes: [a, { id: r, role: router }, c]\n  links:\n    - { id: x, between: [a, r] }\n    - { id: z, between: [r, c], forward: { rate: 2mbit, queue: { limit: 50p } } }\n"),
+        )
+        .unwrap();
+        assert!(
+            backend
+                .calls
+                .iter()
+                .any(|call| call.starts_with("fabric link z")),
+            "{:?}",
+            backend.calls
+        );
+        assert!(
+            backend.calls.iter().any(|call| call.starts_with("link x")),
+            "{:?}",
+            backend.calls
+        );
     }
 
     #[test]

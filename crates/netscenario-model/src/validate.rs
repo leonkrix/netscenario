@@ -5,6 +5,7 @@ use crate::error::Problem;
 use crate::generators::{Generator, Pattern};
 use crate::graph::{PathError, Routes};
 use crate::measure::{MAX_BINS, MIN_BIN};
+use crate::queue::{Discipline, QueueLimit};
 use crate::scenario::{
     Change, Direction, Event, Impairments, Jitter, JitterDistribution, Link, Loss, Scenario,
     Workload,
@@ -1068,7 +1069,104 @@ fn check_window(
     }
 }
 
+/// The largest queue in packets.
+pub const MAX_QUEUE_PACKETS: u32 = 1_000_000;
+/// The largest queue in bytes.
+pub const MAX_QUEUE_BYTES: u64 = 1 << 30;
+
+/// The queue of a direction (D-082): it needs a rate to wait for, its limit is in the unit its discipline counts, and its
+/// parameters are those of its discipline.
+fn check_queue(impairments: &Impairments, base: &str, problems: &mut Vec<Problem>) {
+    let Some(queue) = &impairments.queue else {
+        return;
+    };
+    let path = format!("{base}.queue");
+    if impairments.rate.is_none() {
+        problems.push(
+            Problem::new("a `queue` holds the packets that wait for the rate, and this direction has no `rate`")
+                .at_path(path.clone())
+                .with_help("add a `rate` next to `queue`; without one nothing waits and the queue stays empty"),
+        );
+    }
+    for key in queue.foreign_keys() {
+        problems.push(
+            Problem::new(format!(
+                "`{key}` is not a parameter of the discipline `{}`",
+                queue.discipline.as_str()
+            ))
+            .at_path(format!("{path}.{key}"))
+            .with_help(match key {
+                "interval" => "`interval` belongs to `codel` and `fq-codel`",
+                "t-update" => "`t-update` belongs to `pie`",
+                "flows" | "quantum" => "`flows` and `quantum` belong to `fq-codel`",
+                _ => "`target` and `ecn` belong to `codel`, `fq-codel` and `pie`",
+            }),
+        );
+    }
+    match queue.limit {
+        Some(QueueLimit::Bytes(size)) if queue.discipline != Discipline::Fifo => {
+            problems.push(
+                Problem::new(format!(
+                    "the discipline `{}` counts packets, and the limit {size} is an amount of data",
+                    queue.discipline.as_str()
+                ))
+                .at_path(format!("{path}.limit"))
+                .with_help("write the limit in packets, such as `100p`; only `fifo` counts bytes"),
+            );
+        }
+        Some(QueueLimit::Bytes(size)) if !(1..=MAX_QUEUE_BYTES).contains(&size.bytes()) => {
+            problems.push(
+                Problem::new(format!("the limit {size} is outside 1 byte to 1gib"))
+                    .at_path(format!("{path}.limit")),
+            );
+        }
+        Some(QueueLimit::Packets(packets)) if packets > MAX_QUEUE_PACKETS => {
+            problems.push(
+                Problem::new(format!(
+                    "the limit {packets}p is more than {MAX_QUEUE_PACKETS} packets"
+                ))
+                .at_path(format!("{path}.limit")),
+            );
+        }
+        _ => {}
+    }
+    for (key, value) in [
+        ("target", queue.target),
+        ("interval", queue.interval),
+        ("t-update", queue.t_update),
+    ] {
+        if let Some(value) = value
+            && (std::time::Duration::from(value).is_zero()
+                || std::time::Duration::from(value) > std::time::Duration::from_secs(10))
+        {
+            problems.push(
+                Problem::new(format!(
+                    "`{key}` {value} is outside 1 microsecond to 10 seconds"
+                ))
+                .at_path(format!("{path}.{key}")),
+            );
+        }
+    }
+    if let Some(flows) = queue.flows
+        && !(1..=65_536).contains(&flows)
+    {
+        problems.push(
+            Problem::new(format!("`flows` {flows} is outside 1 to 65536"))
+                .at_path(format!("{path}.flows")),
+        );
+    }
+    if let Some(quantum) = queue.quantum
+        && !(1..=1 << 20).contains(&quantum.bytes())
+    {
+        problems.push(
+            Problem::new(format!("`quantum` {quantum} is outside 1 byte to 1mib"))
+                .at_path(format!("{path}.quantum")),
+        );
+    }
+}
+
 fn check_impairments(impairments: &Impairments, base: &str, problems: &mut Vec<Problem>) {
+    check_queue(impairments, base, problems);
     if let Some(Loss::Markov4 { p13, p14, .. }) = &impairments.loss {
         check_sum("p13", *p13, "p14", *p14, &format!("{base}.loss"), problems);
     }

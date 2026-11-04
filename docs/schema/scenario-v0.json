@@ -189,6 +189,31 @@
         }
       ]
     },
+    "Discipline": {
+      "description": "How the packets that wait for the rate are kept and dropped.",
+      "oneOf": [
+        {
+          "const": "fifo",
+          "description": "A first-in first-out queue that drops what does not fit (`pfifo`, or `bfifo` with a limit in bytes). The default.",
+          "type": "string"
+        },
+        {
+          "const": "codel",
+          "description": "`CoDel` (RFC 8289): drops by the time a packet has waited.",
+          "type": "string"
+        },
+        {
+          "const": "fq-codel",
+          "description": "FQ-CoDel (RFC 8290): a queue for each flow, each kept short by `CoDel`.",
+          "type": "string"
+        },
+        {
+          "const": "pie",
+          "description": "PIE (RFC 8033): drops by a probability that follows the delay of the queue.",
+          "type": "string"
+        }
+      ]
+    },
     "Dumbbell": {
       "additionalProperties": false,
       "description": "Hosts on two sides of a shared link between two routers.",
@@ -441,6 +466,17 @@
             }
           ],
           "description": "Packet loss: independent, or in bursts."
+        },
+        "queue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Queue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The queue in front of the rate: its size and how it drops (D-082). A link with a queue is built through the fabric of the\nrun (D-079)."
         },
         "rate": {
           "anyOf": [
@@ -986,6 +1022,97 @@
         "2%"
       ],
       "pattern": "^[0-9]+(\\.[0-9]+)?%$",
+      "type": "string"
+    },
+    "Queue": {
+      "additionalProperties": false,
+      "description": "The queue of a direction (D-082): how many packets wait for the rate and how they are dropped.\n\nEverything that is not set is the default of the kernel for the discipline: 1000 packets for a `fifo`, `codel` and `pie`,\n10240 for `fq-codel`, a target of 5 ms and an interval of 100 ms for `CoDel`, 15 ms and a `t-update` of 15 ms for PIE. The\nresult records what was built.",
+      "properties": {
+        "discipline": {
+          "$ref": "#/$defs/Discipline",
+          "description": "How the queue drops. `fifo` (the default), `codel`, `fq-codel` or `pie`."
+        },
+        "ecn": {
+          "description": "Mark the packets of a flow that asked for it (ECN) instead of dropping them (`codel`, `fq-codel`, `pie`).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "flows": {
+          "description": "The number of queues of `fq-codel`, one for each flow that hashes to it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "interval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The time over which `codel` and `fq-codel` look for a delay that does not go below the target."
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueLimit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The size of the queue: packets (`100p`) or data (`64kb`, a `fifo` only)."
+        },
+        "quantum": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Size"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The bytes a queue of `fq-codel` may send in its turn."
+        },
+        "t-update": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The time between two updates of the drop probability of `pie`."
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The delay the queue accepts (`codel`, `fq-codel`, `pie`): above it the queue starts to drop."
+        }
+      },
+      "type": "object"
+    },
+    "QueueLimit": {
+      "description": "The size of the queue: a number of packets (100p) or an amount of data (64kb). Only a fifo counts bytes.",
+      "examples": [
+        "100p",
+        "64kb"
+      ],
+      "pattern": "^[0-9]+p$|^[0-9]+(\\.[0-9]+)?(b|kb|mb|gb|kib|mib|gib)$",
       "type": "string"
     },
     "Rate": {

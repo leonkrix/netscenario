@@ -30,6 +30,20 @@ pub(crate) struct WireHop {
     pub(crate) weight: u32,
 }
 
+/// What the kernel counted in the leaf of a queue (PRB-10), on the wire.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WireQueueStats {
+    pub(crate) kind: String,
+    pub(crate) packets: u64,
+    pub(crate) bytes: u64,
+    pub(crate) drops: u64,
+    pub(crate) overlimits: u64,
+    pub(crate) requeues: u64,
+    pub(crate) backlog_packets: u64,
+    pub(crate) backlog_bytes: u64,
+    pub(crate) details: std::collections::BTreeMap<String, u64>,
+}
+
 /// What the caller asks the supervisor to do.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -40,6 +54,14 @@ pub(crate) enum Request {
     CreateLink {
         name: String,
         between: [u32; 2],
+        /// The link goes through the fabric of the run (D-079): its directions have a queue of their own.
+        #[serde(default)]
+        fabric: bool,
+    },
+    /// What the kernel counted in the queue of a direction that has a `queue` (PRB-10).
+    QueueStats {
+        link: u32,
+        direction: Way,
     },
     /// Says which addresses the network has, before the first node is made (D-081).
     SetFamilies {
@@ -178,6 +200,8 @@ pub(crate) enum Response {
     Error { message: String },
     /// The answer to `QueuePackets`.
     Count { packets: u64 },
+    /// The answer to `QueueStats`: `None` for a direction without a queue of its own.
+    QueueStats { stats: Option<WireQueueStats> },
     /// The answer to `NodeCounts`.
     NodeCounts {
         frames_received: u64,
@@ -231,6 +255,11 @@ mod tests {
             Request::CreateLink {
                 name: "access".to_owned(),
                 between: [0, 1],
+                fabric: false,
+            },
+            Request::QueueStats {
+                link: 0,
+                direction: Way::Forward,
             },
             Request::Apply {
                 link: 0,

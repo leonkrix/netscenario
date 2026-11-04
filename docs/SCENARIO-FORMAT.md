@@ -191,7 +191,29 @@ loss: { model: markov4, p13: 2%, p31: 30%, p32: 10%, p23: 20%, p14: 0.5% }
 ```
 
 
-The queue of the link is the default of the kernel (`limit 1000` packets) and is recorded in the result. A `queue` key (limit and discipline, LNK-09) arrives with release 0.3.
+### Queue
+
+`queue` is the queue of a direction: the packets that wait for its `rate` (LNK-09, D-082). It needs a `rate`, because without one nothing waits; the delay of the link comes after the queue, so a deep queue adds its waiting time to the `delay`, as in a router.
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `discipline` | `fifo` (default), `codel`, `fq-codel`, `pie` | How the queue drops: `fifo` drops what does not fit (tail drop), `codel` (RFC 8289) by the time a packet has waited, `fq-codel` (RFC 8290) with a queue for each flow, `pie` (RFC 8033) by a probability that follows the delay. |
+| `limit` | `100p` or `64kb` | The size: packets, or data (a `fifo` only; the other disciplines count packets). Default: the one of the kernel for the discipline (1000 packets, 10240 for `fq-codel`). |
+| `target` | a duration | `codel`, `fq-codel`, `pie`: the delay the queue accepts (5 ms for `codel`, 15 ms for `pie`). |
+| `interval` | a duration | `codel`, `fq-codel`: the time over which a delay above the target is looked for (100 ms). |
+| `t-update` | a duration | `pie`: the time between two updates of the drop probability (15 ms). |
+| `ecn` | `true`, `false` | `codel`, `fq-codel`, `pie`: mark the packets of a flow that asked for it instead of dropping them. |
+| `flows` | 1 to 65536 | `fq-codel`: the number of queues (1024). |
+| `quantum` | a size | `fq-codel`: the bytes a queue may send in its turn (the MTU). |
+
+```yaml
+forward:
+  rate: 5mbit
+  delay: 20ms
+  queue: { discipline: codel, limit: 200p, target: 5ms, interval: 100ms }
+```
+
+A parameter that belongs to another discipline is refused with the discipline it belongs to, and so is a limit in data on a discipline that counts packets. A step of the timeline cannot set `queue` (the queue is built with the link and kept for the whole run, D-059); the rate can be changed. A direction without a `queue` keeps the queue that the backend builds for it (the default of the kernel for the packets in flight, see "Queue of the Kernel backend" in [COVERAGE.md](COVERAGE.md)). The result lists every queue that was built, with its counters (`queues`, see [RESULTS.md](RESULTS.md)). A link with a `queue` is built through the fabric of the run (D-079); the example is [`scenarios/queues.yaml`](../scenarios/queues.yaml).
 
 ## Timeline
 
@@ -359,7 +381,6 @@ These keys are not part of version 0 in release 0.2. A scenario that uses one is
 | `matrix` | 0.5 | Sweeps. |
 | `mobility` | 0.6 | Positions over time. |
 | `model` (in a link) | 0.3 | Link models: trace, Markov, periodic (the steps over time are the `timeline`, 0.2). |
-| `queue` (in a direction) | 0.3 | Queue limit and discipline. |
 | `address` (node, link) | later | Fixed addresses. |
 | `kind` other than `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty` and `command` | 0.3 and later | `tcp-bulk`, `request-response`, `trace-replay` and more. |
 
@@ -401,13 +422,14 @@ error: the node 'sever' does not exist
   = path: topology.links[0].between[1]
   = help: did you mean 'server'? the nodes are: client, server
 
-error: `queue` is planned for release 0.3 (see FEATURES.md)
-  --> access.yaml:11:9
+error: a `queue` holds the packets that wait for the rate, and this direction has no `rate`
+  --> access.yaml:10:16
    |
-10 |         delay: 40ms
-11 |         queue: { limit: 100 }
-   |         ^^^^^
+ 9 |       forward:
+10 |         queue: { limit: 100p }
+   |                ^
    = path: topology.links[0].forward.queue
+   = help: add a `rate` next to `queue`; without one nothing waits and the queue stays empty
 ```
 
 The messages for syntax, types, unknown and duplicate keys come from the YAML library and are shown in the words of this format; the others come from the checks of the model (D-020). The scenarios in `scenarios/invalid/` are faulty on purpose, one fault per file (and one with several), and their messages are held in snapshots, so a change in a message is a change in a test (QA-01).

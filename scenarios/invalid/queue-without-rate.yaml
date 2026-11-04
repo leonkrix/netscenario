@@ -7,12 +7,6 @@ topology:
     - id: access
       between: [client, server]
       forward:
-        delay: 40ms
         queue: { limit: 100p }
 workloads:
-  - id: media
-    kind: udp-cbr
-    from: client
-    to: server
-    rate: 1mbit
-    packet-size: 1200b
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b }
