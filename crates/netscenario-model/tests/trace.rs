@@ -184,13 +184,13 @@ fn seed(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
-/// The seeds of the fuzz targets are real files of the formats: the capture of one flow is a trace of 120 packets, the same flow
+/// The seeds of the fuzz targets are real files of the formats: the capture of one flow (named `.cap`, because `.pcap` is ignored by git) is a trace of 120 packets, the same flow
 /// in `pcapng` is the first 60 of them, and the capture of two flows is refused with the list. A change of a reader that breaks a
 /// seed shows here, and the fuzzer starts from inputs that go deep.
 #[test]
 fn the_seeds_of_the_fuzz_targets_are_files_of_the_formats() {
     use netscenario_model::{FlowSelection, read_capture, read_csv};
-    let flow = read_capture(&seed("captures/flow.pcap"), &FlowSelection::default(), 16).unwrap();
+    let flow = read_capture(&seed("captures/flow.cap"), &FlowSelection::default(), 16).unwrap();
     assert_eq!((flow.data.len(), flow.padded), (120, 0));
     assert_eq!(flow.data.moments_ns()[0], 0);
     let ng = read_capture(&seed("captures/flow.pcapng"), &FlowSelection::default(), 16).unwrap();
@@ -198,7 +198,7 @@ fn the_seeds_of_the_fuzz_targets_are_files_of_the_formats() {
     assert_eq!(ng.data.sizes(), &flow.data.sizes()[..60]);
     assert_eq!(ng.data.moments_ns(), &flow.data.moments_ns()[..60]);
     let error = read_capture(
-        &seed("captures/two-flows.pcap"),
+        &seed("captures/two-flows.cap"),
         &FlowSelection::default(),
         16,
     )
