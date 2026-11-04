@@ -98,7 +98,16 @@ struct End {
     node: usize,
     interface: String,
     neighbours: Vec<[String; 2]>,
+    /// The IPv6 address of the interface with its prefix length: the kernel removes it when the interface goes down (it keeps an
+    /// IPv4 address), and with it the route to the other end, so it is put back at `up`.
+    v6_address: Option<String>,
 }
+
+/// The fixed neighbours of one end of a new link and its IPv6 address with the prefix length.
+type EndAddresses = (Vec<[String; 2]>, Option<String>);
+
+/// What `set_link` needs of one end of a link: the process of the node, the interface, the fixed neighbours and the IPv6 address.
+type LinkEnd = (u32, String, Vec<[String; 2]>, Option<String>);
 
 struct Link {
     ends: [End; 2],
@@ -361,7 +370,7 @@ impl Provisioner {
         pids: [u32; 2],
         inside: &str,
         macs: &[String; 2],
-    ) -> Result<[Vec<[String; 2]>; 2], String> {
+    ) -> Result<[EndAddresses; 2], String> {
         // The addresses of each family the network has, as (address, prefix length) for each end
         let mut families: Vec<[String; 2]> = Vec::new();
         let mut prefixes: Vec<&str> = Vec::new();
@@ -373,7 +382,8 @@ impl Provisioner {
             families.push([0, 1].map(|end| link_address_v6(number, end).to_string()));
             prefixes.push("126");
         }
-        let mut neighbours: [Vec<[String; 2]>; 2] = [Vec::new(), Vec::new()];
+        let mut neighbours: [(Vec<[String; 2]>, Option<String>); 2] =
+            [(Vec::new(), None), (Vec::new(), None)];
         for end in 0..2 {
             let other = 1 - end;
             let pid = pids[end];
@@ -401,7 +411,12 @@ impl Provisioner {
                         "permanent",
                     ],
                 )?;
-                neighbours[end].push([addresses[other].clone(), macs[other].clone()]);
+                neighbours[end]
+                    .0
+                    .push([addresses[other].clone(), macs[other].clone()]);
+                if addresses[end].contains(':') {
+                    neighbours[end].1 = Some(address.clone());
+                }
             }
             self.in_node(pid, &self.tools.ip, &["link", "set", inside, "up"])?;
         }
@@ -458,18 +473,20 @@ impl Provisioner {
         }
         self.failpoints.hit("link:moved");
         let neighbours = self.address_the_ends(id(index).unwrap_or(0), pids, &inside, &macs)?;
-        let [first_neighbours, second_neighbours] = neighbours;
+        let [(first_neighbours, first_v6), (second_neighbours, second_v6)] = neighbours;
         self.links.push(Link {
             ends: [
                 End {
                     node: first,
                     interface: inside.clone(),
                     neighbours: first_neighbours,
+                    v6_address: first_v6,
                 },
                 End {
                     node: second,
                     interface: inside,
                     neighbours: second_neighbours,
+                    v6_address: second_v6,
                 },
             ],
         });
@@ -819,7 +836,7 @@ impl Provisioner {
             .get(link as usize)
             .ok_or_else(|| format!("the link {link} does not exist in this run"))?;
         let state = if up { "up" } else { "down" };
-        let ends: Vec<(u32, String, Vec<[String; 2]>)> = link
+        let ends: Vec<LinkEnd> = link
             .ends
             .iter()
             .map(|end| {
@@ -827,17 +844,29 @@ impl Provisioner {
                     self.nodes[end.node].pid,
                     end.interface.clone(),
                     end.neighbours.clone(),
+                    end.v6_address.clone(),
                 )
             })
             .collect();
         // One end after the other: for a moment a sender on the first side is refused and one on the second is not
-        for (pid, interface, _) in &ends {
+        for (pid, interface, _, _) in &ends {
             self.in_node(*pid, &self.tools.ip, &["link", "set", interface, state])?;
         }
         if up {
             // The kernel removed the fixed neighbours with the down (a fixed one as well as a learned one); without them the
             // first packet in each direction waits for an ARP exchange that crosses the impaired link
-            for (pid, interface, neighbours) in &ends {
+            // IPv6: the kernel removed the address with the down (an IPv4 address stays), and the route to the other end of the link
+            // with it, so the address comes first
+            for (pid, interface, _, v6_address) in &ends {
+                if let Some(address) = v6_address {
+                    self.in_node(
+                        *pid,
+                        &self.tools.ip,
+                        &["addr", "replace", address, "dev", interface, "nodad"],
+                    )?;
+                }
+            }
+            for (pid, interface, neighbours, _) in &ends {
                 for [address, mac] in neighbours {
                     self.in_node(
                         *pid,
