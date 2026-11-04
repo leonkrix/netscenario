@@ -10,4 +10,4 @@ error: the packet size 8 bytes is outside 16 to 1472 bytes
 17 |     packet-size: 8b
    |                  ^^
    = path: workloads[0].packet-size
-   = help: the smallest payload is the header of the agent (16 bytes); the largest fits the MTU of 1500 without fragmentation (1472 bytes)
+   = help: the smallest payload is the header of the agent (16 bytes); the largest fits the MTU of 1500 without fragmentation (1472 bytes); a link with an `mtu` allows a larger packet, which is then cut into fragments

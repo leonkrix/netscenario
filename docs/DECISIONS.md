@@ -86,3 +86,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-078](decisions/D-078.md) | A topology is one graph with shortcuts, the routes are automatic, set in part or fully manual, and every node has an address of its own | Accepted 2026-11-03 |
 | [D-079](decisions/D-079.md) | A link that needs a queue discipline or a rate that changes is built through a fabric namespace, with a delaying `netem` in front of the shaper | Accepted 2026-11-03 |
 | [D-080](decisions/D-080.md) | A packet is accounted for link by link along its path, by the counts of the nodes, where the run can tell which packets enter a link | Accepted 2026-11-04 |
+| [D-081](decisions/D-081.md) | The IP family is chosen for the network and for the workload, a link has one MTU, and what fragments is accounted for by frames | Accepted 2026-11-04 |

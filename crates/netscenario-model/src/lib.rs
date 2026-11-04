@@ -32,6 +32,7 @@ pub mod error;
 mod generators;
 mod graph;
 mod measure;
+mod mtu;
 mod read;
 mod required;
 mod reserved;
@@ -51,6 +52,10 @@ pub use generators::{Generator, Pattern, PhaseDistribution, UdpBursty, UdpOnOff,
 pub use graph::{Destination, Path, PathError, RouteEntry, Routes};
 pub use measure::{
     MAX_BINS, MIN_BIN, Measure, MeasureOverrides, RecoveryBasis, RecoverySettings, SeriesSettings,
+};
+pub use mtu::{
+    DEFAULT_MTU, IpFamily, MAX_MTU, MAX_UDP_PAYLOAD_V4, MAX_UDP_PAYLOAD_V6, MIN_MTU, MIN_MTU_V6,
+    frames_per_packet, mtus_of, mtus_of_topology, path_problem,
 };
 pub use read::MAX_FILE_BYTES;
 pub use scenario::{

@@ -583,6 +583,15 @@
           "$ref": "#/$defs/Name",
           "description": "The name of the link."
         },
+        "mtu": {
+          "description": "The MTU of the interface at both ends of the link, in bytes (D-081). 1500 by default. A datagram that does not fit\nthe first link of its path is cut into fragments by the sender; later links must carry those whole.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "reverse": {
           "anyOf": [
             {

@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A link with an MTU of 1000 and packets of 1,400 bytes: the sender cuts each packet into two fragments, the router carries
+# them whole (its link has the default MTU of 1500) and the receiver gets the packet back. A lost fragment loses the packet,
+# so the loss of the first link is applied to the fragments: 1 - 0.95^2 = 9.75 % of the packets are lost.
+version: 0
+name: fragments
+seed: 11
+duration: 10s
+topology:
+  nodes: [client, { id: edge, role: router }, server]
+  links:
+    - id: access
+      between: [client, edge]
+      mtu: 1000
+      forward:
+        loss: { model: random, p: 5% }
+    - id: core
+      between: [edge, server]
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1400b }

@@ -91,7 +91,8 @@ impl Receiver {
         let deadline = self
             .max_time_ns
             .map(|limit| monotonic_ns().saturating_add(limit));
-        let mut buffer = [0_u8; 2048];
+        // Room for the largest UDP datagram: a packet larger than the MTU is cut into fragments and arrives whole (D-081)
+        let mut buffer = vec![0_u8; 65_536];
         // When the stop has come, the packets that are already queued are still read, but not for long
         let mut drain_end: Option<u64> = None;
         loop {

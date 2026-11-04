@@ -521,6 +521,9 @@ impl netscenario_core::Backend for Disturbed {
     ) -> Result<(), Error> {
         self.0.set_node_address(node, address)
     }
+    fn set_link_mtu(&mut self, link: netscenario_core::LinkHandle, mtu: u32) -> Result<(), Error> {
+        self.0.set_link_mtu(link, mtu)
+    }
     fn set_forwarding(
         &mut self,
         node: netscenario_core::NodeHandle,

@@ -1245,6 +1245,33 @@ fn cases() -> Vec<Case> {
                 },
             ],
         },
+        Case {
+            id: "25-mtu-loss",
+            title: "A link with an MTU of 600 and a loss of 5 %, packets of 1,400 bytes: a lost fragment loses the packet",
+            link: "mtu: 600; forward: loss 5%",
+            network: "  nodes: [client, server]\n  links:\n    - { id: access, between: [client, server], mtu: 600, forward: { loss: { model: random, p: 5% } } }\n",
+            offered: "8mbit",
+            size: 1400,
+            seconds: 6,
+            settle_seconds: 1,
+            udp_checksum: true,
+            bounds: vec![
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.1426,
+                    lo: 0.1212,
+                    hi: 0.1640,
+                    reason: "a packet of 1,400 bytes is cut into 3 fragments by an MTU of 600 (576 bytes of UDP in a fragment: 1,408 bytes of UDP make 3), each is lost on its own with 5 %, and the packet is lost if any fragment is: 1 - 0.95^3 = 14.26 %; binomial, 4,285 packets, a standard deviation of 0.53 percentage points, four of them on each side",
+                },
+                Bound {
+                    metric: Metric::ReorderedRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "fragments of one packet are reassembled, and a link without a delay keeps the order of the packets",
+                },
+            ],
+        },
     ]
 }
 
@@ -1260,6 +1287,7 @@ fn measure(case: &Case) -> Measurement {
     measurement
 }
 
+#[allow(clippy::too_many_lines)]
 fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
     let workload = &result.workloads[0];
     let file =
@@ -1296,7 +1324,9 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         .path
         .as_ref()
         .expect("the Kernel backend names the path");
-    let tallies: Vec<_> = path
+    // A packet that is cut into fragments has no tally (D-081): the numbers that need it are NaN there, and a bound on one of
+    // them fails, as it should
+    let tallies: Option<Vec<_>> = path
         .links
         .iter()
         .map(|link| {
@@ -1304,19 +1334,33 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
                 .directions
                 .iter()
                 .find(|t| t.link == *link && t.direction == "forward")
-                .unwrap_or_else(|| panic!("no tally for {link}: {:?}", result.directions))
         })
         .collect();
-    let (first, last) = (tallies[0], tallies[tallies.len() - 1]);
-    let dropped_corrupted: u64 = tallies.iter().map(|t| t.dropped_corrupted).sum();
-    let receive_buffer_drops: u64 = tallies.iter().map(|t| t.receive_buffer_drops).sum();
-    // A duplicating direction has no count of the packets the queue dropped: the measures that need it are not
-    // numbers there, and a bound on one of them fails, as it should
-    let lost_in_queue = tallies
-        .iter()
-        .map(|t| t.lost_in_queue)
-        .sum::<Option<u64>>()
-        .map(|lost| lost as f64);
+    let counted = tallies.as_ref().map(|tallies| {
+        let (first, last) = (tallies[0], tallies[tallies.len() - 1]);
+        let dropped_corrupted: u64 = tallies.iter().map(|t| t.dropped_corrupted).sum();
+        let receive_buffer_drops: u64 = tallies.iter().map(|t| t.receive_buffer_drops).sum();
+        // A duplicating direction has no count of the packets the queue dropped
+        let lost_in_queue = tallies
+            .iter()
+            .map(|t| t.lost_in_queue)
+            .sum::<Option<u64>>()
+            .map(|lost| lost as f64);
+        (
+            first.sent,
+            last.reached_node,
+            last.delivered,
+            dropped_corrupted,
+            receive_buffer_drops,
+            lost_in_queue,
+        )
+    });
+    let nan = f64::NAN;
+    let (first_sent, last_reached, last_delivered, dropped_corrupted, receive_buffer_drops) =
+        counted
+            .as_ref()
+            .map_or((0, 0, 0, 0, 0), |c| (c.0, c.1, c.2, c.3, c.4));
+    let lost_in_queue = counted.as_ref().and_then(|c| c.5);
     Measurement {
         delays_ms,
         loss_ratio: workload.stats.loss_ratio,
@@ -1325,8 +1369,12 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         duplicate_ratio: workload.stats.duplicates as f64 / workload.stats.sent.max(1) as f64,
         early_share,
         mean_loss_run: mean_loss_run(&received, workload.stats.sent),
-        node_drop_ratio: dropped_corrupted as f64 / last.reached_node.max(1) as f64,
-        lost_in_queue_ratio: lost_in_queue.map_or(f64::NAN, |lost| lost / first.sent.max(1) as f64),
+        node_drop_ratio: if counted.is_some() {
+            dropped_corrupted as f64 / last_reached.max(1) as f64
+        } else {
+            nan
+        },
+        lost_in_queue_ratio: lost_in_queue.map_or(nan, |lost| lost / first_sent.max(1) as f64),
         damaged_ratio: workload.corrupted as f64 / workload.stats.sent.max(1) as f64,
         // NaN where the result has nothing, so that a bound on it fails
         jitter_mean_ms: workload
@@ -1346,15 +1394,15 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
             .map_or(f64::NAN, |reordering| {
                 reordering.late_time.mean_ns as f64 / 1e6
             }),
-        named_share: workload.corrupted_named.map_or(f64::NAN, |named| {
-            named as f64 / dropped_corrupted.max(1) as f64
-        }),
+        named_share: workload
+            .corrupted_named
+            .map_or(nan, |named| named as f64 / dropped_corrupted.max(1) as f64),
         named_excess: workload.corrupted_named.map_or(f64::NAN, |named| {
             named.saturating_sub(dropped_corrupted) as f64
         }),
         unaccounted: lost_in_queue.map_or(f64::NAN, |lost| {
-            first.sent as f64
-                - (lost + (dropped_corrupted + last.delivered) as f64)
+            first_sent as f64
+                - (lost + (dropped_corrupted + last_delivered) as f64)
                 - receive_buffer_drops as f64
         }),
         sent: workload.stats.sent,
@@ -2254,4 +2302,25 @@ fn the_judging_of_a_path_tells_the_compound_loss_from_the_loss_of_one_link() {
         failing_metrics("23-path-loss", &missing),
         [Metric::Unaccounted]
     );
+}
+
+#[test]
+fn a_lost_fragment_loses_the_packet() {
+    run_and_judge("25-mtu-loss");
+}
+
+/// Canary: the same link without the MTU carries the packet whole, and loses 5 % and not 14 %.
+#[test]
+fn canary_a_link_that_does_not_cut_the_packet_fails_the_fragment_case() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let failed = wrong_network_on_purpose(
+        "25-mtu-loss",
+        "forward: loss 5%",
+        "  nodes: [client, server]\n  links:\n    - { id: access, between: [client, server], forward: { loss: { model: random, p: 5% } } }\n",
+        4,
+        1,
+    );
+    assert!(failed.contains(&Metric::LossRatio), "{failed:?}");
 }

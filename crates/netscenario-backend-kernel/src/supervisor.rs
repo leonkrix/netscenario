@@ -159,6 +159,7 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
             Request::SetNodeAddress { node, address } => {
                 provisioner.set_node_address(node, &address).map(|()| None)
             }
+            Request::SetMtu { link, mtu } => provisioner.set_mtu(link, mtu).map(|()| None),
             Request::SetForwarding { node, on } => {
                 provisioner.set_forwarding(node, on).map(|()| None)
             }

@@ -860,6 +860,14 @@ impl Backend for KernelBackend {
         .map(|_| ())
     }
 
+    fn set_link_mtu(&mut self, link: LinkHandle, mtu: u32) -> Result<(), Error> {
+        self.call(
+            &format!("set the MTU {mtu} of the link {}", link.0),
+            &Request::SetMtu { link: link.0, mtu },
+        )
+        .map(|_| ())
+    }
+
     fn set_forwarding(&mut self, node: NodeHandle, on: bool) -> Result<(), Error> {
         self.call(
             &format!(

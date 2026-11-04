@@ -58,7 +58,7 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Rate limit | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs); counts Ethernet frames, see below) | ✔ 0.4 | ✔ 0.5 |
 | Queue limit | ✔ 0.3 (until then derived, see below) | ✔ 0.4 | ~ 0.5 |
 | Queue disciplines (CoDel, FQ-CoDel, PIE) | ✔ 0.3 | ✔ 0.4 | ✘ |
-| MTU, fragmentation | ✔ 0.3 | ✔ 0.4 | ✘ |
+| MTU, fragmentation | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs): the sender cuts the packet, the router carries the fragments; [fidelity](../crates/netscenario-backend-kernel/tests/fidelity.rs): a lost fragment loses the packet) | ✔ 0.4 | ✘ |
 | Different values per direction | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/provision.rs)) | ✔ 0.4 | ✔ 0.5 |
 | Outages | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/timeline.rs): nothing arrives in the window, the packets that were on their way are dropped, the edges are placed by the clock) | ✔ 0.4 | ✔ 0.5 |
 | ECN marking | ? | ✔ 0.4 | ✘ |
