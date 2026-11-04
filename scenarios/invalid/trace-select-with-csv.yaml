@@ -1,0 +1,10 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+workloads:
+  - { id: call, kind: trace-replay, from: client, to: server, trace: { file: call.csv, select: { src-port: 5004 } } }

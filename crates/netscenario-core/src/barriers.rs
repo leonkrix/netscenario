@@ -212,7 +212,7 @@ mod tests {
         let sending = [Sending {
             from: &a,
             to: &b,
-            schedule,
+            schedule: schedule.clone(),
             start_ns: 1_000_000_000,
             duration_ns: 5_000_000_000,
         }];

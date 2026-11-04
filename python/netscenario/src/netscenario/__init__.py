@@ -55,6 +55,7 @@ from netscenario.results import (
     Series,
     Throughput,
     TimelineStep,
+    TraceInfo,
     Workload,
 )
 from netscenario.run import CancelToken, Check, DoctorReport, doctor, run
@@ -132,6 +133,7 @@ __all__ = [
     "SetSeed",
     "Throughput",
     "TimelineStep",
+    "TraceInfo",
     "Verdict",
     "Workload",
     "__version__",

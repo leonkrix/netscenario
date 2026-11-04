@@ -23,4 +23,5 @@ pub mod rng;
 pub mod schedule;
 pub mod sender;
 pub mod tap;
+pub mod trace;
 pub mod wire;

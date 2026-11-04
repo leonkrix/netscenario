@@ -69,6 +69,9 @@ pub enum Feature {
     QueueLimit,
     /// The `queue` of a direction with `CoDel`, `FQ-CoDel` or `PIE` (LNK-09, D-082). Last in the list because it was added last.
     QueueDisciplines,
+    /// The workload `trace-replay`: packets at the moments and with the sizes of a recorded trace (WRK-03, D-085). Last in the
+    /// list because it was added last.
+    TraceReplay,
 }
 
 impl Feature {
@@ -100,6 +103,7 @@ impl Feature {
         Feature::Ipv6,
         Feature::QueueLimit,
         Feature::QueueDisciplines,
+        Feature::TraceReplay,
     ];
 
     /// A short stable name, for results and logs.
@@ -132,6 +136,7 @@ impl Feature {
             Feature::Ipv6 => "ipv6",
             Feature::QueueLimit => "queue-limit",
             Feature::QueueDisciplines => "queue-disciplines",
+            Feature::TraceReplay => "trace-replay",
         }
     }
 
@@ -165,6 +170,7 @@ impl Feature {
             Feature::Ipv6 => "IPv6",
             Feature::QueueLimit => "Queue limit",
             Feature::QueueDisciplines => "Queue disciplines (CoDel, FQ-CoDel, PIE)",
+            Feature::TraceReplay => "Replay of a trace of packets (times and sizes)",
         }
     }
 }
@@ -307,6 +313,10 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             WorkloadKind::UdpPoisson | WorkloadKind::UdpOnoff | WorkloadKind::UdpBursty => {
                 need(Feature::UdpGenerators, format!("workloads[{index}]"));
                 need(Feature::TrafficPatterns, format!("workloads[{index}]"));
+            }
+            WorkloadKind::TraceReplay => {
+                need(Feature::UdpGenerators, format!("workloads[{index}]"));
+                need(Feature::TraceReplay, format!("workloads[{index}]"));
             }
             _ => {}
         }

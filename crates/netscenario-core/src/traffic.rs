@@ -65,6 +65,31 @@ pub(crate) fn schedule_of(
             distribution: distribution(phases),
             seed,
         },
+        Pattern::Trace => {
+            let data = generator
+                .trace
+                .and_then(|trace| trace.packets.as_ref())
+                .ok_or_else(|| {
+                    failure(
+                        "build the schedule of a workload",
+                        format!(
+                            "the trace of the workload '{}' has not been read from its file",
+                            generator.id
+                        ),
+                    )
+                })?;
+            let trace = netscenario_agent::trace::Trace::new(
+                data.moments_ns().to_vec(),
+                data.sizes().to_vec(),
+            )
+            .map_err(|why| {
+                failure(
+                    "build the schedule of a workload",
+                    format!("the trace of the workload '{}': {why}", generator.id),
+                )
+            })?;
+            Schedule::Trace(std::sync::Arc::new(trace))
+        }
         _ => {
             return Err(failure(
                 "build the schedule of a workload",
@@ -77,8 +102,18 @@ pub(crate) fn schedule_of(
     })
 }
 
-/// The options of `netscenario-agent send` that describe the schedule: the pattern and what it needs, and the size.
-pub(crate) fn arguments(schedule: &Schedule) -> Vec<String> {
+/// The file that the agent reads for a trace: one line for each packet (see [`netscenario_agent::trace`]). `None` for the other
+/// patterns.
+pub(crate) fn trace_text(schedule: &Schedule) -> Option<String> {
+    match schedule {
+        Schedule::Trace(trace) => Some(trace.to_text()),
+        _ => None,
+    }
+}
+
+/// The options of `netscenario-agent send` that describe the schedule: the pattern and what it needs, and the size. A trace is
+/// in the file `trace_file`, which the run writes before the sender starts (see [`trace_text`]).
+pub(crate) fn arguments(schedule: &Schedule, trace_file: Option<&std::path::Path>) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
     let mut add = |name: &str, value: String| {
         words.push(format!("--{name}"));
@@ -88,8 +123,20 @@ pub(crate) fn arguments(schedule: &Schedule) -> Vec<String> {
         Distribution::Fixed => "fixed",
         Distribution::Exponential => "exponential",
     };
-    add("size", schedule.packet_size().to_string());
-    match *schedule {
+    // A trace has a size for each packet, in its file
+    if !matches!(schedule, Schedule::Trace(_)) {
+        add("size", schedule.packet_size().to_string());
+    }
+    match schedule {
+        Schedule::Trace(_) => {
+            add("pattern", "trace".to_owned());
+            add(
+                "trace",
+                trace_file
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            );
+        }
         Schedule::Cbr(stream) => add("rate", stream.bits_per_second.to_string()),
         Schedule::Poisson { stream, seed } => {
             add("pattern", "poisson".to_owned());
@@ -107,7 +154,7 @@ pub(crate) fn arguments(schedule: &Schedule) -> Vec<String> {
             add("rate", stream.bits_per_second.to_string());
             add("on-ns", on_ns.to_string());
             add("off-ns", off_ns.to_string());
-            add("distribution", phases(distribution).to_owned());
+            add("distribution", phases(*distribution).to_owned());
             add("seed", seed.to_string());
         }
         Schedule::Bursty {
@@ -122,7 +169,7 @@ pub(crate) fn arguments(schedule: &Schedule) -> Vec<String> {
             add("burst-packets", packets.to_string());
             add("gap-ns", gap_ns.to_string());
             add("pause-ns", pause_ns.to_string());
-            add("distribution", phases(distribution).to_owned());
+            add("distribution", phases(*distribution).to_owned());
             add("seed", seed.to_string());
         }
     }
@@ -209,9 +256,68 @@ mod tests {
                 "--duration-ns".to_owned(),
                 "1".to_owned(),
             ];
-            words.extend(arguments(&schedule));
+            words.extend(arguments(&schedule, None));
             let parsed = netscenario_agent::cli::schedule_from_words(&words[2..]).unwrap();
             assert_eq!(parsed, schedule, "{words:?}");
         }
+    }
+
+    /// A trace workload becomes the schedule of its packets, the words for the agent name the file and no size, and the agent
+    /// reads the file back to the same schedule.
+    #[test]
+    fn a_trace_becomes_a_schedule_and_the_agent_reads_it_back() {
+        let mut scenario = Scenario::from_yaml(
+            "version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\nworkloads:\n  - { id: call, kind: trace-replay, from: a, to: b, trace: { file: call.csv } }\n",
+            "t.yaml",
+        )
+        .unwrap();
+        let problems =
+            scenario.resolve_files(|_| Ok(b"0ms,100b\n20ms,1200b\n20ms,16b\n1s,500b\n".to_vec()));
+        assert_eq!(problems, Vec::new());
+        let generator = scenario.workloads[0].generator().unwrap();
+        let schedule = schedule_of(&generator, 42, 0).unwrap();
+        let Schedule::Trace(trace) = &schedule else {
+            panic!("{schedule:?}");
+        };
+        assert_eq!(
+            trace.moments_ns(),
+            [0, 20_000_000, 20_000_000, 1_000_000_000]
+        );
+        assert_eq!(trace.sizes(), [100, 1200, 16, 500]);
+        assert_eq!(
+            (schedule.packet_size(), schedule.smallest_packet()),
+            (1200, 16)
+        );
+        // The file for the agent, and the words
+        let file =
+            std::env::temp_dir().join(format!("netscenario-trace-{}.trace", std::process::id()));
+        std::fs::write(&file, trace_text(&schedule).unwrap()).unwrap();
+        let mut words = vec!["send".to_owned(), "--to".to_owned(), "x:1".to_owned()];
+        words.extend(arguments(&schedule, Some(&file)));
+        assert!(!words.contains(&"--size".to_owned()), "{words:?}");
+        assert!(
+            words.windows(2).any(|pair| pair == ["--pattern", "trace"]),
+            "{words:?}"
+        );
+        let parsed = netscenario_agent::cli::schedule_from_words(&words[3..]).unwrap();
+        assert_eq!(parsed, schedule);
+        // Canary: the other patterns have no trace file and a size
+        assert_eq!(
+            trace_text(&Schedule::Cbr(Stream {
+                bits_per_second: 1,
+                packet_size: 20
+            })),
+            None
+        );
+        let _ = std::fs::remove_file(file);
+        // A trace that was not read is an error and not a guess
+        let unread = Scenario::from_yaml(
+            "version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\nworkloads:\n  - { id: call, kind: trace-replay, from: a, to: b, trace: { file: call.csv } }\n",
+            "t.yaml",
+        )
+        .unwrap();
+        let generator = unread.workloads[0].generator().unwrap();
+        let error = schedule_of(&generator, 42, 0).unwrap_err().to_string();
+        assert!(error.contains("has not been read from its file"), "{error}");
     }
 }

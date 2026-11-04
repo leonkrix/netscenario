@@ -10,7 +10,7 @@ use crate::source::{self, SourceIndex};
 use crate::suggest::closest;
 
 /// A scenario file may be at most this large.
-pub const MAX_FILE_BYTES: usize = 1024 * 1024;
+pub const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
 
 fn options() -> Options {
     let mut options = Options::default();

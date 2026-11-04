@@ -32,7 +32,7 @@ use crate::recovery::{self, Basis, Recovery, RecoveryOptions};
 use crate::result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, NodeInfo,
     PathInfo, ProgramResult, QueueCheck, QueueInfo, RESULT_FORMAT, RESULT_VERSION, RouteInfo,
-    RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
+    RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, TraceInfo, WorkloadResult,
 };
 use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
@@ -282,8 +282,9 @@ struct Flow<'a> {
     to_address: String,
     /// The nodes and links its packets pass (D-078).
     path: netscenario_model::Path,
-    /// The frames a packet makes on the first link: more than one if the sender cuts it into fragments (D-081).
-    frames: u64,
+    /// The frames a packet makes on the first link: more than one if the sender cuts it into fragments (D-081). A trace has packets
+    /// of different sizes, so it counts them one by one (D-085).
+    frames: Frames,
     /// Why the damaged packets of this flow cannot be named by sequence number, where the path corrupts them (D-081): the tap
     /// of the receiver reads IPv4 frames, and a fragment other than the first shows no sequence number.
     wire_unavailable: Option<&'static str>,
@@ -342,7 +343,7 @@ struct Measurement {
 
 /// A scenario that refers to a file must have it read before it runs (D-083): the table is made when the scenario is loaded.
 fn check_files_are_read(scenario: &Scenario) -> Result<(), Error> {
-    let unread = scenario.unresolved_table_files();
+    let unread = scenario.unresolved_files();
     if unread.is_empty() {
         return Ok(());
     }
@@ -832,8 +833,15 @@ fn workload_result(
     } else {
         None
     };
-    let (series, recoveries) =
-        series_of(workload, schedule, flow, scenario, options, timeline, start)?;
+    let (series, recoveries) = series_of(
+        workload,
+        schedule.clone(),
+        flow,
+        scenario,
+        options,
+        timeline,
+        start,
+    )?;
     let (from_address, to_address) =
         addresses_of(provisioned, workload, family_of(scenario, workload));
     Ok(WorkloadResult {
@@ -848,7 +856,7 @@ fn workload_result(
             .cloned()
             .flatten()
             .map_or(1, |path| {
-                frames_on_the_first_link(scenario, workload, &path)
+                frames_of(scenario, workload, &schedule, &path).most()
             }),
         path: paths_of(scenario)
             .get(index)
@@ -861,13 +869,14 @@ fn workload_result(
             }),
         rate_bits_per_second: schedule.mean_bits_per_second(),
         packet_size_bytes: workload.packet_size.bytes(),
+        trace: trace_info(workload),
         start_ns: nanos(start),
         duration_ns: nanos(stop.saturating_sub(start)),
         stats: analyse_refused(
             flow.sent.packets + flow.sent.errors,
             &flow.sent.refused,
             &flow.records.records,
-            workload.packet_size.bytes(),
+            &|sequence| schedule.size_of(sequence),
             first_send,
         ),
         sender: SenderInfo {
@@ -894,6 +903,21 @@ fn workload_result(
         packets_file,
         series: Some(series),
         recoveries,
+    })
+}
+
+/// What the result says about the trace of a `trace-replay` workload.
+fn trace_info(workload: &Generator<'_>) -> Option<TraceInfo> {
+    let trace = workload.trace?;
+    let data = trace.packets.as_ref()?;
+    Some(TraceInfo {
+        file: trace.file.clone(),
+        sha256: trace.sha256.clone(),
+        packets: data.len() as u64,
+        padded: u64::from(trace.padded.unwrap_or(0)),
+        smallest_bytes: data.smallest(),
+        largest_bytes: data.largest(),
+        span_ns: data.span_ns(),
     })
 }
 
@@ -1110,12 +1134,92 @@ fn frames_on_the_first_link(
     )
 }
 
+/// How many frames the packets of a workload make on the first link (D-081): the same for every packet, or, for a trace, one number
+/// for each packet because their sizes differ (D-085).
+#[derive(Debug, Clone)]
+enum Frames {
+    /// Every packet makes this many.
+    Each(u64),
+    /// The frames of packet `n`, for each `n`.
+    PerPacket(Vec<u32>),
+}
+
+impl Frames {
+    /// The most frames any packet makes: more than one if some packet is cut into fragments.
+    fn most(&self) -> u64 {
+        match self {
+            Self::Each(frames) => *frames,
+            Self::PerPacket(frames) => frames.iter().copied().max().map_or(1, u64::from),
+        }
+    }
+
+    /// The frames of the packets the sender put in: the sequence numbers it used, less the ones the kernel refused.
+    fn of_sent(&self, sent: &SendSummary) -> u64 {
+        match self {
+            Self::Each(frames) => sent.packets * frames,
+            Self::PerPacket(frames) => {
+                let slots = usize::try_from(sent.packets + sent.errors).unwrap_or(usize::MAX);
+                let refused = |sequence: u64| {
+                    sent.refused
+                        .iter()
+                        .any(|[first, last]| (*first..=*last).contains(&sequence))
+                };
+                frames
+                    .iter()
+                    .take(slots)
+                    .enumerate()
+                    .filter(|(sequence, _)| !refused(*sequence as u64))
+                    .map(|(_, frames)| u64::from(*frames))
+                    .sum()
+            }
+        }
+    }
+}
+
+/// The frames of the packets of a workload on the first link of its path.
+fn frames_of(
+    scenario: &Scenario,
+    workload: &Generator<'_>,
+    schedule: &Schedule,
+    path: &netscenario_model::Path,
+) -> Frames {
+    let Schedule::Trace(trace) = schedule else {
+        return Frames::Each(frames_on_the_first_link(scenario, workload, path));
+    };
+    if workload.dont_fragment {
+        return Frames::Each(1);
+    }
+    let mtu = netscenario_model::mtus_of(scenario, &path.links)
+        .first()
+        .copied()
+        .unwrap_or(netscenario_model::DEFAULT_MTU);
+    let family = family_of(scenario, workload);
+    Frames::PerPacket(
+        trace
+            .sizes()
+            .iter()
+            .map(|size| {
+                u32::try_from(netscenario_model::frames_per_packet(
+                    u64::from(*size),
+                    mtu,
+                    family,
+                ))
+                .unwrap_or(u32::MAX)
+            })
+            .collect(),
+    )
+}
+
 fn nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
 fn port(index: usize) -> u16 {
     BASE_PORT.saturating_add(u16::try_from(index).unwrap_or(0))
+}
+
+fn trace_name(index: usize) -> String {
+    format!("flow-{index}.trace")
 }
 
 fn records_name(index: usize) -> String {
@@ -1248,13 +1352,12 @@ fn plan<'a>(
                 .map_or_else(|| Duration::from(scenario.duration), Duration::from);
             let (_, to_address) =
                 addresses_of(provisioned, &workload, family_of(scenario, &workload));
+            let schedule =
+                traffic::schedule_of(&workload, provisioned.seed.unwrap_or_default(), index)?;
+            let frames = frames_of(scenario, &workload, &schedule, &path);
             Ok(Flow {
                 index,
-                schedule: traffic::schedule_of(
-                    &workload,
-                    provisioned.seed.unwrap_or_default(),
-                    index,
-                )?,
+                schedule,
                 workload,
                 from_node: node(workload.from)?,
                 to_node: node(workload.to)?,
@@ -1263,19 +1366,19 @@ fn plan<'a>(
                 // The tap names a damaged packet by its sequence number, which only the first fragment of a packet shows, and it
                 // reads IPv4 frames
                 wire_file: (corrupts_on_the_way(scenario, &path)
-                    && frames_on_the_first_link(scenario, &workload, &path) == 1
+                    && frames.most() == 1
                     && family_of(scenario, &workload) == netscenario_model::IpFamily::V4)
                     .then(|| options.out_dir.join(wire_name(index))),
                 wire_unavailable: if !corrupts_on_the_way(scenario, &path) {
                     None
                 } else if family_of(scenario, &workload) == netscenario_model::IpFamily::V6 {
                     Some("the tap of the receiver reads IPv4 frames only, so the damaged packets of an IPv6 flow are counted but not named")
-                } else if frames_on_the_first_link(scenario, &workload, &path) > 1 {
+                } else if frames.most() > 1 {
                     Some("a packet that is cut into fragments shows its sequence number in the first fragment only, so its damaged packets are counted but not named")
                 } else {
                     None
                 },
-                frames: frames_on_the_first_link(scenario, &workload, &path),
+                frames,
                 path,
                 start,
                 duration: stop.saturating_sub(start),
@@ -1427,7 +1530,22 @@ fn start_senders(
     for (index, flow) in flows.iter().enumerate() {
         let what = format!("start the sender of '{}'", flow.workload.id);
         let mut arguments = strings(&["send", "--to", &flow.to_address]);
-        arguments.extend(traffic::arguments(&flow.schedule));
+        // A trace is a file for the agent, written here before the sender starts
+        let trace_file = match traffic::trace_text(&flow.schedule) {
+            Some(text) => {
+                let path = std::path::absolute(options.out_dir.join(trace_name(flow.index)))
+                    .unwrap_or_else(|_| options.out_dir.join(trace_name(flow.index)));
+                std::fs::write(&path, text).map_err(|error| {
+                    failure(
+                        "write the trace of a workload",
+                        format!("{}: {error}", path.display()),
+                    )
+                })?;
+                Some(path)
+            }
+            None => None,
+        };
+        arguments.extend(traffic::arguments(&flow.schedule, trace_file.as_deref()));
         arguments.push("--duration-ns".to_owned());
         arguments.push(nanos(flow.duration).to_string());
         arguments.push("--flow".to_owned());
@@ -1527,7 +1645,7 @@ fn measure_with(
         .map(|flow| barriers::Sending {
             from: flow.workload.from,
             to: flow.workload.to,
-            schedule: flow.schedule,
+            schedule: flow.schedule.clone(),
             start_ns: nanos(flow.start),
             duration_ns: nanos(flow.duration),
         })
@@ -1925,7 +2043,7 @@ fn tally_directions(
                 let Some(total) = entered_packets(
                     &senders,
                     &feeders,
-                    |workload| measured[workload].sent.packets * flows[workload].frames,
+                    |workload| flows[workload].frames.of_sent(&measured[workload].sent),
                     before,
                     after,
                 ) else {
@@ -1938,7 +2056,7 @@ fn tally_directions(
         let crossing = crossings(scenario, &paths, key);
         // The tally is by packet and a queue sees frames: a packet that is cut into fragments is not accounted for here (D-081);
         // its queue is still checked, by frames
-        if crossing.iter().any(|c| flows[c.workload].frames > 1) {
+        if crossing.iter().any(|c| flows[c.workload].frames.most() > 1) {
             continue;
         }
         // The receivers are at the end of the last link only; at a node in the middle the packets are forwarded, and what
@@ -2052,7 +2170,7 @@ fn check_queues(
                 let Some(total) = entered_packets(
                     &senders,
                     &feeders,
-                    |workload| sent[workload].packets * flows[workload].frames,
+                    |workload| flows[workload].frames.of_sent(&sent[workload]),
                     before,
                     after,
                 ) else {
@@ -4324,5 +4442,37 @@ mod tests {
         .unwrap();
         // forward: 100 ms + 4 * 10 ms = 140 ms; reverse: 300 ms
         assert_eq!(longest_hold(&scenario), Duration::from_millis(300));
+    }
+
+    /// The frames of a trace are counted for each packet: the packets that the sender put in, less the ones the kernel refused. A
+    /// packet that is cut makes more than one frame, and the most of any packet tells whether the tally by packet can be kept.
+    #[test]
+    fn the_frames_of_a_trace_are_counted_for_each_packet_that_was_sent() {
+        let sent = |packets: u64, errors: u64, refused: Vec<[u64; 2]>| SendSummary {
+            flow: 0,
+            packets,
+            first_send_ns: None,
+            last_send_ns: None,
+            max_lateness_ns: 0,
+            errors,
+            first_error: None,
+            refused,
+            refused_unrecorded: 0,
+            stopped: false,
+            barriers: Vec::new(),
+            barrier_timeouts: 0,
+        };
+        // Packets 0 to 5 make 1, 2, 1, 3, 1, 1 frames
+        let frames = Frames::PerPacket(vec![1, 2, 1, 3, 1, 1]);
+        assert_eq!(frames.most(), 3);
+        assert_eq!(frames.of_sent(&sent(6, 0, Vec::new())), 9);
+        // Four were sent and the kernel refused packets 1 and 2: 0 and 3 are the ones that left (and 4, 5 never had a slot)
+        assert_eq!(frames.of_sent(&sent(2, 2, vec![[1, 2]])), 1 + 3);
+        // Canary: the same count for a constant size is the packets times the frames
+        let each = Frames::Each(2);
+        assert_eq!(
+            (each.most(), each.of_sent(&sent(6, 0, Vec::new()))),
+            (2, 12)
+        );
     }
 }

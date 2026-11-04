@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/trace-select-with-csv.yaml
+---
+error: `select` picks a flow out of a capture, and a CSV file is one flow already
+  --> trace-select-with-csv.yaml:10:96
+   |
+ 9 | workloads:
+10 |   - { id: call, kind: trace-replay, from: client, to: server, trace: { file: call.csv, select: { src-port: 5004 } } }
+   |                                                                                                ^
+   = path: workloads[0].trace.select
+   = help: take `select` away, or use `format: pcap`

@@ -1,6 +1,6 @@
 //! The moments at which the packets of a workload leave (WRK-01, WRK-02).
 //!
-//! A [`Schedule`] is one of four patterns: a constant bit rate, a Poisson process, an on/off source and bursts. The
+//! A [`Schedule`] is one of five patterns: a constant bit rate, a Poisson process, an on/off source, bursts and a trace. The
 //! constant bit rate is closed-form ([`Stream`]); the others are made by walking a seeded generator ([`crate::rng`]) from
 //! the start, because the moment of packet `n` depends on the gaps before it. The sender walks it once, in order; the run
 //! walks it again after the fact (the series, the barriers of the timeline) and gets the same moments, because the walk is
@@ -18,7 +18,10 @@
     clippy::cast_sign_loss
 )]
 
+use std::sync::Arc;
+
 use crate::rng::Xoshiro256PlusPlus;
+use crate::trace::Trace;
 
 /// A constant bit rate stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +72,7 @@ pub enum Distribution {
 }
 
 /// The moments at which the packets of one workload leave, counted from its start.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Schedule {
     /// A packet every `size * 8 / rate` seconds.
     Cbr(Stream),
@@ -112,6 +115,9 @@ pub enum Schedule {
         /// The seed of the generator.
         seed: u64,
     },
+    /// The packets of a recorded trace, each at its own moment with its own size (WRK-03, D-085). Last because the patterns are
+    /// listed in the order they were added.
+    Trace(Arc<Trace>),
 }
 
 impl From<Stream> for Schedule {
@@ -121,7 +127,7 @@ impl From<Stream> for Schedule {
 }
 
 impl Schedule {
-    /// The payload of a packet in bytes.
+    /// The payload of a packet in bytes: the same for every packet, except for a trace, where it is the largest.
     #[must_use]
     pub fn packet_size(&self) -> u64 {
         match self {
@@ -129,6 +135,28 @@ impl Schedule {
                 stream.packet_size
             }
             Self::Bursty { packet_size, .. } => *packet_size,
+            Self::Trace(trace) => trace.largest(),
+        }
+    }
+
+    /// The payload of packet `n` in bytes.
+    #[must_use]
+    pub fn size_of(&self, n: u64) -> u64 {
+        match self {
+            Self::Trace(trace) => usize::try_from(n)
+                .ok()
+                .and_then(|index| trace.sizes().get(index))
+                .map_or_else(|| trace.largest(), |size| u64::from(*size)),
+            _ => self.packet_size(),
+        }
+    }
+
+    /// The smallest payload of any packet.
+    #[must_use]
+    pub fn smallest_packet(&self) -> u64 {
+        match self {
+            Self::Trace(trace) => trace.smallest(),
+            _ => self.packet_size(),
         }
     }
 
@@ -167,6 +195,15 @@ impl Schedule {
                 let bits = u128::from(*packets) * u128::from(*packet_size) * 8;
                 u64::try_from(bits * 1_000_000_000 / cycle).unwrap_or(u64::MAX)
             }
+            // The payload of the trace over the time from its first packet to its last
+            Self::Trace(trace) => {
+                let span = trace.moments_ns().last().copied().unwrap_or(0);
+                if span == 0 {
+                    return 0;
+                }
+                u64::try_from(trace.total_bits() * 1_000_000_000 / u128::from(span))
+                    .unwrap_or(u64::MAX)
+            }
         }
     }
 
@@ -204,6 +241,8 @@ impl Schedule {
                         .and_then(|burst| burst.checked_add(*pause_ns))
                         .is_some_and(|cycle| cycle > 0)
             }
+            // A trace is checked when it is made
+            Self::Trace(trace) => !trace.is_empty(),
         }
     }
 
@@ -211,7 +250,7 @@ impl Schedule {
     /// is packet 0. The iterator ends at the first moment that is not before the end, because the moments only grow.
     #[must_use]
     pub fn offsets(&self, duration_ns: u64) -> Offsets {
-        Offsets::new(*self, duration_ns)
+        Offsets::new(self.clone(), duration_ns)
     }
 
     /// How many packets leave before `duration_ns`.
@@ -219,6 +258,10 @@ impl Schedule {
     pub fn packets_in(&self, duration_ns: u64) -> u64 {
         match self {
             Self::Cbr(stream) => stream.packets_in(duration_ns),
+            Self::Trace(trace) => trace
+                .moments_ns()
+                .partition_point(|moment| *moment < duration_ns)
+                as u64,
             _ => self.offsets(duration_ns).count() as u64,
         }
     }
@@ -288,6 +331,10 @@ enum State {
         burst_start: f64,
         i: u64,
     },
+    Trace {
+        trace: Arc<Trace>,
+        i: usize,
+    },
 }
 
 /// A length for a phase or a pause: exact, or drawn with the given mean.
@@ -352,6 +399,7 @@ impl Offsets {
                 burst_start: 0.0,
                 i: 0,
             },
+            Schedule::Trace(trace) => State::Trace { trace, i: 0 },
         };
         Self { duration_ns, state }
     }
@@ -438,6 +486,14 @@ impl Iterator for Offsets {
                 *burst_start += (burst as f64) + length(rng, *distribution, *pause_ns);
                 *i = 0;
             },
+            State::Trace { trace, i } => {
+                let offset = *trace.moments_ns().get(*i)?;
+                if offset >= duration {
+                    return None;
+                }
+                *i += 1;
+                Some(offset)
+            }
         }
     }
 }
@@ -808,5 +864,40 @@ mod tests {
             bursts(Distribution::Fixed, 1).mean_bits_per_second(),
             3_200 * 1_000_000_000 / 2_300_000
         );
+    }
+
+    /// A trace gives its own moments and sizes, counts the packets that leave before a moment (a moment is not before itself),
+    /// and has the mean rate of its payload over its span.
+    #[test]
+    fn a_trace_walks_its_own_moments_and_sizes() {
+        let trace = Trace::new(vec![0, 10, 10, 40], vec![100, 200, 300, 400]).unwrap();
+        let schedule = Schedule::Trace(Arc::new(trace));
+        assert_eq!(schedule.offsets(1_000).collect::<Vec<_>>(), [0, 10, 10, 40]);
+        assert_eq!(schedule.offsets(40).collect::<Vec<_>>(), [0, 10, 10]);
+        assert_eq!(schedule.packets_in(10), 1);
+        assert_eq!(schedule.packets_in(11), 3);
+        assert_eq!(schedule.packets_in(41), 4);
+        assert_eq!(
+            schedule.packets_before_each(&[0, 10, 11, 100]),
+            [0, 1, 3, 4]
+        );
+        assert_eq!(
+            (
+                schedule.size_of(0),
+                schedule.size_of(2),
+                schedule.size_of(3)
+            ),
+            (100, 300, 400)
+        );
+        assert_eq!(
+            (schedule.packet_size(), schedule.smallest_packet()),
+            (400, 100)
+        );
+        // 1,000 bytes = 8,000 bits in 40 ns
+        assert_eq!(schedule.mean_bits_per_second(), 200_000_000_000);
+        assert!(schedule.is_well_formed());
+        // Canary: a constant stream has one size for all of its packets
+        let cbr = Schedule::Cbr(stream(1_000_000, 125));
+        assert_eq!((cbr.size_of(0), cbr.size_of(99)), (125, 125));
     }
 }

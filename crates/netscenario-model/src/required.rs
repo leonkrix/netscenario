@@ -127,6 +127,11 @@ pub(crate) const TAGGED: &[Tagged] = &[
                     "dont-fragment",
                 ],
             ),
+            (
+                "trace-replay",
+                &["id", "from", "to", "trace"],
+                &["start", "stop", "udp-checksum", "ip", "dont-fragment"],
+            ),
         ],
     },
 ];

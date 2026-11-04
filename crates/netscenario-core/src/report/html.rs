@@ -213,12 +213,17 @@ fn workload_section(
 ) {
     let _ = write!(
         out,
-        "<h2>{}</h2><p>{} → {}, {} packets of {} bytes</p>",
+        "<h2>{}</h2><p>{} → {}, {} packets of {}</p>",
         escape(&workload.id),
         escape(&workload.from),
         escape(&workload.to),
         workload.stats.sent,
-        workload.packet_size_bytes
+        match &workload.trace {
+            Some(trace) if trace.smallest_bytes != trace.largest_bytes => {
+                format!("{} to {} bytes", trace.smallest_bytes, trace.largest_bytes)
+            }
+            _ => format!("{} bytes", workload.packet_size_bytes),
+        }
     );
     if let Some(reason) = failure_of(result, workload) {
         let _ = write!(out, "<p class=\"warn\">{}</p>", escape(&reason));
@@ -263,7 +268,15 @@ fn throughput_chart(
         .collect();
     let offered: Vec<f64> = bins
         .iter()
-        .map(|b| b.by_send.sent as f64 * workload.packet_size_bytes as f64 * 8.0 / bin_s)
+        .map(|b| {
+            // A series of release 0.2 has no sum of the bits, and every packet had the size of the workload
+            let bits = if b.by_send.bits > 0 {
+                b.by_send.bits as f64
+            } else {
+                b.by_send.sent as f64 * workload.packet_size_bytes as f64 * 8.0
+            };
+            bits / bin_s
+        })
         .collect();
     let peak = received.iter().chain(&offered).copied().fold(0.0, f64::max);
     let (scale, unit) = if peak >= 1e9 {

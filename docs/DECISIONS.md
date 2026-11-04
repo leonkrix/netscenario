@@ -90,3 +90,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-082](decisions/D-082.md) | The queue of a direction is the packets that wait for its rate, with a discipline and its parameters, and the run reads its counters | Accepted 2026-11-04 |
 | [D-083](decisions/D-083.md) | A scenario reads the files it refers to when it is loaded, from its own directory, and the scenario holds what is made of them | Accepted 2026-11-04 |
 | [D-084](decisions/D-084.md) | The jitter takes its shape from a table of `netem`: the tables of iproute2, or one made from a file of samples, scaled to fit 16 bits | Accepted 2026-11-04 |
+| [D-085](decisions/D-085.md) | A trace is replayed by its moments and its sizes, read from a CSV file or a capture when the scenario is loaded | Accepted 2026-11-04 |

@@ -309,6 +309,7 @@ mod tests {
             start_ns: index * SECOND,
             by_send: BySend {
                 sent: 100,
+                bits: 100 * 8,
                 received: delivered,
                 lost: 100 - delivered,
                 delivered_ratio: Some(delivered as f64 / 100.0),

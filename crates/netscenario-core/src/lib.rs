@@ -108,7 +108,7 @@ pub use result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, MetricSummary,
     NodeInfo, PathInfo, ProgramOutput, ProgramResult, QueueCheck, QueueInfo, QueueSample,
     RESULT_FORMAT, RESULT_VERSION, RouteInfo, RunResult, ScenarioInfo, SeedInfo, SenderInfo,
-    SeriesInfo, Timing, WorkloadResult,
+    SeriesInfo, Timing, TraceInfo, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
 pub use runset::{

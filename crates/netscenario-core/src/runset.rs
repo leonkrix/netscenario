@@ -304,7 +304,7 @@ pub fn metric_values(result: &RunResult) -> BTreeMap<String, f64> {
             }
         }
         if workload.duration_ns > 0 {
-            let bits = count(stats.received) * count(workload.packet_size_bytes) * 8.0;
+            let bits = count(workload.payload_received_bytes()) * 8.0;
             put(
                 format!("{id}.throughput.mean"),
                 bits / seconds(workload.duration_ns),

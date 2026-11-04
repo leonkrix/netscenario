@@ -272,11 +272,14 @@ pub fn run_with(
         ));
     }
     let header = u64::try_from(udp_checksum.header_len()).unwrap_or(16);
+    // The largest payload fills the buffer; a trace has the sizes of all its packets to check
     let packet_size = schedule.packet_size();
-    if !(header..=MAX_PAYLOAD).contains(&packet_size) {
-        return Err(SendError(format!(
-            "the packet size {packet_size} is outside {header} to {MAX_PAYLOAD} bytes"
-        )));
+    for size in [schedule.smallest_packet(), packet_size] {
+        if !(header..=MAX_PAYLOAD).contains(&size) {
+            return Err(SendError(format!(
+                "the packet size {size} is outside {header} to {MAX_PAYLOAD} bytes"
+            )));
+        }
     }
     // A schedule that is not drawn is counted at once; a drawn one is cut off at the last number the wire format has
     if let Schedule::Cbr(stream) = schedule {
@@ -293,13 +296,13 @@ pub fn run_with(
     let offset = outlet.offset();
     let size = usize::try_from(packet_size).unwrap_or(HEADER_LEN);
     let mut datagram = vec![0_u8; offset + size];
-    if matches!(outlet, Outlet::Raw(_)) {
-        let length = u16::try_from(datagram.len()).unwrap_or(u16::MAX);
+    let raw = matches!(outlet, Outlet::Raw(_));
+    if raw {
         let port = target.port();
         datagram[0..2].copy_from_slice(&source_port(*flow).to_be_bytes());
         datagram[2..4].copy_from_slice(&port.to_be_bytes());
-        datagram[4..6].copy_from_slice(&length.to_be_bytes());
-        // The checksum field stays 0: that is the point
+        // The length field is written for each packet below, because the sizes of a trace differ; the checksum field stays 0:
+        // that is the point
     }
     let start = start_at_ns.unwrap_or_else(monotonic_ns);
     let mut summary = SendSummary {
@@ -357,11 +360,17 @@ pub fn run_with(
             sequence,
             send_ns: now,
         };
-        match udp_checksum {
-            UdpChecksum::On => header.write(&mut datagram[offset..]),
-            UdpChecksum::Off => header.write_v2(&mut datagram[offset..]),
+        // This packet is as long as the schedule says; the buffer is as long as the longest
+        let length = offset + usize::try_from(schedule.size_of(n)).unwrap_or(size);
+        if raw {
+            let field = u16::try_from(length).unwrap_or(u16::MAX);
+            datagram[4..6].copy_from_slice(&field.to_be_bytes());
         }
-        match outlet.send(&datagram) {
+        match udp_checksum {
+            UdpChecksum::On => header.write(&mut datagram[offset..length]),
+            UdpChecksum::Off => header.write_v2(&mut datagram[offset..length]),
+        }
+        match outlet.send(&datagram[..length]) {
             Ok(()) => {
                 summary.packets += 1;
                 summary.first_send_ns.get_or_insert(now);
@@ -529,13 +538,77 @@ mod tests {
             seed: 5,
         };
         let mut stream = config(1, 125, 300_000_000);
-        stream.schedule = schedule;
+        stream.schedule = schedule.clone();
         stream.target = ([127, 0, 0, 1], 9).into();
         let summary = run_with(&stream, &mut NoBarriers).unwrap();
         // Nothing listens, so the kernel may refuse some after a first answer of the peer; every slot is accounted for
         let slots = summary.packets + summary.errors;
         assert_eq!(slots, schedule.packets_in(300_000_000));
         assert!(slots > 200, "{slots} packets of a mean of 300");
+    }
+
+    /// A trace sends each packet at its moment and with its size: a socket that listens reads the datagrams of the sizes of the
+    /// trace, with the header of the agent in front, in the order of the sequence numbers.
+    #[test]
+    fn a_trace_sends_packets_of_the_sizes_it_lists() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let sizes = [20_u32, 300, 1400, 16, 1472];
+        let trace = crate::trace::Trace::new(
+            vec![0, 1_000_000, 2_000_000, 2_000_000, 3_000_000],
+            sizes.to_vec(),
+        )
+        .unwrap();
+        let mut stream = config(1, 125, 50_000_000);
+        stream.target = socket.local_addr().unwrap();
+        stream.schedule = Schedule::Trace(std::sync::Arc::new(trace));
+        let summary = run_with(&stream, &mut NoBarriers).unwrap();
+        assert_eq!((summary.packets, summary.errors), (5, 0));
+        let mut buffer = [0_u8; 2000];
+        for (expected, size) in sizes.iter().enumerate() {
+            let length = socket.recv(&mut buffer).unwrap();
+            assert_eq!(length, *size as usize, "packet {expected}");
+            let header = Header::read(&buffer[..length]).unwrap();
+            assert_eq!(header.sequence as usize, expected);
+        }
+        // The window cuts a trace like any schedule: the packets from 2 ms on are not sent in 2 ms
+        let cut = Schedule::Trace(std::sync::Arc::new(
+            crate::trace::Trace::new(vec![0, 1_000_000, 2_000_000], vec![100, 100, 100]).unwrap(),
+        ));
+        assert_eq!(cut.packets_in(2_000_000), 2);
+    }
+
+    /// A trace with a packet that cannot carry the header of the agent, or that is larger than a datagram, is refused before it
+    /// sends, naming the size. Canary: the same trace without that packet is sent.
+    #[test]
+    fn a_trace_with_a_size_outside_the_limits_is_refused() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let run = |sizes: Vec<u32>| {
+            let moments = vec![0; sizes.len()];
+            let mut stream = config(1, 125, 10_000_000);
+            stream.target = socket.local_addr().unwrap();
+            stream.schedule = Schedule::Trace(std::sync::Arc::new(
+                crate::trace::Trace::new(moments, sizes).unwrap(),
+            ));
+            run_with(&stream, &mut NoBarriers)
+        };
+        assert!(run(vec![100, 200]).is_ok());
+        let small = run(vec![100, 8]).unwrap_err();
+        assert!(
+            small
+                .to_string()
+                .contains("the packet size 8 is outside 16 to"),
+            "{small}"
+        );
+        let large = run(vec![100, 70_000]).unwrap_err();
+        assert!(
+            large
+                .to_string()
+                .contains("the packet size 70000 is outside"),
+            "{large}"
+        );
     }
 
     /// Canary: a schedule that makes no packet is refused with a message that names what to change, and does not walk.

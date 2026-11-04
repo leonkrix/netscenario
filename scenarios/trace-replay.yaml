@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A recorded call (call.csv: the moments and the sizes of its packets) sent through a link of 2 mbit with a queue (D-085). The
+# file is next to this scenario, is read when the scenario is loaded and is part of it from then on (D-083): `netscenario expand
+# trace-replay.yaml` shows the packets that were made of it. Replace the file by your own CSV (`time,size` with a unit on each
+# value), or by a capture: `trace: { file: call.pcap, select: { src-port: 5004 } }` (a flow of a pcap or pcapng file).
+version: 0
+name: trace-replay
+seed: 3
+duration: 8s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward:
+        delay: 30ms
+        rate: 2mbit
+        queue: { limit: 40p }
+      reverse: { delay: 30ms }
+workloads:
+  - { id: call, kind: trace-replay, from: client, to: server, trace: { file: call.csv } }

@@ -269,7 +269,7 @@ impl Case {
         )
         .unwrap();
         // A case may name a file of samples; its content is made here, so that the case needs no file next to it
-        let problems = scenario.resolve_tables(|file| {
+        let problems = scenario.resolve_files(|file| {
             sample_file(file).ok_or_else(|| format!("the case has no file {file}"))
         });
         assert_eq!(problems, Vec::new());
