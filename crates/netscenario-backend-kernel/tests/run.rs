@@ -129,9 +129,10 @@ fn a_run_measures_the_link_and_writes_a_result() {
             .collect::<Vec<_>>(),
         ["10.100.0.1", "10.100.0.2"]
     );
+    // The workloads use the addresses of the nodes (on their loopbacks, D-078), not those of the ends of the link
     assert_eq!(
         (media.from_address.as_str(), media.to_address.as_str()),
-        ("10.100.0.1", "10.100.0.2:5000")
+        ("10.200.0.1", "10.200.0.2:5000")
     );
 
     // A scenario without a seed got one that was drawn, so the run can be repeated
@@ -513,6 +514,27 @@ impl netscenario_core::Backend for Disturbed {
     ) -> Result<netscenario_core::LinkHandle, Error> {
         self.0.create_link(name, between)
     }
+    fn set_node_address(
+        &mut self,
+        node: netscenario_core::NodeHandle,
+        address: std::net::Ipv4Addr,
+    ) -> Result<(), Error> {
+        self.0.set_node_address(node, address)
+    }
+    fn set_forwarding(
+        &mut self,
+        node: netscenario_core::NodeHandle,
+        on: bool,
+    ) -> Result<(), Error> {
+        self.0.set_forwarding(node, on)
+    }
+    fn add_route(
+        &mut self,
+        node: netscenario_core::NodeHandle,
+        route: &netscenario_core::NodeRoute,
+    ) -> Result<(), Error> {
+        self.0.add_route(node, route)
+    }
     fn apply(
         &mut self,
         link: netscenario_core::LinkHandle,
@@ -613,7 +635,7 @@ fn workloads_run_together_and_a_window_limits_one_of_them() {
     // They went in opposite directions on their own ports
     assert_eq!(
         (burst.from_address.as_str(), burst.to_address.as_str()),
-        ("10.100.0.2", "10.100.0.1:5001")
+        ("10.200.0.2", "10.200.0.1:5001")
     );
     for workload in &result.workloads {
         let delay = workload.stats.delay.as_ref().unwrap();

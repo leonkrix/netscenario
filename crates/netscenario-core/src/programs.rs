@@ -106,13 +106,13 @@ pub(crate) fn environment(
     env
 }
 
-/// The address of each node: its end of the first link it is on.
+/// The address of each node: the one of its own on its loopback, which does not depend on the link or the path (D-078).
 fn node_addresses(provisioned: &Provisioned) -> BTreeMap<String, Ipv4Addr> {
-    let mut found = BTreeMap::new();
-    for entry in &provisioned.addresses {
-        found.entry(entry.node.to_string()).or_insert(entry.address);
-    }
-    found
+    provisioned
+        .node_addresses
+        .iter()
+        .map(|(name, address)| (name.to_string(), *address))
+        .collect()
 }
 
 /// What a program must have for the run to call it ready: the check, called with the lines it printed since the last look.

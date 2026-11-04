@@ -12,11 +12,11 @@ netscenario run examples/echo-server/echo.yaml
 ```
 
 ```text
-program server  in server  python3 echo_server.py 10.100.0.2 4433
+program server  in server  python3 echo_server.py 10.200.0.2 4433
   started -0.521 s, ready -0.500 s, ended 6.367 s (stopped, signal 15)
   output  0 bytes in program-server.stdout.log, 0 bytes of standard error in program-server.stderr.log
 
-program client  in client  python3 echo_client.py 10.100.0.2 4433 200
+program client  in client  python3 echo_client.py 10.200.0.2 4433 200
   started -0.500 s, ready -0.500 s, ended 4.028 s (on-its-own, exit code 0)
   output  10732 bytes in program-client.stdout.log, 0 bytes of standard error in program-client.stderr.log
   metric answered  1 readings, last 177, min 177, max 177

@@ -62,6 +62,14 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
       "address": "10.100.0.2"
     }
   ],
+  "nodes": [
+    { "node": "client", "role": "host", "address": "10.200.0.1" },
+    { "node": "server", "role": "host", "address": "10.200.0.2" }
+  ],
+  "routes": [
+    { "node": "client", "to": "server", "link": "access", "next_hop": "server", "metric": 100, "weight": 1, "given": false },
+    { "node": "server", "to": "client", "link": "access", "next_hop": "client", "metric": 100, "weight": 1, "given": false }
+  ],
   "timing": {
     "duration_ns": 3000000000,
     "settle_ns": 1120000000
@@ -72,8 +80,9 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
       "kind": "udp-cbr",
       "from": "client",
       "to": "server",
-      "from_address": "10.100.0.1",
-      "to_address": "10.100.0.2:5000",
+      "from_address": "10.200.0.1",
+      "to_address": "10.200.0.2:5000",
+      "path": { "nodes": ["client", "server"], "links": ["access"], "shared": false },
       "rate_bits_per_second": 2000000,
       "packet_size_bytes": 1200,
       "start_ns": 0,
@@ -146,6 +155,8 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `seed` | The seed, below. |
 | `accepted_restrictions` | The limits of the backend that the scenario accepted with `allow-limited` (release 0.3): `feature` and `restriction`. Empty in release 0.1, where a limit is refused. |
 | `addresses` | The IPv4 address of each end of each link: `node`, `link`, `address`. They are assigned by the backend (`10.100.n.1` and `.2` for link `n` in the Kernel backend) and are not part of the scenario. |
+| `nodes` | The nodes of the network: `node`, `role` (`host` or `router`) and `address`, the address on the loopback of the node that the workloads and the placeholders (`{server.addr}`) use (D-078). Empty in a result from before release 0.3. |
+| `routes` | The routes of the run, the given ones and the ones the tool computed: `node`, `to`, `link` (the link the packets leave by), `next_hop`, `metric`, `weight` and `given` (`true` for a route of the scenario). Empty in a result from before release 0.3. |
 | `timing.duration_ns` | The `duration` of the scenario. |
 | `timing.settle_ns` | How long the run waited after the last packet was sent for the packets still in the network. A packet that needs longer counts as lost. Without a setting the run waits until the queues of all links are empty (a rate limit holds the packets that are sent faster than it lets them go) and then 300 ms for the receivers to read, at most two minutes (D-067); the field is the time that took. A backend that cannot count the packets in its queues gets one second plus twice the longest hold of the scenario (the largest delay plus four times the largest jitter of any direction). |
 | `timing.interrupted_ns` | `null` for a run that went to its end. If the run was interrupted while the workloads ran (Ctrl-C on the command line, D-066): how long after the start of the measured phase the senders were told to stop. The workloads ended there, the later steps of the timeline were not done, `settle_ns` was waited all the same, and everything in the result is about the part that ran. |
@@ -186,8 +197,9 @@ The seed of one direction is derived from the seed of the run, the index of the 
 | --- | --- |
 | `id`, `kind` | As in the scenario (`udp-cbr`, `udp-poisson`, `udp-onoff` or `udp-bursty`). |
 | `from`, `to` | The sending and the receiving node. |
-| `from_address` | The address of the sender. |
-| `to_address` | The address and the port the packets went to (port 5000 for the first workload, 5001 for the next). |
+| `from_address` | The address of the sender: the address of its node on the loopback (D-078). |
+| `to_address` | The address of the receiving node and the port the packets went to (port 5000 for the first workload, 5001 for the next). |
+| `path` | The nodes from the sender to the receiver and the links between them; `shared` is `true` when a node on the way shares the packets among several routes of the same metric (multipath), and the path is then the first of them by the order of the links. Absent in a result from before release 0.3. |
 | `rate_bits_per_second`, `packet_size_bytes` | The rate of the **payload** that the schedule is meant to give, and the size of the payload of one packet. The rate is the one in the scenario for `udp-cbr` and `udp-poisson` (for the second it is the mean), and the mean over the on and off phases (`udp-onoff`) or over a burst and its pause (`udp-bursty`), rounded down. |
 | `start_ns`, `duration_ns` | When the workload started (from the start of the measured phase) and how long it sent. |
 | `sent` | The packets the sender handed to the kernel. |

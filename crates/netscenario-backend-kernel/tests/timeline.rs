@@ -360,6 +360,23 @@ impl Backend for Slow {
     fn create_link(&mut self, name: &Name, between: [NodeHandle; 2]) -> Result<LinkHandle, Error> {
         self.inner.create_link(name, between)
     }
+    fn set_node_address(
+        &mut self,
+        node: NodeHandle,
+        address: std::net::Ipv4Addr,
+    ) -> Result<(), Error> {
+        self.inner.set_node_address(node, address)
+    }
+    fn set_forwarding(&mut self, node: NodeHandle, on: bool) -> Result<(), Error> {
+        self.inner.set_forwarding(node, on)
+    }
+    fn add_route(
+        &mut self,
+        node: NodeHandle,
+        route: &netscenario_core::NodeRoute,
+    ) -> Result<(), Error> {
+        self.inner.add_route(node, route)
+    }
     fn check_values(&self, scenario: &Scenario) -> Result<(), netscenario_core::CapabilityError> {
         self.inner.check_values(scenario)
     }

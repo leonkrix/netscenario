@@ -22,6 +22,14 @@ impl From<Direction> for Way {
     }
 }
 
+/// One way out of a route on the wire: the link, the end of it that the node is at, and the weight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WireHop {
+    pub(crate) link: u32,
+    pub(crate) end: usize,
+    pub(crate) weight: u32,
+}
+
 /// What the caller asks the supervisor to do.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -32,6 +40,23 @@ pub(crate) enum Request {
     CreateLink {
         name: String,
         between: [u32; 2],
+    },
+    /// Gives a node an address on its loopback (D-078).
+    SetNodeAddress {
+        node: u32,
+        address: String,
+    },
+    /// Makes a node forward packets or not (D-078).
+    SetForwarding {
+        node: u32,
+        on: bool,
+    },
+    /// Adds a route to a node (D-078): to an address (`None` is every address), out of one or several links.
+    AddRoute {
+        node: u32,
+        destination: Option<String>,
+        metric: u32,
+        next_hops: Vec<WireHop>,
     },
     Apply {
         link: u32,

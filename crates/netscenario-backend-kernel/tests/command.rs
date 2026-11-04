@@ -94,12 +94,13 @@ sleep 60"#,
         (program.id.as_str(), program.node.as_str()),
         ("app", "server")
     );
-    // The placeholder is replaced in the arguments, and the result shows the program as it was run
-    assert_eq!(program.run, ["./app.sh", "10.100.0.2"]);
+    // The placeholder is replaced in the arguments by the address of the node (on its loopback, D-078), and the result shows
+    // the program as it was run
+    assert_eq!(program.run, ["./app.sh", "10.200.0.2"]);
     let stdout = std::fs::read_to_string(dir.join(&program.stdout_file)).unwrap();
     assert!(
         stdout.contains(
-            "address 10.100.0.2 10.100.0.2 10.100.0.1 node=server id=app mine=on 10.100.0.1"
+            "address 10.200.0.2 10.200.0.2 10.200.0.1 node=server id=app mine=on 10.200.0.1"
         ),
         "{stdout}"
     );
