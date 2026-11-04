@@ -374,17 +374,20 @@ impl Provisioner {
     /// Gives a node an address on its loopback (D-078): the address that the routes of the other nodes lead to.
     pub(crate) fn set_node_address(&mut self, node: u32, address: &str) -> Result<(), String> {
         let pid = self.node_pid(node)?;
+        self.failpoints.hit("address:start");
         self.in_node(
             pid,
             &self.tools.ip,
             &["addr", "add", &format!("{address}/32"), "dev", "lo"],
-        )
-        .map(|_| ())
+        )?;
+        self.failpoints.hit("address:end");
+        Ok(())
     }
 
     /// Makes a node forward packets between its links, or not (D-078).
     pub(crate) fn set_forwarding(&mut self, node: u32, on: bool) -> Result<(), String> {
         let pid = self.node_pid(node)?;
+        self.failpoints.hit("forwarding:start");
         let setting = format!("net.ipv4.ip_forward={}", u8::from(on));
         let namespace = format!("--net=/proc/{pid}/ns/net");
         let exe = self.exe.to_string_lossy().into_owned();
@@ -397,8 +400,9 @@ impl Provisioner {
                 "sysctl",
                 setting.as_str(),
             ],
-        )
-        .map(|_| ())
+        )?;
+        self.failpoints.hit("forwarding:end");
+        Ok(())
     }
 
     /// Adds a route to a node (D-078): to an address (or every address) out of one or several links, with the other end of
@@ -410,6 +414,7 @@ impl Provisioner {
         metric: u32,
         next_hops: &[crate::protocol::WireHop],
     ) -> Result<(), String> {
+        self.failpoints.hit("route:start");
         let route = Route {
             node,
             destination: destination.map(str::to_owned),
@@ -418,6 +423,7 @@ impl Provisioner {
         };
         self.install(&route, "add", &route.next_hops)?;
         self.routes.push(route);
+        self.failpoints.hit("route:end");
         Ok(())
     }
 

@@ -20,6 +20,17 @@ const POINTS: &[&str] = &[
     "link:created",
     "link:moved",
     "link:end",
+    // The steps of a network (D-078): the address of a node, whether it forwards, and a route; each node and each route
+    // passes the point once, so the second pass is a second node
+    "address:start",
+    "address:end",
+    "address:start#2",
+    "forwarding:start",
+    "forwarding:end",
+    "forwarding:start#2",
+    "route:start",
+    "route:end",
+    "route:start#2",
     "apply:start",
     "apply:end",
     "apply:start#2",

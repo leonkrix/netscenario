@@ -81,6 +81,32 @@ fn a_flow_over_four_hops_arrives_and_the_result_names_the_path_the_routes_and_th
     // A delay that adds up per hop is for the fidelity tests; here the packets cross four links in well under a second
     let delay = media.stats.delay.as_ref().unwrap();
     assert!(delay.max_ns < 500_000_000, "{} ns", delay.max_ns);
+    // Every packet is accounted for link by link: 250 entered each of the four links, 250 arrived at the node at its end, and
+    // none was lost or dropped on the way
+    let hops: Vec<_> = result
+        .directions
+        .iter()
+        .map(|t| {
+            (
+                t.link.as_str(),
+                t.direction.as_str(),
+                t.sent,
+                t.reached_node,
+                t.delivered,
+                t.lost_in_queue,
+                t.dropped_corrupted,
+            )
+        })
+        .collect();
+    assert_eq!(
+        hops,
+        [
+            ("l1", "forward", 250, 250, 250, Some(0), 0),
+            ("l2", "forward", 250, 250, 250, Some(0), 0),
+            ("l3", "forward", 250, 250, 250, Some(0), 0),
+            ("l4", "forward", 250, 250, 250, Some(0), 0),
+        ]
+    );
     assert_nothing_left(backend.run_id(), "after the run");
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -465,5 +491,54 @@ fn when_the_first_link_is_back_the_route_of_the_smaller_metric_is_used_again() {
         "{slow} packets took the slow path, expected {least} to {most}: {:?}",
         result.events
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The dumbbell of the shortcut: two flows cross the one link between the routers. Both arrive, their paths name the shared
+/// link, and the account is kept where it can be: the access links on the left carry one flow each and have a tally, and the
+/// shared link has one that adds the two (everything that arrived at the router goes on into it); the links on the right
+/// have none, because the frames that the shared link let through are for two links and the run cannot tell which flow is
+/// which (D-078).
+#[test]
+fn two_flows_over_a_shared_link_arrive_and_the_account_adds_them_at_the_shared_link() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("network-dumbbell");
+    let mut backend = backend(|_| {});
+    let dumbbell = Scenario::from_yaml(
+        "version: 0\nname: dumbbell-test\nduration: 2s\ntopology:\n  dumbbell:\n    left: [alice, bob]\n    right: [carol, dave]\nworkloads:\n  - { id: first, kind: udp-cbr, from: alice, to: carol, rate: 1mbit, packet-size: 1000b }\n  - { id: second, kind: udp-cbr, from: bob, to: dave, rate: 1mbit, packet-size: 1000b }\n",
+        "dumbbell-test.yaml",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let result = run(&mut backend, &dumbbell, &options(&dir)).unwrap();
+    for workload in &result.workloads {
+        assert_eq!(
+            (workload.stats.sent, workload.stats.received),
+            (250, 250),
+            "{}",
+            workload.id
+        );
+        let path = workload.path.as_ref().unwrap();
+        assert_eq!(path.links.len(), 3, "{:?}", path.links);
+        assert_eq!(path.links[1], "bottleneck");
+    }
+    let tallied: Vec<(&str, u64)> = result
+        .directions
+        .iter()
+        .map(|t| (t.link.as_str(), t.sent))
+        .collect();
+    assert!(
+        tallied.contains(&("alice-router-left", 250))
+            && tallied.contains(&("bob-router-left", 250)),
+        "{tallied:?}"
+    );
+    assert!(tallied.contains(&("bottleneck", 500)), "{tallied:?}");
+    assert_eq!(
+        tallied.len(),
+        3,
+        "the right-hand links have no tally: {tallied:?}"
+    );
+    assert_nothing_left(backend.run_id(), "after the run");
     let _ = std::fs::remove_dir_all(dir);
 }
