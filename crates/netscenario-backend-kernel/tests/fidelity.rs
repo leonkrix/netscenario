@@ -219,8 +219,11 @@ fn judge<'a>(bounds: &'a [Bound], measurement: &Measurement) -> Vec<Verdict<'a>>
 struct Case {
     id: &'static str,
     title: &'static str,
-    /// The impairments of the forward direction, as in the file.
+    /// The impairments of the forward direction, as in the file. For a case with a `network`, a description of the links.
     link: &'static str,
+    /// The `topology` of a case that is not two nodes with one link, as in the file (indented by two spaces), with the
+    /// workload from `client` to `server`. Empty: the two nodes and the link `access` with `link` on its forward direction.
+    network: &'static str,
     /// The rate of the payload that is sent, and the size of a payload in bytes.
     offered: &'static str,
     size: u64,
@@ -238,9 +241,16 @@ impl Case {
         } else {
             format!("      forward: {{ {} }}\n", self.link)
         };
+        let topology = if self.network.is_empty() {
+            format!(
+                "  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n{link}"
+            )
+        } else {
+            self.network.to_owned()
+        };
         Scenario::from_yaml(
             &format!(
-                "version: 0\nname: fidelity-{}\nseed: 7\nduration: {}s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n{link}workloads:\n  - {{ id: media, kind: udp-cbr, from: client, to: server, rate: {}, packet-size: {}b{} }}\n",
+                "version: 0\nname: fidelity-{}\nseed: 7\nduration: {}s\ntopology:\n{topology}workloads:\n  - {{ id: media, kind: udp-cbr, from: client, to: server, rate: {}, packet-size: {}b{} }}\n",
                 self.id,
                 self.seconds,
                 self.offered,
@@ -267,6 +277,7 @@ fn cases() -> Vec<Case> {
             id: "1-delay",
             title: "A fixed delay of 20 ms",
             link: "delay: 20ms",
+            network: "",
             offered: "2mbit",
             size: 1200,
             seconds: 6,
@@ -307,6 +318,7 @@ fn cases() -> Vec<Case> {
             id: "2-loss",
             title: "A random loss of 5 %",
             link: "loss: { model: random, p: 5% }",
+            network: "",
             offered: "8mbit",
             size: 1000,
             seconds: 6,
@@ -340,6 +352,7 @@ fn cases() -> Vec<Case> {
             id: "3-rate",
             title: "A rate limit of 2 mbit, offered 3 mbit",
             link: "rate: 2mbit",
+            network: "",
             offered: "3mbit",
             size: 1000,
             seconds: 6,
@@ -374,6 +387,7 @@ fn cases() -> Vec<Case> {
             id: "4-jitter-uniform",
             title: "A delay of 20 ms with a uniform jitter of 5 ms",
             link: "delay: 20ms, jitter: { amount: 5ms }",
+            network: "",
             offered: "8mbit",
             size: 1000,
             seconds: 6,
@@ -442,6 +456,7 @@ fn cases() -> Vec<Case> {
             id: "5-jitter-normal",
             title: "A delay of 20 ms with a normal jitter of 5 ms",
             link: "delay: 20ms, jitter: { amount: 5ms, distribution: normal }",
+            network: "",
             offered: "8mbit",
             size: 1000,
             seconds: 6,
@@ -482,6 +497,7 @@ fn cases() -> Vec<Case> {
             id: "6-jitter-and-rate",
             title: "A delay of 40 ms with a normal jitter of 5 ms and a rate limit of 10 mbit",
             link: "delay: 40ms, jitter: { amount: 5ms, distribution: normal }, rate: 10mbit",
+            network: "",
             offered: "2mbit",
             size: 1200,
             seconds: 8,
@@ -524,6 +540,7 @@ fn cases() -> Vec<Case> {
             id: "7-burst-gilbert-elliott",
             title: "Loss in bursts: Gilbert-Elliott, 1 % to the bad state, 20 % back, all lost there",
             link: "loss: { model: gilbert-elliott, p: 1%, r: 20%, loss-bad: 100%, loss-good: 0% }",
+            network: "",
             offered: "4mbit",
             size: 200,
             seconds: 12,
@@ -557,6 +574,7 @@ fn cases() -> Vec<Case> {
             id: "8-burst-four-state",
             title: "Loss in bursts: the four-state model, 2 % 30 % 20 % 10 % 1 %",
             link: "loss: { model: markov4, p13: 2%, p31: 30%, p32: 20%, p23: 10%, p14: 1% }",
+            network: "",
             offered: "4mbit",
             size: 200,
             seconds: 12,
@@ -583,6 +601,7 @@ fn cases() -> Vec<Case> {
             id: "9-reorder",
             title: "Reordering: a delay of 10 ms, 25 % of the packets sent on at once",
             link: "delay: 10ms, reorder: { share: 25% }",
+            network: "",
             offered: "8mbit",
             size: 1000,
             seconds: 6,
@@ -616,6 +635,7 @@ fn cases() -> Vec<Case> {
             id: "10-reorder-gap",
             title: "Reordering with a gap: 25 % sent on at once, but never two within 5 packets",
             link: "delay: 10ms, reorder: { share: 25%, gap: 5 }",
+            network: "",
             offered: "8mbit",
             size: 1000,
             seconds: 6,
@@ -633,6 +653,7 @@ fn cases() -> Vec<Case> {
             id: "11-duplicate",
             title: "Duplication of 20 %",
             link: "duplicate: 20%",
+            network: "",
             offered: "8mbit",
             size: 1000,
             seconds: 6,
@@ -659,6 +680,7 @@ fn cases() -> Vec<Case> {
             id: "12-duplicate-and-loss",
             title: "Duplication of 20 % with a loss of 10 %: each copy is lost on its own",
             link: "duplicate: 20%, loss: { model: random, p: 10% }",
+            network: "",
             offered: "8mbit",
             size: 1000,
             seconds: 6,
@@ -685,6 +707,7 @@ fn cases() -> Vec<Case> {
             id: "13-dup-jitter-rate",
             title: "Duplication of 20 % in a direction with a jitter and a rate: two queues in one tree",
             link: "delay: 20ms, jitter: { amount: 5ms }, rate: 10mbit, duplicate: 20%",
+            network: "",
             offered: "4mbit",
             size: 500,
             seconds: 6,
@@ -718,6 +741,7 @@ fn cases() -> Vec<Case> {
             id: "14-reorder-with-rate",
             title: "Reordering with a rate limit of 2 mbit, offered 3 mbit: the rate holds",
             link: "delay: 10ms, reorder: { share: 25% }, rate: 2mbit",
+            network: "",
             offered: "3mbit",
             size: 1000,
             seconds: 6,
@@ -744,6 +768,7 @@ fn cases() -> Vec<Case> {
             id: "15-corrupt-64",
             title: "A corruption of 10 % with a payload of 64 bytes: the node drops the damaged packets",
             link: "corrupt: 10%",
+            network: "",
             offered: "2048kbit",
             size: 64,
             seconds: 5,
@@ -798,6 +823,7 @@ fn cases() -> Vec<Case> {
             id: "16-corrupt-200",
             title: "A corruption of 10 % with a payload of 200 bytes",
             link: "corrupt: 10%",
+            network: "",
             offered: "6400kbit",
             size: 200,
             seconds: 5,
@@ -852,6 +878,7 @@ fn cases() -> Vec<Case> {
             id: "17-corrupt-1200",
             title: "A corruption of 10 % with a payload of 1,200 bytes",
             link: "corrupt: 10%",
+            network: "",
             offered: "38400kbit",
             size: 1200,
             seconds: 5,
@@ -906,6 +933,7 @@ fn cases() -> Vec<Case> {
             id: "18-corrupt-and-loss",
             title: "A corruption of 10 % with a loss of 10 %: the result tells the two apart",
             link: "loss: { model: random, p: 10% }, corrupt: 10%",
+            network: "",
             offered: "6400kbit",
             size: 200,
             seconds: 5,
@@ -946,6 +974,7 @@ fn cases() -> Vec<Case> {
             id: "19-no-checksum-64",
             title: "A corruption of 10 % in a stream without the checksum of UDP, payload of 64 bytes: the damaged packet arrives",
             link: "corrupt: 10%",
+            network: "",
             offered: "2048kbit",
             size: 64,
             seconds: 5,
@@ -993,6 +1022,7 @@ fn cases() -> Vec<Case> {
             id: "20-no-checksum-200",
             title: "The same with a payload of 200 bytes",
             link: "corrupt: 10%",
+            network: "",
             offered: "6400kbit",
             size: 200,
             seconds: 5,
@@ -1040,6 +1070,7 @@ fn cases() -> Vec<Case> {
             id: "21-no-checksum-1200",
             title: "The same with a payload of 1,200 bytes",
             link: "corrupt: 10%",
+            network: "",
             offered: "38400kbit",
             size: 1200,
             seconds: 5,
@@ -1080,6 +1111,137 @@ fn cases() -> Vec<Case> {
                     lo: 0.0908,
                     hi: 0.1079,
                     reason: "a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (1242 - 8) / 1242 = 9.94 %; binomial, 20,000 packets, four standard deviations on each side",
+                },
+            ],
+        },
+        Case {
+            id: "22-path-delay",
+            title: "Three links in a row with delays of 10, 15 and 5 ms: the delays add up",
+            link: "l1: delay 10ms; l2: delay 15ms; l3: delay 5ms",
+            network: "  nodes: [client, { id: r1, role: router }, { id: r2, role: router }, server]\n  links:\n    - { id: l1, between: [client, r1], forward: { delay: 10ms } }\n    - { id: l2, between: [r1, r2], forward: { delay: 15ms } }\n    - { id: l3, between: [r2, server], forward: { delay: 5ms } }\n",
+            offered: "2mbit",
+            size: 1200,
+            seconds: 6,
+            settle_seconds: 1,
+            udp_checksum: true,
+            bounds: vec![
+                Bound {
+                    metric: Metric::MinDelayMs,
+                    expected: 30.0,
+                    lo: 30.0,
+                    hi: 30.5,
+                    reason: "no packet can be faster than the three links together: 10 + 15 + 5 ms; the path and the two routers add well under 0.5 ms (0.016 ms for a link in the single-link case)",
+                },
+                Bound {
+                    metric: Metric::MedianDelayMs,
+                    expected: 30.0,
+                    lo: 30.0,
+                    hi: 31.0,
+                    reason: "`netem` is exact to the microsecond on each link; 1 ms leaves room for the three hops and a busy shared runner (0.5 ms for one hop in the single-link case)",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "links without loss lose nothing, and a router that forwards drops nothing",
+                },
+                Bound {
+                    metric: Metric::ReorderedRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "fixed delays keep the order, also over three hops",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "every packet is accounted for link by link: what entered the first link is lost in a queue, dropped by a node or delivered at the end",
+                },
+            ],
+        },
+        Case {
+            id: "23-path-loss",
+            title: "Three links in a row with losses of 3 % and 4 %: the losses compound",
+            link: "l1: loss 3%; l2: loss 4%; l3: none",
+            network: "  nodes: [client, { id: r1, role: router }, { id: r2, role: router }, server]\n  links:\n    - { id: l1, between: [client, r1], forward: { loss: { model: random, p: 3% } } }\n    - { id: l2, between: [r1, r2], forward: { loss: { model: random, p: 4% } } }\n    - { id: l3, between: [r2, server] }\n",
+            offered: "8mbit",
+            size: 1000,
+            seconds: 6,
+            settle_seconds: 1,
+            udp_checksum: true,
+            bounds: vec![
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0688,
+                    lo: 0.0557,
+                    hi: 0.0819,
+                    reason: "a packet is lost if either queue loses it, and the queues draw independently (a seed of their own each): 1 - 0.97 x 0.96 = 6.88 %; binomial, 6,000 packets, a standard deviation of 0.33 percentage points, four of them on each side",
+                },
+                Bound {
+                    metric: Metric::LostInQueueRatio,
+                    expected: 0.0688,
+                    lo: 0.0557,
+                    hi: 0.0819,
+                    reason: "the packets that the queues dropped, counted by the tally of each link and added, are the lost ones: nothing else takes a packet on the way; same model and bounds as the loss",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "the packets lost in the first queue, those lost in the second and those delivered add up to the packets sent into the first link, because what enters the second is what arrived at the router",
+                },
+                Bound {
+                    metric: Metric::MedianDelayMs,
+                    expected: 0.05,
+                    lo: 0.0,
+                    hi: 1.0,
+                    reason: "links without a delay add only the path (0.016 ms for a link) and two routers; 1 ms for three hops and noise",
+                },
+            ],
+        },
+        Case {
+            id: "24-path-rate",
+            title: "Three links in a row, the middle one limited to 2 mbit, offered 3 mbit: the slowest link sets the rate",
+            link: "l1: rate 10mbit; l2: rate 2mbit; l3: rate 10mbit",
+            network: "  nodes: [client, { id: r1, role: router }, { id: r2, role: router }, server]\n  links:\n    - { id: l1, between: [client, r1], forward: { rate: 10mbit } }\n    - { id: l2, between: [r1, r2], forward: { rate: 2mbit } }\n    - { id: l3, between: [r2, server], forward: { rate: 10mbit } }\n",
+            offered: "3mbit",
+            size: 1000,
+            seconds: 6,
+            settle_seconds: 5,
+            udp_checksum: true,
+            bounds: vec![
+                // 2 mbit of frames; a frame is the payload and 42 bytes (8 UDP + 20 IP + 14 Ethernet), as in the single-link case
+                Bound {
+                    metric: Metric::SteadyGoodputBps,
+                    expected: 2_000_000.0 * 1000.0 / 1042.0,
+                    lo: 1_881_000.0,
+                    hi: 1_958_000.0,
+                    reason: "the rate of a path is the smallest rate on it, counted in Ethernet frames as for one link: 2 mbit of frames carry 1,000 bytes of payload in 1,042; 2 % for the edges of the one-second bins (about 240 packets each)",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "the backlog at the slow link (about 800 packets) stays below its queue of 1,000, and the faster links before and after it hold nothing back, so nothing is lost",
+                },
+                Bound {
+                    metric: Metric::ReorderedRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "rate limits keep the order",
+                },
+                Bound {
+                    metric: Metric::Unaccounted,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "every packet is accounted for link by link",
                 },
             ],
         },
@@ -1127,10 +1289,34 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         "the result says a mean run of {} lost packets and the test counts {oracle}",
         workload.stats.loss_runs.mean
     );
-    let tally = &result.directions[0];
+    // The tally of every link on the way of the workload (one for two nodes): the packets enter the first, each link hands on
+    // what arrived at the node at its end, and the receivers are at the end of the last, so what was lost in the queues, what
+    // the node dropped as damaged and what was delivered add up to what was sent into the first
+    let path = workload
+        .path
+        .as_ref()
+        .expect("the Kernel backend names the path");
+    let tallies: Vec<_> = path
+        .links
+        .iter()
+        .map(|link| {
+            result
+                .directions
+                .iter()
+                .find(|t| t.link == *link && t.direction == "forward")
+                .unwrap_or_else(|| panic!("no tally for {link}: {:?}", result.directions))
+        })
+        .collect();
+    let (first, last) = (tallies[0], tallies[tallies.len() - 1]);
+    let dropped_corrupted: u64 = tallies.iter().map(|t| t.dropped_corrupted).sum();
+    let receive_buffer_drops: u64 = tallies.iter().map(|t| t.receive_buffer_drops).sum();
     // A duplicating direction has no count of the packets the queue dropped: the measures that need it are not
     // numbers there, and a bound on one of them fails, as it should
-    let lost_in_queue = tally.lost_in_queue.map(|lost| lost as f64);
+    let lost_in_queue = tallies
+        .iter()
+        .map(|t| t.lost_in_queue)
+        .sum::<Option<u64>>()
+        .map(|lost| lost as f64);
     Measurement {
         delays_ms,
         loss_ratio: workload.stats.loss_ratio,
@@ -1139,8 +1325,8 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
         duplicate_ratio: workload.stats.duplicates as f64 / workload.stats.sent.max(1) as f64,
         early_share,
         mean_loss_run: mean_loss_run(&received, workload.stats.sent),
-        node_drop_ratio: tally.dropped_corrupted as f64 / tally.reached_node.max(1) as f64,
-        lost_in_queue_ratio: lost_in_queue.map_or(f64::NAN, |lost| lost / tally.sent.max(1) as f64),
+        node_drop_ratio: dropped_corrupted as f64 / last.reached_node.max(1) as f64,
+        lost_in_queue_ratio: lost_in_queue.map_or(f64::NAN, |lost| lost / first.sent.max(1) as f64),
         damaged_ratio: workload.corrupted as f64 / workload.stats.sent.max(1) as f64,
         // NaN where the result has nothing, so that a bound on it fails
         jitter_mean_ms: workload
@@ -1161,15 +1347,15 @@ fn measurement_of(result: &RunResult, dir: &Path) -> Measurement {
                 reordering.late_time.mean_ns as f64 / 1e6
             }),
         named_share: workload.corrupted_named.map_or(f64::NAN, |named| {
-            named as f64 / tally.dropped_corrupted.max(1) as f64
+            named as f64 / dropped_corrupted.max(1) as f64
         }),
         named_excess: workload.corrupted_named.map_or(f64::NAN, |named| {
-            named.saturating_sub(tally.dropped_corrupted) as f64
+            named.saturating_sub(dropped_corrupted) as f64
         }),
         unaccounted: lost_in_queue.map_or(f64::NAN, |lost| {
-            tally.sent as f64
-                - (lost + (tally.dropped_corrupted + tally.delivered) as f64)
-                - tally.receive_buffer_drops as f64
+            first.sent as f64
+                - (lost + (dropped_corrupted + last.delivered) as f64)
+                - receive_buffer_drops as f64
         }),
         sent: workload.stats.sent,
         kernel: result.provenance.kernel.clone().unwrap_or_default(),
@@ -1210,12 +1396,17 @@ fn mean_loss_run(received: &std::collections::BTreeSet<u64>, sent: u64) -> f64 {
 /// The part of the report for one case.
 fn fragment(case: &Case, measurement: &Measurement, verdicts: &[Verdict<'_>]) -> String {
     let mut text = format!(
-        "#### {}\n\n`forward: {{ {} }}`, offered {} with payloads of {} bytes for {} s ({} packets)\n\n| Quantity | Expected | Measured | Deviation | Allowed | Why |\n| --- | --- | --- | --- | --- | --- |\n",
+        "#### {}\n\n{}, offered {} with payloads of {} bytes for {} s ({} packets)\n\n| Quantity | Expected | Measured | Deviation | Allowed | Why |\n| --- | --- | --- | --- | --- | --- |\n",
         case.title,
-        if case.link.is_empty() {
-            "none"
+        if !case.network.is_empty() {
+            format!(
+                "a client, two routers and a server in a row: `{}`",
+                case.link
+            )
+        } else if case.link.is_empty() {
+            "`forward: { none }`".to_owned()
         } else {
-            case.link
+            format!("`forward: {{ {} }}`", case.link)
         },
         case.offered,
         case.size,
@@ -1941,5 +2132,126 @@ fn canary_names_without_a_dropped_frame_or_no_names_at_all_fail_the_naming() {
     assert_eq!(
         failing_metrics("16-corrupt-200", &all),
         [Metric::NamedShare]
+    );
+}
+
+// ---- networks of several links ----
+
+/// Runs a case with the network of another case (the links of `network`) and judges it with the bounds of the real one.
+fn wrong_network_on_purpose(
+    id: &str,
+    link: &'static str,
+    network: &'static str,
+    seconds: u64,
+    settle_seconds: u64,
+) -> Vec<Metric> {
+    let real = cases().into_iter().find(|c| c.id == id).unwrap();
+    let wrong = Case {
+        link,
+        network,
+        seconds,
+        settle_seconds,
+        bounds: Vec::new(),
+        ..cases().into_iter().find(|c| c.id == id).unwrap()
+    };
+    let measurement = measure(&wrong);
+    judge(&real.bounds, &measurement)
+        .iter()
+        .filter(|v| !v.passed())
+        .map(|v| v.bound.metric)
+        .collect()
+}
+
+#[test]
+fn the_delays_of_the_links_of_a_path_add_up() {
+    run_and_judge("22-path-delay");
+}
+
+#[test]
+fn the_losses_of_the_links_of_a_path_compound() {
+    run_and_judge("23-path-loss");
+}
+
+#[test]
+fn the_rate_of_a_path_is_the_smallest_rate_on_it() {
+    run_and_judge("24-path-rate");
+}
+
+/// Canary: a delay that is missing on one of the links gives a path that is faster than the sum, and the case says so.
+#[test]
+fn canary_a_delay_that_is_missing_on_one_link_of_a_path_fails_the_delay_case() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let failed = wrong_network_on_purpose(
+        "22-path-delay",
+        "l1: delay 10ms; l2: none; l3: delay 5ms",
+        "  nodes: [client, { id: r1, role: router }, { id: r2, role: router }, server]\n  links:\n    - { id: l1, between: [client, r1], forward: { delay: 10ms } }\n    - { id: l2, between: [r1, r2] }\n    - { id: l3, between: [r2, server], forward: { delay: 5ms } }\n",
+        4,
+        1,
+    );
+    assert!(
+        failed.contains(&Metric::MinDelayMs) && failed.contains(&Metric::MedianDelayMs),
+        "{failed:?}"
+    );
+}
+
+/// Canary: a loss that only one of the links applies gives the loss of that link and not the compound, and the case says so.
+#[test]
+fn canary_a_loss_that_one_link_of_a_path_does_not_apply_fails_the_loss_case() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let failed = wrong_network_on_purpose(
+        "23-path-loss",
+        "l1: loss 3%; l2: none; l3: none",
+        "  nodes: [client, { id: r1, role: router }, { id: r2, role: router }, server]\n  links:\n    - { id: l1, between: [client, r1], forward: { loss: { model: random, p: 3% } } }\n    - { id: l2, between: [r1, r2] }\n    - { id: l3, between: [r2, server] }\n",
+        6,
+        1,
+    );
+    assert!(
+        failed.contains(&Metric::LossRatio) && failed.contains(&Metric::LostInQueueRatio),
+        "{failed:?}"
+    );
+}
+
+/// Canary: without the limit on the middle link the path carries all of the offered 3 mbit, and the case for 2 mbit says so.
+#[test]
+fn canary_a_path_without_its_slowest_link_fails_the_rate_case() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let failed = wrong_network_on_purpose(
+        "24-path-rate",
+        "l1: rate 10mbit; l2: none; l3: rate 10mbit",
+        "  nodes: [client, { id: r1, role: router }, { id: r2, role: router }, server]\n  links:\n    - { id: l1, between: [client, r1], forward: { rate: 10mbit } }\n    - { id: l2, between: [r1, r2] }\n    - { id: l3, between: [r2, server], forward: { rate: 10mbit } }\n",
+        4,
+        1,
+    );
+    assert!(failed.contains(&Metric::SteadyGoodputBps), "{failed:?}");
+}
+
+/// The judging of a path: the compound loss of 6.88 % is accepted, and the loss of one link alone (3 % or 4 %) and a loss
+/// that is too high (9 %) are outside the band.
+#[test]
+fn the_judging_of_a_path_tells_the_compound_loss_from_the_loss_of_one_link() {
+    let mut faithful = synthetic(&[0.05], 0.0688, 0.0, 0.0);
+    faithful.lost_in_queue_ratio = 0.0688;
+    assert_eq!(failing_metrics("23-path-loss", &faithful), []);
+    for loss in [0.03, 0.04, 0.09] {
+        let mut wrong = synthetic(&[0.05], loss, 0.0, 0.0);
+        wrong.lost_in_queue_ratio = loss;
+        assert_eq!(
+            failing_metrics("23-path-loss", &wrong),
+            [Metric::LossRatio, Metric::LostInQueueRatio],
+            "{loss}"
+        );
+    }
+    // The tally that does not add up fails in a path as in a link
+    let mut missing = faithful;
+    missing.unaccounted = 2.0;
+    assert_eq!(
+        failing_metrics("23-path-loss", &missing),
+        [Metric::Unaccounted]
     );
 }

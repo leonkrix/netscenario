@@ -574,11 +574,12 @@ fn not_reproducible_because(
 }
 
 /// The directions that two or more workloads send into while their queue draws random numbers, one sentence for each
-/// (D-038, D-065), and the workloads whose packets cross several links of which one draws random numbers. Which packet
-/// draws which number depends on the order in which the packets reach the queue, and with two senders that order is not
-/// fixed on a real kernel: their packets can be microseconds apart. The number of packets that are lost agrees, the packets
-/// do not. A packet that crosses several links is sent into the first only, so the queues after it cannot be held to the
-/// packets that were sent (the run does not check them).
+/// (D-038, D-065), and the directions whose random queue gets packets that the run cannot account for or cannot put in a
+/// fixed order. Which packet draws which number depends on the order in which the packets reach the queue, and with two
+/// senders that order is not fixed on a real kernel: their packets can be microseconds apart. The number of packets that are
+/// lost agrees, the packets do not. After the first link of a path the packets that enter a queue are those that the links
+/// before it let through (D-078): the run counts them when one workload alone crosses the link and the link before it, and
+/// the order is fixed when the links before it keep the order of the packets.
 fn shared_directions(scenario: &Scenario) -> Vec<String> {
     let mut reasons = Vec::new();
     let generators: Vec<Generator<'_>> = scenario
@@ -587,6 +588,8 @@ fn shared_directions(scenario: &Scenario) -> Vec<String> {
         .filter_map(Workload::generator)
         .collect();
     let paths = paths_of(scenario);
+    let path_refs: Vec<Option<&netscenario_model::Path>> =
+        paths.iter().map(Option::as_ref).collect();
     for (index, link) in scenario.topology.links.iter().enumerate() {
         for (direction, word) in [
             (Direction::Forward, "forward"),
@@ -598,35 +601,53 @@ fn shared_directions(scenario: &Scenario) -> Vec<String> {
             {
                 continue;
             }
-            let crossing: Vec<(&Generator<'_>, &netscenario_model::Path)> = generators
-                .iter()
-                .zip(&paths)
-                .filter_map(|(workload, path)| Some((workload, path.as_ref()?)))
-                .filter(|(_, path)| way_keys(scenario, path).contains(&(index, direction)))
-                .collect();
-            let long: Vec<String> = crossing
-                .iter()
-                .filter(|(_, path)| path.links.len() > 1)
-                .map(|(workload, _)| format!("'{}'", workload.id))
-                .collect();
-            if !long.is_empty() {
-                reasons.push(format!(
-                    "the packets of {} cross several links and the queue of link '{}' ({word}) draws random numbers: the packets that enter it are those that the links before it let through, which the run does not count, so it cannot hold the queue to the packets that were sent and cannot say whether the lost packets are those of the seed",
-                    long.join(", "),
-                    link.id
-                ));
-                continue;
-            }
-            if crossing.len() > 1 {
-                let senders: Vec<String> = crossing
-                    .iter()
-                    .map(|(workload, _)| format!("'{}'", workload.id))
-                    .collect();
-                reasons.push(format!(
-                    "the workloads {} send into link '{}' ({word}) and its queue draws random numbers: the order in which their packets reach the queue is not fixed on a real kernel, so which packet draws which number, and so which packets are lost, can differ from run to run with the same seed",
-                    senders.join(", "),
-                    link.id
-                ));
+            let crossing = crossings(scenario, &path_refs, (index, direction));
+            match feed(scenario, &path_refs, (index, direction)) {
+                Feed::Idle => {}
+                Feed::Known { .. } if crossing.len() > 1 => {
+                    let names: Vec<String> = crossing
+                        .iter()
+                        .map(|c| format!("'{}'", generators[c.workload].id))
+                        .collect();
+                    reasons.push(format!(
+                        "the workloads {} send into link '{}' ({word}) and its queue draws random numbers: the order in which their packets reach the queue is not fixed on a real kernel, so which packet draws which number, and so which packets are lost, can differ from run to run with the same seed",
+                        names.join(", "),
+                        link.id
+                    ));
+                }
+                Feed::Known { .. } => {
+                    let [only] = crossing.as_slice() else {
+                        continue;
+                    };
+                    let Some(path) = &paths[only.workload] else {
+                        continue;
+                    };
+                    let keys = way_keys(scenario, path);
+                    let shuffles = keys[..only.position].iter().find(|(before, way)| {
+                        timeline::states_of(scenario, *before, *way)
+                            .iter()
+                            .any(may_reorder)
+                    });
+                    if let Some((before, _)) = shuffles {
+                        reasons.push(format!(
+                            "the packets of '{}' reach the queue of link '{}' ({word}), which draws random numbers, after link '{}', which can change the order of packets (a jitter or a reorder): which packet draws which number, and so which packets are lost, can differ from run to run with the same seed",
+                            generators[only.workload].id,
+                            link.id,
+                            scenario.topology.links[*before].id
+                        ));
+                    }
+                }
+                Feed::Unknown => {
+                    let names: Vec<String> = crossing
+                        .iter()
+                        .map(|c| format!("'{}'", generators[c.workload].id))
+                        .collect();
+                    reasons.push(format!(
+                        "the packets of {} reach the queue of link '{}' ({word}), which draws random numbers, together with the packets of other workloads or by one of several routes: the run does not know which packets enter it, so it cannot hold the queue to them and cannot say whether the lost packets are those of the seed",
+                        names.join(", "),
+                        link.id
+                    ));
+                }
             }
         }
     }
@@ -908,6 +929,127 @@ fn way_keys(scenario: &Scenario, path: &netscenario_model::Path) -> Vec<(usize, 
             Some((index, direction))
         })
         .collect()
+}
+
+/// A workload that crosses a direction: which one, at which place of its path, and whether that is the last link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Crossing {
+    workload: usize,
+    position: usize,
+    last: bool,
+}
+
+/// The workloads whose packets cross one direction of a link, with the place of the direction on their paths.
+fn crossings(
+    scenario: &Scenario,
+    paths: &[Option<&netscenario_model::Path>],
+    key: (usize, Direction),
+) -> Vec<Crossing> {
+    let mut found = Vec::new();
+    for (workload, path) in paths.iter().enumerate() {
+        let Some(path) = path else { continue };
+        let keys = way_keys(scenario, path);
+        if let Some(position) = keys.iter().position(|other| *other == key) {
+            found.push(Crossing {
+                workload,
+                position,
+                last: position + 1 == keys.len(),
+            });
+        }
+    }
+    found
+}
+
+/// Where the packets that enter a direction come from, so that the run can account for them (D-040, ENV-07).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Feed {
+    /// No workload sends into it.
+    Idle,
+    /// The packets that enter it are known: those the `senders` put in (workloads whose path begins with this link), plus
+    /// those that arrived at the node before it by the `feeders` (links earlier on the paths), which forwards them all. This
+    /// holds when every workload that crosses a feeder goes on into this direction, so that all the frames that arrived by
+    /// the feeder enter this queue (D-078): a node makes no packet and takes none but by a damaged header, which a link that
+    /// corrupts makes unaccountable (the tally says so).
+    Known {
+        senders: Vec<usize>,
+        feeders: Vec<(usize, Direction)>,
+    },
+    /// Workloads of other directions share a feeder with it, or the packets may take one of several routes: the run does not
+    /// know which of the packets that arrive enter it.
+    Unknown,
+}
+
+fn feed(
+    scenario: &Scenario,
+    paths: &[Option<&netscenario_model::Path>],
+    key: (usize, Direction),
+) -> Feed {
+    let crossing = crossings(scenario, paths, key);
+    if crossing.is_empty() {
+        return Feed::Idle;
+    }
+    if crossing
+        .iter()
+        .any(|c| paths[c.workload].is_some_and(|path| path.shared))
+    {
+        return Feed::Unknown;
+    }
+    let mut senders = Vec::new();
+    let mut feeders: Vec<(usize, Direction)> = Vec::new();
+    for c in &crossing {
+        if c.position == 0 {
+            senders.push(c.workload);
+            continue;
+        }
+        let Some(path) = paths[c.workload] else {
+            return Feed::Unknown;
+        };
+        let before = way_keys(scenario, path)[c.position - 1];
+        if !feeders.contains(&before) {
+            feeders.push(before);
+        }
+    }
+    // Every workload that crosses a feeder must go on into this direction, or some of the frames that arrived are not for it
+    for feeder in &feeders {
+        let beyond = crossings(scenario, paths, *feeder);
+        if beyond
+            .iter()
+            .any(|other| !crossing.iter().any(|c| c.workload == other.workload))
+        {
+            return Feed::Unknown;
+        }
+    }
+    Feed::Known { senders, feeders }
+}
+
+/// The packets that entered a direction, when the run knows them: what the `senders` put in (by `sent_of`) and what arrived
+/// at the node before it by each feeder (the difference of its counts before and after the workloads).
+fn entered_packets(
+    senders: &[usize],
+    feeders: &[(usize, Direction)],
+    sent_of: impl Fn(usize) -> u64,
+    before: &[Option<NodeCounts>],
+    after: &[Option<NodeCounts>],
+) -> Option<u64> {
+    let mut total: u64 = senders.iter().map(|&workload| sent_of(workload)).sum();
+    for feeder in feeders {
+        let place = way_place(*feeder);
+        let (Some(Some(was)), Some(Some(is))) = (before.get(place), after.get(place)) else {
+            return None;
+        };
+        total += is.frames_received.saturating_sub(was.frames_received);
+    }
+    Some(total)
+}
+
+/// The place of a direction in the order of [`ways`].
+fn way_place(key: (usize, Direction)) -> usize {
+    key.0 * 2 + usize::from(key.1 == Direction::Reverse)
+}
+
+/// Whether the packets of a workload may come out of a link in another order than they went in: a jitter or a reorder.
+fn may_reorder(impairments: &Impairments) -> bool {
+    impairments.jitter.is_some() || impairments.reorder.is_some()
 }
 
 fn nanos(duration: Duration) -> u64 {
@@ -1330,13 +1472,21 @@ fn measure_with(
     programs.stop_all(backend)?;
     captures.stop_all(backend, control)?;
     // After the wait, every packet has passed its queue; the receivers still run and the network still stands
+    let after = node_counts(backend, scenario, provisioned)?;
     let queue_checks = if programs.is_empty() {
-        check_queues(backend, scenario, provisioned, &flows, &sent)?
+        check_queues(
+            backend,
+            scenario,
+            provisioned,
+            &flows,
+            &sent,
+            &before,
+            &after,
+        )?
     } else {
         // A program sends packets of its own into the queues; the run did not count them and cannot hold the queue to its own
         Vec::new()
     };
-    let after = node_counts(backend, scenario, provisioned)?;
     control.emit(&RunEvent::Collecting);
     let mut measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
     let directions = tally_directions(scenario, provisioned, &flows, &measured, &before, &after);
@@ -1641,8 +1791,11 @@ fn node_counts(
         .collect()
 }
 
-/// Sets the packets that the workloads sent into each direction against what the receiving node counted and
-/// what its receivers got (D-040). A direction without a workload has no tally.
+/// Sets the packets that entered each direction against what the node at its end counted and what its receivers got (D-040).
+/// What enters the first link of a path is what the workloads sent; what enters a later link is what arrived at the node
+/// before it, which forwards it (D-078), so a packet is accounted for link by link: lost in this queue, dropped by the node,
+/// or delivered. A direction without a workload has no tally, and neither has one that packets of several workloads reach
+/// after the first link, or that they reach by one of several routes: the run cannot tell which packets those are.
 fn tally_directions(
     scenario: &Scenario,
     provisioned: &Provisioned,
@@ -1651,51 +1804,96 @@ fn tally_directions(
     before: &[Option<NodeCounts>],
     after: &[Option<NodeCounts>],
 ) -> Vec<DirectionTally> {
+    let paths: Vec<Option<&netscenario_model::Path>> =
+        flows.iter().map(|flow| Some(&flow.path)).collect();
     let mut tallies = Vec::new();
-    for (way, (before, after)) in ways(scenario, provisioned).zip(before.iter().zip(after)) {
-        let (Some(before), Some(after)) = (before, after) else {
+    for (way, (counted_before, counted_after)) in
+        ways(scenario, provisioned).zip(before.iter().zip(after))
+    {
+        let (Some(counted_before), Some(counted_after)) = (counted_before, counted_after) else {
             continue;
         };
         let link = &scenario.topology.links[way.index];
-        let crossing: Vec<(&Flow<'_>, &Measured)> = flows
-            .iter()
-            .zip(measured)
-            .filter(|(flow, _)| {
-                way_keys(scenario, &flow.path).contains(&(way.index, way.direction))
-            })
-            .collect();
-        // The tally sets what the workloads sent into a direction against what the node at its end counted; a packet that
-        // crosses several links is sent into the first only, so a direction that such a packet crosses has no tally of its own
-        if crossing.is_empty() || crossing.iter().any(|(flow, _)| flow.path.links.len() > 1) {
+        let key = (way.index, way.direction);
+        let entered = match feed(scenario, &paths, key) {
+            Feed::Known { senders, feeders } => {
+                let Some(total) = entered_packets(
+                    &senders,
+                    &feeders,
+                    |workload| measured[workload].sent.packets,
+                    before,
+                    after,
+                ) else {
+                    continue;
+                };
+                total
+            }
+            Feed::Idle | Feed::Unknown => continue,
+        };
+        let crossing = crossings(scenario, &paths, key);
+        // The receivers are at the end of the last link only; at a node in the middle the packets are forwarded, and what
+        // happens to them there shows on the next link
+        let at_the_end = crossing.iter().all(|c| c.last);
+        if !at_the_end && crossing.iter().any(|c| c.last) {
             continue;
         }
-        let carried: Vec<&Measured> = crossing.into_iter().map(|(_, measured)| measured).collect();
-        let sent: u64 = carried.iter().map(|m| m.sent.packets).sum();
-        let delivered: u64 = carried
-            .iter()
-            .map(|m| m.received.packets + m.received.foreign + m.received.corrupted)
-            .sum();
-        let reached_node = after.frames_received.saturating_sub(before.frames_received);
-        let receive_buffer_drops = after
+        let delivered: u64 = if at_the_end {
+            crossing
+                .iter()
+                .map(|c| {
+                    let m = &measured[c.workload];
+                    m.received.packets + m.received.foreign + m.received.corrupted
+                })
+                .sum()
+        } else {
+            counted_after
+                .frames_received
+                .saturating_sub(counted_before.frames_received)
+        };
+        let reached_node = counted_after
+            .frames_received
+            .saturating_sub(counted_before.frames_received);
+        let receive_buffer_drops = counted_after
             .receive_buffer_drops
-            .saturating_sub(before.receive_buffer_drops);
-        // The frames of a duplicating direction include the copies, so what the queue dropped cannot be told
-        let duplicates = impairments_of(link, way.direction)
-            .is_some_and(|impairments| impairments.duplicate.is_some());
+            .saturating_sub(counted_before.receive_buffer_drops);
+        // The frames of a duplicating direction include the copies, so what the queue dropped cannot be told; nor can it
+        // after a link that corrupts: a router drops a packet whose header was damaged, and that packet did not enter this
+        // queue though it arrived at the node before it
+        let duplicates = timeline::states_of(scenario, way.index, way.direction)
+            .iter()
+            .any(|impairments| impairments.duplicate.is_some())
+            || impairments_of(link, way.direction)
+                .is_some_and(|impairments| impairments.duplicate.is_some());
+        let damaged_before = flows.iter().any(|flow| {
+            let keys = way_keys(scenario, &flow.path);
+            keys.iter()
+                .position(|other| *other == key)
+                .is_some_and(|at| {
+                    keys[..at].iter().any(|(index, direction)| {
+                        timeline::states_of(scenario, *index, *direction)
+                            .iter()
+                            .any(|impairments| impairments.corrupt.is_some())
+                    })
+                })
+        });
         tallies.push(DirectionTally {
             link: way.name.to_string(),
             direction: way.word.to_owned(),
-            sent,
+            sent: entered,
             reached_node,
             delivered,
-            lost_in_queue: if duplicates {
+            lost_in_queue: if duplicates || damaged_before {
                 None
             } else {
-                sent.checked_sub(reached_node)
+                entered.checked_sub(reached_node)
             },
-            dropped_corrupted: reached_node
-                .saturating_sub(delivered)
-                .saturating_sub(receive_buffer_drops),
+            dropped_corrupted: if at_the_end {
+                reached_node
+                    .saturating_sub(delivered)
+                    .saturating_sub(receive_buffer_drops)
+            } else {
+                0
+            },
             receive_buffer_drops,
         });
     }
@@ -1712,11 +1910,15 @@ fn check_queues(
     provisioned: &Provisioned,
     flows: &[Flow<'_>],
     sent: &[SendSummary],
+    before: &[Option<NodeCounts>],
+    after: &[Option<NodeCounts>],
 ) -> Result<Vec<QueueCheck>, Error> {
     let mut checks = Vec::new();
     if provisioned.seed.is_none() {
         return Ok(checks);
     }
+    let paths: Vec<Option<&netscenario_model::Path>> =
+        flows.iter().map(|flow| Some(&flow.path)).collect();
     // A link that goes down drops the packets that are in its queue without counting them, so the queue cannot be
     // held to the number of packets that were sent; the run says so (D-064)
     let goes_down = timeline::links_that_go_down(scenario);
@@ -1732,19 +1934,24 @@ fn check_queues(
         {
             continue;
         }
-        let crossing: Vec<(&Flow<'_>, &SendSummary)> = flows
-            .iter()
-            .zip(sent)
-            .filter(|(flow, _)| {
-                way_keys(scenario, &flow.path).contains(&(way.index, way.direction))
-            })
-            .collect();
-        // A queue that packets of a longer path cross is not held to the packets that were sent: what enters it is what the
-        // links before it let through
-        if crossing.iter().any(|(flow, _)| flow.path.links.len() > 1) {
-            continue;
-        }
-        let expected = crossing.iter().map(|(_, summary)| summary.packets).sum();
+        // What enters the queue: what the senders put in, or, after the first link of a path, what arrived at the node before
+        // it (a link that goes down on the way is left out above only for itself: the node after it counts what it got)
+        let expected = match feed(scenario, &paths, (way.index, way.direction)) {
+            Feed::Idle => 0,
+            Feed::Known { senders, feeders } => {
+                let Some(total) = entered_packets(
+                    &senders,
+                    &feeders,
+                    |workload| sent[workload].packets,
+                    before,
+                    after,
+                ) else {
+                    continue;
+                };
+                total
+            }
+            Feed::Unknown => continue,
+        };
         if let Some(counted) = backend.queue_packets(way.handle, way.direction)? {
             checks.push(QueueCheck {
                 link: way.name.to_string(),
@@ -1789,6 +1996,11 @@ mod tests {
         /// first reading.
         frames: Option<([u64; 2], u64)>,
         readings: [u32; 2],
+        /// For a network of several links: what the queue and the receiving node of one direction of a link count, by the
+        /// place of the link and `true` for the reverse direction. Where a link is not in it, `counts` and `frames` speak.
+        per_link: std::collections::HashMap<(u32, bool), (u64, u64)>,
+        links_made: u32,
+        link_readings: std::collections::HashMap<(u32, bool), u32>,
         /// The value of `--udp-checksum` each agent was started with, as `recv off`, in the order of starting.
         checksum: Vec<String>,
         /// How many datagrams the receiver reports as damaged: 2 when it was told that the checksum is off,
@@ -1802,6 +2014,10 @@ mod tests {
         /// it is `last` for ever. `None`: the fake cannot say.
         backlog: Option<(VecDeque<u64>, u64)>,
     }
+
+    /// The place of a link and `true` for its reverse direction, then what the queue of it counted and how many frames
+    /// reached the node at its end.
+    type LinkCount = ((u32, bool), (u64, u64));
 
     struct Played {
         lines: VecDeque<String>,
@@ -1821,6 +2037,9 @@ mod tests {
                 counts: None,
                 frames: None,
                 readings: [0; 2],
+                per_link: std::collections::HashMap::new(),
+                links_made: 0,
+                link_readings: std::collections::HashMap::new(),
                 checksum: Vec::new(),
                 damaged: 0,
                 wire_packets: None,
@@ -1892,6 +2111,15 @@ mod tests {
             }
         }
 
+        /// A fake for a network of several links: for each (place of the link, reverse) what the queue of the direction counted
+        /// and how many frames reached the node at its end.
+        fn with_links(counts: &[LinkCount]) -> Self {
+            Self {
+                per_link: counts.iter().copied().collect(),
+                ..Self::new(None)
+            }
+        }
+
         fn counting(counts: [u64; 2]) -> Self {
             Self {
                 counts: Some(counts),
@@ -1929,7 +2157,8 @@ mod tests {
             _: [NodeHandle; 2],
         ) -> Result<LinkHandle, Error> {
             self.calls.push(format!("link {name}"));
-            Ok(LinkHandle(0))
+            self.links_made += 1;
+            Ok(LinkHandle(self.links_made - 1))
         }
 
         fn set_node_address(&mut self, _: NodeHandle, _: std::net::Ipv4Addr) -> Result<(), Error> {
@@ -1990,10 +2219,16 @@ mod tests {
 
         fn queue_packets(
             &mut self,
-            _: LinkHandle,
+            link: LinkHandle,
             direction: Direction,
         ) -> Result<Option<u64>, Error> {
             self.calls.push(format!("count {direction:?}"));
+            if let Some((queue, _)) = self
+                .per_link
+                .get(&(link.0, direction == Direction::Reverse))
+            {
+                return Ok(Some(*queue));
+            }
             Ok(self.counts.map(|counts| match direction {
                 Direction::Forward => counts[0],
                 Direction::Reverse => counts[1],
@@ -2017,9 +2252,19 @@ mod tests {
 
         fn node_counts(
             &mut self,
-            _: LinkHandle,
+            link: LinkHandle,
             direction: Direction,
         ) -> Result<Option<NodeCounts>, Error> {
+            let key = (link.0, direction == Direction::Reverse);
+            if let Some((_, frames)) = self.per_link.get(&key) {
+                let reading = self.link_readings.entry(key).or_default();
+                *reading += 1;
+                return Ok(Some(if *reading == 1 {
+                    NodeCounts::new(0, 0)
+                } else {
+                    NodeCounts::new(*frames, 0)
+                }));
+            }
             let way = usize::from(direction == Direction::Reverse);
             let reading = self.readings[way];
             self.readings[way] += 1;
@@ -2443,6 +2688,246 @@ mod tests {
         let result = run(&mut backend, &scenario(), &options).unwrap();
         assert_eq!(result.seed.queue_checks[0].expected, 8);
         assert!(result.seed.loss_reproducible, "{:?}", result.seed);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// A chain of two links with a router in the middle and a random loss on the second, one workload from end to end.
+    fn chain(first: &str, workloads: &str) -> Scenario {
+        Scenario::from_yaml(
+            &format!(
+                "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, {{ id: r, role: router }}, b]\n  links:\n    - {{ id: l1, between: [a, r]{first} }}\n    - {{ id: l2, between: [r, b], both: {{ loss: {{ model: random, p: 20% }} }} }}\nworkloads:\n{workloads}"
+            ),
+            "chain.yaml",
+        )
+        .unwrap()
+    }
+
+    const CHAIN_FLOW: &str =
+        "  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n";
+
+    /// What each queue and each node of the chain counts when the fake sender sent 10 packets: 9 reached the router, the
+    /// second queue got those 9 and let 8 through.
+    const COUNTED: [LinkCount; 4] = [
+        ((0, false), (0, 9)),
+        ((0, true), (0, 0)),
+        ((1, false), (9, 8)),
+        ((1, true), (0, 0)),
+    ];
+
+    /// D-040 along a path: what enters the second link is what arrived at the router, so the packet is accounted for link
+    /// by link (lost in the first queue, lost in the second, delivered), the queue of the second link is held to the packets
+    /// that arrived at the router, and the run stays reproducible.
+    #[test]
+    fn a_packet_is_accounted_for_link_by_link_along_its_path() {
+        let mut backend = Fake::with_links(&COUNTED);
+        let options = options("path-tally");
+        let result = run(&mut backend, &chain("", CHAIN_FLOW), &options).unwrap();
+        let tallies: Vec<_> = result
+            .directions
+            .iter()
+            .map(|t| {
+                (
+                    t.link.as_str(),
+                    t.direction.as_str(),
+                    t.sent,
+                    t.reached_node,
+                    t.delivered,
+                    t.lost_in_queue,
+                    t.dropped_corrupted,
+                )
+            })
+            .collect();
+        // The router takes what arrives and forwards it, so the first link has no packet dropped by a node; the receivers
+        // are at the end of the second
+        assert_eq!(
+            tallies,
+            [
+                ("l1", "forward", 10, 9, 9, Some(1), 0),
+                ("l2", "forward", 9, 8, 8, Some(1), 0)
+            ]
+        );
+        assert!(result.seed.loss_reproducible, "{:?}", result.seed);
+        assert_eq!(
+            result.seed.queue_checks,
+            [
+                QueueCheck {
+                    link: "l2".to_owned(),
+                    direction: "forward".to_owned(),
+                    expected: 9,
+                    counted: 9
+                },
+                QueueCheck {
+                    link: "l2".to_owned(),
+                    direction: "reverse".to_owned(),
+                    expected: 0,
+                    counted: 0
+                }
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Canary for the test above: a second queue that counted a packet more than arrived at the router, or fewer, is a queue
+    /// that something else entered (or that a packet did not enter), and the run says so.
+    #[test]
+    fn canary_a_queue_after_the_first_link_that_counted_another_number_is_not_reproducible() {
+        for queue in [8, 10] {
+            let mut counted = COUNTED;
+            counted[2] = ((1, false), (queue, 8));
+            let mut backend = Fake::with_links(&counted);
+            let options = options("path-canary");
+            let result = run(&mut backend, &chain("", CHAIN_FLOW), &options).unwrap();
+            assert!(!result.seed.loss_reproducible, "{queue}");
+            assert!(
+                result
+                    .seed
+                    .not_reproducible_because
+                    .iter()
+                    .any(|why| why.contains("link 'l2'") && why.contains("counted")),
+                "{:?}",
+                result.seed.not_reproducible_because
+            );
+            let _ = std::fs::remove_dir_all(&options.out_dir);
+        }
+    }
+
+    /// Two workloads that meet in the second link and have shared the first: everything that arrived at the router enters the
+    /// second queue, so it has a tally and a check, but the order in which the two reach it is not fixed, and the result says
+    /// why the loss is not reproducible.
+    #[test]
+    fn workloads_that_share_two_links_are_accounted_but_not_reproducible() {
+        let two = format!(
+            "{CHAIN_FLOW}  - {{ id: v, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }}\n"
+        );
+        let mut backend = Fake::with_links(&COUNTED);
+        let options = options("path-share");
+        let result = run(&mut backend, &chain("", &two), &options).unwrap();
+        let second = result
+            .directions
+            .iter()
+            .find(|t| (t.link.as_str(), t.direction.as_str()) == ("l2", "forward"))
+            .unwrap();
+        // 9 frames arrived at the router, all for the second link
+        assert_eq!((second.sent, second.reached_node), (9, 8));
+        assert!(
+            result
+                .seed
+                .queue_checks
+                .iter()
+                .any(|c| c.link == "l2" && c.direction == "forward" && c.expected == 9),
+            "{:?}",
+            result.seed.queue_checks
+        );
+        assert!(!result.seed.loss_reproducible);
+        assert!(
+            result
+                .seed
+                .not_reproducible_because
+                .iter()
+                .any(|why| why.contains("'w', 'v'") && why.contains("link 'l2'")),
+            "{:?}",
+            result.seed.not_reproducible_because
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// Two workloads that share the first link and part at the router: the frames that arrive there are for two links, so
+    /// the run cannot tell which enter the second queue. It has no tally and no check, and the result says why.
+    #[test]
+    fn workloads_that_part_at_a_router_are_not_accounted_after_it_and_not_reproducible() {
+        let yaml = format!(
+            "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, {{ id: r, role: router }}, b, c]\n  links:\n    - {{ id: l1, between: [a, r] }}\n    - {{ id: l2, between: [r, b], both: {{ loss: {{ model: random, p: 20% }} }} }}\n    - {{ id: l3, between: [r, c] }}\nworkloads:\n{CHAIN_FLOW}  - {{ id: v, kind: udp-cbr, from: a, to: c, rate: 800kbit, packet-size: 1000b }}\n"
+        );
+        let scenario = Scenario::from_yaml(&yaml, "part.yaml").unwrap();
+        let mut backend = Fake::with_links(&[
+            ((0, false), (0, 18)),
+            ((0, true), (0, 0)),
+            ((1, false), (9, 8)),
+            ((1, true), (0, 0)),
+            ((2, false), (0, 8)),
+            ((2, true), (0, 0)),
+        ]);
+        let options = options("path-part");
+        let result = run(&mut backend, &scenario, &options).unwrap();
+        assert!(
+            result.directions.iter().all(|t| t.link != "l2"),
+            "{:?}",
+            result.directions
+        );
+        assert!(
+            result
+                .seed
+                .queue_checks
+                .iter()
+                .all(|c| (c.link.as_str(), c.direction.as_str()) != ("l2", "forward")),
+            "{:?}",
+            result.seed.queue_checks
+        );
+        assert!(!result.seed.loss_reproducible);
+        assert!(
+            result
+                .seed
+                .not_reproducible_because
+                .iter()
+                .any(|why| why.contains("link 'l2'") && why.contains("other workloads")),
+            "{:?}",
+            result.seed.not_reproducible_because
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// A link before the queue that can change the order of the packets (a jitter) makes the packet that draws each number
+    /// depend on the timing: the queue is counted, but the run is not reproducible, and the reason names the link.
+    #[test]
+    fn a_jitter_before_a_random_queue_makes_the_run_not_reproducible() {
+        let mut backend = Fake::with_links(&COUNTED);
+        let options = options("path-jitter");
+        let result = run(
+            &mut backend,
+            &chain(
+                ", forward: { delay: 20ms, jitter: { amount: 5ms } }",
+                CHAIN_FLOW,
+            ),
+            &options,
+        )
+        .unwrap();
+        assert!(!result.seed.loss_reproducible);
+        assert!(
+            result
+                .seed
+                .not_reproducible_because
+                .iter()
+                .any(|why| why.contains("after link 'l1'") && why.contains("order")),
+            "{:?}",
+            result.seed.not_reproducible_because
+        );
+        // The count still agrees; it is the order that is not fixed
+        assert!(result.seed.queue_checks.iter().all(QueueCheck::agrees));
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// After a link that corrupts, a router drops a packet whose header was damaged, and that packet arrived at the node but
+    /// did not enter the next queue: what the next queue lost cannot be told, and the result says `None` instead of a number.
+    #[test]
+    fn after_a_corrupting_link_the_loss_of_the_next_queue_is_not_told() {
+        let mut backend = Fake::with_links(&COUNTED);
+        let options = options("path-corrupt");
+        let result = run(
+            &mut backend,
+            &chain(", forward: { corrupt: 1% }", CHAIN_FLOW),
+            &options,
+        )
+        .unwrap();
+        let tally = |link: &str| {
+            result
+                .directions
+                .iter()
+                .find(|t| t.link == link)
+                .unwrap()
+                .lost_in_queue
+        };
+        assert_eq!(tally("l1"), Some(1));
+        assert_eq!(tally("l2"), None);
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 

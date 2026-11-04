@@ -18,6 +18,10 @@ The bounds follow four rules, in the order of their strength:
 
 The tests run one at a time (`.config/nextest.toml`), because the sender of the agent spins for the last stretch before each packet and two of them side by side on four cores would disturb each other. The agent is optimised in the development profile as well (`Cargo.toml`, D-061): the debug build of the receiver took half a core at 4,000 packets of 1,200 bytes a second, which on a shared runner lost packets and once ran past the watchdog.
 
+## Paths of several links
+
+Three cases run a client, two routers and a server in a row (D-078): **the delays of three links add up** (10, 15 and 5 ms give a smallest delay of 30 ms, which no packet undercuts), **the losses compound** (3 % and 4 % give 1 - 0.97 x 0.96 = 6.88 %, with the binomial band of 6,000 packets), and **the rate of the path is its smallest rate** (a limit of 2 mbit on the middle link between two links of 10 mbit gives the steady rate of the single-link case). Each also holds the tally to zero unaccounted packets: what entered the first link is lost in a queue, dropped by a node or delivered, link by link. Three canaries (a delay, a loss and a rate that one link of the path does not apply) prove that the bounds fail for a wrong path. The tables of these cases appear in the block below when `just fidelity` has run on a machine with `netem`.
+
 ## Three canaries
 
 A test that judges must be able to fail. Three tests run a scenario that is wrong on purpose and judge it with the bounds of the real case: **a rate that is not applied** (the link carries all of the offered 3 mbit, and the case for 2 mbit fails), **a delay that is not applied**, and **a loss that is not applied or is applied at the wrong ratio**. A fourth test judges made-up numbers and checks that each wrong number is named. If a bound were too wide to catch these, the canary would pass the wrong network, and the test would fail.
