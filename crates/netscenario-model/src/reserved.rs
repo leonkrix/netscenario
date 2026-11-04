@@ -14,19 +14,36 @@ const RESERVED_KEYS: &[(&str, &str, &str)] = &[
     ("", "mobility", "0.6"),
     ("topology.links[]", "model", "0.3"),
     ("topology.links[]", "address", "a later release"),
-    ("topology.links[].forward", "queue", "0.3"),
-    ("topology.links[].reverse", "queue", "0.3"),
-    ("topology.links[].both", "queue", "0.3"),
 ];
 
 /// Keys that look like keys of the scenario and are not: they are options of a run, which is what makes a run of the scenario
 /// comparable with another one (the hash of the scenario is the same). Parent, key, what is wrong and what to do.
-const OPTIONS_OF_A_RUN: &[(&str, &str, &str, &str)] = &[(
-    "",
-    "repetitions",
-    "`repetitions` is an option of a run and not a key of the scenario",
-    "run the scenario several times with `netscenario run --repetitions n`, or `run(..., repetitions=n)` in Python (docs/STATISTICS.md)",
-)];
+const OPTIONS_OF_A_RUN: &[(&str, &str, &str, &str)] = &[
+    (
+        "timeline[].set.forward",
+        "queue",
+        "a step cannot change the `queue` of a direction",
+        "write the `queue` in the link: the queue is built with the link, and a rate that changes needs the traces of a later release",
+    ),
+    (
+        "timeline[].set.reverse",
+        "queue",
+        "a step cannot change the `queue` of a direction",
+        "write the `queue` in the link: the queue is built with the link, and a rate that changes needs the traces of a later release",
+    ),
+    (
+        "timeline[].set.both",
+        "queue",
+        "a step cannot change the `queue` of a direction",
+        "write the `queue` in the link: the queue is built with the link, and a rate that changes needs the traces of a later release",
+    ),
+    (
+        "",
+        "repetitions",
+        "`repetitions` is an option of a run and not a key of the scenario",
+        "run the scenario several times with `netscenario run --repetitions n`, or `run(..., repetitions=n)` in Python (docs/STATISTICS.md)",
+    ),
+];
 
 /// Values by the generic path of the key they belong to: the value and the release.
 const RESERVED_VALUES: &[(&str, &str, &str)] = &[

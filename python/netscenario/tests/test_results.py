@@ -317,6 +317,50 @@ def test_the_tally_of_a_direction_adds_up_and_a_missing_one_is_empty() -> None:
     assert result(directions=[duplicating]).directions[0].lost_in_queue is None
 
 
+def test_the_queues_of_the_run_with_their_samples() -> None:
+    assert result().queues == ()
+    queue = {
+        "link": "bottleneck",
+        "direction": "forward",
+        "build": "fabric",
+        "discipline": "codel",
+        "kind": "codel",
+        "packets": 900,
+        "bytes": 1_300_000,
+        "drops": 17,
+        "overlimits": 0,
+        "requeues": 1,
+        "backlog_packets": 3,
+        "backlog_bytes": 3600,
+        "details": {"ecn_mark": 0, "drop_overlimit": 2},
+        "samples": [
+            {
+                "t_ns": 1_000_000_000,
+                "packets": 450,
+                "drops": 5,
+                "backlog_packets": 30,
+                "backlog_bytes": 36_000,
+            }
+        ],
+    }
+    (stats,) = result(queues=[queue]).queues
+    assert (stats.link, stats.direction, stats.discipline, stats.kind) == (
+        "bottleneck",
+        "forward",
+        "codel",
+        "codel",
+    )
+    assert (stats.packets, stats.drops, stats.backlog_packets) == (900, 17, 3)
+    assert stats.details["drop_overlimit"] == 2
+    (sample,) = stats.samples
+    assert (sample.t, sample.drops, sample.backlog_bytes) == (1.0, 5, 36_000)
+    # A queue without samples (a short run) and without details is still a queue
+    bare = {k: v for k, v in queue.items() if k not in ("details", "samples")}
+    (plain,) = result(queues=[bare]).queues
+    assert plain.samples == ()
+    assert dict(plain.details) == {}
+
+
 def _line(index: int, sent: int, received: int, arrived: int, bits: int) -> dict[str, object]:
     delay = {"mean_ns": 25_000_000, "p50_ns": 24_000_000, "p95_ns": 30_000_000}
     delay |= {"p99_ns": 31_000_000, "max_ns": 32_000_000}

@@ -34,6 +34,7 @@ mod graph;
 mod ip;
 mod measure;
 mod mtu;
+mod queue;
 mod read;
 mod required;
 mod reserved;
@@ -59,6 +60,7 @@ pub use mtu::{
     DEFAULT_MTU, MAX_MTU, MAX_PACKET_SIZE_V6, MAX_UDP_PAYLOAD_V4, MAX_UDP_PAYLOAD_V6, MIN_MTU,
     MIN_MTU_V6, frames_per_packet, mtus_of, mtus_of_topology, path_problem,
 };
+pub use queue::{Discipline, Queue, QueueLimit};
 pub use read::MAX_FILE_BYTES;
 pub use scenario::{
     Backend, Change, Command, Direction, Edit, Event, FormatVersion, Impairments,
@@ -75,6 +77,6 @@ pub use topology::{
 };
 pub use units::{Duration, Name, Probability, Rate, Size, ValueError};
 pub use validate::{
-    MAX_BURST_PACKETS, MAX_COST, MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MAX_WEIGHT,
-    MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM,
+    MAX_BURST_PACKETS, MAX_COST, MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MAX_QUEUE_BYTES,
+    MAX_QUEUE_PACKETS, MAX_WEIGHT, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM,
 };

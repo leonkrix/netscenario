@@ -31,8 +31,8 @@ use crate::provision::{Provisioned, impairments_of, provision};
 use crate::recovery::{self, Basis, Recovery, RecoveryOptions};
 use crate::result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, NodeInfo,
-    PathInfo, ProgramResult, QueueCheck, RESULT_FORMAT, RESULT_VERSION, RouteInfo, RunResult,
-    ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
+    PathInfo, ProgramResult, QueueCheck, QueueInfo, RESULT_FORMAT, RESULT_VERSION, RouteInfo,
+    RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
 };
 use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
@@ -325,6 +325,7 @@ struct Measurement {
     settle: Duration,
     queue_checks: Vec<QueueCheck>,
     directions: Vec<DirectionTally>,
+    queues: Vec<QueueInfo>,
     events: Vec<EventRecord>,
     notes: Vec<String>,
     /// When the workloads were told to stop, if the run was interrupted (D-066).
@@ -377,6 +378,7 @@ pub fn run(
         settle,
         queue_checks,
         directions,
+        queues,
         events,
         notes,
         interrupted_ns,
@@ -434,6 +436,7 @@ pub fn run(
         },
         workloads,
         directions,
+        queues,
         events,
         notes,
         programs,
@@ -1520,6 +1523,7 @@ fn measure_with(
     // The events are part of the scenario up to its end, also where every workload has stopped before
     let run_for = latest_end.max(Duration::from(scenario.duration));
     let deadline = Instant::now() + START_MARGIN + run_for + END_MARGIN;
+    let mut sampler = queue_sampler(scenario, provisioned);
     let driven = drive::drive(
         backend,
         scenario,
@@ -1532,6 +1536,7 @@ fn measure_with(
         drive::Watch {
             programs,
             hold_until: begin_at + Duration::from(scenario.duration),
+            queues: &mut sampler,
         },
         control,
     )?;
@@ -1565,11 +1570,13 @@ fn measure_with(
     let mut measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
     let directions = tally_directions(scenario, provisioned, &flows, &measured, &before, &after);
     refuse_names_after_buffer_drops(scenario, provisioned, &flows, &directions, &mut measured);
+    let queues = queue_infos(backend, scenario, provisioned, &sampler)?;
     Ok(Measurement {
         measured,
         settle,
         queue_checks,
         directions,
+        queues,
         events,
         notes: backend.notes().into_iter().chain(settle_note).collect(),
         interrupted_ns,
@@ -2046,6 +2053,53 @@ fn check_queues(
     Ok(checks)
 }
 
+/// The sampler of the queues of the scenario: one look a second at every direction that has a `queue` (PRB-10).
+fn queue_sampler(scenario: &Scenario, provisioned: &Provisioned) -> crate::queues::Sampler {
+    crate::queues::Sampler::new(ways(scenario, provisioned).filter_map(|way| {
+        let link = &scenario.topology.links[way.index];
+        impairments_of(link, way.direction)
+            .and_then(|impairments| impairments.queue.as_ref())
+            .map(|_| (way.name.to_string(), way.word, way.handle, way.direction))
+    }))
+}
+
+/// What the kernel counted in the queue of every direction that has a `queue` (PRB-10, D-082). A backend that cannot say leaves
+/// the list empty.
+fn queue_infos(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    provisioned: &Provisioned,
+    sampler: &crate::queues::Sampler,
+) -> Result<Vec<QueueInfo>, Error> {
+    let mut found = Vec::new();
+    for way in ways(scenario, provisioned) {
+        let link = &scenario.topology.links[way.index];
+        let Some(queue) = impairments_of(link, way.direction).and_then(|i| i.queue.as_ref()) else {
+            continue;
+        };
+        let Some(stats) = backend.queue_stats(way.handle, way.direction)? else {
+            continue;
+        };
+        found.push(QueueInfo {
+            link: way.name.to_string(),
+            direction: way.word.to_owned(),
+            build: "fabric".to_owned(),
+            discipline: queue.discipline.as_str().to_owned(),
+            kind: stats.kind,
+            packets: stats.packets,
+            bytes: stats.bytes,
+            drops: stats.drops,
+            overlimits: stats.overlimits,
+            requeues: stats.requeues,
+            backlog_packets: stats.backlog_packets,
+            backlog_bytes: stats.backlog_bytes,
+            details: stats.details,
+            samples: sampler.samples_of(way.name.as_str(), way.word),
+        });
+    }
+    Ok(found)
+}
+
 /// The path of the agent that belongs to the program at `exe`: the file `netscenario-agent` next to it.
 #[must_use]
 pub fn agent_next_to(exe: &Path) -> PathBuf {
@@ -2082,6 +2136,8 @@ mod tests {
         /// place of the link and `true` for the reverse direction. Where a link is not in it, `counts` and `frames` speak.
         per_link: std::collections::HashMap<(u32, bool), (u64, u64)>,
         links_made: u32,
+        /// The packets the queue of the forward direction says it dropped, if the fake has a queue.
+        queue_drops: Option<u64>,
         link_readings: std::collections::HashMap<(u32, bool), u32>,
         /// The value of `--udp-checksum` each agent was started with, as `recv off`, in the order of starting.
         checksum: Vec<String>,
@@ -2121,6 +2177,7 @@ mod tests {
                 readings: [0; 2],
                 per_link: std::collections::HashMap::new(),
                 links_made: 0,
+                queue_drops: None,
                 link_readings: std::collections::HashMap::new(),
                 checksum: Vec::new(),
                 damaged: 0,
@@ -2241,6 +2298,36 @@ mod tests {
             self.calls.push(format!("link {name}"));
             self.links_made += 1;
             Ok(LinkHandle(self.links_made - 1))
+        }
+
+        fn create_link_through_fabric(
+            &mut self,
+            name: &netscenario_model::Name,
+            between: [NodeHandle; 2],
+        ) -> Result<LinkHandle, Error> {
+            self.calls.push(format!("fabric link {name}"));
+            self.links_made += 1;
+            let _ = between;
+            Ok(LinkHandle(self.links_made - 1))
+        }
+
+        fn queue_stats(
+            &mut self,
+            _: LinkHandle,
+            direction: Direction,
+        ) -> Result<Option<crate::backend::QueueStats>, Error> {
+            // The fake counts a queue on the forward direction only
+            Ok(
+                (direction == Direction::Forward && self.queue_drops.is_some()).then(|| {
+                    let mut stats = crate::backend::QueueStats::new("codel");
+                    stats.packets = 8;
+                    stats.bytes = 8_000;
+                    stats.drops = self.queue_drops.unwrap_or(0);
+                    stats.backlog_packets = 1;
+                    stats.details.insert("ecn_mark".to_owned(), 0);
+                    stats
+                }),
+            )
         }
 
         fn set_ip_families(&mut self, _: bool, _: bool) -> Result<(), Error> {
@@ -3032,6 +3119,106 @@ mod tests {
         assert_eq!(tally("l1"), Some(1));
         assert_eq!(tally("l2"), None);
         let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// A link with a `queue` is built through the fabric, and the result lists what the kernel counted in its queue (PRB-10): the
+    /// build, the discipline of the scenario and of the kernel, and the counters. A link without a queue is not listed.
+    #[test]
+    fn a_link_with_a_queue_is_built_through_the_fabric_and_the_result_has_its_counters() {
+        let queued = Scenario::from_yaml(
+            "version: 0\nname: t\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { rate: 2mbit, queue: { discipline: codel, limit: 100p } }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n",
+            "queued.yaml",
+        )
+        .unwrap();
+        let mut backend = Fake::new(None);
+        backend.queue_drops = Some(2);
+        let options = options("queue-fabric");
+        let result = run(&mut backend, &queued, &options).unwrap();
+        assert!(
+            backend.calls.contains(&"fabric link l".to_owned()),
+            "{:?}",
+            backend.calls
+        );
+        let [queue] = result.queues.as_slice() else {
+            panic!("{:?}", result.queues);
+        };
+        assert_eq!(
+            (
+                queue.link.as_str(),
+                queue.direction.as_str(),
+                queue.build.as_str()
+            ),
+            ("l", "forward", "fabric")
+        );
+        assert_eq!(
+            (queue.discipline.as_str(), queue.kind.as_str()),
+            ("codel", "codel")
+        );
+        assert_eq!(
+            (queue.packets, queue.drops, queue.backlog_packets),
+            (8, 2, 1)
+        );
+        assert_eq!(queue.details["ecn_mark"], 0);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+
+        // A link without a queue is built directly and has no entry
+        let mut backend = Fake::new(None);
+        backend.queue_drops = Some(2);
+        let options = self::options("queue-direct");
+        let result = run(&mut backend, &scenario(), &options).unwrap();
+        assert_eq!(result.queues, []);
+        assert!(!backend.calls.iter().any(|call| call.starts_with("fabric")));
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// The counters of a queue are looked at once per interval while the workloads go, in the order of time, and never earlier
+    /// than one interval after the last look (PRB-10). A look before the first interval has passed reads nothing.
+    #[test]
+    fn the_queues_are_looked_at_once_per_interval() {
+        use std::time::Duration;
+        const INTERVAL_NS: u64 = 40_000_000;
+        let mut backend = Fake::new(None);
+        backend.queue_drops = Some(1);
+        let mut sampler = crate::queues::Sampler::new([(
+            "l".to_owned(),
+            "forward",
+            LinkHandle(0),
+            Direction::Forward,
+        )])
+        .with_interval(INTERVAL_NS);
+        let begin_ns = netscenario_agent::clock::monotonic_ns();
+        sampler.look(&mut backend, begin_ns).unwrap();
+        assert!(sampler.samples_of("l", "forward").is_empty(), "too early");
+        for _ in 0..4 {
+            std::thread::sleep(Duration::from_millis(25));
+            sampler.look(&mut backend, begin_ns).unwrap();
+        }
+        let seen = sampler.samples_of("l", "forward");
+        // 100 ms at 40 ms: the looks at 40 ms and 80 ms, never more than three even when the machine stalls
+        assert!((1..=3).contains(&seen.len()), "{seen:?}");
+        assert!(seen[0].t_ns >= INTERVAL_NS, "{seen:?}");
+        assert!(
+            seen.windows(2)
+                .all(|pair| pair[1].t_ns >= pair[0].t_ns + INTERVAL_NS),
+            "one look per interval: {seen:?}"
+        );
+        assert!(seen.iter().all(|sample| sample.drops == 1), "{seen:?}");
+        assert_eq!(sampler.samples_of("l", "reverse"), Vec::new());
+    }
+
+    /// A backend that cannot say has no samples, and a sampler without a queue never asks.
+    #[test]
+    fn a_backend_without_counters_leaves_the_samples_empty() {
+        let mut backend = Fake::new(None);
+        let mut sampler = crate::queues::Sampler::new([(
+            "l".to_owned(),
+            "forward",
+            LinkHandle(0),
+            Direction::Forward,
+        )])
+        .with_interval(1);
+        sampler.look(&mut backend, 0).unwrap();
+        assert_eq!(sampler.samples_of("l", "forward"), Vec::new());
     }
 
     /// A queue sees frames (D-081): packets of 1,400 bytes over an MTU of 600 make 3 fragments each, so the queue of the link

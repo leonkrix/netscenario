@@ -537,6 +537,20 @@ impl netscenario_core::Backend for Disturbed {
     fn set_link_mtu(&mut self, link: netscenario_core::LinkHandle, mtu: u32) -> Result<(), Error> {
         self.0.set_link_mtu(link, mtu)
     }
+    fn create_link_through_fabric(
+        &mut self,
+        name: &netscenario_model::Name,
+        between: [netscenario_core::NodeHandle; 2],
+    ) -> Result<netscenario_core::LinkHandle, Error> {
+        self.0.create_link_through_fabric(name, between)
+    }
+    fn queue_stats(
+        &mut self,
+        link: netscenario_core::LinkHandle,
+        direction: netscenario_core::Direction,
+    ) -> Result<Option<netscenario_core::QueueStats>, Error> {
+        self.0.queue_stats(link, direction)
+    }
     fn set_forwarding(
         &mut self,
         node: netscenario_core::NodeHandle,

@@ -1,0 +1,10 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  dumbbell:
+    left: [a]
+    right: [b]
+    bottleneck: { both: { rate: 2mbit, queue: { limit: 100 } } }
+workloads:
+  - { id: media, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1000b }

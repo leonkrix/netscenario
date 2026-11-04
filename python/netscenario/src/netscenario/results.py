@@ -652,6 +652,59 @@ class DirectionTally:
 
 
 @dataclass(frozen=True)
+class QueueSample:
+    """The counters of a queue at a moment of the run."""
+
+    t: float
+    """When, in seconds from the start of the measured phase."""
+    packets: int
+    """The packets that left the queue until then."""
+    drops: int
+    """The packets the queue dropped until then."""
+    backlog_packets: int
+    """The packets waiting in the queue then."""
+    backlog_bytes: int
+    """The bytes waiting in the queue then."""
+
+
+@dataclass(frozen=True)
+class QueueStats:
+    """The queue of one direction of a link as it was built, with what the kernel counted in it."""
+
+    link: str
+    """The link."""
+    direction: str
+    """``"forward"`` (from the first node of ``between`` to the second) or ``"reverse"``."""
+    build: str
+    """How the link was built: ``"fabric"``."""
+    discipline: str
+    """The discipline of the scenario: ``"fifo"``, ``"codel"``, ``"fq-codel"`` or ``"pie"``."""
+    kind: str
+    """The discipline as the kernel names it (``pfifo``, ``bfifo``, ``codel``, ``fq_codel``,
+    ``pie``)."""
+    packets: int
+    """The frames that left the queue (a datagram cut by the MTU is several)."""
+    bytes: int
+    """The bytes of those frames."""
+    drops: int
+    """The packets the queue dropped, by its limit or by the rule of its discipline."""
+    overlimits: int
+    """The packets over the limit."""
+    requeues: int
+    """The packets put back for another try."""
+    backlog_packets: int
+    """The packets waiting when the run looked last."""
+    backlog_bytes: int
+    """The bytes waiting when the run looked last."""
+    details: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
+    """The counters special to the discipline, by the names of the kernel (``ecn_mark``,
+    ``drop_overlimit``, ...)."""
+    samples: tuple[QueueSample, ...] = ()
+    """The counters once a second while the workloads went. Empty for a run shorter than a second,
+    and where a sender may wait for a step of the timeline."""
+
+
+@dataclass(frozen=True)
 class SeedInfo:
     """The seed of the run."""
 
@@ -748,6 +801,9 @@ class Result:
     directions: tuple[DirectionTally, ...] = ()
     """For each direction of a link that carried a workload: where its packets went. Empty if the
     backend cannot count, or the scenario runs a program of your own."""
+    queues: tuple[QueueStats, ...] = ()
+    """For each direction with a ``queue``: how it was built and what the kernel counted in it
+    (drops, backlog, and a sample each second). Empty for a scenario without a ``queue``."""
     steps: tuple[TimelineStep, ...] = ()
     """What the run did to the links while it ran, in the order it was done (the ``events`` of
     ``result.json``). Empty for a scenario without a timeline."""
@@ -854,6 +910,7 @@ class Result:
                 )
                 for d in raw.get("directions", ())
             ),
+            queues=tuple(_queue_stats(q) for q in raw.get("queues", ())),
             steps=tuple(
                 TimelineStep(
                     event=int(e["event"]),
@@ -876,6 +933,34 @@ class Result:
             out_dir=directory,
             raw=MappingProxyType(raw),
         )
+
+
+def _queue_stats(raw: Mapping[str, Any]) -> QueueStats:
+    return QueueStats(
+        link=raw["link"],
+        direction=raw["direction"],
+        build=raw["build"],
+        discipline=raw["discipline"],
+        kind=raw["kind"],
+        packets=int(raw["packets"]),
+        bytes=int(raw["bytes"]),
+        drops=int(raw["drops"]),
+        overlimits=int(raw["overlimits"]),
+        requeues=int(raw["requeues"]),
+        backlog_packets=int(raw["backlog_packets"]),
+        backlog_bytes=int(raw["backlog_bytes"]),
+        details=MappingProxyType({k: int(v) for k, v in raw.get("details", {}).items()}),
+        samples=tuple(
+            QueueSample(
+                t=_seconds(x["t_ns"]),
+                packets=int(x["packets"]),
+                drops=int(x["drops"]),
+                backlog_packets=int(x["backlog_packets"]),
+                backlog_bytes=int(x["backlog_bytes"]),
+            )
+            for x in raw.get("samples", ())
+        ),
+    )
 
 
 def _capture(data: dict[str, Any], directory: Path) -> Capture:

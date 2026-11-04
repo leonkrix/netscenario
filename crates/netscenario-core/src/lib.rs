@@ -67,6 +67,7 @@ mod observe;
 pub mod patterns;
 mod programs;
 mod provision;
+mod queues;
 pub mod recovery;
 mod replay;
 pub mod report;
@@ -83,7 +84,7 @@ mod traffic;
 pub use backend::{
     Backend, BackendInfo, Direction, LINE_LIMIT, LOG_LIMIT, LinkHandle, NextHop, NodeCounts,
     NodeHandle, NodeRoute, OutputStats, PortKind, Program, ProgramExit, ProgramHandle,
-    ProgramSignal, ProgramState,
+    ProgramSignal, ProgramState, QueueStats,
 };
 pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, check};
 pub use error::Error;
@@ -94,7 +95,8 @@ pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
 pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering};
 pub use provision::{
-    NodeAddress, NodeIps, Provisioned, impairments_of, node_address, node_address_v6, provision,
+    NodeAddress, NodeIps, Provisioned, has_queue, impairments_of, node_address, node_address_v6,
+    provision,
 };
 pub use recovery::{Basis, Recovery, RecoveryOptions};
 pub use replay::{
@@ -103,8 +105,9 @@ pub use replay::{
 };
 pub use result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, MetricSummary,
-    NodeInfo, PathInfo, ProgramOutput, ProgramResult, QueueCheck, RESULT_FORMAT, RESULT_VERSION,
-    RouteInfo, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, WorkloadResult,
+    NodeInfo, PathInfo, ProgramOutput, ProgramResult, QueueCheck, QueueInfo, QueueSample,
+    RESULT_FORMAT, RESULT_VERSION, RouteInfo, RunResult, ScenarioInfo, SeedInfo, SenderInfo,
+    SeriesInfo, Timing, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
 pub use runset::{

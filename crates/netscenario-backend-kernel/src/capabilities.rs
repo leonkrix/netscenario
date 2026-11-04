@@ -42,6 +42,8 @@ const NEEDS_TC: &[Feature] = &[
     Feature::RateLimit,
     Feature::ScheduledSteps,
     Feature::Outages,
+    Feature::QueueLimit,
+    Feature::QueueDisciplines,
 ];
 
 /// The features that the Kernel backend gets in later steps of a release: the format knows them, the backend does not
@@ -77,6 +79,15 @@ impl Probed {
             .map(|step| &step.result)
     }
 
+    /// What was answered if `leaf` (`pfifo`, `codel`, `fqcodel`, `pie`) was refused as the leaf of the class of a queue. Nothing
+    /// if the tree itself was refused: that is not the fault of the discipline.
+    pub(crate) fn discipline_refused(&self, leaf: &str) -> Option<&str> {
+        if self.refused("queuetree").is_some() || self.refused("fabric").is_some() {
+            return None;
+        }
+        self.refused(leaf)
+    }
+
     /// What was answered if the virtual Ethernet pair could not be made.
     fn veth_refused(&self) -> Option<&str> {
         self.step("veth")?.as_ref().err().map(|e| answer(e))
@@ -108,6 +119,8 @@ pub fn capabilities(environment: &Environment) -> Capabilities {
 /// reordering, the duplication or the corruption that is refused, a seed that is not accepted, no virtual Ethernet
 /// pair. A scenario that needs it is refused before anything is built, with the answer of the machine.
 #[must_use]
+// One check of the probe after the other, each with the features it takes away
+#[allow(clippy::too_many_lines)]
 pub fn capabilities_probed(environment: &Environment, probed: &Probed) -> Capabilities {
     let mut capabilities = by_version(environment);
     let unsupported = |reason: String, fix: &str| Support::Unsupported {
@@ -121,6 +134,8 @@ pub fn capabilities_probed(environment: &Environment, probed: &Probed) -> Capabi
             Feature::StaticRoutes,
             Feature::LinkMtu,
             Feature::Ipv6,
+            Feature::QueueLimit,
+            Feature::QueueDisciplines,
         ] {
             capabilities = capabilities.with(
                 feature,
@@ -140,6 +155,20 @@ pub fn capabilities_probed(environment: &Environment, probed: &Probed) -> Capabi
                     unsupported(
                         format!("a node of this machine cannot do what a network needs ({step}): {why}"),
                         &format!("the kernel needs `net.ipv4.ip_forward` and routes through a next hop, {ENGINE}"),
+                    ),
+                );
+            }
+        }
+    }
+    // The tree of a link with a queue: the redirect of the fabric, and `netem`, `htb` and a class below it (D-079)
+    for step in ["fabric", "queuetree"] {
+        if let Some(why) = probed.refused(step) {
+            for feature in [Feature::QueueLimit, Feature::QueueDisciplines] {
+                capabilities = capabilities.with(
+                    feature,
+                    unsupported(
+                        format!("a link with a queue cannot be built on this machine ({step}): {why}"),
+                        &format!("the kernel needs the modules `sch_htb`, `cls_u32`, `act_mirred` and `sch_netem`, {ENGINE}"),
                     ),
                 );
             }
@@ -221,6 +250,8 @@ fn by_version(environment: &Environment) -> Capabilities {
         .with(Feature::StaticRoutes, Support::Exact)
         .with(Feature::LinkMtu, Support::Exact)
         .with(Feature::Ipv6, Support::Exact)
+        .with(Feature::QueueLimit, Support::Exact)
+        .with(Feature::QueueDisciplines, Support::Exact)
         .with(Feature::UdpWithoutChecksum, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
@@ -285,6 +316,12 @@ mod tests {
                 "reorder",
                 "duplicate",
                 "corrupt",
+                "fabric",
+                "queuetree",
+                "pfifo",
+                "codel",
+                "fqcodel",
+                "pie",
                 "forwarding",
                 "route",
                 "ipv6",
@@ -377,6 +414,8 @@ mod tests {
             Feature::StaticRoutes,
             Feature::LinkMtu,
             Feature::Ipv6,
+            Feature::QueueLimit,
+            Feature::QueueDisciplines,
         ];
         one("veth", Feature::PointToPoint, &no_veth);
         // Forwarding and a route are what a network of several nodes needs; IPv6 stands on its own
@@ -387,6 +426,13 @@ mod tests {
             &[Feature::MultipleNodes],
         );
         one("ipv6", Feature::Ipv6, &[]);
+        // The tree of a queue stands on its own: the two queue features go with it, the rest does not
+        one(
+            "queuetree",
+            Feature::QueueLimit,
+            &[Feature::QueueDisciplines],
+        );
+        one("fabric", Feature::QueueDisciplines, &[Feature::QueueLimit]);
         let found = declared(&probed(&[(
             "veth",
             "Error: Specified qdisc kind is unknown.",

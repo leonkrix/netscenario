@@ -149,6 +149,20 @@ impl Backend for NoForwarding {
     fn set_link_mtu(&mut self, link: LinkHandle, mtu: u32) -> Result<(), Error> {
         self.0.set_link_mtu(link, mtu)
     }
+    fn create_link_through_fabric(
+        &mut self,
+        name: &Name,
+        between: [NodeHandle; 2],
+    ) -> Result<LinkHandle, Error> {
+        self.0.create_link_through_fabric(name, between)
+    }
+    fn queue_stats(
+        &mut self,
+        link: LinkHandle,
+        direction: Direction,
+    ) -> Result<Option<netscenario_core::QueueStats>, Error> {
+        self.0.queue_stats(link, direction)
+    }
     fn set_forwarding(&mut self, node: NodeHandle, _on: bool) -> Result<(), Error> {
         // No node forwards, whatever the machine has set: the routers are told to stop, as are the hosts
         self.0.set_forwarding(node, false)

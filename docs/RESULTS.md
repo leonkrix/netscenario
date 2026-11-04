@@ -163,6 +163,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `timing.interrupted_ns` | `null` for a run that went to its end. If the run was interrupted while the workloads ran (Ctrl-C on the command line, D-066): how long after the start of the measured phase the senders were told to stop. The workloads ended there, the later steps of the timeline were not done, `settle_ns` was waited all the same, and everything in the result is about the part that ran. |
 | `workloads` | One entry for each workload, in the order of the scenario. |
 | `directions` | Where the packets of each direction went, below. |
+| `queues` | One entry for each direction with a `queue`, in the order of the scenario: how it was built and what the kernel counted in it, below. Empty for a scenario without one. |
 | `events` | What the run did to the links while it ran (the timeline), below. Empty for a scenario without one. |
 | `programs` | One entry for each program of your own (`kind: command`), in the order of the scenario, below. Empty for a scenario without one. |
 | `captures` | One entry for each captured interface (`measure.capture`), two for each link, below. Empty for a scenario that captures nothing. |
@@ -321,6 +322,35 @@ One entry for each `command` workload ([PROGRAMS.md](PROGRAMS.md)). Times are in
 **How complete.** The self-check compares with the counter of the interface, which counts every frame whether or not the capture got it, so a capture that overflowed says by how much. Up to 100,000 packets per second on an idle machine the measurements of D-047 lost nothing, and a stream of a test is a few hundred packets per second.
 
 **`tcpdump` in a user namespace.** Reading a file with `tcpdump` outside the nodes needs nothing special. Inside a user namespace it wants to change to the user `tcpdump` and fails; `-Z root` is the answer. On Ubuntu 22.04 (`tcpdump` 4.99.1) it cannot run in a user namespace at all, even to read a file; the file is the same and a newer `tcpdump` or Wireshark outside the namespace reads it.
+
+### `queues` (LNK-09, PRB-10, D-082)
+
+One entry for each direction that has a `queue`, from the counters that the kernel keeps in the queue of the direction (`tc -s`):
+
+| Field | Meaning |
+| --- | --- |
+| `link`, `direction` | The link, and `forward` (from the first node of `between` to the second) or `reverse`. |
+| `build` | How the link was built: `fabric` (D-079). |
+| `discipline`, `kind` | The discipline of the scenario (`fifo`, `codel`, `fq-codel`, `pie`) and the name the kernel gives it (`pfifo`, `bfifo`, `codel`, `fq_codel`, `pie`). |
+| `packets`, `bytes` | What left the queue, in frames: a datagram that was cut by the MTU is several (D-081). |
+| `drops` | What the queue dropped, by its limit or by the rule of its discipline. They are part of the `lost_in_queue` of the direction. |
+| `overlimits`, `requeues` | The counters of the kernel with these names. |
+| `backlog_packets`, `backlog_bytes` | What waited in the queue when the run looked last (after the workloads ended and the settle time, so usually 0, and not 0 where the run was interrupted). |
+| `details` | The counters that belong to the discipline, by the names of the kernel: `ecn_mark`, `drop_overlimit`, `maxpacket`, `new_flow_count` and more. |
+| `samples` | The counters once a second while the workloads went: `t_ns` (from the start of the measured phase), `packets`, `drops`, `backlog_packets`, `backlog_bytes`. Absent for a run shorter than a second, and where a sender may wait for a step of the timeline (the loop that answers it is not held up for a look). Use it to ask whether a queue stayed short or when it began to drop. |
+
+```json
+"queues": [
+  {
+    "link": "bottleneck", "direction": "forward", "build": "fabric",
+    "discipline": "codel", "kind": "codel",
+    "packets": 10280, "bytes": 14850000, "drops": 217, "overlimits": 0, "requeues": 0,
+    "backlog_packets": 0, "backlog_bytes": 0,
+    "details": { "ecn_mark": 0, "drop_overlimit": 0, "maxpacket": 1242 },
+    "samples": [ { "t_ns": 1000012345, "packets": 520, "drops": 11, "backlog_packets": 38, "backlog_bytes": 47196 } ]
+  }
+]
+```
 
 ### `events` (TML-01, D-060)
 

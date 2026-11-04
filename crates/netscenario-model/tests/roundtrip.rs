@@ -151,6 +151,8 @@ fn impairments() -> impl Strategy<Value = Impairments> {
                     duplicate: duplicate.map(probability),
                     corrupt: corrupt.map(probability),
                     rate: rate.map(|bits| Rate::from_bits_per_second(bits).unwrap()),
+                    // The queue has its own cases in the example scenarios (`scenarios/queues.yaml`)
+                    queue: None,
                 }
             },
         )

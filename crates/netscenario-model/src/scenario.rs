@@ -222,6 +222,10 @@ pub struct Impairments {
     /// A limit on the data rate (`netem rate`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate: Option<Rate>,
+    /// The queue in front of the rate: its size and how it drops (D-082). A link with a queue is built through the fabric of the
+    /// run (D-079).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<crate::queue::Queue>,
 }
 
 /// Variation of the delay.

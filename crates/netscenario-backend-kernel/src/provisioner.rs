@@ -111,6 +111,8 @@ type LinkEnd = (u32, String, Vec<[String; 2]>, Option<String>);
 
 struct Link {
     ends: [End; 2],
+    /// The ports of the fabric of a link built through it (D-079): the one towards the first node and the one towards the second.
+    fabric: Option<[String; 2]>,
 }
 
 /// A route that was added to a node (D-078), kept so that it can be added again: the kernel removes the routes that lead out
@@ -165,6 +167,11 @@ pub(crate) struct Provisioner {
     failpoints: Failpoints,
     nodes: Vec<Node>,
     links: Vec<Link>,
+    /// The process that holds the namespace of the fabric, once a link needs it (D-079). The holder is in `nodes` as well, after the
+    /// nodes of the scenario, so that the teardown ends it with them.
+    fabric: Option<u32>,
+    /// The directions whose queues are the tree of a queue (D-082), by link and direction.
+    queued: std::collections::HashSet<(u32, Way)>,
     /// Which addresses the network has (D-081): IPv4 only until the run says otherwise.
     v4: bool,
     v6: bool,
@@ -204,6 +211,8 @@ impl Provisioner {
             failpoints,
             nodes: Vec::new(),
             links: Vec::new(),
+            fabric: None,
+            queued: std::collections::HashSet::new(),
             v4: true,
             v6: false,
             routes: Vec::new(),
@@ -278,17 +287,9 @@ impl Provisioner {
         }
     }
 
-    pub(crate) fn create_node(&mut self, name: &str) -> Result<u32, String> {
-        self.failpoints.hit("node:start");
-        if self.nodes.len() >= self.max_nodes {
-            return Err(format!(
-                "a run may use at most {} network namespaces (SAF-02) and the scenario needs more",
-                self.max_nodes
-            ));
-        }
-        if self.nodes.iter().any(|node| node.name == name) {
-            return Err(format!("the node '{name}' exists already"));
-        }
+    /// Starts the process that holds a new network namespace, and waits until it says that it does. The holder is put in `nodes`
+    /// as soon as it is known, so that a failure leaves it to the teardown.
+    fn spawn_holder(&mut self, name: &str) -> Result<u32, String> {
         let mut holder = Command::new(&self.tools.unshare)
             .args(["--net", "--"])
             .arg(&self.exe)
@@ -319,6 +320,21 @@ impl Provisioner {
                 ready.trim()
             ));
         }
+        Ok(pid)
+    }
+
+    pub(crate) fn create_node(&mut self, name: &str) -> Result<u32, String> {
+        self.failpoints.hit("node:start");
+        if self.nodes.len() >= self.max_nodes {
+            return Err(format!(
+                "a run may use at most {} network namespaces (SAF-02) and the scenario needs more",
+                self.max_nodes
+            ));
+        }
+        if self.nodes.iter().any(|node| node.name == name) {
+            return Err(format!("the node '{name}' exists already"));
+        }
+        let pid = self.spawn_holder(name)?;
         self.in_node(pid, &self.tools.ip, &["link", "set", "lo", "up"])?;
         // A route through an interface whose carrier is gone is not used (the other path takes over, D-078), and a packet is
         // not dropped because it arrives on another interface than the one the reverse route leaves by
@@ -423,21 +439,14 @@ impl Provisioner {
         Ok(neighbours)
     }
 
-    pub(crate) fn create_link(&mut self, name: &str, between: [u32; 2]) -> Result<u32, String> {
-        self.failpoints.hit("link:start");
-        let index = self.links.len();
-        if index >= MAX_LINKS {
-            return Err(format!("a run may have at most {MAX_LINKS} links"));
-        }
-        let [first, second] = between.map(|node| node as usize);
-        if first == second || first >= self.nodes.len() || second >= self.nodes.len() {
-            return Err(format!(
-                "the link '{name}' needs two different nodes of this run"
-            ));
-        }
-        let outside = [format!("nsc{index}a"), format!("nsc{index}b")];
-        let inside = interface_name(u32::try_from(index).unwrap_or(u32::MAX));
-        let macs = [0, 1].map(|end| format!("02:4e:53:00:{index:02x}:{:02x}", end + 1));
+    /// A veth pair between two nodes, moved into them (the direct build of a link).
+    fn join_directly(
+        &mut self,
+        outside: &[String; 2],
+        inside: &str,
+        macs: &[String; 2],
+        pids: [u32; 2],
+    ) -> Result<(), String> {
         run(
             &self.tools.ip,
             &[
@@ -456,7 +465,6 @@ impl Provisioner {
             ],
         )?;
         self.failpoints.hit("link:created");
-        let pids = [self.nodes[first].pid, self.nodes[second].pid];
         for (end, pid) in pids.iter().enumerate() {
             run(
                 &self.tools.ip,
@@ -467,14 +475,158 @@ impl Provisioner {
                     "netns",
                     &pid.to_string(),
                     "name",
-                    &inside,
+                    inside,
                 ],
             )?;
         }
+        Ok(())
+    }
+
+    /// Two veth pairs, one from each node to the fabric, and in the fabric the redirect that sends every frame that arrives at
+    /// one port out of the other (D-079). The frames cross unchanged, so the addresses, the MACs and the fixed neighbours of the
+    /// two ends are as in the direct build. Returns the ports of the fabric: the one towards the first node and the one towards
+    /// the second.
+    fn join_through_fabric(
+        &mut self,
+        index: usize,
+        outside: &[String; 2],
+        inside: &str,
+        macs: &[String; 2],
+        pids: [u32; 2],
+    ) -> Result<[String; 2], String> {
+        let fabric = self.fabric_pid()?;
+        let ports = [format!("nsf{index}a"), format!("nsf{index}b")];
+        run(
+            &self.tools.ip,
+            &[
+                "link",
+                "add",
+                &outside[0],
+                "address",
+                &macs[0],
+                "type",
+                "veth",
+                "peer",
+                "name",
+                &ports[0],
+            ],
+        )?;
+        run(
+            &self.tools.ip,
+            &[
+                "link",
+                "add",
+                &ports[1],
+                "type",
+                "veth",
+                "peer",
+                "name",
+                &outside[1],
+                "address",
+                &macs[1],
+            ],
+        )?;
+        self.failpoints.hit("link:created");
+        for (end, pid) in pids.iter().enumerate() {
+            run(
+                &self.tools.ip,
+                &[
+                    "link",
+                    "set",
+                    &outside[end],
+                    "netns",
+                    &pid.to_string(),
+                    "name",
+                    inside,
+                ],
+            )?;
+        }
+        for port in &ports {
+            run(
+                &self.tools.ip,
+                &["link", "set", port, "netns", &fabric.to_string()],
+            )?;
+        }
+        for (from, to) in [(0, 1), (1, 0)] {
+            self.in_node(fabric, &self.tools.ip, &["link", "set", &ports[from], "up"])?;
+            self.in_node(
+                fabric,
+                &self.tools.tc,
+                &["qdisc", "add", "dev", &ports[from], "ingress"],
+            )?;
+            self.in_node(
+                fabric,
+                &self.tools.tc,
+                &[
+                    "filter",
+                    "add",
+                    "dev",
+                    &ports[from],
+                    "parent",
+                    "ffff:",
+                    "protocol",
+                    "all",
+                    "u32",
+                    "match",
+                    "u32",
+                    "0",
+                    "0",
+                    "action",
+                    "mirred",
+                    "egress",
+                    "redirect",
+                    "dev",
+                    &ports[to],
+                ],
+            )?;
+        }
+        Ok(ports)
+    }
+
+    /// The process that holds the namespace of the fabric: made when the first link needs it (D-079).
+    fn fabric_pid(&mut self) -> Result<u32, String> {
+        if let Some(pid) = self.fabric {
+            return Ok(pid);
+        }
+        self.failpoints.hit("fabric:start");
+        let pid = self.spawn_holder("(fabric)")?;
+        self.fabric = Some(pid);
+        self.failpoints.hit("fabric:end");
+        Ok(pid)
+    }
+
+    pub(crate) fn create_link(
+        &mut self,
+        name: &str,
+        between: [u32; 2],
+        through_fabric: bool,
+    ) -> Result<u32, String> {
+        self.failpoints.hit("link:start");
+        let index = self.links.len();
+        if index >= MAX_LINKS {
+            return Err(format!("a run may have at most {MAX_LINKS} links"));
+        }
+        let [first, second] = between.map(|node| node as usize);
+        if first == second || first >= self.nodes.len() || second >= self.nodes.len() {
+            return Err(format!(
+                "the link '{name}' needs two different nodes of this run"
+            ));
+        }
+        let outside = [format!("nsc{index}a"), format!("nsc{index}b")];
+        let inside = interface_name(u32::try_from(index).unwrap_or(u32::MAX));
+        let macs = [0, 1].map(|end| format!("02:4e:53:00:{index:02x}:{:02x}", end + 1));
+        let pids = [self.nodes[first].pid, self.nodes[second].pid];
+        let ports = if through_fabric {
+            Some(self.join_through_fabric(index, &outside, &inside, &macs, pids)?)
+        } else {
+            self.join_directly(&outside, &inside, &macs, pids)?;
+            None
+        };
         self.failpoints.hit("link:moved");
         let neighbours = self.address_the_ends(id(index).unwrap_or(0), pids, &inside, &macs)?;
         let [(first_neighbours, first_v6), (second_neighbours, second_v6)] = neighbours;
         self.links.push(Link {
+            fabric: ports,
             ends: [
                 End {
                     node: first,
@@ -924,6 +1076,32 @@ impl Provisioner {
             Way::Forward => &link.ends[0],
             Way::Reverse => &link.ends[1],
         };
+        // A direction with a `queue` is built as the tree of a queue, with the delay in the fabric (D-079, D-082)
+        if impairments.queue.is_some() {
+            let ports = link.fabric.clone().ok_or_else(|| {
+                "a direction with a queue needs a link through the fabric".to_owned()
+            })?;
+            let (interface, pid) = (end.interface.clone(), self.nodes[end.node].pid);
+            // The packets leave the fabric by the port towards the receiver
+            let port = match way {
+                Way::Forward => &ports[1],
+                Way::Reverse => &ports[0],
+            };
+            let tree = crate::fabric::queue_tree(&interface, port, impairments, seed)?;
+            for line in &tree.node {
+                let words: Vec<&str> = line.split(' ').collect();
+                self.in_node(pid, &self.tools.tc, &words)?;
+            }
+            if let Some(line) = &tree.fabric {
+                let fabric = self.fabric_pid()?;
+                let words: Vec<&str> = line.split(' ').collect();
+                self.in_node(fabric, &self.tools.tc, &words)?;
+            }
+            self.built.insert((link_index, way));
+            self.queued.insert((link_index, way));
+            self.failpoints.hit("apply:end");
+            return Ok(());
+        }
         // A direction that is planned for changes is built for all its states, also if this one impairs nothing
         let planned = self.layouts.contains_key(&(link_index, way));
         let stages = if let Some(layout) = self.layouts.get(&(link_index, way)) {
@@ -983,7 +1161,46 @@ impl Provisioner {
             &self.tools.tc,
             &["-j", "-s", "qdisc", "show", "dev", interface.as_str()],
         )?;
-        backlog_of(&shown)
+        let mut backlog = backlog_of(&shown)?;
+        // A direction with a queue holds packets for the delay in the fabric as well
+        if self.queued.contains(&(link, way))
+            && let (Some(fabric), Some(ports)) = (
+                self.fabric,
+                self.links
+                    .get(link as usize)
+                    .and_then(|link| link.fabric.as_ref()),
+            )
+        {
+            let port = match way {
+                Way::Forward => &ports[1],
+                Way::Reverse => &ports[0],
+            };
+            let shown = self.in_node(
+                fabric,
+                &self.tools.tc,
+                &["-j", "-s", "qdisc", "show", "dev", port.as_str()],
+            )?;
+            backlog += backlog_of(&shown)?;
+        }
+        Ok(backlog)
+    }
+
+    /// What the kernel counted in the leaf of the queue of a direction (PRB-10, D-082): `None` for a direction without a queue.
+    pub(crate) fn queue_stats(
+        &self,
+        link: u32,
+        way: Way,
+    ) -> Result<Option<crate::protocol::WireQueueStats>, String> {
+        if !self.queued.contains(&(link, way)) {
+            return Ok(None);
+        }
+        let (pid, interface) = self.interface_of(link, way)?;
+        let shown = self.in_node(
+            pid,
+            &self.tools.tc,
+            &["-j", "-s", "qdisc", "show", "dev", interface.as_str()],
+        )?;
+        leaf_stats(&shown).map(Some)
     }
 
     /// What the node at the receiving end of a direction has counted (D-040): the frames that arrived at the
@@ -1274,6 +1491,65 @@ impl Provisioner {
     }
 }
 
+/// The counters of the leaf of a queue (the qdisc with the handle `3:`), from the JSON of `tc -j -s qdisc show dev <interface>`.
+/// What every qdisc has is `bytes`, `packets`, `drops`, `overlimits`, `requeues`, `backlog` (bytes) and `qlen` (packets); the
+/// rest that is a whole number or a boolean is special to the discipline (`ecn_mark`, `drop_overlimit`, `maxpacket`, ...).
+fn leaf_stats(json: &str) -> Result<crate::protocol::WireQueueStats, String> {
+    let qdiscs: serde_json::Value = serde_json::from_str(json)
+        .map_err(|error| format!("cannot read the statistics of the queue: {error}"))?;
+    let leaf = qdiscs
+        .as_array()
+        .and_then(|qdiscs| {
+            qdiscs.iter().find(|qdisc| {
+                qdisc.get("handle").and_then(serde_json::Value::as_str)
+                    == Some(crate::fabric::LEAF_HANDLE)
+            })
+        })
+        .ok_or_else(|| "the interface has no queue with the handle 3:".to_owned())?;
+    let number = |key: &str| {
+        leaf.get(key)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    let common = [
+        "bytes",
+        "packets",
+        "drops",
+        "overlimits",
+        "requeues",
+        "backlog",
+        "qlen",
+    ];
+    let mut details = std::collections::BTreeMap::new();
+    if let Some(object) = leaf.as_object() {
+        for (key, value) in object {
+            if common.contains(&key.as_str()) {
+                continue;
+            }
+            if let Some(number) = value.as_u64() {
+                details.insert(key.clone(), number);
+            } else if let Some(flag) = value.as_bool() {
+                details.insert(key.clone(), u64::from(flag));
+            }
+        }
+    }
+    Ok(crate::protocol::WireQueueStats {
+        kind: leaf
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        packets: number("packets"),
+        bytes: number("bytes"),
+        drops: number("drops"),
+        overlimits: number("overlimits"),
+        requeues: number("requeues"),
+        backlog_packets: number("qlen"),
+        backlog_bytes: number("backlog"),
+        details,
+    })
+}
+
 /// The packets that the root queue holds, from the JSON of `tc -j -s qdisc show dev <interface>`: its `qlen`, which
 /// includes the packets in the queues behind it.
 fn backlog_of(json: &str) -> Result<u64, String> {
@@ -1369,6 +1645,54 @@ mod tests {
     /// What `tc -j -s qdisc show` printed for a root queue with a child behind it (a direction with a loss, a
     /// rate and a jitter), after 3 packets had entered the root: 1 sent on, 2 dropped.
     const ROOT_AND_CHILD: &str = r#"[{"kind":"netem","handle":"1:","root":true,"refcnt":17,"options":{"limit":1000},"bytes":90,"packets":1,"drops":2,"overlimits":0,"requeues":0,"backlog":0,"qlen":0},{"kind":"netem","handle":"2:","parent":"1:1","options":{"limit":1000},"bytes":90,"packets":1,"drops":0,"overlimits":0,"requeues":0,"backlog":0,"qlen":0}]"#;
+
+    /// The counters of the leaf of a queue are read by its handle `3:`, the common ones are fields of their own, and the rest that
+    /// is a number or a flag is kept by the name the kernel gives it (PRB-10).
+    #[test]
+    fn the_counters_of_the_leaf_are_read_by_its_handle() {
+        let shown = r#"[
+          {"kind":"netem","handle":"1:","root":true,"options":{"limit":1000},"bytes":99,"packets":9,"drops":0,"overlimits":0,"requeues":0,"backlog":0,"qlen":0},
+          {"kind":"htb","handle":"2:","parent":"1:1","options":{"r2q":10},"bytes":98,"packets":8,"drops":0,"overlimits":0,"requeues":0,"backlog":0,"qlen":0},
+          {"kind":"codel","handle":"3:","parent":"2:1","options":{"limit":200,"target":5000,"interval":100000,"ecn":false},"bytes":12000,"packets":10,"drops":3,"overlimits":1,"requeues":2,"backlog":2400,"qlen":2,"maxpacket":1200,"drop_overlimit":1,"ecn_mark":0,"dropping":true,"count":4}
+        ]"#;
+        let found = leaf_stats(shown).unwrap();
+        assert_eq!(found.kind, "codel");
+        assert_eq!(
+            (
+                found.packets,
+                found.bytes,
+                found.drops,
+                found.overlimits,
+                found.requeues,
+                found.backlog_packets,
+                found.backlog_bytes
+            ),
+            (10, 12000, 3, 1, 2, 2, 2400)
+        );
+        let details: Vec<(&str, u64)> = found
+            .details
+            .iter()
+            .map(|(name, value)| (name.as_str(), *value))
+            .collect();
+        assert_eq!(
+            details,
+            [
+                ("count", 4),
+                ("drop_overlimit", 1),
+                ("dropping", 1),
+                ("ecn_mark", 0),
+                ("maxpacket", 1200)
+            ]
+        );
+    }
+
+    /// Canary: an interface without the leaf (a direction that has no queue, or the tree is not built) is an error, not zeros.
+    #[test]
+    fn canary_an_interface_without_the_leaf_has_no_counters() {
+        let shown = r#"[{"kind":"netem","handle":"1:","root":true,"bytes":0,"packets":0}]"#;
+        assert!(leaf_stats(shown).unwrap_err().contains("3:"));
+        assert!(leaf_stats("not json").is_err());
+    }
 
     #[test]
     fn the_packets_that_entered_are_those_sent_on_dropped_and_held() {

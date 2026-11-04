@@ -65,6 +65,10 @@ pub enum Feature {
     /// IPv6 addresses on the links and the nodes (`topology.ip`, `ip` on a workload, D-081). Last in the list because it was
     /// added last.
     Ipv6,
+    /// The `queue` of a direction with a `fifo` and a limit (LNK-09, D-082). Last in the list because it was added last.
+    QueueLimit,
+    /// The `queue` of a direction with `CoDel`, `FQ-CoDel` or `PIE` (LNK-09, D-082). Last in the list because it was added last.
+    QueueDisciplines,
 }
 
 impl Feature {
@@ -94,6 +98,8 @@ impl Feature {
         Feature::StaticRoutes,
         Feature::LinkMtu,
         Feature::Ipv6,
+        Feature::QueueLimit,
+        Feature::QueueDisciplines,
     ];
 
     /// A short stable name, for results and logs.
@@ -124,6 +130,8 @@ impl Feature {
             Feature::StaticRoutes => "static-routes",
             Feature::LinkMtu => "link-mtu",
             Feature::Ipv6 => "ipv6",
+            Feature::QueueLimit => "queue-limit",
+            Feature::QueueDisciplines => "queue-disciplines",
         }
     }
 
@@ -155,6 +163,8 @@ impl Feature {
             Feature::StaticRoutes => "Routers and routes",
             Feature::LinkMtu => "MTU, fragmentation",
             Feature::Ipv6 => "IPv6",
+            Feature::QueueLimit => "Queue limit",
+            Feature::QueueDisciplines => "Queue disciplines (CoDel, FQ-CoDel, PIE)",
         }
     }
 }
@@ -194,6 +204,14 @@ fn needs_of(impairments: &Impairments, path: &str, need: &mut dyn FnMut(Feature,
     }
     if impairments.rate.is_some() {
         need(Feature::RateLimit, format!("{path}.rate"));
+    }
+    if let Some(queue) = &impairments.queue {
+        let feature = if queue.discipline == netscenario_model::Discipline::Fifo {
+            Feature::QueueLimit
+        } else {
+            Feature::QueueDisciplines
+        };
+        need(feature, format!("{path}.queue"));
     }
 }
 
@@ -341,6 +359,22 @@ mod tests {
 
     fn features(scenario: &Scenario) -> Vec<Feature> {
         requirements(scenario).iter().map(|r| r.feature).collect()
+    }
+
+    /// A `queue` asks for the features of its discipline: a `fifo` with a limit for `QueueLimit`, the others for
+    /// `QueueDisciplines`; a link without a queue asks for neither (D-082).
+    #[test]
+    fn a_queue_asks_for_the_feature_of_its_discipline() {
+        let with = |queue: &str| {
+            features(&scenario(&format!(
+                "{HEAD}topology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: {{ rate: 1mbit{queue} }}\n{TAIL}"
+            )))
+        };
+        assert!(with(", queue: { limit: 10p }").contains(&Feature::QueueLimit));
+        assert!(!with(", queue: { limit: 10p }").contains(&Feature::QueueDisciplines));
+        assert!(with(", queue: { discipline: pie }").contains(&Feature::QueueDisciplines));
+        assert!(!with("").contains(&Feature::QueueLimit));
+        assert!(!with("").contains(&Feature::QueueDisciplines));
     }
 
     /// A network of more than two nodes needs `MultipleNodes` and not `PointToPoint`; routers, listed routes, manual routing, a

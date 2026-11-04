@@ -46,6 +46,9 @@ pub struct RunResult {
     /// backend cannot count, or the scenario runs a program of your own, whose packets the agent does not count.
     #[serde(default)]
     pub directions: Vec<DirectionTally>,
+    /// For each direction with a `queue`: how the link was built and what the kernel counted in the queue (PRB-10, D-082).
+    #[serde(default)]
+    pub queues: Vec<QueueInfo>,
     /// What the run did to the links while it ran, one entry for each step of the timeline, in the order they were
     /// done (D-038). Empty for a scenario without a timeline.
     #[serde(default)]
@@ -335,6 +338,60 @@ pub struct DirectionTally {
     /// The datagrams that the node dropped because the receive buffer of a socket was full. This is a fault of
     /// the receiver and not of the network.
     pub receive_buffer_drops: u64,
+}
+
+/// The queue of a direction as the run built it and what the kernel counted in it (PRB-10, D-082).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct QueueInfo {
+    /// The link.
+    pub link: String,
+    /// `forward` or `reverse`.
+    pub direction: String,
+    /// How the link was built: `fabric` (a link with a queue goes through the fabric of the run, D-079).
+    pub build: String,
+    /// The discipline of the scenario: `fifo`, `codel`, `fq-codel` or `pie`.
+    pub discipline: String,
+    /// The discipline as the kernel names it (`pfifo`, `bfifo`, `codel`, `fq_codel`, `pie`).
+    pub kind: String,
+    /// The packets that left the queue.
+    pub packets: u64,
+    /// The bytes of those packets.
+    pub bytes: u64,
+    /// The packets the queue dropped, by its limit or its discipline.
+    pub drops: u64,
+    /// The packets over the limit.
+    pub overlimits: u64,
+    /// The packets put back for another try.
+    pub requeues: u64,
+    /// The packets waiting at the end of the run.
+    pub backlog_packets: u64,
+    /// The bytes waiting at the end of the run.
+    pub backlog_bytes: u64,
+    /// The counters special to the discipline, by the name of the kernel (`ecn_mark`, `drop_overlimit`, ...).
+    #[serde(default)]
+    pub details: std::collections::BTreeMap<String, u64>,
+    /// The counters once a second while the workloads went (PRB-10), from the start of the measured phase. Empty when a sender
+    /// may wait for a step of the timeline (the loop that answers it is not held up for a look at the queue), and for a run
+    /// shorter than a second.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<QueueSample>,
+}
+
+/// The counters of a queue at a moment of the run (PRB-10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct QueueSample {
+    /// When, in nanoseconds from the start of the measured phase.
+    pub t_ns: u64,
+    /// The packets that left the queue until then.
+    pub packets: u64,
+    /// The packets the queue dropped until then.
+    pub drops: u64,
+    /// The packets waiting in the queue then.
+    pub backlog_packets: u64,
+    /// The bytes waiting in the queue then.
+    pub backlog_bytes: u64,
 }
 
 /// A restriction of the backend that the scenario accepted (`allow-limited`).
@@ -671,6 +728,7 @@ pub(crate) mod tests {
             notes: vec!["a note".to_owned()],
             programs: Vec::new(),
             captures: Vec::new(),
+            queues: Vec::new(),
             directions: vec![DirectionTally {
                 link: "l".to_owned(),
                 direction: "forward".to_owned(),

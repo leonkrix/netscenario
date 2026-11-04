@@ -379,6 +379,20 @@ impl Backend for Slow {
     fn set_link_mtu(&mut self, link: LinkHandle, mtu: u32) -> Result<(), Error> {
         self.inner.set_link_mtu(link, mtu)
     }
+    fn create_link_through_fabric(
+        &mut self,
+        name: &Name,
+        between: [NodeHandle; 2],
+    ) -> Result<LinkHandle, Error> {
+        self.inner.create_link_through_fabric(name, between)
+    }
+    fn queue_stats(
+        &mut self,
+        link: LinkHandle,
+        direction: Direction,
+    ) -> Result<Option<netscenario_core::QueueStats>, Error> {
+        self.inner.queue_stats(link, direction)
+    }
     fn set_forwarding(&mut self, node: NodeHandle, on: bool) -> Result<(), Error> {
         self.inner.set_forwarding(node, on)
     }

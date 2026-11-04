@@ -153,8 +153,17 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
         let finished = request == Request::Teardown;
         let response = answer(match request {
             Request::CreateNode { name } => provisioner.create_node(&name).map(Some),
-            Request::CreateLink { name, between } => {
-                provisioner.create_link(&name, between).map(Some)
+            Request::CreateLink {
+                name,
+                between,
+                fabric,
+            } => provisioner.create_link(&name, between, fabric).map(Some),
+            Request::QueueStats { link, direction } => {
+                send(&match provisioner.queue_stats(link, direction) {
+                    Ok(stats) => Response::QueueStats { stats },
+                    Err(message) => Response::Error { message },
+                });
+                continue;
             }
             Request::SetNodeAddress { node, address } => {
                 provisioner.set_node_address(node, &address).map(|()| None)

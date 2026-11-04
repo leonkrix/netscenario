@@ -87,6 +87,8 @@ const BARRIER_WAIT: Duration = Duration::from_millis(1);
 pub(crate) struct Watch<'a> {
     pub(crate) programs: &'a mut crate::programs::Programs,
     pub(crate) hold_until: Instant,
+    /// Looks at the queues once a second (PRB-10), while no sender may wait for a barrier.
+    pub(crate) queues: &'a mut crate::queues::Sampler,
 }
 
 /// Waits for the senders to end and does the steps of the timeline: at the barriers where `bindings` has one, else by the
@@ -114,6 +116,7 @@ pub(crate) fn drive(
     let Watch {
         programs,
         hold_until,
+        queues,
     } = watch;
     // The steps that are done by the clock, in order; the others are done when their sender asks
     let mut pending: VecDeque<(usize, &Step)> = steps
@@ -131,6 +134,11 @@ pub(crate) fn drive(
     loop {
         control.checkpoint()?;
         programs.watch(backend)?;
+        // A look at the queues costs a `tc` process or more, a few milliseconds: not while a sender may ask for a barrier and wait
+        // for the answer
+        if at_barriers == 0 {
+            queues.look(backend, begin.ns)?;
+        }
         // A cancel that keeps the result (D-066): every sender is told to stop and no step is done any more. The
         // senders end at their next packet and say what they sent; the loop waits for that like for their end.
         if interrupted_ns.is_none() && control.take_interruption() {

@@ -157,3 +157,14 @@ fn nothing_is_left_when_the_supervisor_dies_in_a_network_with_ipv6() {
         true,
     );
 }
+
+/// The fabric of a run (D-079) is a namespace like the nodes, with its own holder: the supervisor dies when it is made, when it
+/// is ready, and while the tree of the queue is built, and nothing is left. The scenario has a queue and no other impairment.
+#[test]
+fn nothing_is_left_when_the_supervisor_dies_while_the_fabric_is_made() {
+    dies_at(
+        &["fabric:start", "fabric:end", "apply:start", "apply:end"],
+        "version: 0\nname: t\nduration: 10s\ntopology:\n  nodes: [client, server]\n  links:\n    - { id: access, between: [client, server], forward: { rate: 2mbit, queue: { limit: 50p } } }\nworkloads:\n  - { id: w, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 500b }\n",
+        false,
+    );
+}
