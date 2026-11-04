@@ -14,10 +14,10 @@ use crate::args::{Parsed, Spec};
 use crate::exit;
 use crate::interrupt::{Watch, code_of};
 use crate::run_cmd::{ProgressLine, default_out, report};
-use crate::validate::{Loaded, load};
+use crate::validate::{ALLOW_OUTSIDE_FILES, Loaded, load};
 
 pub(crate) const REPLAY_HELP: &str = "\
-Usage: netscenario replay <dir> [--out <dir>] [--scenario <file>] [--json]
+Usage: netscenario replay <dir> [--out <dir>] [--scenario <file>] [--json] [--allow-outside-files]
 
 Runs a recorded run again, with the scenario it was made with (scenario.json in its directory) and the seed it
 had, and says whether the same packets were lost. <dir> is the directory of a run: the one that `netscenario run`
@@ -32,6 +32,7 @@ processor), because the lost packets of a seed depend on them.
   --scenario <file>  also compare this scenario file with the recorded scenario, field by field, and replay nothing
                      if they differ (the replay always runs the recorded scenario, never the file)
   --json             print the comparison as JSON on standard output instead of the summary
+  --allow-outside-files  let the scenario file named by --scenario read files from outside its directory
 
 Exit codes: 0 the replay lost the same packets (or the loss of one of the runs was not promised to repeat, which the
 summary explains), 1 the replay lost other packets although the loss repeats from the seed, 2 the directory or the
@@ -41,12 +42,17 @@ interrupted.
 
 pub(crate) const REPLAY_SPEC: Spec = Spec {
     values: &["out", "scenario"],
-    flags: &["json"],
+    flags: &["json", ALLOW_OUTSIDE_FILES],
 };
 
 /// The differences between a scenario file and the recorded scenario, as lines for a message.
-fn file_differences(recorded: &Recorded, path: &str, err: &mut impl Write) -> Result<(), u8> {
-    let loaded = match load(path) {
+fn file_differences(
+    recorded: &Recorded,
+    path: &str,
+    allow_outside_files: bool,
+    err: &mut impl Write,
+) -> Result<(), u8> {
+    let loaded = match load(path, allow_outside_files) {
         Ok(loaded) => loaded,
         Err(message) => {
             let _ = writeln!(err, "netscenario replay: {message}");
@@ -113,7 +119,7 @@ pub(crate) fn replay_command<S: AsRef<str>>(
         }
     };
     if let Some(path) = parsed.value("scenario")
-        && let Err(code) = file_differences(&recorded, path, err)
+        && let Err(code) = file_differences(&recorded, path, parsed.flag(ALLOW_OUTSIDE_FILES), err)
     {
         return code;
     }

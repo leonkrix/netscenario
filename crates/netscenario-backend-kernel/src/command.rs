@@ -18,9 +18,19 @@ pub(crate) fn line(program: &Path, args: &[&str]) -> String {
 
 /// Runs `program` and returns what it printed on its standard output.
 pub(crate) fn run(program: &Path, args: &[&str]) -> Result<String, String> {
+    run_with_env(program, args, &[])
+}
+
+/// Runs `program` with more variables in its environment, and returns what it printed on its standard output.
+pub(crate) fn run_with_env(
+    program: &Path,
+    args: &[&str],
+    environment: &[(&str, &str)],
+) -> Result<String, String> {
     let output = Command::new(program)
         .args(args)
         .env("LC_ALL", "C")
+        .envs(environment.iter().copied())
         .stdin(Stdio::null())
         .output()
         .map_err(|error| format!("cannot run `{}`: {error}", line(program, args)))?;

@@ -34,7 +34,7 @@ Errors go to standard error, results to standard output; with `--json` standard 
 ## `run`
 
 ```text
-netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--json]
+netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--json] [--allow-outside-files]
                        [--repetitions <n>] [--statistic mean|median] [--confidence <percent>]
                        [--bin <duration>] [--recovery-basis send|arrival] [--recovery-baseline <bins>]
                        [--recovery-window <bins>] [--recovery-fraction <percent>]
@@ -59,6 +59,7 @@ What a run measures is in the scenario, in the section `measure` ([SCENARIO-FORM
 | `--statistic mean\|median` | With `--repetitions`: what the interval is around. Default `mean`. |
 | `--confidence <percent>` | With `--repetitions`: the level of the interval, above 0 and below 100 (`95` or `95%`). Default 95. |
 | `--json` | Print `result.json` (with `--repetitions`: `runset.json`) on standard output instead of the summary. The file is written either way. |
+| `--allow-outside-files` | Let the scenario read the files it refers to (a file of delay samples for a jitter) from outside the directory of the scenario file. Without it a path that leads out of that directory is refused (D-083). Also for `validate`, `expand`, `show` and `replay --scenario`. |
 
 **Ctrl-C** (or SIGTERM) while the workloads run stops them, waits for the packets that are still in the network (the settle time), writes the result of the part that ran and exits with 130 (143). The summary says how long it ran, and `result.json` has `timing.interrupted_ns`. The steps of the timeline that were not due are not done, and the packets that were not sent are not lost: the result counts what the senders sent. **Ctrl-C a second time quits at once**; the network is removed all the same (D-022). The supervisor, the nodes and the agents are in a process group of their own, so the signal of the terminal reaches the program only and the run can stop in an orderly way (D-066).
 
@@ -71,7 +72,7 @@ A run needs `netscenario-agent` next to the `netscenario` program: `cargo build`
 ## `replay`
 
 ```text
-netscenario replay <dir> [--out <dir>] [--scenario <file>] [--json]
+netscenario replay <dir> [--out <dir>] [--scenario <file>] [--json] [--allow-outside-files]
 ```
 
 Runs a recorded run again and says whether the same packets were lost (ENV-03, [D-075](decisions/D-075.md)). `<dir>` is the directory of a run (the `--out` of `netscenario run`; for a run of a set, `run-001` and so on). It holds `scenario.json`, the scenario exactly as it ran, and the replay uses it with the **recorded seed** and waits for the packets in the network as long as the original did.
@@ -105,7 +106,7 @@ Makes a report from a result directory: a run (`--out` of `run`) or a set of run
 ## `validate`
 
 ```text
-netscenario validate <file> [--json]
+netscenario validate <file> [--json] [--allow-outside-files]
 ```
 
 Checks the syntax, the keys, every value with its unit, and the rules between values. A valid scenario prints its name, the number of nodes, links and workloads, the duration and the features it needs (the rows of [COVERAGE.md](COVERAGE.md) that a backend has to reproduce). A faulty one prints every problem with the line, the column, the path and a hint, and exits with 2.

@@ -67,11 +67,13 @@ impl Batch {
     pub(crate) fn start(
         program: &Path,
         arguments: &[String],
+        environment: &[(&str, &str)],
         within: Duration,
     ) -> Result<Self, String> {
         let mut child = Command::new(program)
             .args(arguments)
             .env("LC_ALL", "C")
+            .envs(environment.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -235,6 +237,7 @@ done
         Batch::start(
             Path::new("sh"),
             &["-c".to_owned(), FAKE.to_owned()],
+            &[],
             Duration::from_secs(5),
         )
     }
@@ -334,10 +337,11 @@ done
 
     #[test]
     fn a_program_that_does_not_exist_or_does_not_answer_is_no_batch() {
-        assert!(Batch::start(Path::new("/nonexistent/tc"), &[], SHORT).is_err());
+        assert!(Batch::start(Path::new("/nonexistent/tc"), &[], &[], SHORT).is_err());
         let silent = Batch::start(
             Path::new("sh"),
             &["-c".to_owned(), "sleep 30".to_owned()],
+            &[],
             SHORT,
         );
         assert_eq!(silent.unwrap_err(), "the batch did not answer in time");

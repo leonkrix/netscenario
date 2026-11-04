@@ -59,6 +59,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "samples"
+path = "fuzz_targets/samples.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "metrics"
 path = "fuzz_targets/metrics.rs"
 test = false

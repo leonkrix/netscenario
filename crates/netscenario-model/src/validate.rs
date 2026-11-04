@@ -7,8 +7,8 @@ use crate::graph::{PathError, Routes};
 use crate::measure::{MAX_BINS, MIN_BIN};
 use crate::queue::{Discipline, QueueLimit};
 use crate::scenario::{
-    Change, Direction, Event, Impairments, Jitter, JitterDistribution, Link, Loss, Scenario,
-    Workload,
+    Change, Direction, Edit, Event, Impairments, ImpairmentsChange, Jitter, JitterDistribution,
+    Link, Loss, Scenario, Workload,
 };
 use crate::suggest::closest;
 use crate::topology::{
@@ -991,6 +991,25 @@ fn check_actions(event: &Event, base: &str, problems: &mut Vec<Problem>) {
             .with_help("write one event for each thing that happens"),
         );
     }
+    if let Some(change) = &event.set {
+        for (key, part) in [
+            ("forward", &change.forward),
+            ("reverse", &change.reverse),
+            ("both", &change.both),
+        ] {
+            if let Some(ImpairmentsChange {
+                jitter: Edit::Set(Jitter { table: Some(_), .. }),
+                ..
+            }) = part
+            {
+                problems.push(
+                    Problem::new("a step cannot bring a `table`: `netem` keeps the table that was loaded first")
+                        .at_path(format!("{base}.set.{key}.jitter.table"))
+                        .with_help("write `distribution: table` and the new `amount`; the table is the one of the link"),
+                );
+            }
+        }
+    }
     if event.direction.is_some() && event.outage.is_none() {
         problems.push(
             Problem::new("`direction` belongs to `outage`")
@@ -1195,6 +1214,7 @@ fn check_impairments(impairments: &Impairments, base: &str, problems: &mut Vec<P
         return;
     };
     let path = format!("{base}.jitter");
+    check_table(jitter, &path, problems);
     let Some(delay) = impairments.delay else {
         problems.push(
             Problem::new("`jitter` needs a `delay` to vary")
@@ -1248,6 +1268,74 @@ fn check_jitter(jitter: &Jitter, delay: Duration, path: &str) -> Option<Problem>
             .at_path(format!("{path}.amount"))
             .with_help("the normal distribution of netem reaches about four standard deviations: use a smaller jitter or a longer delay"),
         ),
-        _ => None,
+        JitterDistribution::Uniform | JitterDistribution::Normal => None,
+        distribution => {
+            // The tables of `netem` and the tables made from samples reach a known distance below the mean
+            let reach = match (&jitter.table, distribution) {
+                (Some(table), JitterDistribution::Table) => table.reach_below()?,
+                (None, JitterDistribution::Table) => return None,
+                _ => distribution.reach_below(),
+            };
+            #[allow(clippy::cast_precision_loss)]
+            let needed = jitter.amount.as_nanos() as f64 * reach;
+            #[allow(clippy::cast_precision_loss)]
+            if (delay.as_nanos() as f64) < needed {
+                Some(
+                    Problem::new(format!(
+                        "with the distribution {} the delay ({delay}) must be at least {reach:.2} times the jitter ({}): some delays would be below zero",
+                        distribution.as_str(),
+                        jitter.amount
+                    ))
+                    .at_path(format!("{path}.amount"))
+                    .with_help("use a smaller jitter or a longer delay"),
+                )
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// The `table` of a jitter belongs to the distribution `table` and to nothing else, and that distribution needs it (D-084).
+fn check_table(jitter: &Jitter, path: &str, problems: &mut Vec<Problem>) {
+    match (jitter.distribution, &jitter.table) {
+        (JitterDistribution::Table, None) => problems.push(
+            Problem::new("the distribution `table` needs a `table` with the `file` of samples")
+                .at_path(format!("{path}.distribution"))
+                .with_help("write `table: { file: delays.txt }` next to `distribution: table`"),
+        ),
+        (JitterDistribution::Table, Some(table)) => {
+            if table.file.is_none() && table.values.is_none() {
+                problems.push(
+                    Problem::new("a `table` needs a `file` of samples")
+                        .at_path(format!("{path}.table"))
+                        .with_help(
+                            "write `file: delays.txt`, a path relative to the scenario file",
+                        ),
+                );
+            }
+            if let Some(file) = &table.file
+                && let Some(why) = crate::table::path_problem(file)
+            {
+                problems.push(Problem::new(why).at_path(format!("{path}.table.file")));
+            }
+            if let Some(hash) = &table.sha256
+                && !(hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                problems.push(
+                    Problem::new("`sha256` is 64 hexadecimal digits")
+                        .at_path(format!("{path}.table.sha256")),
+                );
+            }
+        }
+        (distribution, Some(_)) => problems.push(
+            Problem::new(format!(
+                "a `table` belongs to `distribution: table`, and this jitter has `{}`",
+                distribution.as_str()
+            ))
+            .at_path(format!("{path}.table"))
+            .with_help("write `distribution: table`, or take the `table` away"),
+        ),
+        (_, None) => {}
     }
 }

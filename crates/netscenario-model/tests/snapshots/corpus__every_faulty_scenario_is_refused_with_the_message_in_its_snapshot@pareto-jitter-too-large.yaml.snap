@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/pareto-jitter-too-large.yaml
+---
+error: with the distribution pareto the delay (10ms) must be at least 0.67 times the jitter (20ms): some delays would be below zero
+  --> pareto-jitter-too-large.yaml:11:27
+   |
+10 |         delay: 10ms
+11 |         jitter: { amount: 20ms, distribution: pareto }
+   |                           ^^^^
+   = path: topology.links[0].forward.jitter.amount
+   = help: use a smaller jitter or a longer delay

@@ -139,21 +139,54 @@ fn percent(micro_percent: u32) -> String {
     )
 }
 
-/// The arguments of the delay with its jitter: `delay D J [distribution normal]`.
+/// The arguments of the delay with its jitter: `delay D J [distribution NAME]`. `NAME` is a table of iproute2 (`normal`, `pareto`,
+/// `paretonormal`) or, for a jitter made from samples, the table the run wrote (D-084), whose entries were scaled down to fit 16
+/// bits: the amount goes to `netem` scaled up by the same factor, rounded to a microsecond.
 pub(crate) fn delay_arguments(impairments: &Impairments) -> Result<Vec<String>, String> {
     let mut arguments = Vec::new();
     if let Some(delay) = impairments.delay {
         arguments.push("delay".to_owned());
         arguments.push(microseconds(delay)?);
         if let Some(jitter) = &impairments.jitter {
-            arguments.push(microseconds(jitter.amount)?);
-            if jitter.distribution == JitterDistribution::Normal {
-                arguments.push("distribution".to_owned());
-                arguments.push("normal".to_owned());
+            match jitter.distribution {
+                JitterDistribution::Uniform => arguments.push(microseconds(jitter.amount)?),
+                JitterDistribution::Table => {
+                    let table = jitter
+                        .table
+                        .as_ref()
+                        .ok_or_else(|| "the jitter has no table".to_owned())?;
+                    let name = crate::tables::table_name(table).ok_or_else(|| {
+                        "the table of the jitter has not been read from its file".to_owned()
+                    })?;
+                    arguments.push(scaled_microseconds(
+                        jitter.amount,
+                        table.scale_thousandths(),
+                    )?);
+                    arguments.push("distribution".to_owned());
+                    arguments.push(name);
+                }
+                shipped => {
+                    arguments.push(microseconds(jitter.amount)?);
+                    arguments.push("distribution".to_owned());
+                    arguments.push(shipped.as_str().to_owned());
+                }
             }
         }
     }
     Ok(arguments)
+}
+
+/// `amount * scale / 1000` in whole microseconds, rounded to the nearest. With the scale 1000 it is the amount itself, which
+/// must be a whole number of microseconds as everywhere else.
+fn scaled_microseconds(amount: Duration, scale_thousandths: u32) -> Result<String, String> {
+    if scale_thousandths == 1000 {
+        return microseconds(amount);
+    }
+    let nanos = u128::from(amount.as_nanos()) * u128::from(scale_thousandths);
+    let micros = (nanos + 500_000) / 1_000_000;
+    u64::try_from(micros)
+        .map(|micros| format!("{micros}us"))
+        .map_err(|_| "the jitter is too large".to_owned())
 }
 
 /// A probability for `tc`: `P%`.
@@ -624,6 +657,74 @@ mod tests {
             ),
             "limit 3500 delay 20000us 5000us distribution normal"
         );
+    }
+
+    /// The tables of iproute2 are named as `tc` names them, and the amount goes through as it is.
+    #[test]
+    fn the_shipped_tables_are_named_for_tc() {
+        for name in ["pareto", "paretonormal"] {
+            assert_eq!(
+                text(
+                    &format!("{{ delay: 40ms, jitter: {{ amount: 10ms, distribution: {name} }} }}"),
+                    None
+                ),
+                format!("limit 6000 delay 40000us 10000us distribution {name}")
+            );
+        }
+    }
+
+    /// A table made from samples is named by its content, and the amount goes to `netem` scaled by the factor with which the
+    /// entries were scaled down (D-084). Canary: with the factor left out the amount would be the unscaled one.
+    #[test]
+    fn a_table_of_samples_is_named_by_its_content_and_scales_the_amount() {
+        use netscenario_model::{DelayTable, TableValues};
+        // A tail of 8 standard deviations: the scale is 2.001
+        let samples: Vec<f64> = (0..20_000)
+            .map(|i| -(1.0 - (f64::from(i) + 0.5) / 20_000.0).ln())
+            .collect();
+        let (values, scale) = TableValues::from_samples(&samples).unwrap();
+        assert!(scale > 1900 && scale < 2100, "{scale}");
+        let table = DelayTable {
+            scale: Some(scale),
+            ..DelayTable::from_values(values)
+        };
+        let mut scenario = netscenario_model::Scenario::from_yaml(
+            "version: 0\nname: t\nduration: 5s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { delay: 100ms, jitter: { amount: 5ms, distribution: table, table: { file: d.txt } } }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\n",
+            "t.yaml",
+        )
+        .unwrap();
+        let impairments = scenario.topology.links[0].forward.as_mut().unwrap();
+        impairments.jitter.as_mut().unwrap().table = Some(table.clone());
+        let arguments = delay_arguments(impairments).unwrap();
+        let name = crate::tables::table_name(&table).unwrap();
+        let expected_amount = format!("{}us", (5000.0 * f64::from(scale) / 1000.0).round());
+        assert_eq!(
+            arguments,
+            [
+                "delay",
+                "100000us",
+                expected_amount.as_str(),
+                "distribution",
+                name.as_str()
+            ]
+        );
+        assert_ne!(arguments[2], "5000us", "the amount is the scaled one");
+        // A table that fits keeps the amount exactly
+        let (values, scale) = TableValues::from_samples(&samples_uniform()).unwrap();
+        assert_eq!(scale, 1000);
+        impairments.jitter.as_mut().unwrap().table = Some(DelayTable::from_values(values));
+        assert_eq!(delay_arguments(impairments).unwrap()[2], "5000us");
+        // A table that was not read is an error and not a guess
+        impairments.jitter.as_mut().unwrap().table = Some(DelayTable::from_file("d.txt"));
+        assert!(
+            delay_arguments(impairments)
+                .unwrap_err()
+                .contains("has not been read")
+        );
+    }
+
+    fn samples_uniform() -> Vec<f64> {
+        (0..1000).map(|i| f64::from(i) / 10.0).collect()
     }
 
     #[test]

@@ -168,6 +168,10 @@ step veth "$1" link add np0 type veth peer name np1
 step netem "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us loss random 1% rate 1mbit
 "$2" qdisc del dev np0 root >/dev/null 2>&1
 step tables "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us 500us distribution normal
+step pareto "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us 500us distribution pareto
+step paretonormal "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us 500us distribution paretonormal
+# A table of our own (D-084): `tc` takes NAME.dist from the directory of TC_LIB_DIR
+step tablecustom sh -c 'd=$(mktemp -d) || exit 1; yes 0 | head -n 4096 > "$d/probe.dist"; TC_LIB_DIR="$d" "$0" qdisc replace dev np0 root netem limit 1000 delay 1000us 500us distribution probe; r=$?; rm -rf "$d"; exit $r' "$2"
 "$2" qdisc del dev np0 root >/dev/null 2>&1
 step seed "$2" qdisc replace dev np0 root netem limit 1000 loss random 1% seed 1
 "$2" qdisc del dev np0 root >/dev/null 2>&1
@@ -519,23 +523,78 @@ fn netem_check(outcome: &Outcome, not_tested: &str) -> Check {
     }
 }
 
-fn tables_check(outcome: &Outcome, tc_lib_dir: Option<&str>, not_tested: &str) -> Check {
+/// The tables of iproute2 that the distributions of a jitter come from: one outcome for each of `normal`, `pareto` and
+/// `paretonormal`.
+fn tables_check(
+    outcomes: [(&str, &Outcome); 3],
+    tc_lib_dir: Option<&str>,
+    not_tested: &str,
+) -> Check {
     let title = "jitter tables";
-    match outcome {
-        Some(Ok(())) => kernel("tables", title, Status::Ok, "the distribution `normal` is found", None),
-        Some(Err(error)) => kernel(
+    if outcomes.iter().all(|(_, outcome)| outcome.is_none()) {
+        return kernel("tables", title, Status::Info, not_tested, None);
+    }
+    let missing: Vec<(&str, &String)> = outcomes
+        .iter()
+        .filter_map(|(name, outcome)| match outcome {
+            Some(Err(error)) => Some((*name, error)),
+            _ => None,
+        })
+        .collect();
+    if missing.is_empty() {
+        return kernel(
             "tables",
             title,
-            Status::Warn,
-            &format!("{error}; a jitter with the distribution `normal` fails"),
-            Some(match tc_lib_dir {
-                Some(dir) => format!(
-                    "TC_LIB_DIR is set to {dir}: put normal.dist there or point it to the directory that has it"
-                ),
-                None => "install the iproute2 package that has the tables (usually in /usr/lib/tc or /usr/lib/<arch>/tc), or set TC_LIB_DIR to the directory with normal.dist (a tc built from source looks in /usr/lib/tc)".to_owned(),
-            }),
+            Status::Ok,
+            "the distributions `normal`, `pareto` and `paretonormal` are found",
+            None,
+        );
+    }
+    let names: Vec<String> = missing
+        .iter()
+        .map(|(name, _)| format!("`{name}`"))
+        .collect();
+    let first = missing[0].1;
+    kernel(
+        "tables",
+        title,
+        Status::Warn,
+        &format!(
+            "{first}; a jitter with the distribution {} fails",
+            names.join(" or ")
         ),
-        None => kernel("tables", title, Status::Info, not_tested, None),
+        Some(match tc_lib_dir {
+            Some(dir) => format!(
+                "TC_LIB_DIR is set to {dir}: put {}.dist there or point it to the directory that has it",
+                missing[0].0
+            ),
+            None => format!(
+                "install the iproute2 package that has the tables (usually in /usr/lib/tc or /usr/lib/<arch>/tc), or set TC_LIB_DIR to the directory with {}.dist (a tc built from source looks in /usr/lib/tc)",
+                missing[0].0
+            ),
+        }),
+    )
+}
+
+/// A table of our own, loaded from the directory of `TC_LIB_DIR` (D-084).
+fn custom_tables_check(outcome: &Outcome, not_tested: &str) -> Check {
+    let title = "jitter tables from samples";
+    match outcome {
+        Some(Ok(())) => kernel(
+            "custom-tables",
+            title,
+            Status::Ok,
+            "`tc` loads a table from the directory of TC_LIB_DIR",
+            None,
+        ),
+        Some(Err(error)) => kernel(
+            "custom-tables",
+            title,
+            Status::Warn,
+            &format!("{error}; a jitter made from a file of samples fails"),
+            Some("a scenario with `distribution: table` is refused here; the tools `mktemp` and `yes` are needed for this test, and a `tc` that ignores TC_LIB_DIR cannot load the table".to_owned()),
+        ),
+        None => kernel("custom-tables", title, Status::Info, not_tested, None),
     }
 }
 
@@ -612,10 +671,15 @@ fn kernel_checks(findings: &Findings, tc: &Tool, checks: &mut Vec<Check>) {
     checks.push(veth_check(&veth, not_tested));
     checks.push(netem_check(&after_veth("netem"), not_tested));
     checks.push(tables_check(
-        &after_veth("tables"),
+        [
+            ("normal", &after_veth("tables")),
+            ("pareto", &after_veth("pareto")),
+            ("paretonormal", &after_veth("paretonormal")),
+        ],
         findings.system.tc_lib_dir.as_deref(),
         not_tested,
     ));
+    checks.push(custom_tables_check(&after_veth("tablecustom"), not_tested));
     checks.push(seed_check(tc, &after_veth("seed"), not_tested));
     checks.push(models_check(
         &after_veth("burst"),
@@ -1042,6 +1106,9 @@ mod tests {
             "veth",
             "netem",
             "tables",
+            "pareto",
+            "paretonormal",
+            "tablecustom",
             "seed",
             "burst",
             "chain",

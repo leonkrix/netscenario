@@ -31,6 +31,7 @@ mod decimal;
 pub mod error;
 mod generators;
 mod graph;
+mod hash;
 mod ip;
 mod measure;
 mod mtu;
@@ -43,6 +44,7 @@ mod schema;
 mod shortcut;
 mod source;
 mod suggest;
+mod table;
 mod topology;
 pub mod units;
 mod validate;
@@ -52,6 +54,7 @@ pub use command::{MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ENV_ENTRIES, RESERVED_E
 pub use error::{Error, Location, Problem};
 pub use generators::{Generator, Pattern, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
 pub use graph::{Destination, Path, PathError, RouteEntry, Routes};
+pub use hash::sha256_hex;
 pub use ip::{IpFamily, IpMode};
 pub use measure::{
     MAX_BINS, MIN_BIN, Measure, MeasureOverrides, RecoveryBasis, RecoverySettings, SeriesSettings,
@@ -70,6 +73,10 @@ pub use scenario::{
 pub use schema::json_schema;
 pub use shortcut::{
     BOTTLENECK, Chain, Dumbbell, LinkSpec, Multipath, PathSpec, ROUTER_LEFT, ROUTER_RIGHT, Star,
+};
+pub use table::{
+    DelayTable, MAX_REFERENCED_FILE_BYTES, MAX_SAMPLES, MIN_SAMPLES, TABLE_ENTRIES, TABLE_SCALE,
+    TableValues, parse_samples,
 };
 pub use topology::{
     DEFAULT_DESTINATION, DEFAULT_METRIC, MAX_LINKS, MAX_NODES, MAX_ROUTES, Node, Role, Route,

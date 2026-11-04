@@ -40,6 +40,8 @@ enum Metric {
     MeanDelayMs,
     MedianDelayMs,
     MinDelayMs,
+    /// The largest delay of the run.
+    MaxDelayMs,
     P99DelayMs,
     StdevDelayMs,
     LossRatio,
@@ -83,6 +85,7 @@ impl Metric {
             Metric::MeanDelayMs => "mean delay",
             Metric::MedianDelayMs => "median delay",
             Metric::MinDelayMs => "smallest delay",
+            Metric::MaxDelayMs => "largest delay",
             Metric::P99DelayMs => "99th percentile of the delay",
             Metric::StdevDelayMs => "standard deviation of the delay",
             Metric::LossRatio => "loss",
@@ -163,6 +166,7 @@ impl Measurement {
             Metric::MeanDelayMs => mean,
             Metric::MedianDelayMs => self.delays_ms[self.delays_ms.len() / 2],
             Metric::MinDelayMs => self.delays_ms[0],
+            Metric::MaxDelayMs => self.delays_ms[self.delays_ms.len() - 1],
             // Nearest rank, as in the results (docs/RESULTS.md)
             Metric::P99DelayMs => self.delays_ms[(self.delays_ms.len() * 99).div_ceil(100) - 1],
             Metric::StdevDelayMs => (self
@@ -248,7 +252,7 @@ impl Case {
         } else {
             self.network.to_owned()
         };
-        Scenario::from_yaml(
+        let mut scenario = Scenario::from_yaml(
             &format!(
                 "version: 0\nname: fidelity-{}\nseed: 7\nduration: {}s\ntopology:\n{topology}workloads:\n  - {{ id: media, kind: udp-cbr, from: client, to: server, rate: {}, packet-size: {}b{} }}\n",
                 self.id,
@@ -263,7 +267,13 @@ impl Case {
             ),
             "fidelity.yaml",
         )
-        .unwrap()
+        .unwrap();
+        // A case may name a file of samples; its content is made here, so that the case needs no file next to it
+        let problems = scenario.resolve_tables(|file| {
+            sample_file(file).ok_or_else(|| format!("the case has no file {file}"))
+        });
+        assert_eq!(problems, Vec::new());
+        scenario
     }
 }
 
@@ -1307,7 +1317,165 @@ fn cases() -> Vec<Case> {
                 },
             ],
         },
+        Case {
+            id: "27-jitter-pareto",
+            title: "A delay of 40 ms with a pareto jitter of 10 ms",
+            link: "delay: 40ms, jitter: { amount: 10ms, distribution: pareto }",
+            network: "",
+            offered: "8mbit",
+            size: 1000,
+            seconds: 8,
+            settle_seconds: 1,
+            udp_checksum: true,
+            bounds: vec![
+                Bound {
+                    metric: Metric::MeanDelayMs,
+                    expected: 39.665,
+                    lo: 39.30,
+                    hi: 40.53,
+                    reason: "MODEL: the 4,096 entries of `pareto.dist` (mean -0.034 amounts, deviation 0.820) at 40 ms + 10 ms x entry / 8192; the mean of 8,000 delays has a standard deviation of 0.092 ms, four of them on each side, and 0.5 ms of noise above",
+                },
+                Bound {
+                    metric: Metric::MedianDelayMs,
+                    expected: 36.796,
+                    lo: 36.545,
+                    hi: 37.55,
+                    reason: "MODEL: the median of the table, -0.320 amounts; the median of 8,000 delays has a standard deviation of 0.063 ms, four of them on each side, and 0.5 ms of noise above",
+                },
+                Bound {
+                    metric: Metric::StdevDelayMs,
+                    expected: 8.197,
+                    lo: 7.607,
+                    hi: 8.99,
+                    reason: "MODEL: the deviation of the table, 0.820 amounts; the estimate from 8,000 delays of this heavy-tailed shape (kurtosis 6.1) has a standard deviation of 0.148 ms, four of them on each side, and 0.2 ms above for noise",
+                },
+                Bound {
+                    metric: Metric::MinDelayMs,
+                    expected: 33.334,
+                    lo: 33.329,
+                    hi: 33.85,
+                    reason: "PHYSICS: the smallest entry is -5461, so no delay is below 40 ms - 10 ms x 0.667 = 33.334 ms (5 us for the rounding); the smallest of 8,000 delays is above the 0.26 % quantile (33.345 ms) with a chance of 1 - 1e-9, and 0.5 ms of noise above",
+                },
+                Bound {
+                    metric: Metric::MaxDelayMs,
+                    expected: 79.999,
+                    lo: 79.999,
+                    hi: 80.5,
+                    reason: "PHYSICS and MODEL: the largest entry is 32767, 4 amounts, so no delay is above 80.0 ms; 1.07 % of the entries are that large, so among 8,000 delays there is one at the top with a chance of 1 - 1e-37; 0.5 ms of noise above",
+                },
+            ],
+        },
+        Case {
+            id: "28-jitter-paretonormal",
+            title: "A delay of 40 ms with a paretonormal jitter of 10 ms",
+            link: "delay: 40ms, jitter: { amount: 10ms, distribution: paretonormal }",
+            network: "",
+            offered: "8mbit",
+            size: 1000,
+            seconds: 8,
+            settle_seconds: 1,
+            udp_checksum: true,
+            bounds: vec![
+                Bound {
+                    metric: Metric::MeanDelayMs,
+                    expected: 39.747,
+                    lo: 39.374,
+                    hi: 40.62,
+                    reason: "MODEL: the entries of `paretonormal.dist` (mean -0.025 amounts, deviation 0.834); the mean of 8,000 delays has a standard deviation of 0.093 ms, four of them on each side, and 0.5 ms of noise above",
+                },
+                Bound {
+                    metric: Metric::MedianDelayMs,
+                    expected: 37.595,
+                    lo: 37.267,
+                    hi: 38.42,
+                    reason: "MODEL: the median of the table, -0.240 amounts; the median of 8,000 delays has a standard deviation of 0.082 ms, four of them on each side, and 0.5 ms of noise above",
+                },
+                Bound {
+                    metric: Metric::StdevDelayMs,
+                    expected: 8.339,
+                    lo: 7.851,
+                    hi: 9.03,
+                    reason: "MODEL: the deviation of the table, 0.834 amounts; the estimate from 8,000 delays has a standard deviation of 0.122 ms, four of them on each side, and 0.2 ms above for noise",
+                },
+                Bound {
+                    metric: Metric::MinDelayMs,
+                    expected: 24.979,
+                    lo: 24.974,
+                    hi: 28.48,
+                    reason: "PHYSICS: the smallest entry is -12305, so no delay is below 40 ms - 10 ms x 1.502 = 24.979 ms (5 us for the rounding); the smallest of 8,000 delays is above the 0.26 % quantile (27.98 ms) with a chance of 1 - 1e-9, and 0.5 ms of noise above",
+                },
+                Bound {
+                    metric: Metric::MaxDelayMs,
+                    expected: 78.805,
+                    lo: 76.968,
+                    hi: 79.305,
+                    reason: "PHYSICS and MODEL: the largest entry is 31789, so no delay is above 78.805 ms (0.5 ms of noise above); the largest of 8,000 delays is above the 99.74 % quantile (76.97 ms) with a chance of 1 - 1e-9",
+                },
+            ],
+        },
+        Case {
+            id: "29-jitter-table",
+            title: "A delay of 100 ms with a jitter of 8 ms in the shape of a file of samples with a long tail",
+            link: "delay: 100ms, jitter: { amount: 8ms, distribution: table, table: { file: delays.txt } }",
+            network: "",
+            offered: "8mbit",
+            size: 1000,
+            seconds: 8,
+            settle_seconds: 1,
+            udp_checksum: true,
+            bounds: vec![
+                Bound {
+                    metric: Metric::MeanDelayMs,
+                    expected: 100.0,
+                    lo: 99.64,
+                    hi: 100.86,
+                    reason: "MODEL: the table has the mean 0 and the deviation 1 by construction, so the delay has the mean of the `delay`; the mean of 8,000 delays has a standard deviation of 0.089 ms, four of them on each side, and 0.5 ms of noise above",
+                },
+                Bound {
+                    metric: Metric::MedianDelayMs,
+                    expected: 97.543,
+                    lo: 97.185,
+                    hi: 98.40,
+                    reason: "MODEL: the samples are exponential (20 ms + 8 ms x Exp(1)), whose median is 0.307 deviations below the mean: 100 ms + 8 ms x (ln 2 - 1) = 97.545 ms; the median of 8,000 delays has a standard deviation of 0.089 ms, four of them on each side, and 0.5 ms of noise above",
+                },
+                Bound {
+                    metric: Metric::StdevDelayMs,
+                    expected: 8.0,
+                    lo: 7.50,
+                    hi: 8.70,
+                    reason: "MODEL: the amount is the standard deviation of the shape, also where the entries had to be scaled down to fit 16 bits (the tail reaches 8 deviations, scale 2.024 and the amount goes to `netem` as 16.192 ms); the estimate from 8,000 delays of an exponential shape (kurtosis 9) has a standard deviation of 0.125 ms, four of them on each side, and 0.2 ms above for noise",
+                },
+                Bound {
+                    metric: Metric::MinDelayMs,
+                    expected: 91.997,
+                    lo: 91.992,
+                    hi: 92.52,
+                    reason: "PHYSICS: the smallest entry of the table is the first quantile of the samples, 0.0001 deviations above their minimum: 100 ms - 8 ms x 1.0003 = 91.997 ms (5 us for the rounding); 0.5 ms of noise above",
+                },
+                Bound {
+                    metric: Metric::MaxDelayMs,
+                    expected: 164.75,
+                    lo: 139.76,
+                    hi: 165.25,
+                    reason: "PHYSICS and MODEL: the largest entry is 32759 at scale 2.024, 8.09 deviations: no delay is above 164.75 ms; the largest of 8,000 delays is above the 99.74 % quantile (139.76 ms) with a chance of 1 - 1e-9. A table that was not scaled would stop at 4 deviations (132 ms) and a `normal` one at 3.5",
+                },
+            ],
+        },
     ]
+}
+
+/// The file of samples that the case with a table names: 5,000 delays of 20 ms plus 8 ms times an exponential variable
+/// with mean 1, at evenly spaced quantiles, to the thousandth of a millisecond.
+fn sample_file(name: &str) -> Option<Vec<u8>> {
+    if name != "delays.txt" {
+        return None;
+    }
+    let mut text = String::from("# 5,000 delays, ms\n");
+    for i in 0..5000 {
+        let u = (f64::from(i) + 0.5) / 5000.0;
+        let _ = writeln!(text, "{:.3}", 20.0 + 8.0 * -(1.0 - u).ln());
+    }
+    Some(text.into_bytes())
 }
 
 /// Runs the scenario of a case and measures it.
@@ -1696,6 +1864,21 @@ fn a_normal_jitter_has_the_configured_deviation_and_reorders() {
 }
 
 #[test]
+fn a_pareto_jitter_has_the_shape_of_its_table() {
+    run_and_judge("27-jitter-pareto");
+}
+
+#[test]
+fn a_paretonormal_jitter_has_the_shape_of_its_table() {
+    run_and_judge("28-jitter-paretonormal");
+}
+
+#[test]
+fn a_jitter_made_from_samples_has_their_shape_and_the_deviation_of_the_amount() {
+    run_and_judge("29-jitter-table");
+}
+
+#[test]
 fn jitter_with_a_rate_limit_raises_the_mean_and_keeps_the_order() {
     run_and_judge("6-jitter-and-rate");
 }
@@ -1970,6 +2153,49 @@ fn every_bound_has_a_reason_and_an_expectation_inside_it() {
     }
 }
 
+/// Delays with the quantiles of a shape: `count` values at evenly spaced probabilities.
+fn quantiles(count: usize, shape: impl Fn(f64) -> f64) -> Vec<f64> {
+    (0..count)
+        .map(|i| shape((i as f64 + 0.5) / count as f64))
+        .collect()
+}
+
+/// The cases of the tables judge the shape and not only the mean and the deviation. A measurement with the shape of the model
+/// passes; one with the same mean and deviation and another shape (even spread, which is what a jitter without a table would
+/// give) fails on the median and on both ends. This is a canary that runs everywhere: it needs no network.
+#[test]
+fn the_judging_of_the_table_cases_tells_the_shape_from_the_moments() {
+    // The shape of the file of samples: exponential, cut where the table ends (9 deviations of the exponential)
+    let exponential = quantiles(8000, |u| 100.0 + 8.0 * ((-(1.0 - u).ln()).min(9.0) - 1.0));
+    assert_eq!(
+        failing_metrics("29-jitter-table", &synthetic(&exponential, 0.0, 0.0, 0.0)),
+        []
+    );
+    let even = quantiles(8000, |u| 100.0 + 8.0 * 12f64.sqrt() * (u - 0.5));
+    assert_eq!(
+        failing_metrics("29-jitter-table", &synthetic(&even, 0.0, 0.0, 0.0)),
+        [
+            Metric::MedianDelayMs,
+            Metric::MinDelayMs,
+            Metric::MaxDelayMs
+        ]
+    );
+    // The same for the table of iproute2: an even spread of the same mean and deviation fails
+    let even_pareto = quantiles(8000, |u| 39.665 + 8.197 * 12f64.sqrt() * (u - 0.5));
+    assert_eq!(
+        failing_metrics("27-jitter-pareto", &synthetic(&even_pareto, 0.0, 0.0, 0.0)),
+        [
+            Metric::MedianDelayMs,
+            Metric::MinDelayMs,
+            Metric::MaxDelayMs
+        ]
+    );
+    // A delay that is cut short at the top (a table that was not scaled up) fails the largest delay and only that
+    let cut = quantiles(8000, |u| 100.0 + 8.0 * ((-(1.0 - u).ln()).min(4.0) - 1.0));
+    let failed = failing_metrics("29-jitter-table", &synthetic(&cut, 0.0, 0.0, 0.0));
+    assert!(failed.contains(&Metric::MaxDelayMs), "{failed:?}");
+}
+
 // ---- canaries: networks that are wrong on purpose must fail ----
 
 /// Runs a case with something taken away and judges it with the bounds of the real case.
@@ -2164,6 +2390,29 @@ fn canary_a_link_without_a_jitter_fails_the_jitter_and_the_extent() {
     ] {
         assert!(none.contains(&metric), "{metric:?} passed: {none:?}");
     }
+}
+
+/// A network that applies a normal jitter where the case asks for the shape of the samples has the same mean and (about) the
+/// same deviation, and the judging still fails it: the shape is what the case is about.
+#[test]
+fn canary_a_normal_jitter_fails_the_case_of_the_table() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let normal = wrong_on_purpose(
+        "29-jitter-table",
+        "delay: 100ms, jitter: { amount: 8ms, distribution: normal }",
+        4,
+        1,
+    );
+    for metric in [
+        Metric::MedianDelayMs,
+        Metric::MinDelayMs,
+        Metric::MaxDelayMs,
+    ] {
+        assert!(normal.contains(&metric), "{metric:?} passed: {normal:?}");
+    }
+    assert!(!normal.contains(&Metric::MeanDelayMs), "{normal:?}");
 }
 
 /// The tally must add up. A measurement in which a packet is missing from it fails the judging.

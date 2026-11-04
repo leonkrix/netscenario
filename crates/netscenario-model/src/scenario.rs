@@ -13,6 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::generators::{Generator, PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
 use crate::ip::IpFamily;
 use crate::measure::Measure;
+use crate::table::DelayTable;
 use crate::topology::Topology;
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
@@ -229,15 +230,35 @@ pub struct Impairments {
 }
 
 /// Variation of the delay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+///
+/// Not `Copy`: a table holds its entries (D-083). `non_exhaustive` so that a field can be added later without a break.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Jitter {
     /// How much the delay varies: the delay lies within this amount above and below the fixed delay
-    /// (`uniform`) or has this standard deviation (`normal`).
+    /// (`uniform`), or this is the scale of the table that `netem` draws from: the standard deviation for `normal` and
+    /// `table`, the scale of the shipped table for `pareto` and `paretonormal`.
     pub amount: Duration,
-    /// The distribution. `uniform` (the default) or `normal`.
+    /// The distribution. `uniform` (the default), `normal`, `pareto`, `paretonormal` or `table`.
     #[serde(default, skip_serializing_if = "JitterDistribution::is_default")]
     pub distribution: JitterDistribution,
+    /// The table of a `distribution: table` (D-084), made from a file of samples. In a step of the timeline it is left out:
+    /// the step changes the amount, and the table stays the one of the link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<DelayTable>,
+}
+
+impl Jitter {
+    /// A jitter with the given amount and distribution and no table.
+    #[must_use]
+    pub fn new(amount: Duration, distribution: JitterDistribution) -> Self {
+        Self {
+            amount,
+            distribution,
+            table: None,
+        }
+    }
 }
 
 /// The distribution of the variation of the delay.
@@ -249,6 +270,14 @@ pub enum JitterDistribution {
     Uniform,
     /// A bell curve around the delay, cut at about four standard deviations.
     Normal,
+    /// A heavy tail towards longer delays (the table `pareto` of iproute2). Added after the others because the order of the
+    /// variants is the order of the first releases.
+    Pareto,
+    /// A bell curve with a heavy tail towards longer delays (the table `paretonormal` of iproute2).
+    #[serde(rename = "paretonormal")]
+    ParetoNormal,
+    /// The shape of a file of samples (the `table` of the jitter).
+    Table,
 }
 
 impl JitterDistribution {
@@ -256,6 +285,41 @@ impl JitterDistribution {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     fn is_default(&self) -> bool {
         *self == Self::Uniform
+    }
+
+    /// The word of the file.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::Normal => "normal",
+            Self::Pareto => "pareto",
+            Self::ParetoNormal => "paretonormal",
+            Self::Table => "table",
+        }
+    }
+
+    /// The name of the table of iproute2 that `tc` loads for this distribution, if it is one of those.
+    #[must_use]
+    pub fn shipped_table(self) -> Option<&'static str> {
+        match self {
+            Self::Normal | Self::Pareto | Self::ParetoNormal => Some(self.as_str()),
+            Self::Uniform | Self::Table => None,
+        }
+    }
+
+    /// How far below the delay the distribution reaches, in units of the amount: the delay has to be at least this many
+    /// amounts, or the shortest delays would be below zero. For the shipped tables it is the smallest entry of the table
+    /// (`-4`, `-0.67`, `-1.5`; 8192 is one unit).
+    #[must_use]
+    pub fn reach_below(self) -> f64 {
+        match self {
+            Self::Uniform => 1.0,
+            Self::Normal => 4.0,
+            Self::Pareto => 5461.0 / 8192.0,
+            Self::ParetoNormal => 12305.0 / 8192.0,
+            Self::Table => 0.0,
+        }
     }
 }
 
@@ -606,6 +670,18 @@ impl ImpairmentsChange {
         edit(&mut result.duplicate, &self.duplicate);
         edit(&mut result.corrupt, &self.corrupt);
         edit(&mut result.rate, &self.rate);
+        // A step that says `distribution: table` changes the amount and leaves the table where it is (D-084)
+        if let (
+            Some(jitter),
+            Some(Jitter {
+                table: Some(table), ..
+            }),
+        ) = (&mut result.jitter, &impairments.jitter)
+            && jitter.distribution == JitterDistribution::Table
+            && jitter.table.is_none()
+        {
+            jitter.table = Some(table.clone());
+        }
         result
     }
 }

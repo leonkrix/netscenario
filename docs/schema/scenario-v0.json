@@ -169,6 +169,56 @@
       ],
       "type": "string"
     },
+    "DelayTable": {
+      "additionalProperties": false,
+      "description": "The delay table of a jitter with `distribution: table`: where the samples came from and the table made of them.\n\nIn a scenario file only `file` is written. When the scenario is loaded the file is read and the other fields are filled\nin, so that the canonical form of the scenario (and its hash) holds the table and the fingerprint of the file, and a\nrecorded scenario runs without the file (D-083). `sha256` may be written as well: then the file must have exactly that\ncontent.",
+      "properties": {
+        "file": {
+          "description": "The file of samples, one number per line (or several, separated by spaces or commas), a path relative to the\ndirectory of the scenario file. Lines that start with `#` are comments. Read when the scenario is loaded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "samples": {
+          "description": "How many samples the table was made from. Written by the loader.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scale": {
+          "description": "The factor, in thousandths, by which the entries were scaled down so that they fit 16 bits, and by which the `amount` of\nthe jitter is scaled up when it goes to `netem`. 1000 (or left out) when the samples reach at most 4 standard\ndeviations. Written by the loader.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sha256": {
+          "description": "The SHA-256 of the file. Written by the loader; if it is in the file, the content of the file must match it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TableValues"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The 4096 entries, as 4 hexadecimal digits each. Written by the loader; a scenario with the entries needs no file."
+        }
+      },
+      "type": "object"
+    },
     "Direction": {
       "description": "The side of a link that an event acts on.",
       "oneOf": [
@@ -575,15 +625,26 @@
     },
     "Jitter": {
       "additionalProperties": false,
-      "description": "Variation of the delay.",
+      "description": "Variation of the delay.\n\nNot `Copy`: a table holds its entries (D-083). `non_exhaustive` so that a field can be added later without a break.",
       "properties": {
         "amount": {
           "$ref": "#/$defs/Duration",
-          "description": "How much the delay varies: the delay lies within this amount above and below the fixed delay\n(`uniform`) or has this standard deviation (`normal`)."
+          "description": "How much the delay varies: the delay lies within this amount above and below the fixed delay\n(`uniform`), or this is the scale of the table that `netem` draws from: the standard deviation for `normal` and\n`table`, the scale of the shipped table for `pareto` and `paretonormal`."
         },
         "distribution": {
           "$ref": "#/$defs/JitterDistribution",
-          "description": "The distribution. `uniform` (the default) or `normal`."
+          "description": "The distribution. `uniform` (the default), `normal`, `pareto`, `paretonormal` or `table`."
+        },
+        "table": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DelayTable"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The table of a `distribution: table` (D-084), made from a file of samples. In a step of the timeline it is left out:\nthe step changes the amount, and the table stays the one of the link."
         }
       },
       "required": [
@@ -602,6 +663,21 @@
         {
           "const": "normal",
           "description": "A bell curve around the delay, cut at about four standard deviations.",
+          "type": "string"
+        },
+        {
+          "const": "pareto",
+          "description": "A heavy tail towards longer delays (the table `pareto` of iproute2). Added after the others because the order of the\nvariants is the order of the first releases.",
+          "type": "string"
+        },
+        {
+          "const": "paretonormal",
+          "description": "A bell curve with a heavy tail towards longer delays (the table `paretonormal` of iproute2).",
+          "type": "string"
+        },
+        {
+          "const": "table",
+          "description": "The shape of a file of samples (the `table` of the jitter).",
           "type": "string"
         }
       ]
@@ -1472,6 +1548,11 @@
         "leaves"
       ],
       "type": "object"
+    },
+    "TableValues": {
+      "description": "The 4096 entries of a delay table, each as 4 hexadecimal digits (two's complement, 8192 is one standard deviation). Written by the loader from the file of samples.",
+      "pattern": "^[0-9a-fA-F]{16384}$",
+      "type": "string"
     },
     "Topology": {
       "additionalProperties": false,

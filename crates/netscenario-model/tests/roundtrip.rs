@@ -128,14 +128,14 @@ fn impairments() -> impl Strategy<Value = Impairments> {
                         delay.as_nanos()
                     };
                     let amount = u64::from(jitter_part) % (limit + 1);
-                    Jitter {
-                        amount: Duration::from_nanos(amount),
-                        distribution: if normal {
+                    Jitter::new(
+                        Duration::from_nanos(amount),
+                        if normal {
                             JitterDistribution::Normal
                         } else {
                             JitterDistribution::Uniform
                         },
-                    }
+                    )
                 });
                 Impairments {
                     delay,

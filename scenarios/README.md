@@ -23,6 +23,7 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [manual-routes.yaml](manual-routes.yaml) | Two parallel links with a `cost`, and one route set by hand over the computed ones |
 | [dumbbell.yaml](dumbbell.yaml) | The `dumbbell` shortcut: two senders and two receivers share a bottleneck between two routers |
 | [star-and-chain.yaml](star-and-chain.yaml) | The `star` shortcut with values for each link, and how the `chain` and `multipath` shortcuts are written |
+| [jitter-from-samples.yaml](jitter-from-samples.yaml) | A jitter that takes its shape from a file of measured round trips ([round-trips.txt](round-trips.txt)), read when the scenario is loaded |
 | [damaged-payload.yaml](damaged-payload.yaml) | Corruption and a stream with `udp-checksum: false`, so that a damaged packet arrives and is counted |
 
 Each file starts with a line `# yaml-language-server: $schema=...` that points an editor at the JSON Schema of this checkout, for completion and checking while you write (docs/CLI.md has the form for your own files).

@@ -26,6 +26,7 @@ Usage: netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [
                        [--repetitions <n>] [--statistic mean|median] [--confidence <percent>]
                        [--bin <duration>] [--capture all|<link>,...] [--recovery-basis send|arrival]
                        [--recovery-baseline <bins>] [--recovery-window <bins>] [--recovery-fraction <percent>]
+                       [--allow-outside-files]
 
 Runs a scenario: builds the network in network namespaces, starts the agents in the nodes, lets the
 workloads run for the duration of the scenario, and writes the result. Nothing outside the namespaces
@@ -36,6 +37,8 @@ that it creates is touched, and everything is removed afterwards, also after an 
   --settle <duration>  how long to wait after the last packet for the packets still in the network
                        (for example 2s; default: until the queues of the links are empty, and 0.3 s more)
   --json               print result.json (or runset.json, with --repetitions) on standard output instead of the summary
+  --allow-outside-files  let the scenario read files (a table of delay samples) from outside the directory of the
+                       scenario file; without it a path that leads out of that directory is refused
 
 Repetitions run the scenario several times, one after the other, and say how much each metric varies between the runs
 (see docs/STATISTICS.md). Run number i uses a seed derived from the seed of the scenario (or of --seed), so the runs draw
@@ -85,7 +88,7 @@ pub(crate) const RUN_SPEC: Spec = Spec {
         "statistic",
         "confidence",
     ],
-    flags: &["packets", "json"],
+    flags: &["packets", "json", crate::validate::ALLOW_OUTSIDE_FILES],
 };
 
 /// What the command line asks for in the section `measure` of the file (D-070, D-073), or what is wrong with it. `links` are
@@ -394,7 +397,7 @@ pub(crate) fn run_command<S: AsRef<str>>(
         Ok(set) => set,
         Err(message) => return crate::usage_error(err, "run", &message, RUN_HELP),
     };
-    let loaded = match load(path) {
+    let loaded = match load(path, parsed.flag(crate::validate::ALLOW_OUTSIDE_FILES)) {
         Ok(loaded) => loaded,
         Err(message) => {
             let _ = writeln!(err, "netscenario: {message}");

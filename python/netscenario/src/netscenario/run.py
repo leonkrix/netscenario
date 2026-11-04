@@ -175,6 +175,7 @@ def run(
 
     text = _native.run_scenario(
         loaded.source,
+        loaded.to_json(),
         loaded.source_name,
         str(supervisor),
         str(agent),

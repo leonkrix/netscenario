@@ -170,12 +170,48 @@ forward:
 | Key | Value | Meaning in the Kernel backend |
 | --- | --- | --- |
 | `delay` | Duration | `netem delay` (LNK-01). |
-| `jitter` | `amount`: Duration, `distribution`: `uniform` (default) or `normal` | `netem delay D J`, with `distribution normal` for the second one (LNK-02). **Needs `delay`.** A delay below zero cannot exist, and `netem` would silently clamp it to zero, so the format refuses a jitter that reaches below zero: `uniform` needs `amount` not greater than `delay`, `normal` needs `delay` at least four times `amount` (the tables of `netem` are cut at about four sigma, which is also why a normal jitter never reaches its far tail, see COVERAGE). |
+| `jitter` | `amount`: Duration, `distribution`: `uniform` (default), `normal`, `pareto`, `paretonormal` or `table`, and `table` for the last | `netem delay D J`, with `distribution NAME` for all but the first (LNK-02, D-084). **Needs `delay`.** A delay below zero cannot exist, and `netem` would silently clamp it to zero, so the format refuses a jitter that reaches below zero: `uniform` needs `amount` not greater than `delay`, `normal` needs `delay` at least four times `amount` (the tables of `netem` are cut at about four sigma, which is also why a normal jitter never reaches its far tail, see COVERAGE), and for the other tables the delay must be at least as many amounts as the table reaches below its mean (`pareto` 0.67, `paretonormal` 1.50, `table` as the samples have it, known after the file is read). See "The distributions of the jitter" below. |
 | `loss` | `model` and its parameters, see below | `netem loss` (LNK-03, LNK-04). `trace` is planned for 0.3. |
 | `reorder` | `share`: Probability, `gap`: whole number, at least 1 (optional, default 1) | `netem reorder P gap G` (LNK-05). **Needs `delay`** (`tc` refuses it without). `share` is the share of the packets that are sent on at once; the others wait for the delay and arrive after later ones. With `gap` the share sent on at once is `1 / (gap - 1 + 1 / share)`: 25 % with `gap: 5` is 12.5 %. Measured in D-048. |
 | `duplicate` | Probability | `netem duplicate` (LNK-06). The copy is impaired on its own. |
 | `corrupt` | Probability | `netem corrupt` (LNK-07). One bit of the frame is flipped, anywhere in it, the Ethernet header included; a receiver with the UDP checksum on drops the packet (D-040), so the program sees loss, and the result tells the two apart (`directions`, [RESULTS.md](RESULTS.md)) and names most of them by sequence number (`corrupted_seq`). The share of packets that are dropped is a little less than `P`: a bit in the source address of the Ethernet header harms nothing. |
 | `rate` | Rate | `netem rate` (LNK-08). |
+
+**The distributions of the jitter (D-084).** `netem` draws the variation of the delay from a table of 4,096 entries: the delay is `delay + amount x entry`, with an entry (a number around 0, mostly within a few units) chosen at random.
+
+| `distribution` | The shape | `amount` is |
+| --- | --- | --- |
+| `uniform` | Every delay between `delay - amount` and `delay + amount` is equally likely (no table). | The half of the range. |
+| `normal` | A bell curve, cut at 3.5 deviations above and 4 below. | The standard deviation. |
+| `pareto` | A heavy tail towards longer delays (the table `pareto` of iproute2): mean -0.03, deviation 0.82, from -0.67 to +4 amounts. | The scale of the table, not the deviation (0.82 amounts). |
+| `paretonormal` | A bell curve with a heavy tail towards longer delays: mean -0.03, deviation 0.83, from -1.50 to +3.9 amounts. | The scale of the table (0.83 amounts). |
+| `table` | The shape of a file of samples (below). | The standard deviation of the delays, whatever the tail. |
+
+`pareto`, `paretonormal` and `normal` need the tables of iproute2 on the machine (`netscenario doctor` says whether `tc` finds them).
+
+```yaml
+forward:
+  delay: 100ms
+  jitter:
+    amount: 8ms
+    distribution: table
+    table: { file: round-trips.txt }
+```
+
+`table` takes the shape of a **file of samples** (D-084): numbers, one to a line or several separated by spaces or commas, lines that start with `#` are comments; at least 100 and at most a million; any unit, because only the shape is used (take a measurement of the delay of a real link and write the file as it comes). The tool turns the samples into the table of `netem`: the 4,096 evenly spaced quantiles, moved to the mean 0 and scaled to the deviation 1, so `delay` is the mean of the delays and `amount` their standard deviation. A tail that reaches further than the 16 bits of a table hold (4 deviations) is not cut: the table is scaled down and the amount goes to `netem` scaled up by the same factor (the `scale` in the table of the scenario), so the whole tail is there; events rarer than 1 in 8,192 are not in the table.
+
+**The files a scenario refers to (D-083).** The `file` is a path relative to the directory of the scenario file, and it must lie inside that directory (links and `..` are resolved first; an absolute path is refused; `--allow-outside-files` or `allow_outside_files=True` lifts this). It is read when the scenario is loaded, at most 16 MiB. What is made of it is written into the scenario: `netscenario expand file.yaml` shows
+
+```yaml
+table:
+  file: round-trips.txt
+  sha256: 3b1f...            # the fingerprint of the file
+  samples: 1200
+  scale: 2024                # thousandths; left out when the samples fit
+  values: "f9c4..."          # the 4,096 entries, 4 hexadecimal digits each
+```
+
+so the canonical form, its hash and the `scenario.json` of a run hold the table, a replay needs no file, and another file is another scenario. A `sha256` written by hand is checked: the file must have that content. A `table` with `values` is complete and is not read from a file again. In a step of the timeline write `distribution: table` and the new `amount` and leave the `table` out: the table is the one of the link, and a step cannot bring another (`netem` keeps the table that was loaded first).
 
 **The loss models.** The parameters are those of `netem` and have its names, without aliases; every parameter of a model is required (a default of `tc` that the file does not show would be a value nobody wrote). There is no `correlation` key for any loss, duplication or reordering, because the correlation argument of `netem` does not keep the probability (D-048).
 
@@ -242,7 +278,7 @@ timeline:
 
 **What the reader refuses besides the types:** an event that does none or several of the four things; a link that does not exist (with a hint); a moment at or after the end; an outage that is not longer than zero, that ends after the end of the measured phase, or that overlaps another outage of the same direction (the end of the first would be unclear); a link that goes down twice or comes up while it is up; a `direction` on anything but an outage; a step that writes no key.
 
-**What the Kernel backend cannot follow.** The jitter of a direction keeps one distribution for the whole run: `netem` cannot go back from normal to uniform without building the queue again (D-059). The amount can change.
+**What the Kernel backend cannot follow.** The jitter of a direction keeps one distribution for the whole run: `netem` cannot go back from one table (or from none) to another without building the queue again (D-059). The amount can change.
 
 **When it happens.** An event is applied **before the first packet that its workload sends at or after its moment** (D-038, D-062): the sender of the workload that sends into the direction of the step knows its packet clock, asks the run right after the packet before, and holds the packet at its slot until the run has done the step. For that workload this is the same as a step at the exact moment, whatever the machine does, so the same seed gives the same lost packets; the packet that waits leaves late by the time of the change (`max_lateness_ns` shows it) and the ones after it catch up in order. The result records, for each step, the number of the first packet that met it and how long that packet waited (`events`, [RESULTS.md](RESULTS.md)). A step that no workload can wait for is done by the clock at its moment: no workload sends into its direction, or the moment lies after the last packet. A timeline that changes the loss, the duplication, the corruption or the reordering of a direction that no workload sends into makes the result say that the lost packets are not promised to repeat, with the reason. So does a direction whose queue draws random numbers and that two workloads send into, with or without a timeline: the order of their packets at the queue is not fixed (D-065). A timeline that changes only a rate or a delay is not affected. A `down` and an `up` are bound to a workload on the link in the same way. An `outage` is the exception: it is a window in the time of the receiver, so it is always done by the clock, and the packet at each of its edges can be lost in one run and delivered in another; the result says so with a reason ([COVERAGE.md](COVERAGE.md)).
 

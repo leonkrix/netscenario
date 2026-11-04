@@ -673,15 +673,17 @@ fn timeline_refusals(scenario: &Scenario) -> Vec<Refusal> {
     refusals
 }
 
-/// The places where `scenario` asks for a jitter with the distribution `normal`: in a link and in a step of the timeline.
-fn normal_jitter_paths(scenario: &Scenario) -> Vec<String> {
+/// The places where `scenario` asks for a jitter with `distribution`: in a link and in a step of the timeline.
+fn jitter_paths(
+    scenario: &Scenario,
+    distribution: netscenario_model::JitterDistribution,
+) -> Vec<String> {
     use netscenario_core::timeline::{Action, steps};
-    use netscenario_model::JitterDistribution;
-    let normal = |impairments: &Impairments| {
+    let asks = |impairments: &Impairments| {
         impairments
             .jitter
             .as_ref()
-            .is_some_and(|jitter| jitter.distribution == JitterDistribution::Normal)
+            .is_some_and(|jitter| jitter.distribution == distribution)
     };
     let mut paths = Vec::new();
     for (index, link) in scenario.topology.links.iter().enumerate() {
@@ -690,7 +692,7 @@ fn normal_jitter_paths(scenario: &Scenario) -> Vec<String> {
             ("reverse", &link.reverse),
             ("both", &link.both),
         ] {
-            if impairments.as_ref().is_some_and(normal) {
+            if impairments.as_ref().is_some_and(asks) {
                 paths.push(format!(
                     "topology.links[{index}].{name}.jitter.distribution"
                 ));
@@ -699,7 +701,7 @@ fn normal_jitter_paths(scenario: &Scenario) -> Vec<String> {
     }
     for step in steps(scenario) {
         if let Action::Impair { impairments, .. } = &step.action
-            && normal(impairments)
+            && asks(impairments)
         {
             let path = format!("timeline[{}].set", step.event);
             if !paths.contains(&path) {
@@ -710,38 +712,59 @@ fn normal_jitter_paths(scenario: &Scenario) -> Vec<String> {
     paths
 }
 
-/// The jitters with the distribution `normal` of `scenario`, refused if `ask` says that `tc` finds no table for it
-/// (the file `normal.dist`). `ask` is called at most once, and not at all if the scenario has no such jitter.
-/// `tc_lib_dir` is the value of `TC_LIB_DIR`, which the fix names if it is set (D-068).
-fn normal_table_refusals(
+/// The jitters of `scenario` with a distribution that `tc` takes from a table, refused if `ask` says that `tc` finds none: the
+/// file `normal.dist`, `pareto.dist` or `paretonormal.dist`, or a table of the run in the directory of `TC_LIB_DIR` (D-068, D-084).
+/// `ask` is given the name of the step of the probe (`tables`, `pareto`, `paretonormal` or `tablecustom`), and is not called for
+/// a distribution that the scenario does not use. `tc_lib_dir` is the value of `TC_LIB_DIR`, which the fix names if it is set.
+fn table_refusals(
     scenario: &Scenario,
-    ask: impl FnOnce() -> Option<String>,
+    ask: impl Fn(&str) -> Option<String>,
     tc_lib_dir: Option<&str>,
 ) -> Vec<Refusal> {
-    let wanted = normal_jitter_paths(scenario);
-    if wanted.is_empty() {
-        return Vec::new();
-    }
-    let Some(answer) = ask() else {
-        return Vec::new();
-    };
-    let fix = match tc_lib_dir {
-        Some(dir) => format!(
-            "TC_LIB_DIR is set to {dir}: put normal.dist there or point it to the directory that has it; or use the distribution `uniform`"
-        ),
-        None => "install the iproute2 package that has the tables (usually in /usr/lib/tc or /usr/lib/<arch>/tc), or set TC_LIB_DIR to the directory with normal.dist; or use the distribution `uniform`".to_owned(),
-    };
-    wanted
-        .into_iter()
-        .map(|path| Refusal {
+    use netscenario_model::JitterDistribution;
+    let mut refusals = Vec::new();
+    for (distribution, step) in [
+        (JitterDistribution::Normal, "tables"),
+        (JitterDistribution::Pareto, "pareto"),
+        (JitterDistribution::ParetoNormal, "paretonormal"),
+        (JitterDistribution::Table, "tablecustom"),
+    ] {
+        let wanted = jitter_paths(scenario, distribution);
+        if wanted.is_empty() {
+            continue;
+        }
+        let Some(answer) = ask(step) else {
+            continue;
+        };
+        let word = distribution.as_str();
+        let (what, fix) = if distribution == JitterDistribution::Table {
+            (
+                "a jitter made from samples needs `tc` to load a table from the directory of `TC_LIB_DIR`, which it does not do on this machine".to_owned(),
+                "use a distribution of iproute2 (`normal`, `pareto`, `paretonormal`) or `uniform`, or a newer iproute2".to_owned(),
+            )
+        } else {
+            (
+                format!(
+                    "a jitter with the distribution `{word}` needs a table that `tc` cannot find on this machine"
+                ),
+                match tc_lib_dir {
+                    Some(dir) => format!(
+                        "TC_LIB_DIR is set to {dir}: put {word}.dist there or point it to the directory that has it; or use the distribution `uniform`"
+                    ),
+                    None => format!(
+                        "install the iproute2 package that has the tables (usually in /usr/lib/tc or /usr/lib/<arch>/tc), or set TC_LIB_DIR to the directory with {word}.dist; or use the distribution `uniform`"
+                    ),
+                },
+            )
+        };
+        refusals.extend(wanted.into_iter().map(|path| Refusal {
             feature: Feature::Jitter,
             path,
-            reason: format!(
-                "a jitter with the distribution `normal` needs a table that `tc` cannot find on this machine: {answer}"
-            ),
+            reason: format!("{what}: {answer}"),
             fix: fix.clone(),
-        })
-        .collect()
+        }));
+    }
+    refusals
 }
 
 /// The workloads of `scenario` that send without the checksum of UDP, refused if `ask` says that a node has no
@@ -827,9 +850,9 @@ impl Backend for KernelBackend {
         refusals.extend(raw_socket_refusals(scenario, || {
             crate::doctor::raw_socket_answer(self.probed().steps())
         }));
-        refusals.extend(normal_table_refusals(
+        refusals.extend(table_refusals(
             scenario,
-            || self.probed().refused("tables").map(str::to_owned),
+            |step| self.probed().refused(step).map(str::to_owned),
             std::env::var("TC_LIB_DIR").ok().as_deref(),
         ));
         if refusals.is_empty() {
@@ -1402,9 +1425,9 @@ mod tests {
     fn a_normal_jitter_is_refused_where_tc_finds_no_table_for_it() {
         let normal =
             "      forward: { delay: 20ms, jitter: { amount: 5ms, distribution: normal } }\n";
-        let refusals = normal_table_refusals(
+        let refusals = table_refusals(
             &scenario_of(normal),
-            || Some("No such file or directory".to_owned()),
+            |_| Some("No such file or directory".to_owned()),
             None,
         );
         assert_eq!(refusals.len(), 1);
@@ -1415,9 +1438,9 @@ mod tests {
         assert!(refusals[0].reason.contains("No such file or directory"));
         assert!(refusals[0].fix.contains("TC_LIB_DIR"));
         // The directory the user set is named
-        let set = normal_table_refusals(
+        let set = table_refusals(
             &scenario_of(normal),
-            || Some("x".to_owned()),
+            |_| Some("x".to_owned()),
             Some("/nowhere"),
         );
         assert!(
@@ -1433,17 +1456,17 @@ mod tests {
             "t.yaml",
         )
         .unwrap();
-        let refusals = normal_table_refusals(&in_step, || Some("gone".to_owned()), None);
+        let refusals = table_refusals(&in_step, |_| Some("gone".to_owned()), None);
         assert_eq!(refusals.len(), 1, "{refusals:?}");
         assert_eq!(refusals[0].path, "timeline[0].set");
         // Canaries: a uniform jitter, none, and a table that is there ask nothing or say nothing
         let uniform = scenario_of("      forward: { delay: 20ms, jitter: { amount: 5ms } }\n");
         assert_eq!(
-            normal_table_refusals(&uniform, || panic!("asked"), None),
+            table_refusals(&uniform, |_| panic!("asked"), None),
             Vec::new()
         );
         assert_eq!(
-            normal_table_refusals(&scenario_of(normal), || None, None),
+            table_refusals(&scenario_of(normal), |_| None, None),
             Vec::new()
         );
     }
