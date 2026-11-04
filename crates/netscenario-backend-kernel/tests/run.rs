@@ -513,6 +513,27 @@ impl netscenario_core::Backend for Disturbed {
     ) -> Result<netscenario_core::LinkHandle, Error> {
         self.0.create_link(name, between)
     }
+    fn set_node_address(
+        &mut self,
+        node: netscenario_core::NodeHandle,
+        address: std::net::Ipv4Addr,
+    ) -> Result<(), Error> {
+        self.0.set_node_address(node, address)
+    }
+    fn set_forwarding(
+        &mut self,
+        node: netscenario_core::NodeHandle,
+        on: bool,
+    ) -> Result<(), Error> {
+        self.0.set_forwarding(node, on)
+    }
+    fn add_route(
+        &mut self,
+        node: netscenario_core::NodeHandle,
+        route: &netscenario_core::NodeRoute,
+    ) -> Result<(), Error> {
+        self.0.add_route(node, route)
+    }
     fn apply(
         &mut self,
         link: netscenario_core::LinkHandle,
