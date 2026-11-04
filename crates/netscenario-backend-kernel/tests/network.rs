@@ -85,7 +85,7 @@ fn a_flow_over_four_hops_arrives_and_the_result_names_the_path_the_routes_and_th
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// A backend that does everything as the Kernel backend does except that its routers do not forward: the canary for the test
+/// A backend that does everything as the Kernel backend does except that no node forwards: the canary for the test
 /// above, which would also pass if the packets reached the server some other way.
 struct NoForwarding(netscenario_backend_kernel::KernelBackend);
 
@@ -109,8 +109,9 @@ impl Backend for NoForwarding {
     ) -> Result<(), Error> {
         self.0.set_node_address(node, address)
     }
-    fn set_forwarding(&mut self, _node: NodeHandle, _on: bool) -> Result<(), Error> {
-        Ok(())
+    fn set_forwarding(&mut self, node: NodeHandle, _on: bool) -> Result<(), Error> {
+        // No node forwards, whatever the machine has set: the routers are told to stop, as are the hosts
+        self.0.set_forwarding(node, false)
     }
     fn add_route(
         &mut self,

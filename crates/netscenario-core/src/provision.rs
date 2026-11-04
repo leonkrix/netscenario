@@ -217,9 +217,10 @@ fn routing(
     for (index, node) in topology.nodes.iter().enumerate() {
         let handle = handle_of(&node.id).ok_or_else(|| missing("node", &node.id))?;
         backend.set_node_address(handle, addresses[index].1)?;
-        if node.role == netscenario_model::Role::Router {
-            backend.set_forwarding(handle, true)?;
-        }
+        // Set on every node and not only on routers: a new network namespace inherits `ip_forward` from the machine, so
+        // on a machine that forwards (Docker sets it) a host in the middle of a chain would carry packets that only a router
+        // may carry
+        backend.set_forwarding(handle, node.role == netscenario_model::Role::Router)?;
     }
     // The routes of a node with the same destination and metric are one route with several ways out
     let routes = topology.routes();
@@ -497,12 +498,21 @@ mod tests {
             .collect();
         assert_eq!(shown, ["a 10.200.0.1", "r 10.200.0.2", "c 10.200.0.3"]);
         let routing = backend.routing.join("\n");
-        // Only the router forwards
-        assert_eq!(routing.matches("forwarding").count(), 1, "{routing}");
-        assert!(
-            routing.contains("forwarding") && routing.contains("true"),
+        // Every node is told, and only the router forwards (a host would inherit the setting of the machine otherwise)
+        let forwarding: Vec<&str> = routing
+            .lines()
+            .filter(|line| line.starts_with("forwarding"))
+            .collect();
+        assert_eq!(forwarding.len(), 3, "{routing}");
+        assert_eq!(
+            forwarding
+                .iter()
+                .filter(|line| line.ends_with("true"))
+                .count(),
+            1,
             "{routing}"
         );
+        assert!(forwarding[1].ends_with("true"), "{routing}");
         // Six routes: each of the three nodes to each of the other two
         assert_eq!(routing.matches("route ").count(), 6, "{routing}");
         // `a` reaches `c` (10.200.0.3) out of the link x at its first end (`a` is the first node of the link)
