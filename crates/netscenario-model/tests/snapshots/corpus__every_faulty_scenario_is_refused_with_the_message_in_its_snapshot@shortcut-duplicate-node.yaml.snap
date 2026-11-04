@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/shortcut-duplicate-node.yaml
+---
+error: the name 'router-left' is used twice in the dumbbell ('router-left' and 'router-right' are the routers that a dumbbell makes): every node needs its own name
+ --> shortcut-duplicate-node.yaml:5:3
+  |
+4 | topology:
+5 |   dumbbell: { left: [a, router-left], right: [b] }
+  |   ^^^^^^^^

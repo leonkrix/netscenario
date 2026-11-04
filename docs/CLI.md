@@ -122,6 +122,22 @@ With `--json` the answer is one JSON object on standard output:
 
 `line`, `column`, `path` and `help` are `null` when a problem has none (a problem about the file as a whole has no line).
 
+## `expand` and `show`
+
+```bash
+netscenario expand scenarios/dumbbell.yaml            # the long form: nodes and links with their names
+netscenario expand scenarios/dumbbell.yaml --json     # the canonical JSON that the hash is made of
+netscenario show scenarios/two-paths.yaml             # nodes, links, routes and the path of each workload
+netscenario show scenarios/two-paths.yaml --format dot | dot -Tsvg > network.svg
+```
+
+Look at the network of a scenario without running anything (CLI-07).
+
+- `expand` writes the scenario in its long form. A shortcut of the topology (`chain`, `star`, `dumbbell`, `multipath`) becomes the nodes and links it makes, with their names, which a route or an event of the timeline needs; the long form has the same canonical text and the same hash, so a run of it is the same run. Comments of the file are not kept. It is also the way from the easy form to the manual one: expand, then change one link.
+- `show` lists the nodes with their roles, the links with their values, the routes of every node (the automatic ones and the listed ones; a `*` marks those that the file lists) and the path that the packets of each workload take, or why there is none. `--format dot` writes a Graphviz graph (a box for a host, an ellipse for a router, the values on the links), `--format json` all of it for tools. The addresses are assigned when a run starts and are in its result.
+
+Both read the file the way `validate` does and refuse it the same way (exit code 2, with the lines). See [SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#topology) for the topology and its shortcuts.
+
 ## `schema`
 
 ```text

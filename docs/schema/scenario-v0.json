@@ -21,6 +21,41 @@
       ],
       "type": "string"
     },
+    "Chain": {
+      "additionalProperties": false,
+      "description": "A line of nodes: the two ends are hosts, the nodes between them are routers, each pair is joined by a link.",
+      "properties": {
+        "link": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The values of every link, unless `links` has its own."
+        },
+        "links": {
+          "description": "The values of each link in turn (one fewer than nodes), instead of `link`.",
+          "items": {
+            "$ref": "#/$defs/LinkSpec"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "description": "The nodes from one end to the other: at least two. The first link's forward direction is from the first node.",
+          "items": {
+            "$ref": "#/$defs/Name"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodes"
+      ],
+      "type": "object"
+    },
     "Change": {
       "additionalProperties": false,
       "description": "What `set` changes, for each direction. `both` changes the two directions.",
@@ -153,6 +188,53 @@
           "type": "string"
         }
       ]
+    },
+    "Dumbbell": {
+      "additionalProperties": false,
+      "description": "Hosts on two sides of a shared link between two routers.",
+      "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The values of the link of each host to its router; its forward direction is from the host to the router."
+        },
+        "bottleneck": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The values of the link `bottleneck` between the two routers; its forward direction is from left to right."
+        },
+        "left": {
+          "description": "The hosts on the left: at least one. They are joined to the router `router-left`.",
+          "items": {
+            "$ref": "#/$defs/Name"
+          },
+          "type": "array"
+        },
+        "right": {
+          "description": "The hosts on the right: at least one. They are joined to the router `router-right`.",
+          "items": {
+            "$ref": "#/$defs/Name"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "left",
+        "right"
+      ],
+      "type": "object"
     },
     "Duration": {
       "description": "A length of time: a number and a unit (ns, us, ms, s, m, h), a whole number of nanoseconds.",
@@ -519,6 +601,59 @@
       ],
       "type": "object"
     },
+    "LinkSpec": {
+      "additionalProperties": false,
+      "description": "The values of a link that a shortcut makes: what a link has besides its name and its ends.",
+      "properties": {
+        "both": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Impairments"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The same impairments in both directions."
+        },
+        "cost": {
+          "default": null,
+          "description": "What the link costs the automatic routing. 1 by default.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "forward": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Impairments"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The impairments from the first node of the link to the second."
+        },
+        "reverse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Impairments"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The impairments from the second node to the first."
+        }
+      },
+      "type": "object"
+    },
     "Loss": {
       "description": "Packet loss. The model is chosen by `model`, and the parameters are those of `netem`, without aliases\n(D-048).\n\nIt is read by hand (see `LossFields`), not by a derived reader for a tagged enum: that one collects the\nmapping first, and an error in a value is then reported at the start of the mapping and not at the value.",
       "oneOf": [
@@ -656,6 +791,33 @@
       },
       "type": "object"
     },
+    "Multipath": {
+      "additionalProperties": false,
+      "description": "Two hosts joined by several paths, each over routers of its own.",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/Name",
+          "description": "The host that the forward direction of the links starts at."
+        },
+        "paths": {
+          "description": "The paths: at least two.",
+          "items": {
+            "$ref": "#/$defs/PathSpec"
+          },
+          "type": "array"
+        },
+        "to": {
+          "$ref": "#/$defs/Name",
+          "description": "The other host."
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "paths"
+      ],
+      "type": "object"
+    },
     "Name": {
       "description": "A name of 1 to 32 characters: lower case letters, digits and '-', starting with a letter and not ending with '-'.",
       "examples": [
@@ -714,6 +876,34 @@
         "udp-onoff"
       ],
       "type": "string"
+    },
+    "PathSpec": {
+      "additionalProperties": false,
+      "description": "One path of a multipath: the routers it passes, in order, and the values of its links.",
+      "properties": {
+        "link": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The values of every link of the path."
+        },
+        "routers": {
+          "description": "The routers on the path from the first host to the second: at least one.",
+          "items": {
+            "$ref": "#/$defs/Name"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "routers"
+      ],
+      "type": "object"
     },
     "PhaseDistribution": {
       "description": "Whether the lengths of the phases of an on/off source, and the pauses between bursts, are exactly what the file says\nor are drawn from an exponential distribution with that mean.",
@@ -1062,30 +1252,113 @@
       "pattern": "^[0-9]+(\\.[0-9]+)?(b|kb|mb|gb|kib|mib|gib)$",
       "type": "string"
     },
+    "Star": {
+      "additionalProperties": false,
+      "description": "A hub that is a router, with hosts around it.",
+      "properties": {
+        "hub": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the hub (a router)."
+        },
+        "leaves": {
+          "description": "The hosts around it: at least two. Each link is between a leaf and the hub, so its forward direction is towards the hub.",
+          "items": {
+            "$ref": "#/$defs/Name"
+          },
+          "type": "array"
+        },
+        "link": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The values of every link, unless `links` has its own."
+        },
+        "links": {
+          "description": "The values of the link of each leaf in turn, instead of `link`.",
+          "items": {
+            "$ref": "#/$defs/LinkSpec"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "hub",
+        "leaves"
+      ],
+      "type": "object"
+    },
     "Topology": {
       "additionalProperties": false,
-      "description": "The nodes, the links and the routes of a scenario.",
+      "description": "The nodes, the links and the routes of a scenario.\n\nIn a file the nodes and links are written out, or given as one of the shortcuts `chain`, `star`, `dumbbell` and\n`multipath` (D-078), which are expanded when the file is read: what is held and written again is always the long form.",
       "properties": {
+        "chain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Chain"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A line of nodes: hosts at the ends, routers between."
+        },
+        "dumbbell": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Dumbbell"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Hosts on two sides of a link between two routers."
+        },
         "ecmp": {
+          "default": false,
           "description": "With `auto`: install every equally short path as a multipath route, not only the first. Off by default.",
           "type": "boolean"
         },
         "links": {
-          "description": "The links between the nodes. Two nodes may have several.",
+          "default": null,
+          "description": "The links between the nodes. Two nodes may have several. Not together with a shortcut.",
           "items": {
             "$ref": "#/$defs/Link"
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "multipath": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Multipath"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Two hosts joined by several paths over routers of their own."
         },
         "nodes": {
-          "description": "The nodes: a name for a host, or `{ id, role }`.",
+          "default": null,
+          "description": "The nodes: a name for a host, or `{ id, role }`. Not together with a shortcut.",
           "items": {
             "$ref": "#/$defs/Node"
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "routes": {
-          "description": "Routes of single nodes: they add to the automatic routes, or replace those of the same node and destination, or\n(with `routing: manual`) are the only ones.",
+          "default": [],
+          "description": "Routes of single nodes.",
           "items": {
             "$ref": "#/$defs/Route"
           },
@@ -1093,13 +1366,21 @@
         },
         "routing": {
           "$ref": "#/$defs/Routing",
+          "default": "auto",
           "description": "How the routes come about: `auto` (the default) or `manual`."
+        },
+        "star": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Star"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A router with hosts around it."
         }
       },
-      "required": [
-        "nodes",
-        "links"
-      ],
       "type": "object"
     },
     "True": {

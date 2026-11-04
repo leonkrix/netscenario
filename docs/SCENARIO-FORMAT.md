@@ -119,7 +119,29 @@ A topology is one graph of nodes and links (D-078). Release 0.3 reads any number
 - **Addresses.** The tool assigns every address and records it in the result; they are not part of the file. Every link gets a subnet of its own and every node an address of its own on its loopback, which workloads and programs use (`{server.addr}`), so a node with several links needs no choice of address. IPv4 only in release 0.3 so far (TOP-08). A key `address` is reserved for a later release.
 - **Which backends.** The Kernel backend builds the point to point network of release 0.1 and 0.2 today; networks of several nodes and routes are read and checked by every tool, and the Kernel backend refuses them with the feature `Several nodes and links` until it builds them (docs/COVERAGE.md).
 
-A chain of two routers is in [scenarios/three-hops.yaml](../scenarios/three-hops.yaml), a failover with listed routes in [scenarios/two-paths.yaml](../scenarios/two-paths.yaml) and a computed network with one route changed by hand in [scenarios/manual-routes.yaml](../scenarios/manual-routes.yaml).
+### Shortcuts
+
+For the common shapes a topology is written as one shortcut instead of `nodes` and `links` (D-078). The shortcut is **expanded when the file is read**: what is run, hashed, replayed and written out again is the long form, and `netscenario expand` prints it. The names of what is made are fixed, so that a route or an event of the timeline can name them.
+
+| Shortcut | Keys | What it makes |
+| --- | --- | --- |
+| `chain` | `nodes` (at least 2), `link`, `links` | The first and the last node are hosts, the ones between are routers. A link between each pair, named `<first>-<second>`, its forward direction from the first to the second. `link` is the values of every link, `links` is a list with one entry for each link (instead of `link`). |
+| `star` | `hub`, `leaves` (at least 2), `link`, `links` | The hub is a router, the leaves are hosts. A link from each leaf to the hub, named `<leaf>-<hub>`, its forward direction towards the hub. `link` or `links` (one for each leaf). |
+| `dumbbell` | `left`, `right` (at least 1 each), `access`, `bottleneck` | The routers `router-left` and `router-right`, a link `<host>-router-left` from each host on the left and `<host>-router-right` from each host on the right (forward from the host to its router, values from `access`), and the link `bottleneck` from `router-left` to `router-right` (values from `bottleneck`). |
+| `multipath` | `from`, `to`, `paths` (at least 2): each `{ routers, link }` | `from` and `to` are hosts; each path is a chain of its `routers` (at least one) from `from` to `to`, its links named `<a>-<b>` and given the values of `link`. |
+
+The values of a link (`link`, `links`, `access`, `bottleneck`) are `cost`, `forward`, `reverse` and `both`, with the same rules as the values of a link in the long form. `routing`, `ecmp` and `routes` may stand next to a shortcut; `nodes` and `links` may not (write the long form for that). A shortcut that makes a name twice (a host called `router-left` in a dumbbell), a name longer than 32 characters or a count that does not fit is refused, and a fault in the values of a link is shown at the place in the shortcut.
+
+```yaml
+topology:
+  dumbbell:
+    left: [alice, bob]
+    right: [carol, dave]
+    access:     { both: { delay: 2ms, rate: 100mbit } }
+    bottleneck: { both: { delay: 20ms, rate: 10mbit } }
+```
+
+The shortcuts are in [scenarios/dumbbell.yaml](../scenarios/dumbbell.yaml) and [scenarios/star-and-chain.yaml](../scenarios/star-and-chain.yaml); a chain of two routers written out is in [scenarios/three-hops.yaml](../scenarios/three-hops.yaml), a failover with listed routes in [scenarios/two-paths.yaml](../scenarios/two-paths.yaml) and a computed network with one route changed by hand in [scenarios/manual-routes.yaml](../scenarios/manual-routes.yaml).
 
 ### Impairments of a direction
 

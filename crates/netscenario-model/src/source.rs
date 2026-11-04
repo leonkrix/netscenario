@@ -67,6 +67,117 @@ impl SourceIndex {
         self.entries.iter()
     }
 
+    /// How many entries the list at `path` has.
+    fn count(&self, path: &str) -> usize {
+        let mut count = 0;
+        while self.entries.contains_key(&format!("{path}[{count}]")) {
+            count += 1;
+        }
+        count
+    }
+
+    /// The path in the file of a part of the nodes and links that a shortcut made: `topology.links[4].forward.rate` made
+    /// by a dumbbell is the `access` of the dumbbell. `None` if the topology is not a shortcut or the path is not one of
+    /// the generated nodes and links.
+    pub(crate) fn source_path(&self, path: &str) -> Option<String> {
+        let (kind, index, rest) = split_generated(path)?;
+        let (shortcut, own) = ["chain", "star", "dumbbell", "multipath"]
+            .into_iter()
+            .map(|name| (name, format!("topology.{name}")))
+            .find(|(_, own)| self.entries.contains_key(own))?;
+        let base = |wanted: &str| -> String {
+            // The common value if the file has no list for each, else the entry of the list; else the shortcut itself
+            if self.entries.contains_key(wanted) {
+                wanted.to_owned()
+            } else {
+                own.clone()
+            }
+        };
+        let place = match (shortcut, kind) {
+            ("chain", Generated::Node) => format!("{own}.nodes[{index}]"),
+            ("star", Generated::Node) => {
+                if index == 0 {
+                    format!("{own}.hub")
+                } else {
+                    format!("{own}.leaves[{}]", index - 1)
+                }
+            }
+            ("chain" | "star", Generated::Link) => {
+                if self.count(&format!("{own}.links")) > 0 {
+                    base(&format!("{own}.links[{index}]"))
+                } else {
+                    base(&format!("{own}.link"))
+                }
+            }
+            ("dumbbell", Generated::Node) => {
+                let left = self.count(&format!("{own}.left"));
+                let right = self.count(&format!("{own}.right"));
+                if index < left {
+                    format!("{own}.left[{index}]")
+                } else if index < left + 2 {
+                    own.clone()
+                } else if index < left + 2 + right {
+                    format!("{own}.right[{}]", index - left - 2)
+                } else {
+                    own.clone()
+                }
+            }
+            ("dumbbell", Generated::Link) => {
+                let left = self.count(&format!("{own}.left"));
+                if index == left {
+                    base(&format!("{own}.bottleneck"))
+                } else {
+                    base(&format!("{own}.access"))
+                }
+            }
+            ("multipath", Generated::Node) => {
+                // The first host, the routers of the paths in order, the second host
+                let mut at = 1;
+                let mut found = None;
+                if index == 0 {
+                    found = Some(format!("{own}.from"));
+                } else {
+                    for (p, _) in (0..self.count(&format!("{own}.paths"))).enumerate() {
+                        let routers = self.count(&format!("{own}.paths[{p}].routers"));
+                        if index < at + routers {
+                            found = Some(format!("{own}.paths[{p}].routers[{}]", index - at));
+                            break;
+                        }
+                        at += routers;
+                    }
+                }
+                found.unwrap_or_else(|| format!("{own}.to"))
+            }
+            ("multipath", Generated::Link) => {
+                // A path of r routers has r + 1 links
+                let mut at = 0;
+                let mut found = own.clone();
+                for p in 0..self.count(&format!("{own}.paths")) {
+                    let links = self.count(&format!("{own}.paths[{p}].routers")) + 1;
+                    if index < at + links {
+                        found = base(&format!("{own}.paths[{p}].link"));
+                        break;
+                    }
+                    at += links;
+                }
+                found
+            }
+            _ => return None,
+        };
+        // What follows in the path is inside the values of a link; a node has nothing inside
+        Some(match kind {
+            Generated::Link
+                if place.ends_with(']')
+                    || place.ends_with("link")
+                    || place.ends_with("access")
+                    || place.ends_with("bottleneck") =>
+            {
+                format!("{place}{rest}")
+            }
+            _ => place,
+        })
+    }
+
     /// The position of the value at `path`, or of the nearest enclosing value that has one.
     pub(crate) fn locate(&self, path: &str) -> Option<(Location, usize)> {
         let mut current = path.to_owned();
@@ -91,8 +202,53 @@ pub(crate) fn parent(path: &str) -> &str {
     }
 }
 
-/// A path with every index replaced by `[]`, to match rules for all elements of a list.
+/// The places in a shortcut that hold the values of a link. Inside them the rules of a link apply (a jitter needs an amount,
+/// a queue is a key of a later release), so `generic` reads them as `topology.links[]`.
+const SHORTCUT_LINK_SPECS: &[&str] = &[
+    "topology.chain.link",
+    "topology.chain.links[]",
+    "topology.star.link",
+    "topology.star.links[]",
+    "topology.dumbbell.access",
+    "topology.dumbbell.bottleneck",
+    "topology.multipath.paths[].link",
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Generated {
+    Node,
+    Link,
+}
+
+/// `topology.links[4].forward.rate` is a link, number 4, with `.forward.rate` inside; `topology.nodes[2]` is a node.
+fn split_generated(path: &str) -> Option<(Generated, usize, &str)> {
+    for (head, kind) in [
+        ("topology.links[", Generated::Link),
+        ("topology.nodes[", Generated::Node),
+    ] {
+        if let Some(rest) = path.strip_prefix(head) {
+            let (number, tail) = rest.split_once(']')?;
+            return Some((kind, number.parse().ok()?, tail));
+        }
+    }
+    None
+}
+
+/// A path with every index replaced by `[]`, to match rules for all elements of a list. What lies inside the values of a link
+/// in a shortcut is given the path it would have in a link.
 pub(crate) fn generic(path: &str) -> String {
+    let plain = generic_plain(path);
+    for spec in SHORTCUT_LINK_SPECS {
+        if let Some(rest) = plain.strip_prefix(spec)
+            && rest.starts_with('.')
+        {
+            return format!("topology.links[]{rest}");
+        }
+    }
+    plain
+}
+
+fn generic_plain(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
     let mut in_index = false;
     for c in path.chars() {
