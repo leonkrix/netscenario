@@ -648,16 +648,6 @@
           "default": null,
           "description": "The impairments from the first node of the link to the second."
         },
-        "mtu": {
-          "default": null,
-          "description": "The MTU of the link in bytes. 1500 by default.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
         "reverse": {
           "anyOf": [
             {
