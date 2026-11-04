@@ -187,13 +187,17 @@ step treeroot "$2" qdisc replace dev np0 root handle 1: netem limit 1000 duplica
 step tree "$2" qdisc replace dev np0 parent 1:1 handle 2: netem limit 1000 delay 1000us 500us
 # A link with a queue is built through the fabric (D-079): a `netem` root with a delay of 1 microsecond, an `htb` class with the
 # rate below it, the discipline as the leaf of the class, and in the fabric an ingress filter that redirects every frame to the
-# other port. The tree is built as the backend builds it, and each discipline is tried as its leaf.
+# other port. The tree is built as the backend builds it, and each discipline is tried as its leaf. The leaf is removed before the
+# next one: a `replace` of the handle `3:` with a qdisc of another kind is refused by the kernel ("Invalid qdisc name").
 "$2" qdisc del dev np0 root >/dev/null 2>&1
 step fabric sh -c '"$0" qdisc add dev np0 ingress && "$0" filter add dev np0 parent ffff: protocol all u32 match u32 0 0 action mirred egress redirect dev np1' "$2"
 step queuetree sh -c '"$0" qdisc replace dev np0 root handle 1: netem limit 1000 delay 1us && "$0" qdisc replace dev np0 parent 1:1 handle 2: htb default 1 r2q 10 && "$0" class replace dev np0 parent 2: classid 2:1 htb rate 1mbit ceil 1mbit burst 1600 cburst 1600 quantum 1514' "$2"
 step pfifo "$2" qdisc replace dev np0 parent 2:1 handle 3: pfifo limit 100
+"$2" qdisc del dev np0 parent 2:1 >/dev/null 2>&1
 step codel "$2" qdisc replace dev np0 parent 2:1 handle 3: codel limit 100 target 5000us interval 100000us
+"$2" qdisc del dev np0 parent 2:1 >/dev/null 2>&1
 step fqcodel "$2" qdisc replace dev np0 parent 2:1 handle 3: fq_codel limit 100 flows 64 quantum 1514 target 5000us interval 100000us
+"$2" qdisc del dev np0 parent 2:1 >/dev/null 2>&1
 step pie "$2" qdisc replace dev np0 parent 2:1 handle 3: pie limit 100 target 15000us tupdate 15000us
 "$2" qdisc del dev np0 root >/dev/null 2>&1
 # A network of several nodes needs forwarding and routes with a next hop (D-078), and IPv6 needs a kernel that has it (D-081).
