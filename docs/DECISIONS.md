@@ -88,3 +88,5 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-080](decisions/D-080.md) | A packet is accounted for link by link along its path, by the counts of the nodes, where the run can tell which packets enter a link | Accepted 2026-11-04 |
 | [D-081](decisions/D-081.md) | The IP family is chosen for the network and for the workload, a link has one MTU, and what fragments is accounted for by frames | Accepted 2026-11-04 |
 | [D-082](decisions/D-082.md) | The queue of a direction is the packets that wait for its rate, with a discipline and its parameters, and the run reads its counters | Accepted 2026-11-04 |
+| [D-083](decisions/D-083.md) | A scenario reads the files it refers to when it is loaded, from its own directory, and the scenario holds what is made of them | Accepted 2026-11-04 |
+| [D-084](decisions/D-084.md) | The jitter takes its shape from a table of `netem`: the tables of iproute2, or one made from a file of samples, scaled to fit 16 bits | Accepted 2026-11-04 |

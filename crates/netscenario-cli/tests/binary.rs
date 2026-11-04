@@ -1020,3 +1020,117 @@ fn a_normal_jitter_is_refused_before_the_network_is_built_where_tc_has_no_table(
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---- the files a scenario refers to (D-083, D-084) ----
+
+const TABLE_SCENARIO: &str = "version: 0\nname: tables\nduration: 5s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { delay: 100ms, jitter: { amount: 10ms, distribution: table, table: { file: FILE } } }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\n";
+
+fn delay_samples() -> String {
+    (0..400).fold(String::new(), |mut text, i| {
+        text.push_str(&(20 + i % 37).to_string());
+        text.push('\n');
+        text
+    })
+}
+
+/// A file of samples next to the scenario becomes the table in the scenario: `expand` shows it with the fingerprint of the file,
+/// and a path that leads out of the directory is refused until `--allow-outside-files` says it is wanted.
+#[test]
+fn the_file_of_samples_next_to_a_scenario_is_read_and_one_outside_is_refused() -> io::Result<()> {
+    let root = work_dir("table-files");
+    let directory = root.join("scenario");
+    std::fs::create_dir_all(&directory)?;
+    std::fs::write(directory.join("delays.txt"), delay_samples())?;
+    std::fs::write(root.join("elsewhere.txt"), delay_samples())?;
+    std::fs::write(
+        directory.join("near.yaml"),
+        TABLE_SCENARIO.replace("FILE", "delays.txt"),
+    )?;
+    std::fs::write(
+        directory.join("far.yaml"),
+        TABLE_SCENARIO.replace("FILE", "../elsewhere.txt"),
+    )?;
+
+    let valid = netscenario_in(&directory, &["validate", "near.yaml"])?;
+    assert_eq!(
+        valid.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&valid.stderr)
+    );
+    let expanded = netscenario_in(&directory, &["expand", "near.yaml", "--json"])?;
+    assert_eq!(expanded.status.code(), Some(0));
+    let json: serde_json::Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    let table = &json["topology"]["links"][0]["forward"]["jitter"]["table"];
+    assert_eq!(table["file"], "delays.txt");
+    assert_eq!(table["samples"], 400);
+    assert_eq!(table["sha256"].as_str().map(str::len), Some(64));
+    assert_eq!(table["values"].as_str().map(str::len), Some(4096 * 4));
+
+    // A path that leaves the directory: refused, with the line, and allowed when asked for
+    let refused = netscenario_in(&directory, &["validate", "far.yaml"])?;
+    assert_eq!(refused.status.code(), Some(2));
+    let message = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        message.contains("'../elsewhere.txt' is outside the directory of the scenario file"),
+        "{message}"
+    );
+    assert!(message.contains("far.yaml:9:"), "{message}");
+    assert!(message.contains("--allow-outside-files"), "{message}");
+    let allowed = netscenario_in(
+        &directory,
+        &["validate", "far.yaml", "--allow-outside-files"],
+    )?;
+    assert_eq!(
+        allowed.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+
+    // Called from another directory the file is still looked for next to the scenario, not in the working directory
+    let from_root = netscenario_in(&root, &["validate", "scenario/near.yaml"])?;
+    assert_eq!(
+        from_root.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&from_root.stderr)
+    );
+    let _ = std::fs::remove_dir_all(root);
+    Ok(())
+}
+
+/// The expanded scenario is whole: it holds the table, so reading it needs no file (a recorded scenario replays).
+#[test]
+fn the_expanded_scenario_needs_no_file() -> io::Result<()> {
+    let root = work_dir("table-expanded");
+    std::fs::write(root.join("delays.txt"), delay_samples())?;
+    std::fs::write(
+        root.join("near.yaml"),
+        TABLE_SCENARIO.replace("FILE", "delays.txt"),
+    )?;
+    let expanded = netscenario_in(&root, &["expand", "near.yaml"])?;
+    assert_eq!(expanded.status.code(), Some(0));
+    let again = root.join("again");
+    std::fs::create_dir_all(&again)?;
+    std::fs::write(again.join("whole.yaml"), &expanded.stdout)?;
+    let valid = netscenario_in(&again, &["validate", "whole.yaml"])?;
+    assert_eq!(
+        valid.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&valid.stderr)
+    );
+    // Canary: the same scenario without its entries does need the file, and says so
+    std::fs::write(
+        again.join("bare.yaml"),
+        TABLE_SCENARIO.replace("FILE", "delays.txt"),
+    )?;
+    let missing = netscenario_in(&again, &["validate", "bare.yaml"])?;
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("cannot read 'delays.txt': no such file")
+    );
+    let _ = std::fs::remove_dir_all(root);
+    Ok(())
+}

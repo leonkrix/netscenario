@@ -11,12 +11,14 @@ use crate::args::{Parsed, Spec};
 use crate::exit;
 
 pub(crate) const VALIDATE_HELP: &str = "\
-Usage: netscenario validate <file> [--json]
+Usage: netscenario validate <file> [--json] [--allow-outside-files]
 
 Checks a scenario file: the syntax, the keys, every value with its unit, and the rules between values (a
-node that exists, a window inside the duration). Nothing is run and nothing is created.
+node that exists, a window inside the duration). The files that the scenario refers to are read and checked
+too (a file of delay samples for a jitter with a table). Nothing is run and nothing is created.
 
   --json    print the answer as JSON on standard output
+  --allow-outside-files  let the scenario read files from outside the directory of the scenario file
 
 Exit codes: 0 the scenario is valid, 2 it is not (the problems are listed with their lines) or the file
 cannot be read.
@@ -30,8 +32,11 @@ Prints the JSON Schema of the scenario format on standard output, for editors an
 
 pub(crate) const VALIDATE_SPEC: Spec = Spec {
     values: &[],
-    flags: &["json"],
+    flags: &["json", ALLOW_OUTSIDE_FILES],
 };
+
+/// The flag that lets a scenario read files from outside its own directory (D-083).
+pub(crate) const ALLOW_OUTSIDE_FILES: &str = "allow-outside-files";
 
 /// A scenario file that has been read: the text and the parsed scenario, or the problems.
 pub(crate) struct Loaded {
@@ -48,12 +53,20 @@ pub(crate) struct Loaded {
 /// # Errors
 ///
 /// A sentence if the file cannot be read.
-pub(crate) fn load(path: &str) -> Result<Loaded, String> {
+pub(crate) fn load(path: &str, allow_outside_files: bool) -> Result<Loaded, String> {
     let bytes =
         std::fs::read(Path::new(path)).map_err(|error| format!("cannot read '{path}': {error}"))?;
     let text = String::from_utf8(bytes)
         .map_err(|_| format!("'{path}' is not text in UTF-8, which a scenario must be"))?;
-    let scenario = Scenario::from_yaml(&text, path);
+    let scenario = Scenario::from_yaml(&text, path).and_then(|mut scenario| {
+        // The files are next to the scenario file (D-083)
+        let base = Path::new(path)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        netscenario_core::resolve_files(&mut scenario, path, &text, base, allow_outside_files)?;
+        Ok(scenario)
+    });
     Ok(Loaded {
         name: path.to_owned(),
         text,
@@ -94,7 +107,7 @@ pub(crate) fn validate<S: AsRef<str>>(
         Ok(path) => path,
         Err(message) => return crate::usage_error(err, "validate", &message, VALIDATE_HELP),
     };
-    let loaded = match load(path) {
+    let loaded = match load(path, parsed.flag(ALLOW_OUTSIDE_FILES)) {
         Ok(loaded) => loaded,
         Err(message) => {
             let _ = writeln!(err, "netscenario: {message}");

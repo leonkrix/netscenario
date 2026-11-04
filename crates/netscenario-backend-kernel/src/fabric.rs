@@ -296,10 +296,10 @@ mod tests {
     fn the_stages_keep_their_order_loss_in_front_of_the_queue_and_the_delay_behind_it() {
         let state = Impairments {
             delay: Some("20ms".parse().unwrap()),
-            jitter: Some(netscenario_model::Jitter {
-                amount: "5ms".parse().unwrap(),
-                distribution: netscenario_model::JitterDistribution::Normal,
-            }),
+            jitter: Some(netscenario_model::Jitter::new(
+                "5ms".parse().unwrap(),
+                netscenario_model::JitterDistribution::Normal,
+            )),
             loss: Some(Loss::Random {
                 p: "1%".parse().unwrap(),
             }),

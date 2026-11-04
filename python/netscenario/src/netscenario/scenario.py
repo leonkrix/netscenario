@@ -123,29 +123,60 @@ class Scenario:
         self._data: dict[str, Any] = json.loads(canonical)
 
     @classmethod
-    def from_yaml(cls, text: str, *, name: str = "<string>") -> Self:
+    def from_yaml(
+        cls,
+        text: str,
+        *,
+        name: str = "<string>",
+        base_dir: str | os.PathLike[str] | None = None,
+        allow_outside_files: bool = False,
+    ) -> Self:
         """Read a scenario from YAML (or JSON) text.
 
         Args:
             text: The scenario.
             name: What messages call the text, usually the name of a file.
+            base_dir: The directory that the files named in the scenario are relative to (a table
+                of delay samples). Needed only for a scenario that refers to a file; without it
+                such a scenario is refused. :meth:`load` gives the directory of the file.
+            allow_outside_files: Let the scenario read files from outside ``base_dir``. A path that
+                leaves the directory is refused by default, so that a scenario from elsewhere
+                cannot read what is not next to it.
 
         Raises:
-            ScenarioError: The scenario is not valid. Every problem is listed, with line, column,
-                path and a hint.
+            ScenarioError: The scenario is not valid, or a file it refers to cannot be used. Every
+                problem is listed, with line, column, path and a hint.
         """
-        return cls(text, name, _native.parse_scenario(text, name))
+        base = None if base_dir is None else str(Path(base_dir))
+        return cls(
+            text,
+            name,
+            _native.parse_scenario(text, name, base, allow_outside_files),
+        )
 
     @classmethod
-    def load(cls, path: str | os.PathLike[str]) -> Self:
+    def load(cls, path: str | os.PathLike[str], *, allow_outside_files: bool = False) -> Self:
         """Read a scenario from a file.
 
+        The files that the scenario refers to are read from the directory of the file. What is
+        made of them (the table of a jitter) becomes part of the scenario, and
+        :meth:`to_json` holds it, so a recorded scenario needs no file.
+
+        Args:
+            path: The scenario file.
+            allow_outside_files: Let the scenario read files from outside its directory.
+
         Raises:
-            ScenarioError: The scenario is not valid.
+            ScenarioError: The scenario is not valid, or a file it refers to cannot be used.
             OSError: The file cannot be read.
         """
         file = Path(path)
-        return cls.from_yaml(file.read_text(encoding="utf-8"), name=str(path))
+        return cls.from_yaml(
+            file.read_text(encoding="utf-8"),
+            name=str(path),
+            base_dir=file.resolve().parent,
+            allow_outside_files=allow_outside_files,
+        )
 
     @staticmethod
     def builder(

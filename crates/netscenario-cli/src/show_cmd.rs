@@ -11,23 +11,24 @@ use serde_json::{Value, json};
 
 use crate::args::{Parsed, Spec};
 use crate::exit;
-use crate::validate::load;
+use crate::validate::{ALLOW_OUTSIDE_FILES, load};
 
 pub(crate) const EXPAND_HELP: &str = "\
-Usage: netscenario expand <file> [--json]
+Usage: netscenario expand <file> [--json] [--allow-outside-files]
 
 Prints a scenario in its long form: a shortcut of the topology (chain, star, dumbbell, multipath) becomes the nodes
 and links it makes, with their names. Comments of the file are not kept. The long form has the same canonical text and
 the same hash as the shortcut, so the run is the same. Use it to learn the names of what a shortcut made (for a route or
 an event of the timeline) and to start from a shortcut and change one link.
 
-  --json    print the canonical JSON that the hash of the scenario is made of
+  --json    print the canonical JSON that the hash of the scenario is made of (a table made from a file of samples is in it)
+  --allow-outside-files  let the scenario read files from outside the directory of the scenario file
 
 Exit codes: 0 done, 2 the scenario is not valid or the file cannot be read.
 ";
 
 pub(crate) const SHOW_HELP: &str = "\
-Usage: netscenario show <file> [--format text|dot|json]
+Usage: netscenario show <file> [--format text|dot|json] [--allow-outside-files]
 
 Shows the network of a scenario: the nodes with their roles, the links with their values, the routes of every node (the
 automatic ones and the listed ones) and the path that the packets of each workload take. Nothing is run. The addresses are
@@ -36,17 +37,18 @@ assigned when a run starts and are in its result.
   --format text   a readable listing (the default)
   --format dot    a Graphviz graph (pipe it to `dot -Tsvg`)
   --format json   all of it, for tools
+  --allow-outside-files  let the scenario read files from outside the directory of the scenario file
 
 Exit codes: 0 done, 2 the scenario is not valid or the file cannot be read.
 ";
 
 const EXPAND_SPEC: Spec = Spec {
     values: &[],
-    flags: &["json"],
+    flags: &["json", ALLOW_OUTSIDE_FILES],
 };
 const SHOW_SPEC: Spec = Spec {
     values: &["format"],
-    flags: &[],
+    flags: &[ALLOW_OUTSIDE_FILES],
 };
 
 /// Reads the file named by the only argument, or says why not.
@@ -60,7 +62,7 @@ fn scenario_of(
         Ok(path) => path,
         Err(message) => return Err(crate::usage_error(err, command, &message, help)),
     };
-    let loaded = match load(path) {
+    let loaded = match load(path, parsed.flag(ALLOW_OUTSIDE_FILES)) {
         Ok(loaded) => loaded,
         Err(message) => {
             let _ = writeln!(err, "netscenario: {message}");

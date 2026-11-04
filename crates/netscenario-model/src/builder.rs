@@ -57,10 +57,7 @@ impl Impairments {
     /// With a variation of the delay (needs a delay; checked by [`Scenario::validate`]).
     #[must_use]
     pub fn with_jitter(mut self, amount: Duration, distribution: JitterDistribution) -> Self {
-        self.jitter = Some(Jitter {
-            amount,
-            distribution,
-        });
+        self.jitter = Some(Jitter::new(amount, distribution));
         self
     }
 

@@ -18,6 +18,7 @@ mod programs;
 mod protocol;
 mod provisioner;
 pub mod supervisor;
+mod tables;
 mod tools;
 
 pub use capabilities::{Environment, Probed, capabilities, capabilities_probed};

@@ -264,6 +264,8 @@ pub(crate) fn set_options(
 /// What the Python call asks for.
 pub(crate) struct Request {
     pub(crate) source: String,
+    /// The scenario in the canonical form, with the tables made from the files it refers to: what runs.
+    pub(crate) canonical: String,
     pub(crate) source_name: String,
     pub(crate) supervisor: String,
     pub(crate) agent: String,
@@ -472,6 +474,7 @@ fn conclude(
 pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
     let Request {
         source,
+        canonical,
         source_name,
         supervisor,
         agent,
@@ -484,8 +487,8 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
         series,
         set,
     } = request;
-    let mut scenario =
-        Scenario::from_yaml(&source, &source_name).map_err(|error| errors::scenario(py, &error))?;
+    let mut scenario = Scenario::from_yaml(&canonical, &source_name)
+        .map_err(|error| errors::scenario(py, &error))?;
     if seed.is_some() {
         scenario.seed = seed;
     }

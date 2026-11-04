@@ -15,10 +15,11 @@ use std::time::{Duration, Instant};
 use netscenario_model::Impairments;
 
 use crate::batch::{ANSWER_WITHIN, Batch, Failure};
-use crate::command::{Toolbox, run};
+use crate::command::{Toolbox, run, run_with_env};
 use crate::netem;
 use crate::programs::{Output, read_stderr, read_stdout, socket_is_bound};
 use crate::protocol::{OutputCounts, Way};
+use crate::tables::TableDirectory;
 
 /// The most links a run can address.
 const MAX_LINKS: usize = 200;
@@ -188,6 +189,9 @@ pub(crate) struct Provisioner {
     batches: HashMap<u32, Option<Batch>>,
     /// What the backend says about the run besides its result: where it did something other than the usual way.
     notes: Vec<String>,
+    /// The tables of the jitter that the run made from samples, once there is one (D-084). Every `tc` of the run gets this
+    /// directory as `TC_LIB_DIR` from then on.
+    tables: Option<TableDirectory>,
 }
 
 fn id(index: usize) -> Result<u32, String> {
@@ -222,6 +226,7 @@ impl Provisioner {
             built: std::collections::HashSet::new(),
             batches: HashMap::new(),
             notes: Vec::new(),
+            tables: None,
         })
     }
 
@@ -959,7 +964,16 @@ impl Provisioner {
             "-batch".to_owned(),
             "-".to_owned(),
         ];
-        let batch = match Batch::start(&self.tools.nsenter, &arguments, ANSWER_WITHIN) {
+        let directory = self
+            .tables
+            .as_ref()
+            .map(|tables| tables.path().to_string_lossy().into_owned());
+        let environment: Vec<(&str, &str)> = directory
+            .iter()
+            .map(|directory| ("TC_LIB_DIR", directory.as_str()))
+            .collect();
+        let batch = match Batch::start(&self.tools.nsenter, &arguments, &environment, ANSWER_WITHIN)
+        {
             Ok(batch) => Some(batch),
             Err(why) => {
                 self.notes.push(format!(
@@ -1066,6 +1080,7 @@ impl Provisioner {
         seed: Option<u64>,
     ) -> Result<(), String> {
         self.failpoints.hit("apply:start");
+        self.prepare_tables(impairments)?;
         let link_index = link;
         let link = self
             .links
@@ -1465,6 +1480,9 @@ impl Provisioner {
             let _ = node.holder.wait();
         }
         self.links.clear();
+        if let Some(tables) = self.tables.take() {
+            tables.remove();
+        }
         self.failpoints.hit("teardown:end");
         if left.is_empty() {
             Ok(())
@@ -1487,7 +1505,41 @@ impl Provisioner {
         let program = program.to_string_lossy();
         let mut command = vec![namespace.as_str(), "--", program.as_ref()];
         command.extend_from_slice(arguments);
-        run(&self.tools.nsenter, &command)
+        match &self.tables {
+            Some(tables) => run_with_env(
+                &self.tools.nsenter,
+                &command,
+                &[("TC_LIB_DIR", &tables.path().to_string_lossy())],
+            ),
+            None => run(&self.tools.nsenter, &command),
+        }
+    }
+
+    /// Writes the tables that `impairments` names (D-084) before a `tc` needs them. The first table makes the directory; a batch
+    /// of `tc` that was started before has not got it in its environment, so it is started again.
+    fn prepare_tables(&mut self, impairments: &Impairments) -> Result<(), String> {
+        let Some(table) = impairments
+            .jitter
+            .as_ref()
+            .and_then(|jitter| jitter.table.as_ref())
+        else {
+            return Ok(());
+        };
+        if self.tables.is_none() {
+            let system = std::env::var("TC_LIB_DIR").ok();
+            self.tables = Some(TableDirectory::create(&self.run_id, system.as_deref())?);
+            let started: Vec<u32> = self.batches.keys().copied().collect();
+            for pid in started {
+                if let Some(Some(mut batch)) = self.batches.remove(&pid) {
+                    batch.end();
+                }
+                self.start_batch(pid);
+            }
+        }
+        if let Some(tables) = &self.tables {
+            tables.add(table)?;
+        }
+        Ok(())
     }
 }
 

@@ -143,7 +143,7 @@ impl Feature {
             Feature::Ipv4 => "IPv4",
             Feature::DifferentValuesPerDirection => "Different values per direction",
             Feature::FixedDelay => "Fixed delay",
-            Feature::Jitter => "Jitter (uniform, normal)",
+            Feature::Jitter => "Jitter (uniform, normal, pareto, paretonormal, table)",
             Feature::IndependentLoss => "Independent loss",
             Feature::BurstLoss => "Burst loss (Gilbert-Elliott, four-state)",
             Feature::Reordering => "Reordering",

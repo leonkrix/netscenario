@@ -340,6 +340,25 @@ struct Measurement {
     captures: Vec<CaptureResult>,
 }
 
+/// A scenario that refers to a file must have it read before it runs (D-083): the table is made when the scenario is loaded.
+fn check_files_are_read(scenario: &Scenario) -> Result<(), Error> {
+    let unread = scenario.unresolved_table_files();
+    if unread.is_empty() {
+        return Ok(());
+    }
+    Err(Error::InvalidScenario(
+        unread
+            .iter()
+            .map(|file| {
+                netscenario_model::Problem::new(format!(
+                    "the scenario refers to the file '{file}', which has not been read"
+                ))
+                .with_help("read the files with `resolve_files` after `Scenario::from_yaml`; the command line and the Python package do both")
+            })
+            .collect(),
+    ))
+}
+
 /// Runs `scenario` with `backend` and returns the result, which is also written to `result.json` in
 /// `options.out_dir`.
 ///
@@ -365,6 +384,7 @@ pub fn run(
             format!("{}: {error}", options.out_dir.display()),
         )
     })?;
+    check_files_are_read(scenario)?;
     let provisioned = provision(backend, scenario)?;
     control.emit(&RunEvent::Provisioned {
         nodes: provisioned.nodes.len(),
@@ -1159,6 +1179,7 @@ fn longest_hold(scenario: &Scenario) -> Duration {
         let delay = impairments.delay.map_or(Duration::ZERO, Duration::from);
         let jitter = impairments
             .jitter
+            .as_ref()
             .map_or(Duration::ZERO, |j| Duration::from(j.amount) * 4);
         delay + jitter
     };

@@ -26,9 +26,9 @@ use netscenario_model::Scenario;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::hash::sha256_hex;
 use crate::result::{RunResult, WorkloadResult};
 use crate::runset::RUNSET_FILE;
+use netscenario_model::sha256_hex;
 
 /// The name of the file with the recorded scenario in the directory of a run.
 pub const SCENARIO_FILE: &str = "scenario.json";

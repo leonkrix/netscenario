@@ -5,7 +5,7 @@ A run writes a directory (`--out`, or the `out_dir` of `RunOptions`) with these 
 | File | What it is |
 | --- | --- |
 | `result.json` | The result: provenance, seed, and the statistics of each workload. This page describes it. |
-| `scenario.json` | The scenario exactly as it ran (canonical JSON). Its fingerprint is `scenario.hash` of `result.json`; `netscenario replay` runs it again with the recorded seed (D-075). Written for every run, also those of a set. |
+| `scenario.json` | The scenario exactly as it ran (canonical JSON). Its fingerprint is `scenario.hash` of `result.json`; `netscenario replay` runs it again with the recorded seed (D-075). Written for every run, also those of a set. It holds what was made of the files the scenario referred to (the table of a jitter from a file of samples, with the SHA-256 of the file, D-083), so the hash covers their content and a replay needs no file. |
 | `flow-<n>.records` | The raw per-packet records of workload `n` (the order of `workloads` in the scenario, from 0), in the binary format of [AGENT.md](AGENT.md). One record for each packet that arrived. |
 | `flow-<n>.wire` | Only for a workload whose direction has `corrupt`: the packets that the receiving node saw on its interface, in the same binary format as `flow-<n>.records` (D-057). The damaged packets are the sequences in it that are not in the records. |
 | `series-<id>.jsonl` | The packets of workload `<id>` by time bin, sent and arrived side by side: one JSON line for each bin, described below (PRB-07, D-070). Always written. |

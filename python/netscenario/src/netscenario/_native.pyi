@@ -5,8 +5,16 @@ from collections.abc import Callable
 def version() -> str:
     """The version of the native library."""
 
-def parse_scenario(text: str, source_name: str) -> str:
-    """Read and check a scenario; return it as canonical JSON. Raises ``ScenarioError``."""
+def parse_scenario(
+    text: str,
+    source_name: str,
+    base_dir: str | None = None,
+    allow_outside_files: bool = False,
+) -> str:
+    """Read and check a scenario; return it as canonical JSON. Raises ``ScenarioError``.
+
+    The files the scenario refers to are read from ``base_dir`` and become part of the result.
+    """
 
 def needs(text: str, source_name: str) -> list[str]:
     """The ids of the features that a scenario needs from a backend."""
@@ -30,6 +38,7 @@ class CancelToken:
 
 def run_scenario(
     source: str,
+    canonical: str,
     source_name: str,
     supervisor: str,
     agent: str,

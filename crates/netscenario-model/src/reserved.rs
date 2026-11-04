@@ -54,17 +54,6 @@ const RESERVED_VALUES: &[(&str, &str, &str)] = &[
     ("topology.links[].forward.loss.model", "trace", "0.3"),
     ("topology.links[].reverse.loss.model", "trace", "0.3"),
     ("topology.links[].both.loss.model", "trace", "0.3"),
-    (
-        "topology.links[].forward.jitter.distribution",
-        "pareto",
-        "0.3",
-    ),
-    (
-        "topology.links[].reverse.jitter.distribution",
-        "pareto",
-        "0.3",
-    ),
-    ("topology.links[].both.jitter.distribution", "pareto", "0.3"),
 ];
 
 fn planned(what: &str, release: &str) -> String {

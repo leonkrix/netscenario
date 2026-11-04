@@ -258,3 +258,72 @@ def test_canary_a_capture_of_a_link_that_does_not_exist_is_refused_with_the_path
             .measure(capture=["nope"])
             .build()
         )
+
+
+TABLE = """\
+version: 0
+name: t
+duration: 1s
+topology:
+  nodes: [a, b]
+  links:
+    - id: l
+      between: [a, b]
+      forward:
+        delay: 100ms
+        jitter: { amount: 10ms, distribution: table, table: { file: FILE } }
+workloads:
+  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1000b }
+"""
+
+
+def _samples(count: int = 400) -> str:
+    return "".join(f"{20 + i % 37}\n" for i in range(count))
+
+
+def _jitter_table(scenario: ns.Scenario) -> dict[str, object]:
+    topology = scenario.data["topology"]
+    return topology["links"][0]["forward"]["jitter"]["table"]  # type: ignore[no-any-return]
+
+
+def test_a_file_of_samples_next_to_the_scenario_becomes_the_table_in_it(tmp_path: Path) -> None:
+    (tmp_path / "delays.txt").write_text(_samples(), encoding="utf-8")
+    file = tmp_path / "near.yaml"
+    file.write_text(TABLE.replace("FILE", "delays.txt"), encoding="utf-8")
+    scenario = ns.Scenario.load(file)
+    table = _jitter_table(scenario)
+    assert table["file"] == "delays.txt"
+    assert table["samples"] == 400
+    assert len(str(table["sha256"])) == 64
+    assert len(str(table["values"])) == 4096 * 4
+    # What was made of the file is in the scenario, so a copy needs no file and keeps the table
+    again = ns.Scenario.from_yaml(scenario.to_json())
+    assert _jitter_table(again) == table
+    assert _jitter_table(scenario.with_seed(5)) == table
+
+
+def test_a_scenario_that_refers_to_a_file_needs_a_directory_and_stays_in_it(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "delays.txt").write_text(_samples(), encoding="utf-8")
+    text = TABLE.replace("FILE", "delays.txt")
+    with pytest.raises(ns.ScenarioError) as nowhere:
+        ns.Scenario.from_yaml(text)
+    assert "there is no directory to look for it in" in str(nowhere.value)
+    ns.Scenario.from_yaml(text, base_dir=tmp_path)
+    # A path that leaves the directory is refused, and allowed when asked for (a canary)
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    outside = TABLE.replace("FILE", "../delays.txt")
+    with pytest.raises(ns.ScenarioError) as refused:
+        ns.Scenario.from_yaml(outside, base_dir=inside)
+    assert "is outside the directory of the scenario file" in str(refused.value)
+    ns.Scenario.from_yaml(outside, base_dir=inside, allow_outside_files=True)
+
+
+def test_samples_that_make_no_table_are_a_problem_at_the_file(tmp_path: Path) -> None:
+    (tmp_path / "few.txt").write_text("1\n2\n3\n", encoding="utf-8")
+    with pytest.raises(ns.ScenarioError) as raised:
+        ns.Scenario.from_yaml(TABLE.replace("FILE", "few.txt"), base_dir=tmp_path)
+    assert "3 samples are too few" in str(raised.value)
+    assert raised.value.problems[0].path == "topology.links[0].forward.jitter.table.file"

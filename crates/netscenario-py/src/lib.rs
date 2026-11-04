@@ -23,10 +23,47 @@ fn version() -> &'static str {
 
 /// Reads and checks a scenario (YAML or JSON text) and returns it as canonical JSON: the keys in the order of
 /// the format, defaults left out. Raises `ScenarioError` with every problem if it is not valid.
+///
+/// The files that the scenario refers to (a table of delay samples) are read from `base_dir` (D-083); the canonical JSON
+/// holds what is made of them. Without a `base_dir` a scenario that refers to a file is refused, because there is nowhere to
+/// look. A path that leaves `base_dir` is refused unless `allow_outside_files`.
 #[pyfunction]
-fn parse_scenario(py: Python<'_>, text: &str, source_name: &str) -> PyResult<String> {
-    let scenario =
+#[pyo3(signature = (text, source_name, base_dir=None, allow_outside_files=false))]
+fn parse_scenario(
+    py: Python<'_>,
+    text: &str,
+    source_name: &str,
+    base_dir: Option<&str>,
+    allow_outside_files: bool,
+) -> PyResult<String> {
+    let mut scenario =
         Scenario::from_yaml(text, source_name).map_err(|error| errors::scenario(py, &error))?;
+    let wanted = scenario.unresolved_table_files();
+    if !wanted.is_empty() {
+        if let Some(base) = base_dir {
+            netscenario_core::resolve_files(
+                &mut scenario,
+                source_name,
+                text,
+                std::path::Path::new(base),
+                allow_outside_files,
+            )
+            .map_err(|error| errors::scenario(py, &error))?;
+        } else {
+            let problems = wanted
+                .iter()
+                .map(|file| {
+                    netscenario_model::Problem::new(format!(
+                        "the scenario refers to the file '{file}', and there is no directory to look for it in"
+                    ))
+                    .with_help("read the scenario with `Scenario.load(path)`, or give `base_dir`")
+                })
+                .collect();
+            if let Some(error) = netscenario_model::Error::in_source(source_name, text, problems) {
+                return Err(errors::scenario(py, &error));
+            }
+        }
+    }
     serde_json::to_string(&scenario).map_err(|error| {
         pyo3::exceptions::PyRuntimeError::new_err(format!("cannot write the scenario: {error}"))
     })
@@ -59,15 +96,17 @@ fn doctor(py: Python<'_>) -> String {
 /// Runs a scenario and returns the text of `result.json`; with `repetitions`, runs it that many times and returns the text of
 /// `runset.json` (ASR-02, ASR-03).
 ///
-/// `source` is the scenario as it was written (the lines of errors refer to it); `supervisor` is the
+/// `source` is the scenario as it was written (the lines of errors refer to it) and `canonical` the same scenario in the
+/// canonical form with the files it refers to read (D-083), which is what runs; `supervisor` is the
 /// `netscenario` program and `agent` the `netscenario-agent` program. `observer` is called as `observer(kind,
 /// fields)` for each event of the run.
 #[pyfunction]
-#[pyo3(signature = (source, source_name, supervisor, agent, out_dir, seed=None, settle=None, observer=None, cancel=None, bin=None, recovery_basis=None, recovery_baseline=None, recovery_window=None, recovery_fraction=None, working_dir=None, capture=None, packets=None, repetitions=None, statistic=None, confidence=None))]
+#[pyo3(signature = (source, canonical, source_name, supervisor, agent, out_dir, seed=None, settle=None, observer=None, cancel=None, bin=None, recovery_basis=None, recovery_baseline=None, recovery_window=None, recovery_fraction=None, working_dir=None, capture=None, packets=None, repetitions=None, statistic=None, confidence=None))]
 #[allow(clippy::too_many_arguments)] // the arguments of one call from Python, all of them by name
 fn run_scenario(
     py: Python<'_>,
     source: String,
+    canonical: String,
     source_name: String,
     supervisor: String,
     agent: String,
@@ -93,6 +132,7 @@ fn run_scenario(
         py,
         Request {
             source,
+            canonical,
             source_name,
             supervisor,
             agent,

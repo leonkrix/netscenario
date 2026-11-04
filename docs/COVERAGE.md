@@ -48,8 +48,7 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Feature | Kernel | Engine | Proxy |
 | --- | --- | --- | --- |
 | Fixed delay | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs): within 0.02 ms) | ✔ 0.4 | ✔ 0.5 |
-| Jitter (uniform, normal) | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs); reorders packets, see below) | ✔ 0.4 | ✔ 0.5 |
-| Jitter (pareto, tables) | ✔ 0.3 | ✔ 0.4 | ✔ 0.5 |
+| Jitter (uniform, normal, pareto, paretonormal, table) | ✔ 0.1 for `uniform` and `normal` ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs); reorders packets, see below), ✔ 0.3 for `pareto` and `paretonormal` (the mean, median, deviation, smallest and largest delay against the table of iproute2) and for `table`, the shape of a file of samples, a tail of 8 deviations included, which a table of 16 bits would cut ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs); the fingerprint of the file is in the scenario, [D-083](decisions/D-083.md), [D-084](decisions/D-084.md)) | ✔ 0.4 | ✔ 0.5 |
 | Independent loss | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs)) | ✔ 0.4 | ~ 0.5 (UDP only) |
 | Burst loss (Gilbert-Elliott, four-state) | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs): mean loss and mean burst length against the theory) | ✔ 0.4 | ~ 0.5 (UDP only) |
 | Reordering | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs): the share sent on at once, with a gap, and past a rate limit) | ✔ 0.4 | ~ 0.5 (UDP only) |

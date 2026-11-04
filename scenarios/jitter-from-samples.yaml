@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A link whose delay varies the way a file of measured round trips does (D-084). The file is next to this scenario, is read
+# when the scenario is loaded and is part of it from then on (D-083): `netscenario expand jitter-from-samples.yaml` shows the
+# table that was made of it. `delay` is the mean of the delays and `amount` their standard deviation, whatever the unit of the
+# file; the long tail of the samples is kept. Run it with `netscenario run scenarios/jitter-from-samples.yaml`.
+version: 0
+name: jitter-from-samples
+seed: 3
+duration: 20s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      both:
+        delay: 40ms
+        jitter:
+          amount: 9ms
+          distribution: table
+          table: { file: round-trips.txt }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1000b }

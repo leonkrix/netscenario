@@ -64,7 +64,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | LNK-01 | Fixed delay | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `fidelity.rs`: `a_fixed_delay_is_exact`) |
-| LNK-02 | Jitter: uniform and normal (0.1), pareto and tables (0.3) | M | 0.1 | done for 0.1 (uniform and normal: `fidelity.rs`); pareto and tables come with 0.3 |
+| LNK-02 | Jitter: uniform and normal (0.1), pareto and tables (0.3) | M | 0.1 | done (uniform and normal: `fidelity.rs`; `pareto`, `paretonormal` and `table` from a file of samples, D-083, D-084: `fidelity.rs`, `crates/netscenario-model/tests/jitter.rs`) |
 | LNK-03 | Independent loss | M | 0.1 | done (`fidelity.rs`: `a_random_loss_is_the_configured_ratio`; the seed: `tests/run.rs`) |
 | LNK-04 | Burst loss: Gilbert-Elliott and four-state Markov | M | 0.2 | done (the Kernel backend since D-054; `tests/fidelity.rs`: the stationary loss and the burst length of both models against the theory; the same seed repeats the bursts, `tests/run.rs`) |
 | LNK-05 | Reordering | M | 0.2 | done (the Kernel backend since D-054; `tests/fidelity.rs`: the share sent on at once, with a gap, and past a rate limit) |
