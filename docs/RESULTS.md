@@ -154,8 +154,9 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `provenance` | Where, when and with what the result was made (ENV-02), below. |
 | `seed` | The seed, below. |
 | `accepted_restrictions` | The limits of the backend that the scenario accepted with `allow-limited` (release 0.3): `feature` and `restriction`. Empty in release 0.1, where a limit is refused. |
-| `addresses` | The IPv4 address of each end of each link: `node`, `link`, `address`. They are assigned by the backend (`10.100.n.1` and `.2` for link `n` in the Kernel backend) and are not part of the scenario. |
+| `addresses` | The address of each end of each link, of each family the network has (`ip`, D-081): `node`, `link`, `address`. They are assigned by the backend (`10.100.n.1` and `.2` for link `n` in the Kernel backend) and are not part of the scenario. |
 | `nodes` | The nodes of the network: `node`, `role` (`host` or `router`) and `address`, the address on the loopback of the node that the workloads and the placeholders (`{server.addr}`) use (D-078). Empty in a result from before release 0.3. |
+| `nodes[].address_v6` | The IPv6 address of a node on its loopback, when the network has both families (D-081); `address` is then the IPv4 one, and in a network with IPv6 only it is the IPv6 one. |
 | `routes` | The routes of the run, the given ones and the ones the tool computed: `node`, `to`, `link` (the link the packets leave by), `next_hop`, `metric`, `weight` and `given` (`true` for a route of the scenario). Empty in a result from before release 0.3. |
 | `timing.duration_ns` | The `duration` of the scenario. |
 | `timing.settle_ns` | How long the run waited after the last packet was sent for the packets still in the network. A packet that needs longer counts as lost. Without a setting the run waits until the queues of all links are empty (a rate limit holds the packets that are sent faster than it lets them go) and then 300 ms for the receivers to read, at most two minutes (D-067); the field is the time that took. A backend that cannot count the packets in its queues gets one second plus twice the longest hold of the scenario (the largest delay plus four times the largest jitter of any direction). |
@@ -198,7 +199,7 @@ The seed of one direction is derived from the seed of the run, the index of the 
 | `id`, `kind` | As in the scenario (`udp-cbr`, `udp-poisson`, `udp-onoff` or `udp-bursty`). |
 | `from`, `to` | The sending and the receiving node. |
 | `from_address` | The address of the sender: the address of its node on the loopback (D-078). |
-| `to_address` | The address of the receiving node and the port the packets went to (port 5000 for the first workload, 5001 for the next). |
+| `to_address` | The address of the receiving node and the port the packets went to (an IPv6 address in brackets, `[fd00:200::2]:5000`) (port 5000 for the first workload, 5001 for the next). |
 | `frames_per_packet` | The frames a packet makes on the first link of its path: 1 if it fits the MTU of the link, else the fragments the sender cuts it into (D-081). A queue sees frames, and a lost fragment loses the packet. Absent (1) in a result from before release 0.3. |
 | `path` | The nodes from the sender to the receiver and the links between them; `shared` is `true` when a node on the way shares the packets among several routes of the same metric (multipath), and the path is then the first of them by the order of the links. Absent in a result from before release 0.3. |
 | `rate_bits_per_second`, `packet_size_bytes` | The rate of the **payload** that the schedule is meant to give, and the size of the payload of one packet. The rate is the one in the scenario for `udp-cbr` and `udp-poisson` (for the second it is the mean), and the mean over the on and off phases (`udp-onoff`) or over a burst and its pause (`udp-bursty`), rounded down. |

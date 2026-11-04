@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/mtu-below-the-minimum-of-ipv6.yaml
+---
+error: the MTU 1000 is outside 1280 to 65535 bytes
+  --> mtu-below-the-minimum-of-ipv6.yaml:10:12
+   |
+ 9 |       between: [client, server]
+10 |       mtu: 1000
+   |            ^^^^
+   = path: topology.links[0].mtu
+   = help: the MTU is the size of the largest IP packet the interface carries; 1500 is the default, and IPv6 needs 1280 at least

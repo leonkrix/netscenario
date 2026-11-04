@@ -502,6 +502,41 @@
       },
       "type": "object"
     },
+    "IpFamily": {
+      "description": "The family of the addresses that a flow uses.",
+      "oneOf": [
+        {
+          "const": "v4",
+          "description": "IPv4: a header of 20 bytes.",
+          "type": "string"
+        },
+        {
+          "const": "v6",
+          "description": "IPv6: a header of 40 bytes, and 8 more on a fragment.",
+          "type": "string"
+        }
+      ]
+    },
+    "IpMode": {
+      "description": "Which addresses the network has. IPv6 in a namespace is not quiet (a few packets of its own in the first second), so a\nnetwork has it only where the scenario asks (D-081).",
+      "oneOf": [
+        {
+          "const": "v4",
+          "description": "IPv4 only. The default.",
+          "type": "string"
+        },
+        {
+          "const": "v6",
+          "description": "IPv6 only: the links and the nodes have no IPv4 address.",
+          "type": "string"
+        },
+        {
+          "const": "dual",
+          "description": "Both: every link and every node has an address of each family.",
+          "type": "string"
+        }
+      ]
+    },
     "Jitter": {
       "additionalProperties": false,
       "description": "Variation of the delay.",
@@ -647,6 +682,16 @@
           ],
           "default": null,
           "description": "The impairments from the first node of the link to the second."
+        },
+        "mtu": {
+          "default": null,
+          "description": "The MTU of the link in bytes. 1500 by default.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "reverse": {
           "anyOf": [
@@ -1332,6 +1377,11 @@
           "description": "With `auto`: install every equally short path as a multipath route, not only the first. Off by default.",
           "type": "boolean"
         },
+        "ip": {
+          "$ref": "#/$defs/IpMode",
+          "default": "v4",
+          "description": "The addresses the network has: `v4` (the default), `v6` or `dual`."
+        },
         "links": {
           "default": null,
           "description": "The links between the nodes. Two nodes may have several. Not together with a shortcut.",
@@ -1409,6 +1459,10 @@
           "$ref": "#/$defs/PhaseDistribution",
           "description": "`fixed` (default): every pause lasts exactly `pause`. `exponential`: the pauses are drawn."
         },
+        "dont-fragment": {
+          "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
+          "type": "boolean"
+        },
         "from": {
           "$ref": "#/$defs/Name",
           "description": "The node that sends."
@@ -1420,6 +1474,17 @@
         "id": {
           "$ref": "#/$defs/Name",
           "description": "The name of the workload. Metrics are named after it."
+        },
+        "ip": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IpFamily"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network."
         },
         "kind": {
           "$ref": "#/$defs/BurstyKind",
@@ -1479,6 +1544,10 @@
     "UdpCbr": {
       "additionalProperties": false,
       "properties": {
+        "dont-fragment": {
+          "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
+          "type": "boolean"
+        },
         "from": {
           "$ref": "#/$defs/Name",
           "description": "The node that sends."
@@ -1486,6 +1555,17 @@
         "id": {
           "$ref": "#/$defs/Name",
           "description": "The name of the workload. Metrics are named after it."
+        },
+        "ip": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IpFamily"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network."
         },
         "kind": {
           "$ref": "#/$defs/UdpCbrKind",
@@ -1557,6 +1637,10 @@
           "$ref": "#/$defs/PhaseDistribution",
           "description": "`fixed` (default): the phases last exactly `on` and `off`. `exponential`: their lengths are drawn."
         },
+        "dont-fragment": {
+          "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
+          "type": "boolean"
+        },
         "from": {
           "$ref": "#/$defs/Name",
           "description": "The node that sends."
@@ -1564,6 +1648,17 @@
         "id": {
           "$ref": "#/$defs/Name",
           "description": "The name of the workload. Metrics are named after it."
+        },
+        "ip": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IpFamily"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network."
         },
         "kind": {
           "$ref": "#/$defs/OnOffKind",
@@ -1631,6 +1726,10 @@
     "UdpPoisson": {
       "additionalProperties": false,
       "properties": {
+        "dont-fragment": {
+          "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
+          "type": "boolean"
+        },
         "from": {
           "$ref": "#/$defs/Name",
           "description": "The node that sends."
@@ -1638,6 +1737,17 @@
         "id": {
           "$ref": "#/$defs/Name",
           "description": "The name of the workload. Metrics are named after it."
+        },
+        "ip": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IpFamily"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network."
         },
         "kind": {
           "$ref": "#/$defs/PoissonKind",

@@ -10,4 +10,4 @@ error: the key `burst-packets` is not used by the workload kind `udp-poisson`
 10 |   - { id: p, kind: udp-poisson, from: client, to: server, rate: 1mbit, packet-size: 1000b, burst-packets: 4 }
    |                                                                                            ^^^^^^^^^^^^^
    = path: workloads[0].burst-packets
-   = help: the workload kind `udp-poisson` has `from`, `to`, `rate`, `packet-size`, `start`, `stop`, `udp-checksum`; `burst-packets` belongs to udp-bursty
+   = help: the workload kind `udp-poisson` has `from`, `to`, `rate`, `packet-size`, `start`, `stop`, `udp-checksum`, `ip`, `dont-fragment`; `burst-packets` belongs to udp-bursty

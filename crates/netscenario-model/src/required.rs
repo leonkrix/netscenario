@@ -83,7 +83,7 @@ pub(crate) const TAGGED: &[Tagged] = &[
             (
                 "udp-cbr",
                 &["id", "from", "to", "rate", "packet-size"],
-                &["start", "stop", "udp-checksum"],
+                &["start", "stop", "udp-checksum", "ip", "dont-fragment"],
             ),
             (
                 "command",
@@ -93,12 +93,19 @@ pub(crate) const TAGGED: &[Tagged] = &[
             (
                 "udp-poisson",
                 &["id", "from", "to", "rate", "packet-size"],
-                &["start", "stop", "udp-checksum"],
+                &["start", "stop", "udp-checksum", "ip", "dont-fragment"],
             ),
             (
                 "udp-onoff",
                 &["id", "from", "to", "rate", "packet-size", "on", "off"],
-                &["distribution", "start", "stop", "udp-checksum"],
+                &[
+                    "distribution",
+                    "start",
+                    "stop",
+                    "udp-checksum",
+                    "ip",
+                    "dont-fragment",
+                ],
             ),
             (
                 "udp-bursty",
@@ -111,7 +118,14 @@ pub(crate) const TAGGED: &[Tagged] = &[
                     "gap",
                     "pause",
                 ],
-                &["distribution", "start", "stop", "udp-checksum"],
+                &[
+                    "distribution",
+                    "start",
+                    "stop",
+                    "udp-checksum",
+                    "ip",
+                    "dont-fragment",
+                ],
             ),
         ],
     },

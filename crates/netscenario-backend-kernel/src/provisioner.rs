@@ -36,6 +36,25 @@ pub(crate) fn link_address(link: u32, end: usize) -> std::net::Ipv4Addr {
     std::net::Ipv4Addr::new(10, 100, third, host)
 }
 
+/// The IPv6 address of one end of a link: link `n` uses `fd00:100:n::/126`, the first node `::1` and the second `::2` (D-081).
+pub(crate) fn link_address_v6(link: u32, end: usize) -> std::net::Ipv6Addr {
+    let link = u16::try_from(link).unwrap_or(u16::MAX);
+    std::net::Ipv6Addr::new(
+        0xfd00,
+        0x100,
+        link,
+        0,
+        0,
+        0,
+        0,
+        if end == 0 { 1 } else { 2 },
+    )
+}
+
+/// How long a network with IPv6 waits for the packets that its interfaces send when they come up (neighbour discovery,
+/// multicast listener reports): they are over within a second (spike S16), and the first queue is built after (D-081).
+const QUIET_WAIT: Duration = Duration::from_millis(1500);
+
 /// A failpoint of the crash tests: `NETSCENARIO_FAIL_AT=link:created` ends the supervisor, without cleaning
 /// up, the first time it passes that point; `link:created#2` the second time. It exists to test the cleanup
 /// guarantee (BKD-04) and does nothing when the variable is not set.
@@ -73,13 +92,22 @@ struct Node {
     pid: u32,
 }
 
-/// One end of a link: the node and the name of the interface in it, and the fixed neighbour on it (the address and the
-/// hardware address of the other end), which the kernel removes when the interface goes down.
+/// One end of a link: the node and the name of the interface in it, and the fixed neighbours on it (the address and the
+/// hardware address of the other end, one for each family), which the kernel removes when the interface goes down.
 struct End {
     node: usize,
     interface: String,
-    neighbour: [String; 2],
+    neighbours: Vec<[String; 2]>,
+    /// The IPv6 address of the interface with its prefix length: the kernel removes it when the interface goes down (it keeps an
+    /// IPv4 address), and with it the route to the other end, so it is put back at `up`.
+    v6_address: Option<String>,
 }
+
+/// The fixed neighbours of one end of a new link and its IPv6 address with the prefix length.
+type EndAddresses = (Vec<[String; 2]>, Option<String>);
+
+/// What `set_link` needs of one end of a link: the process of the node, the interface, the fixed neighbours and the IPv6 address.
+type LinkEnd = (u32, String, Vec<[String; 2]>, Option<String>);
 
 struct Link {
     ends: [End; 2],
@@ -89,6 +117,7 @@ struct Link {
 /// of an interface when the interface goes down, and does not bring them back when it comes up.
 struct Route {
     node: u32,
+    v6: bool,
     destination: Option<String>,
     metric: u32,
     next_hops: Vec<crate::protocol::WireHop>,
@@ -136,6 +165,9 @@ pub(crate) struct Provisioner {
     failpoints: Failpoints,
     nodes: Vec<Node>,
     links: Vec<Link>,
+    /// Which addresses the network has (D-081): IPv4 only until the run says otherwise.
+    v4: bool,
+    v6: bool,
     /// The routes of the nodes, in the order they were added, and the links that are down at the moment.
     routes: Vec<Route>,
     down: std::collections::HashSet<u32>,
@@ -172,6 +204,8 @@ impl Provisioner {
             failpoints,
             nodes: Vec::new(),
             links: Vec::new(),
+            v4: true,
+            v6: false,
             routes: Vec::new(),
             down: std::collections::HashSet::new(),
             programs: Vec::new(),
@@ -207,6 +241,41 @@ impl Provisioner {
         // New interfaces start without IPv6, so that no packet that nobody asked for shifts the loss pattern
         // of `netem` (spike S2, `docs/COVERAGE.md`)
         disable_ipv6()
+    }
+
+    /// Says which addresses the network has, before the first node is made (D-081).
+    pub(crate) fn set_families(&mut self, v4: bool, v6: bool) -> Result<(), String> {
+        if !self.nodes.is_empty() {
+            return Err(
+                "the addresses of the network are chosen before the first node is made".to_owned(),
+            );
+        }
+        if !v4 && !v6 {
+            return Err("a network needs addresses of at least one family".to_owned());
+        }
+        self.v4 = v4;
+        self.v6 = v6;
+        Ok(())
+    }
+
+    /// Writes kernel settings (`net.ipv4.ip_forward=1`) in the network namespace of a node, by the program itself (the
+    /// hidden call `sysctl`).
+    fn sysctl(&self, pid: u32, settings: &[&str]) -> Result<(), String> {
+        let namespace = format!("--net=/proc/{pid}/ns/net");
+        let exe = self.exe.to_string_lossy().into_owned();
+        let mut arguments = vec![namespace.as_str(), "--", exe.as_str(), "sysctl"];
+        arguments.extend_from_slice(settings);
+        run(&self.tools.nsenter, &arguments).map(|_| ())
+    }
+
+    /// Waits until the packets that the interfaces of a network with IPv6 send of their own are over (D-081), so that the
+    /// first queue counts only the packets of the workloads. A network with IPv4 only has none to wait for.
+    pub(crate) fn finish_network(&mut self) {
+        if self.v6 {
+            self.failpoints.hit("quiet:start");
+            std::thread::sleep(QUIET_WAIT);
+            self.failpoints.hit("quiet:end");
+        }
     }
 
     pub(crate) fn create_node(&mut self, name: &str) -> Result<u32, String> {
@@ -267,8 +336,91 @@ impl Provisioner {
                 "net.ipv4.conf.default.rp_filter=0",
             ],
         )?;
+        if self.v6 {
+            // IPv6 in a namespace is not quiet: a node of a network with IPv6 has no duplicate address detection, no router
+            // advertisements and no solicitations, no autoconfiguration, so that the only packets it sends of its own are the
+            // few that the wait of `finish_network` lets pass. The settings are those for the interfaces that come later
+            // (`default`), and for the ones that are there (`all`, `lo`).
+            let mut settings: Vec<String> = Vec::new();
+            for scope in ["default", "all", "lo"] {
+                for (key, value) in [
+                    ("disable_ipv6", "0"),
+                    ("accept_dad", "0"),
+                    ("dad_transmits", "0"),
+                    ("accept_ra", "0"),
+                    ("autoconf", "0"),
+                    ("router_solicitations", "0"),
+                ] {
+                    settings.push(format!("net.ipv6.conf.{scope}.{key}={value}"));
+                }
+            }
+            settings.push("net.ipv6.conf.all.ignore_routes_with_linkdown=1".to_owned());
+            let settings: Vec<&str> = settings.iter().map(String::as_str).collect();
+            self.sysctl(pid, &settings)?;
+        }
         self.failpoints.hit("node:end");
         id(self.nodes.len() - 1)
+    }
+
+    /// Gives both ends of a new link the addresses of each family the network has, fixes the neighbours, and brings the
+    /// interfaces up. Returns the fixed neighbours of each end.
+    fn address_the_ends(
+        &self,
+        number: u32,
+        pids: [u32; 2],
+        inside: &str,
+        macs: &[String; 2],
+    ) -> Result<[EndAddresses; 2], String> {
+        // The addresses of each family the network has, as (address, prefix length) for each end
+        let mut families: Vec<[String; 2]> = Vec::new();
+        let mut prefixes: Vec<&str> = Vec::new();
+        if self.v4 {
+            families.push([0, 1].map(|end| link_address(number, end).to_string()));
+            prefixes.push("30");
+        }
+        if self.v6 {
+            families.push([0, 1].map(|end| link_address_v6(number, end).to_string()));
+            prefixes.push("126");
+        }
+        let mut neighbours: [(Vec<[String; 2]>, Option<String>); 2] =
+            [(Vec::new(), None), (Vec::new(), None)];
+        for end in 0..2 {
+            let other = 1 - end;
+            let pid = pids[end];
+            for (addresses, prefix) in families.iter().zip(&prefixes) {
+                let address = format!("{}/{prefix}", addresses[end]);
+                // IPv6: no duplicate address detection (`nodad`), the address is there at once
+                let mut add = vec!["addr", "add", address.as_str(), "dev", &inside];
+                if addresses[end].contains(':') {
+                    add.push("nodad");
+                }
+                self.in_node(pid, &self.tools.ip, &add)?;
+                // The neighbour is fixed instead of learned: no ARP or neighbour solicitation may shift the loss pattern
+                self.in_node(
+                    pid,
+                    &self.tools.ip,
+                    &[
+                        "neigh",
+                        "replace",
+                        &addresses[other],
+                        "lladdr",
+                        &macs[other],
+                        "dev",
+                        inside,
+                        "nud",
+                        "permanent",
+                    ],
+                )?;
+                neighbours[end]
+                    .0
+                    .push([addresses[other].clone(), macs[other].clone()]);
+                if addresses[end].contains(':') {
+                    neighbours[end].1 = Some(address.clone());
+                }
+            }
+            self.in_node(pid, &self.tools.ip, &["link", "set", inside, "up"])?;
+        }
+        Ok(neighbours)
     }
 
     pub(crate) fn create_link(&mut self, name: &str, between: [u32; 2]) -> Result<u32, String> {
@@ -320,50 +472,21 @@ impl Provisioner {
             )?;
         }
         self.failpoints.hit("link:moved");
-        let addresses = [0, 1].map(|end| link_address(id(index).unwrap_or(0), end).to_string());
-        for end in 0..2 {
-            let other = 1 - end;
-            let pid = pids[end];
-            self.in_node(
-                pid,
-                &self.tools.ip,
-                &[
-                    "addr",
-                    "add",
-                    &format!("{}/30", addresses[end]),
-                    "dev",
-                    &inside,
-                ],
-            )?;
-            // The neighbour is fixed instead of learned: no ARP packet may shift the loss pattern
-            self.in_node(
-                pid,
-                &self.tools.ip,
-                &[
-                    "neigh",
-                    "replace",
-                    &addresses[other],
-                    "lladdr",
-                    &macs[other],
-                    "dev",
-                    &inside,
-                    "nud",
-                    "permanent",
-                ],
-            )?;
-            self.in_node(pid, &self.tools.ip, &["link", "set", &inside, "up"])?;
-        }
+        let neighbours = self.address_the_ends(id(index).unwrap_or(0), pids, &inside, &macs)?;
+        let [(first_neighbours, first_v6), (second_neighbours, second_v6)] = neighbours;
         self.links.push(Link {
             ends: [
                 End {
                     node: first,
                     interface: inside.clone(),
-                    neighbour: [addresses[1].clone(), macs[1].clone()],
+                    neighbours: first_neighbours,
+                    v6_address: first_v6,
                 },
                 End {
                     node: second,
                     interface: inside,
-                    neighbour: [addresses[0].clone(), macs[0].clone()],
+                    neighbours: second_neighbours,
+                    v6_address: second_v6,
                 },
             ],
         });
@@ -375,11 +498,26 @@ impl Provisioner {
     pub(crate) fn set_node_address(&mut self, node: u32, address: &str) -> Result<(), String> {
         let pid = self.node_pid(node)?;
         self.failpoints.hit("address:start");
-        self.in_node(
-            pid,
-            &self.tools.ip,
-            &["addr", "add", &format!("{address}/32"), "dev", "lo"],
-        )?;
+        if address.contains(':') {
+            self.in_node(
+                pid,
+                &self.tools.ip,
+                &[
+                    "addr",
+                    "add",
+                    &format!("{address}/128"),
+                    "dev",
+                    "lo",
+                    "nodad",
+                ],
+            )?;
+        } else {
+            self.in_node(
+                pid,
+                &self.tools.ip,
+                &["addr", "add", &format!("{address}/32"), "dev", "lo"],
+            )?;
+        }
         self.failpoints.hit("address:end");
         Ok(())
     }
@@ -412,19 +550,14 @@ impl Provisioner {
     pub(crate) fn set_forwarding(&mut self, node: u32, on: bool) -> Result<(), String> {
         let pid = self.node_pid(node)?;
         self.failpoints.hit("forwarding:start");
-        let setting = format!("net.ipv4.ip_forward={}", u8::from(on));
-        let namespace = format!("--net=/proc/{pid}/ns/net");
-        let exe = self.exe.to_string_lossy().into_owned();
-        run(
-            &self.tools.nsenter,
-            &[
-                namespace.as_str(),
-                "--",
-                exe.as_str(),
-                "sysctl",
-                setting.as_str(),
-            ],
-        )?;
+        // Both families, when the network has IPv6: a host must not carry IPv6 packets either
+        let v4 = format!("net.ipv4.ip_forward={}", u8::from(on));
+        let v6 = format!("net.ipv6.conf.all.forwarding={}", u8::from(on));
+        if self.v6 {
+            self.sysctl(pid, &[v4.as_str(), v6.as_str()])?;
+        } else {
+            self.sysctl(pid, &[v4.as_str()])?;
+        }
         self.failpoints.hit("forwarding:end");
         Ok(())
     }
@@ -434,6 +567,7 @@ impl Provisioner {
     pub(crate) fn add_route(
         &mut self,
         node: u32,
+        v6: bool,
         destination: Option<&str>,
         metric: u32,
         next_hops: &[crate::protocol::WireHop],
@@ -441,6 +575,7 @@ impl Provisioner {
         self.failpoints.hit("route:start");
         let route = Route {
             node,
+            v6,
             destination: destination.map(str::to_owned),
             metric,
             next_hops: next_hops.to_vec(),
@@ -463,12 +598,17 @@ impl Provisioner {
         if next_hops.is_empty() {
             return Err("a route needs a way out".to_owned());
         }
-        let mut arguments: Vec<String> = vec!["route".into(), verb.into()];
+        let mut arguments: Vec<String> = Vec::new();
+        if route.v6 {
+            arguments.push("-6".into());
+        }
+        arguments.extend(["route".to_owned(), verb.to_owned()]);
+        let host_prefix = if route.v6 { 128 } else { 32 };
         arguments.push(
             route
                 .destination
                 .as_ref()
-                .map_or_else(|| "default".to_owned(), |a| format!("{a}/32")),
+                .map_or_else(|| "default".to_owned(), |a| format!("{a}/{host_prefix}")),
         );
         arguments.extend(["metric".to_owned(), route.metric.to_string()]);
         for hop in next_hops {
@@ -483,7 +623,11 @@ impl Provisioner {
             if end.node != node as usize {
                 return Err(format!("the link {} is not at the node {node}", hop.link));
             }
-            let gateway = link_address(hop.link, 1 - hop.end).to_string();
+            let gateway = if route.v6 {
+                link_address_v6(hop.link, 1 - hop.end).to_string()
+            } else {
+                link_address(hop.link, 1 - hop.end).to_string()
+            };
             if next_hops.len() > 1 {
                 arguments.push("nexthop".into());
             }
@@ -510,7 +654,11 @@ impl Provisioner {
                     "--",
                     exe.as_str(),
                     "sysctl",
-                    "net.ipv4.fib_multipath_hash_policy=1",
+                    if route.v6 {
+                        "net.ipv6.fib_multipath_hash_policy=1"
+                    } else {
+                        "net.ipv4.fib_multipath_hash_policy=1"
+                    },
                 ],
             )?;
         }
@@ -688,40 +836,54 @@ impl Provisioner {
             .get(link as usize)
             .ok_or_else(|| format!("the link {link} does not exist in this run"))?;
         let state = if up { "up" } else { "down" };
-        let ends: Vec<(u32, String, [String; 2])> = link
+        let ends: Vec<LinkEnd> = link
             .ends
             .iter()
             .map(|end| {
                 (
                     self.nodes[end.node].pid,
                     end.interface.clone(),
-                    end.neighbour.clone(),
+                    end.neighbours.clone(),
+                    end.v6_address.clone(),
                 )
             })
             .collect();
         // One end after the other: for a moment a sender on the first side is refused and one on the second is not
-        for (pid, interface, _) in &ends {
+        for (pid, interface, _, _) in &ends {
             self.in_node(*pid, &self.tools.ip, &["link", "set", interface, state])?;
         }
         if up {
             // The kernel removed the fixed neighbours with the down (a fixed one as well as a learned one); without them the
             // first packet in each direction waits for an ARP exchange that crosses the impaired link
-            for (pid, interface, [address, mac]) in &ends {
-                self.in_node(
-                    *pid,
-                    &self.tools.ip,
-                    &[
-                        "neigh",
-                        "replace",
-                        address,
-                        "lladdr",
-                        mac,
-                        "dev",
-                        interface,
-                        "nud",
-                        "permanent",
-                    ],
-                )?;
+            // IPv6: the kernel removed the address with the down (an IPv4 address stays), and the route to the other end of the link
+            // with it, so the address comes first
+            for (pid, interface, _, v6_address) in &ends {
+                if let Some(address) = v6_address {
+                    self.in_node(
+                        *pid,
+                        &self.tools.ip,
+                        &["addr", "replace", address, "dev", interface, "nodad"],
+                    )?;
+                }
+            }
+            for (pid, interface, neighbours, _) in &ends {
+                for [address, mac] in neighbours {
+                    self.in_node(
+                        *pid,
+                        &self.tools.ip,
+                        &[
+                            "neigh",
+                            "replace",
+                            address,
+                            "lladdr",
+                            mac,
+                            "dev",
+                            interface,
+                            "nud",
+                            "permanent",
+                        ],
+                    )?;
+                }
             }
             self.down.remove(&link_index);
             self.restore_routes(link_index)?;

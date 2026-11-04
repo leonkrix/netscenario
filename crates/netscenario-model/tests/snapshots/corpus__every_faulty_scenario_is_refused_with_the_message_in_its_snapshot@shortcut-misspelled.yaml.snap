@@ -3,7 +3,7 @@ source: crates/netscenario-model/tests/corpus.rs
 expression: error.render()
 input_file: scenarios/invalid/shortcut-misspelled.yaml
 ---
-error: unknown field `dumbell`, expected one of nodes, links, chain, star, dumbbell, multipath, routing, ecmp, routes
+error: unknown field `dumbell`, expected one of nodes, links, chain, star, dumbbell, multipath, routing, ecmp, routes, ip
  --> shortcut-misspelled.yaml:5:3
   |
 4 | topology:

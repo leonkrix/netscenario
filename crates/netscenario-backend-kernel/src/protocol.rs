@@ -41,7 +41,14 @@ pub(crate) enum Request {
         name: String,
         between: [u32; 2],
     },
-    /// Gives a node an address on its loopback (D-078).
+    /// Says which addresses the network has, before the first node is made (D-081).
+    SetFamilies {
+        v4: bool,
+        v6: bool,
+    },
+    /// Waits until the network is quiet, before the first queue is built (D-081).
+    FinishNetwork,
+    /// Gives a node an address on its loopback (D-078): of the family the text is.
     SetNodeAddress {
         node: u32,
         address: String,
@@ -59,6 +66,9 @@ pub(crate) enum Request {
     /// Adds a route to a node (D-078): to an address (`None` is every address), out of one or several links.
     AddRoute {
         node: u32,
+        /// The route is an IPv6 route (the destination, if any, and the next hops are IPv6 addresses).
+        #[serde(default)]
+        v6: bool,
         destination: Option<String>,
         metric: u32,
         next_hops: Vec<WireHop>,

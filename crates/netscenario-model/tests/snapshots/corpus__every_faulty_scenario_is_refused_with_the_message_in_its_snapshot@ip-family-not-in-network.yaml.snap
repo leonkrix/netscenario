@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/ip-family-not-in-network.yaml
+---
+error: the workload asks for IPv6 but the network has IPv4 only
+  --> ip-family-not-in-network.yaml:10:96
+   |
+ 9 | workloads:
+10 |   - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b, ip: v6 }
+   |                                                                                                ^^
+   = path: workloads[0].ip
+   = help: write `ip: v6` or `ip: dual` under `topology`, so that the network gets IPv6 addresses

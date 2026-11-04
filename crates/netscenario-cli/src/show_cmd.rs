@@ -209,7 +209,7 @@ fn listing(scenario: &Scenario) -> String {
     let mut text = String::new();
     let _ = writeln!(
         text,
-        "{}: {} nodes, {} links, routing {}{}\n",
+        "{}: {} nodes, {} links, routing {}{}{}\n",
         scenario.name,
         topology.nodes.len(),
         topology.links.len(),
@@ -217,7 +217,12 @@ fn listing(scenario: &Scenario) -> String {
             netscenario_model::Routing::Auto => "auto",
             netscenario_model::Routing::Manual => "manual",
         },
-        if topology.ecmp { ", ecmp" } else { "" }
+        if topology.ecmp { ", ecmp" } else { "" },
+        match topology.ip {
+            netscenario_model::IpMode::V4 => "",
+            netscenario_model::IpMode::V6 => ", IPv6",
+            netscenario_model::IpMode::Dual => ", IPv4 and IPv6",
+        }
     );
     let _ = writeln!(text, "nodes");
     for node in &topology.nodes {
@@ -231,9 +236,10 @@ fn listing(scenario: &Scenario) -> String {
         let cost = link
             .cost
             .map_or(String::new(), |cost| format!("  cost {cost}"));
+        let mtu = link.mtu.map_or(String::new(), |mtu| format!("  mtu {mtu}"));
         let _ = writeln!(
             text,
-            "  {:<24} {} - {}{cost}",
+            "  {:<24} {} - {}{cost}{mtu}",
             link.id, link.between[0], link.between[1]
         );
         for (direction, values) in describe_link(link) {
@@ -327,6 +333,7 @@ fn as_json(scenario: &Scenario) -> Value {
         "name": scenario.name.as_str(),
         "routing": topology.routing,
         "ecmp": topology.ecmp,
+        "ip": topology.ip,
         "nodes": topology.nodes,
         "links": topology.links,
         "routes": routes.entries.iter().map(|entry| json!({

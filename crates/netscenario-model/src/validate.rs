@@ -102,6 +102,31 @@ impl Scenario {
         nodes
     }
 
+    /// The MTU of a link: in range, and at least 1280 where the network has IPv6 (D-081).
+    fn check_mtu(&self, link: &Link, base: &str, problems: &mut Vec<Problem>) {
+        let smallest_mtu = if self.topology.ip.has(crate::IpFamily::V6) {
+            crate::MIN_MTU_V6
+        } else {
+            crate::MIN_MTU
+        };
+        if let Some(mtu) = link.mtu
+            && !(smallest_mtu..=crate::MAX_MTU).contains(&mtu)
+        {
+            problems.push(
+            Problem::new(format!(
+                "the MTU {mtu} is outside {smallest_mtu} to {} bytes",
+                crate::MAX_MTU
+            ))
+            .at_path(format!("{base}.mtu"))
+            .with_help(if smallest_mtu == crate::MIN_MTU_V6 {
+                "the MTU is the size of the largest IP packet the interface carries; 1500 is the default, and IPv6 needs 1280 at least"
+            } else {
+                "the MTU is the size of the largest IP packet the interface carries; 1500 is the default"
+            }),
+        );
+        }
+    }
+
     fn check_links(&self, nodes: &[Name], nodes_ok: bool, problems: &mut Vec<Problem>) {
         let links = &self.topology.links;
         let before = problems.len();
@@ -147,19 +172,7 @@ impl Scenario {
                         .with_help("the cost is a whole number; 1 is the default"),
                 );
             }
-            if let Some(mtu) = link.mtu
-                && !(crate::MIN_MTU..=crate::MAX_MTU).contains(&mtu)
-            {
-                problems.push(
-                    Problem::new(format!(
-                        "the MTU {mtu} is outside {} to {} bytes",
-                        crate::MIN_MTU,
-                        crate::MAX_MTU
-                    ))
-                    .at_path(format!("{base}.mtu"))
-                    .with_help("the MTU is the size of the largest IP packet the interface carries; 1500 is the default"),
-                );
-            }
+            self.check_mtu(link, &base, problems);
             let [first, second] = &link.between;
             if first == second {
                 problems.push(
@@ -466,6 +479,108 @@ impl Scenario {
             .unwrap_or_default()
     }
 
+    /// The family of the flow: its own `ip`, or the only one of the network (D-081). The family must be one the network has,
+    /// and over IPv6 the checksum of UDP cannot be off.
+    fn check_family(
+        &self,
+        workload: &Generator<'_>,
+        base: &str,
+        problems: &mut Vec<Problem>,
+    ) -> crate::IpFamily {
+        // The family of the flow: its own `ip`, or the only one of the network (D-081)
+        let mode = self.topology.ip;
+        let family = workload.ip.unwrap_or_else(|| mode.default_family());
+        if !mode.has(family) {
+            problems.push(
+                Problem::new(format!(
+                    "the workload asks for {} but the network has {} only",
+                    if family == crate::IpFamily::V6 { "IPv6" } else { "IPv4" },
+                    if family == crate::IpFamily::V6 { "IPv4" } else { "IPv6" },
+                ))
+                .at_path(format!("{base}.ip"))
+                .with_help(if family == crate::IpFamily::V6 {
+                    "write `ip: v6` or `ip: dual` under `topology`, so that the network gets IPv6 addresses"
+                } else {
+                    "write `ip: dual` under `topology` to have both families, or leave `ip` out of the workload"
+                }),
+            );
+        }
+        if family == crate::IpFamily::V6 && !workload.udp_checksum.is_on() {
+            problems.push(
+                Problem::new("a stream without the UDP checksum is not possible over IPv6: the protocol requires the checksum")
+                    .at_path(format!("{base}.udp-checksum"))
+                    .with_help("leave `udp-checksum` out, or use `ip: v4` for a test of corruption without the checksum"),
+            );
+        }
+        family
+    }
+
+    /// The packet size: in range for the family, and carried by every link of the path (D-081).
+    fn check_packet_size(
+        workload: &Generator<'_>,
+        family: crate::IpFamily,
+        path_links: Option<&[Name]>,
+        (mtus, sets_mtu): (&[u32], bool),
+        base: &str,
+        problems: &mut Vec<Problem>,
+    ) {
+        let size = workload.packet_size.bytes();
+        // Without a link that says its MTU a packet that does not fit 1500 is a mistake; with one, a larger packet is
+        // the way to ask for fragmentation
+        let largest = match (sets_mtu, family) {
+            (true, crate::IpFamily::V4) => crate::MAX_UDP_PAYLOAD_V4,
+            (true, crate::IpFamily::V6) => crate::MAX_UDP_PAYLOAD_V6,
+            (false, crate::IpFamily::V4) => MAX_PACKET_SIZE,
+            (false, crate::IpFamily::V6) => crate::MAX_PACKET_SIZE_V6,
+        };
+        if !(MIN_PACKET_SIZE..=largest).contains(&size) {
+            problems.push(
+                Problem::new(format!(
+                    "the packet size {size} bytes is outside {MIN_PACKET_SIZE} to {largest} bytes"
+                ))
+                .at_path(format!("{base}.packet-size"))
+                .with_help(if sets_mtu {
+                    format!(
+                        "the smallest payload is the header of the agent ({MIN_PACKET_SIZE} bytes); the largest is the biggest UDP datagram ({largest} bytes), which the sender cuts into fragments where it does not fit the MTU of the first link"
+                    )
+                } else {
+                    format!(
+                        "the smallest payload is the header of the agent ({MIN_PACKET_SIZE} bytes); the largest fits the MTU of 1500 without fragmentation ({largest} bytes); a link with an `mtu` allows a larger packet, which is then cut into fragments"
+                    )
+                }),
+            );
+        } else if let Some((at, why)) = crate::path_problem(size, mtus, family)
+            // A sender that must not cut refuses a packet that does not fit the first link: nothing leaves, and the result
+            // counts the refused packets, so there is no router to cut anything (D-081)
+            .filter(|_| {
+                !(workload.dont_fragment
+                    && mtus
+                        .first()
+                        .is_some_and(|first| family.packet_length(size) > u64::from(*first)))
+            })
+            && let Some(links) = &path_links
+        {
+            problems.push(
+                Problem::new(format!(
+                    "a packet of {size} bytes of payload would be cut by a router: {why} ('{}')",
+                    links[at]
+                ))
+                .at_path(format!("{base}.packet-size"))
+                .with_help("a router that cuts a packet makes frames in sizes the run cannot account for; make the packet smaller, raise the MTU of that link, or put the smallest MTU first on the path (the sender cuts the packet to the MTU of the first link, and the later links carry the fragments whole)"),
+            );
+        } else if !workload.udp_checksum.is_on() && size < MIN_PACKET_SIZE_WITHOUT_CHECKSUM {
+            problems.push(
+                Problem::new(format!(
+                    "the packet size {size} bytes is too small for `udp-checksum: false`: the packet then carries a CRC-32, and the smallest payload is {MIN_PACKET_SIZE_WITHOUT_CHECKSUM} bytes"
+                ))
+                .at_path(format!("{base}.packet-size"))
+                .with_help(format!(
+                    "use a payload of {MIN_PACKET_SIZE_WITHOUT_CHECKSUM} bytes or more, or leave `udp-checksum` out (the checksum of UDP is then on, and the smallest payload is {MIN_PACKET_SIZE} bytes)"
+                )),
+            );
+        }
+    }
+
     fn check_generator(
         &self,
         workload: &Generator<'_>,
@@ -516,51 +631,15 @@ impl Scenario {
                         .any(|link| link.id == *name && link.mtu.is_some())
                 })
             });
-            // Without a link that says its MTU a packet that does not fit 1500 is a mistake; with one, a larger packet is
-            // the way to ask for fragmentation
-            let largest = if sets_mtu {
-                crate::MAX_UDP_PAYLOAD_V4
-            } else {
-                MAX_PACKET_SIZE
-            };
-            if !(MIN_PACKET_SIZE..=largest).contains(&size) {
-                problems.push(
-                    Problem::new(format!(
-                        "the packet size {size} bytes is outside {MIN_PACKET_SIZE} to {largest} bytes"
-                    ))
-                    .at_path(format!("{base}.packet-size"))
-                    .with_help(if sets_mtu {
-                        format!(
-                            "the smallest payload is the header of the agent ({MIN_PACKET_SIZE} bytes); the largest is the biggest UDP datagram ({largest} bytes), which the sender cuts into fragments where it does not fit the MTU of the first link"
-                        )
-                    } else {
-                        format!(
-                            "the smallest payload is the header of the agent ({MIN_PACKET_SIZE} bytes); the largest fits the MTU of 1500 without fragmentation ({MAX_PACKET_SIZE} bytes); a link with an `mtu` allows a larger packet, which is then cut into fragments"
-                        )
-                    }),
-                );
-            } else if let Some((at, why)) = crate::path_problem(size, &mtus, crate::IpFamily::V4)
-                && let Some(links) = &path_links
-            {
-                problems.push(
-                    Problem::new(format!(
-                        "a packet of {size} bytes of payload would be cut by a router: {why} ('{}')",
-                        links[at]
-                    ))
-                    .at_path(format!("{base}.packet-size"))
-                    .with_help("a router that cuts a packet makes frames in sizes the run cannot account for; make the packet smaller, raise the MTU of that link, or put the smallest MTU first on the path (the sender cuts the packet to the MTU of the first link, and the later links carry the fragments whole)"),
-                );
-            } else if !workload.udp_checksum.is_on() && size < MIN_PACKET_SIZE_WITHOUT_CHECKSUM {
-                problems.push(
-                    Problem::new(format!(
-                        "the packet size {size} bytes is too small for `udp-checksum: false`: the packet then carries a CRC-32, and the smallest payload is {MIN_PACKET_SIZE_WITHOUT_CHECKSUM} bytes"
-                    ))
-                    .at_path(format!("{base}.packet-size"))
-                    .with_help(format!(
-                        "use a payload of {MIN_PACKET_SIZE_WITHOUT_CHECKSUM} bytes or more, or leave `udp-checksum` out (the checksum of UDP is then on, and the smallest payload is {MIN_PACKET_SIZE} bytes)"
-                    )),
-                );
-            }
+            let family = self.check_family(workload, base, problems);
+            Self::check_packet_size(
+                workload,
+                family,
+                path_links.as_deref(),
+                (&mtus, sets_mtu),
+                base,
+                problems,
+            );
             check_pattern(workload, size, base, problems);
             if !self.duration.is_zero() {
                 check_window(self.duration, workload.start, workload.stop, base, problems);

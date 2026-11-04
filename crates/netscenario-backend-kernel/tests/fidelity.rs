@@ -1272,6 +1272,41 @@ fn cases() -> Vec<Case> {
                 },
             ],
         },
+        Case {
+            id: "26-ipv6-rate",
+            title: "A rate limit of 2 mbit over IPv6, offered 3 mbit: a frame is 20 bytes longer",
+            link: "ip: v6; forward: rate 2mbit",
+            network: "  ip: v6\n  nodes: [client, server]\n  links:\n    - { id: access, between: [client, server], forward: { rate: 2mbit } }\n",
+            offered: "3mbit",
+            size: 1000,
+            seconds: 6,
+            settle_seconds: 5,
+            udp_checksum: true,
+            bounds: vec![
+                // 2 mbit of frames; a frame is the payload and 62 bytes (8 UDP + 40 IPv6 + 14 Ethernet)
+                Bound {
+                    metric: Metric::SteadyGoodputBps,
+                    expected: 2_000_000.0 * 1000.0 / 1062.0,
+                    lo: 1_863_000.0,
+                    hi: 1_903_000.0,
+                    reason: "`netem rate` counts the Ethernet frame, so 1,000 bytes of payload use 1,062 over IPv6 (1,042 over IPv4): 2 mbit carry 1,883 kbit of payload, 1.8 % less than over IPv4; 1 % for the edges of the one-second bins (about 235 packets each), narrow enough to tell the two apart",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "the backlog (about 840 packets) stays below the queue of 1,000, so a rate limit alone loses nothing here",
+                },
+                Bound {
+                    metric: Metric::ReorderedRatio,
+                    expected: 0.0,
+                    lo: 0.0,
+                    hi: 0.0,
+                    reason: "a rate limit keeps the order",
+                },
+            ],
+        },
     ]
 }
 
@@ -2323,4 +2358,29 @@ fn canary_a_link_that_does_not_cut_the_packet_fails_the_fragment_case() {
         1,
     );
     assert!(failed.contains(&Metric::LossRatio), "{failed:?}");
+}
+
+#[test]
+fn a_rate_limit_over_ipv6_counts_the_longer_frame() {
+    if !support::ipv6_available() {
+        return;
+    }
+    run_and_judge("26-ipv6-rate");
+}
+
+/// Canary: the same link over IPv4 carries 1,919 kbit of payload, which is outside the band of IPv6, so the bound tells the
+/// two headers apart.
+#[test]
+fn canary_a_rate_over_ipv4_fails_the_case_of_ipv6() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let failed = wrong_network_on_purpose(
+        "26-ipv6-rate",
+        "forward: rate 2mbit",
+        "  nodes: [client, server]\n  links:\n    - { id: access, between: [client, server], forward: { rate: 2mbit } }\n",
+        4,
+        1,
+    );
+    assert!(failed.contains(&Metric::SteadyGoodputBps), "{failed:?}");
 }

@@ -31,6 +31,9 @@ pub struct SendConfig {
     pub start_at_ns: Option<u64>,
     /// Whether the packets carry the checksum of UDP. Off needs a raw socket (`CAP_NET_RAW`) and IPv4.
     pub udp_checksum: UdpChecksum,
+    /// The sender must not cut a packet into fragments (`IP_MTU_DISCOVER` set to `DO`): a packet that does not fit the MTU of
+    /// the link is refused by the system and counted as a refused packet (D-081).
+    pub dont_fragment: bool,
     /// The barriers of the timeline (D-038): before which packet the run does something to the link. In the order
     /// of the packets, and for one packet in the order of the ids.
     pub barriers: Vec<Barrier>,
@@ -98,6 +101,23 @@ fn source_port(flow: u32) -> u16 {
     49_152 + offset
 }
 
+/// Makes the system refuse a packet that does not fit the MTU instead of cutting it (`IP_MTU_DISCOVER` `DO`, or the same for
+/// IPv6), and set the bit "do not fragment" on the packets that fit (D-081).
+fn forbid_fragmenting(socket: &UdpSocket, target: SocketAddr) -> Result<(), SendError> {
+    let set = if target.is_ipv4() {
+        rustix::net::sockopt::set_ip_mtu_discover(
+            socket,
+            rustix::net::sockopt::Ipv4PathMtuDiscovery::DO,
+        )
+    } else {
+        rustix::net::sockopt::set_ipv6_mtu_discover(
+            socket,
+            rustix::net::sockopt::Ipv6PathMtuDiscovery::DO,
+        )
+    };
+    set.map_err(|error| SendError(format!("cannot forbid fragmenting on the socket: {error}")))
+}
+
 /// Where the packets go out: a UDP socket, or a raw IPv4 socket on which the program writes the header of UDP
 /// itself, because that is the way to a checksum of `0` in safe code (`SO_NO_CHECK` has no safe wrapper, and the
 /// workspace forbids `unsafe`, D-025). The datagram of a raw socket starts with the 8 bytes of the header of
@@ -121,6 +141,9 @@ impl Outlet {
                 socket.connect(config.target).map_err(|error| {
                     SendError(format!("cannot reach {}: {error}", config.target))
                 })?;
+                if config.dont_fragment {
+                    forbid_fragmenting(&socket, config.target)?;
+                }
                 Ok(Self::Udp(socket))
             }
             UdpChecksum::Off => {
@@ -140,6 +163,15 @@ impl Outlet {
                         "cannot open a raw socket, which a stream without the checksum of UDP needs: {error}. The sender needs the capability CAP_NET_RAW in its node (a user namespace and root have it)"
                     ))
                 })?;
+                if config.dont_fragment {
+                    rustix::net::sockopt::set_ip_mtu_discover(
+                        &socket,
+                        rustix::net::sockopt::Ipv4PathMtuDiscovery::DO,
+                    )
+                    .map_err(|error| {
+                        SendError(format!("cannot forbid fragmenting on the socket: {error}"))
+                    })?;
+                }
                 // The port of a raw socket is not used; the system picks the route and the source address
                 rustix::net::connect(&socket, &std::net::SocketAddrV4::new(*target.ip(), 0))
                     .map_err(|error| SendError(format!("cannot reach {target}: {error}")))?;
@@ -231,6 +263,7 @@ pub fn run_with(
         duration_ns,
         start_at_ns,
         udp_checksum,
+        dont_fragment: _,
         barriers: planned,
     } = config;
     if !schedule.is_well_formed() {
@@ -387,6 +420,7 @@ mod tests {
             duration_ns,
             start_at_ns: None,
             udp_checksum: UdpChecksum::On,
+            dont_fragment: false,
             barriers: Vec::new(),
         }
     }

@@ -3,11 +3,11 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use netscenario_model::{Impairments, Name, Scenario};
+use netscenario_model::{Impairments, IpFamily, Name, Scenario};
 
 use crate::capability::{Capabilities, CapabilityError};
 use crate::error::Error;
@@ -268,8 +268,11 @@ pub struct NextHop {
 /// A route of a node as the backend gets it (D-078): to a node by its address, or to every address, out of one or several links.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeRoute {
-    /// The address that the route leads to (a host route), or `None` for every address that has no route of its own.
-    pub destination: Option<Ipv4Addr>,
+    /// The family of the route: its destination and the next hops are addresses of this family.
+    pub family: IpFamily,
+    /// The address that the route leads to (a host route), or `None` for every address of the family that has no route of
+    /// its own. The family of the address is `family`.
+    pub destination: Option<IpAddr>,
     /// The preference: the smaller is used first.
     pub metric: u32,
     /// The ways out, one or several (a multipath route shares the packets among them by their weights).
@@ -487,13 +490,41 @@ pub trait Backend {
         Ok(None)
     }
 
+    /// Says which addresses the network has, before anything is created (D-081). IPv6 is only on where the scenario asks for
+    /// it, because its interfaces send packets of their own. The default accepts IPv4 only.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the backend cannot build a network with IPv6.
+    fn set_ip_families(&mut self, _v4: bool, v6: bool) -> Result<(), Error> {
+        if v6 {
+            return Err(Error::Backend {
+                backend: self.name().to_owned(),
+                action: "use IPv6".to_owned(),
+                message: "this backend has no IPv6".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Called when the addresses and the routes are set and before the first queue is built (D-081): the backend waits
+    /// until the network is quiet, so that the packets that the interfaces send when they come up (IPv6 neighbour discovery and
+    /// multicast listener reports) do not enter a queue and shift a seeded loss. The default does nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the wait fails.
+    fn finish_network(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Gives a node an address of its own that is not on a link (on its loopback, D-078): the address that other nodes route
-    /// to and that programs use for it. The default says that the backend cannot.
+    /// to and that programs use for it. The family is that of the address. The default says that the backend cannot.
     ///
     /// # Errors
     ///
     /// [`Error::Backend`] if the node does not exist or the address cannot be set.
-    fn set_node_address(&mut self, _node: NodeHandle, _address: Ipv4Addr) -> Result<(), Error> {
+    fn set_node_address(&mut self, _node: NodeHandle, _address: IpAddr) -> Result<(), Error> {
         Err(Error::Backend {
             backend: self.name().to_owned(),
             action: "give a node an address".to_owned(),
@@ -549,6 +580,19 @@ pub trait Backend {
     ///
     /// [`Error::Backend`] if the link does not exist.
     fn address(&self, link: LinkHandle, end: usize) -> Result<Ipv4Addr, Error>;
+
+    /// The IPv6 address of one end of a link (D-081), when the network has IPv6. The default says that the backend has none.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist or the backend has no IPv6.
+    fn address_v6(&self, _link: LinkHandle, _end: usize) -> Result<Ipv6Addr, Error> {
+        Err(Error::Backend {
+            backend: self.name().to_owned(),
+            action: "find an IPv6 address".to_owned(),
+            message: "this backend has no IPv6".to_owned(),
+        })
+    }
 
     /// The name of the interface of one end of a link inside its node, as a capture asks for it (PRB-09). `end` is 0 for the
     /// first node of `between` and 1 for the second.

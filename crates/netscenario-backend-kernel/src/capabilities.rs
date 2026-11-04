@@ -120,6 +120,7 @@ pub fn capabilities_probed(environment: &Environment, probed: &Probed) -> Capabi
             Feature::MultipleNodes,
             Feature::StaticRoutes,
             Feature::LinkMtu,
+            Feature::Ipv6,
         ] {
             capabilities = capabilities.with(
                 feature,
@@ -129,6 +130,29 @@ pub fn capabilities_probed(environment: &Environment, probed: &Probed) -> Capabi
                 ),
             );
         }
+    }
+    // A node that cannot forward or take a route cannot be a router, and a machine without IPv6 cannot build a network with it
+    for step in ["forwarding", "route"] {
+        if let Some(why) = probed.refused(step) {
+            for feature in [Feature::MultipleNodes, Feature::StaticRoutes] {
+                capabilities = capabilities.with(
+                    feature,
+                    unsupported(
+                        format!("a node of this machine cannot do what a network needs ({step}): {why}"),
+                        &format!("the kernel needs `net.ipv4.ip_forward` and routes through a next hop, {ENGINE}"),
+                    ),
+                );
+            }
+        }
+    }
+    if let Some(why) = probed.refused("ipv6") {
+        capabilities = capabilities.with(
+            Feature::Ipv6,
+            unsupported(
+                format!("this machine has no IPv6 in a node: {why}"),
+                &format!("the kernel needs IPv6 (not `ipv6.disable=1`), {ENGINE}"),
+            ),
+        );
     }
     if let Some(why) = probed.refused("netem") {
         let support = unsupported(
@@ -196,6 +220,7 @@ fn by_version(environment: &Environment) -> Capabilities {
         .with(Feature::MultipleNodes, Support::Exact)
         .with(Feature::StaticRoutes, Support::Exact)
         .with(Feature::LinkMtu, Support::Exact)
+        .with(Feature::Ipv6, Support::Exact)
         .with(Feature::UdpWithoutChecksum, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
@@ -260,6 +285,9 @@ mod tests {
                 "reorder",
                 "duplicate",
                 "corrupt",
+                "forwarding",
+                "route",
+                "ipv6",
             ]
             .into_iter()
             .map(|name| Step {
@@ -348,8 +376,17 @@ mod tests {
             Feature::MultipleNodes,
             Feature::StaticRoutes,
             Feature::LinkMtu,
+            Feature::Ipv6,
         ];
         one("veth", Feature::PointToPoint, &no_veth);
+        // Forwarding and a route are what a network of several nodes needs; IPv6 stands on its own
+        one("route", Feature::MultipleNodes, &[Feature::StaticRoutes]);
+        one(
+            "forwarding",
+            Feature::StaticRoutes,
+            &[Feature::MultipleNodes],
+        );
+        one("ipv6", Feature::Ipv6, &[]);
         let found = declared(&probed(&[(
             "veth",
             "Error: Specified qdisc kind is unknown.",

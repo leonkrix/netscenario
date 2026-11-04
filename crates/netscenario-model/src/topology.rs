@@ -11,6 +11,7 @@ use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::ip::IpMode;
 use crate::scenario::Link;
 use crate::shortcut::{Chain, Dumbbell, Multipath, Star};
 use crate::units::Name;
@@ -262,6 +263,10 @@ pub struct Topology {
     /// (with `routing: manual`) are the only ones.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub routes: Vec<Route>,
+    /// The addresses the network has: `v4` (the default), `v6` or `dual` (D-081). A workload picks its family with its own
+    /// `ip`.
+    #[serde(default, skip_serializing_if = "IpMode::is_default")]
+    pub ip: IpMode,
 }
 
 /// The topology as a file writes it: nodes and links, or one shortcut, and the routing.
@@ -296,6 +301,9 @@ struct TopologyForm {
     /// Routes of single nodes.
     #[serde(default)]
     routes: Vec<Route>,
+    /// The addresses the network has: `v4` (the default), `v6` or `dual`.
+    #[serde(default)]
+    ip: IpMode,
 }
 
 impl TryFrom<TopologyForm> for Topology {
@@ -358,6 +366,7 @@ impl TryFrom<TopologyForm> for Topology {
             routing: form.routing,
             ecmp: form.ecmp,
             routes: form.routes,
+            ip: form.ip,
         })
     }
 }
@@ -372,6 +381,7 @@ impl Topology {
             routing: Routing::Auto,
             ecmp: false,
             routes: Vec::new(),
+            ip: IpMode::V4,
         }
     }
 

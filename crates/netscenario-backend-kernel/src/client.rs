@@ -845,10 +845,33 @@ impl Backend for KernelBackend {
         .map(|_| ())
     }
 
+    fn set_ip_families(&mut self, v4: bool, v6: bool) -> Result<(), Error> {
+        self.call(
+            "say which addresses the network has",
+            &Request::SetFamilies { v4, v6 },
+        )
+        .map(|_| ())
+    }
+
+    fn finish_network(&mut self) -> Result<(), Error> {
+        self.call("wait until the network is quiet", &Request::FinishNetwork)
+            .map(|_| ())
+    }
+
+    fn address_v6(&self, link: LinkHandle, end: usize) -> Result<std::net::Ipv6Addr, Error> {
+        if end > 1 {
+            return Err(Self::error(
+                "find an address",
+                format!("a link has two ends, not {}", end + 1),
+            ));
+        }
+        Ok(crate::provisioner::link_address_v6(link.0, end))
+    }
+
     fn set_node_address(
         &mut self,
         node: NodeHandle,
-        address: std::net::Ipv4Addr,
+        address: std::net::IpAddr,
     ) -> Result<(), Error> {
         self.call(
             &format!("give the node {} the address {address}", node.0),
@@ -892,6 +915,7 @@ impl Backend for KernelBackend {
             &format!("add a route to {to} to the node {}", node.0),
             &Request::AddRoute {
                 node: node.0,
+                v6: route.family == netscenario_model::IpFamily::V6,
                 destination: route.destination.map(|a| a.to_string()),
                 metric: route.metric,
                 next_hops: route

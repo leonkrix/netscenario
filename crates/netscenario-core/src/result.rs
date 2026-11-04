@@ -367,8 +367,11 @@ pub struct NodeInfo {
     pub node: String,
     /// `host` or `router`.
     pub role: String,
-    /// The address on its loopback.
+    /// The address on its loopback: the IPv4 one where the network has it, else the IPv6 one.
     pub address: String,
+    /// The IPv6 address on its loopback, when the network has both families (D-081).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_v6: Option<String>,
 }
 
 /// A route of a node (D-078).

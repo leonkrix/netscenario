@@ -4,6 +4,7 @@
 //! those whole; a datagram that fits the first link but not a later one would be cut (IPv4) or dropped (IPv6) by a router,
 //! in sizes the run cannot account for, so a scenario that has it is refused.
 
+use crate::ip::IpFamily;
 use crate::scenario::{Link, Scenario};
 
 /// The MTU of a link that does not say.
@@ -16,17 +17,11 @@ pub const MAX_MTU: u32 = 65_535;
 pub const MIN_MTU_V6: u32 = 1280;
 /// The largest payload of a UDP datagram over IPv4.
 pub const MAX_UDP_PAYLOAD_V4: u64 = 65_507;
-/// The largest payload of a UDP datagram over IPv6 without a jumbogram.
-pub const MAX_UDP_PAYLOAD_V6: u64 = 65_527 - 8;
-
-/// The family of the addresses that a flow uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum IpFamily {
-    /// IPv4: a header of 20 bytes.
-    V4,
-    /// IPv6: a header of 40 bytes, and 8 more on a fragment.
-    V6,
-}
+/// The largest payload of a UDP datagram over IPv6 that is cut into fragments (the fragment header takes 8 of the 65,535
+/// bytes after the IP header).
+pub const MAX_UDP_PAYLOAD_V6: u64 = 65_535 - 8 - 8;
+/// The largest payload that fits the MTU of 1500 over IPv6 without fragmentation (the header of IPv6 is 40 bytes).
+pub const MAX_PACKET_SIZE_V6: u64 = 1500 - 40 - 8;
 
 impl IpFamily {
     /// The bytes of the IP header, with the fragment header where the datagram is cut.
@@ -38,7 +33,7 @@ impl IpFamily {
         }
     }
 
-    /// The length of the frame's IP packet that a payload of `payload` bytes makes whole (IP header, UDP header, payload).
+    /// The length of the IP packet that a payload of `payload` bytes makes whole (IP header, UDP header, payload).
     #[must_use]
     pub fn packet_length(self, payload: u64) -> u64 {
         self.header(false) + 8 + payload

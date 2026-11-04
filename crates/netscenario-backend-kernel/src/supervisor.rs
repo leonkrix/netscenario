@@ -165,12 +165,18 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
             }
             Request::AddRoute {
                 node,
+                v6,
                 destination,
                 metric,
                 next_hops,
             } => provisioner
-                .add_route(node, destination.as_deref(), metric, &next_hops)
+                .add_route(node, v6, destination.as_deref(), metric, &next_hops)
                 .map(|()| None),
+            Request::SetFamilies { v4, v6 } => provisioner.set_families(v4, v6).map(|()| None),
+            Request::FinishNetwork => {
+                provisioner.finish_network();
+                Ok(None)
+            }
             Request::Apply {
                 link,
                 direction,

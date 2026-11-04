@@ -185,6 +185,14 @@ step corrupt "$2" qdisc replace dev np0 root netem limit 1000 corrupt 10% seed 1
 # the backend builds for a direction with a rate and a jitter or a reordering.
 step treeroot "$2" qdisc replace dev np0 root handle 1: netem limit 1000 duplicate 20% rate 1mbit
 step tree "$2" qdisc replace dev np0 parent 1:1 handle 2: netem limit 1000 delay 1000us 500us
+# A network of several nodes needs forwarding and routes with a next hop (D-078), and IPv6 needs a kernel that has it (D-081).
+# The interface gets an address and comes up, so that the route has a connected route to the next hop.
+step forwarding sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+"$1" addr add 10.250.0.1/30 dev np0 >/dev/null 2>&1
+"$1" link set np0 up >/dev/null 2>&1
+"$1" link set np1 up >/dev/null 2>&1
+step route "$1" route add 10.251.0.1/32 via 10.250.0.2 dev np0
+step ipv6 sh -c '[ -d /proc/sys/net/ipv6/conf ] || { echo "the kernel has no IPv6 (/proc/sys/net/ipv6 is missing)"; exit 1; }; "$0" -6 addr add fd00:250::1/64 dev np0 nodad' "$1"
 # A stream without the checksum of UDP is sent through a raw socket, which needs CAP_NET_RAW (capability 13).
 # The effective set of this shell is the one the agent gets: all of it in a user namespace, and in a run with the
 # rights of the process what the process has. The low 32 bits are enough: the capability is among them.
@@ -607,7 +615,52 @@ fn kernel_checks(findings: &Findings, tc: &Tool, checks: &mut Vec<Check>) {
         &after_veth("tree"),
         not_tested,
     ));
+    checks.push(network_check(
+        &after_veth("forwarding"),
+        &after_veth("route"),
+        not_tested,
+    ));
+    checks.push(ipv6_check(&after_veth("ipv6"), not_tested));
     checks.push(raw_socket_check(&step("rawsocket"), not_tested));
+}
+
+/// Forwarding and a route with a next hop in a node: what a network of several nodes needs (D-078).
+fn network_check(forwarding: &Outcome, route: &Outcome, not_tested: &str) -> Check {
+    let title = "forwarding and routes in a node";
+    match (forwarding, route) {
+        (Some(Ok(())), Some(Ok(()))) => kernel(
+            "network",
+            title,
+            Status::Ok,
+            "a node can forward packets and have a route through a next hop, so networks of several nodes can be built",
+            None,
+        ),
+        (Some(Err(error)), _) | (_, Some(Err(error))) => kernel(
+            "network",
+            title,
+            Status::Fail,
+            error,
+            Some("a node needs `net.ipv4.ip_forward` and `ip route add ... via ...`; scenarios with several nodes or routers are refused here, point to point still runs".to_owned()),
+        ),
+        _ => kernel("network", title, Status::Info, not_tested, None),
+    }
+}
+
+/// IPv6 in a node (D-081). A machine without it still runs every scenario that does not ask for `ip: v6` or `ip: dual`, so it
+/// is a warning and not a failure.
+fn ipv6_check(outcome: &Outcome, not_tested: &str) -> Check {
+    let title = "IPv6 in a node";
+    match outcome {
+        Some(Ok(())) => kernel("ipv6", title, Status::Ok, "a node can have IPv6 addresses", None),
+        Some(Err(error)) => kernel(
+            "ipv6",
+            title,
+            Status::Warn,
+            error,
+            Some("scenarios with `ip: v6` or `ip: dual` are refused here; the kernel needs IPv6 (not `ipv6.disable=1`)".to_owned()),
+        ),
+        None => kernel("ipv6", title, Status::Info, not_tested, None),
+    }
 }
 
 /// The capability that a stream without the checksum of UDP needs (`udp-checksum: false`): the sender writes
@@ -902,6 +955,9 @@ mod tests {
             "corrupt",
             "treeroot",
             "tree",
+            "forwarding",
+            "route",
+            "ipv6",
             "rawsocket",
         ]
         .into_iter()

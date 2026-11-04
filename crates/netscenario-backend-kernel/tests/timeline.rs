@@ -360,10 +360,19 @@ impl Backend for Slow {
     fn create_link(&mut self, name: &Name, between: [NodeHandle; 2]) -> Result<LinkHandle, Error> {
         self.inner.create_link(name, between)
     }
+    fn set_ip_families(&mut self, v4: bool, v6: bool) -> Result<(), Error> {
+        self.inner.set_ip_families(v4, v6)
+    }
+    fn finish_network(&mut self) -> Result<(), Error> {
+        self.inner.finish_network()
+    }
+    fn address_v6(&self, link: LinkHandle, end: usize) -> Result<std::net::Ipv6Addr, Error> {
+        self.inner.address_v6(link, end)
+    }
     fn set_node_address(
         &mut self,
         node: NodeHandle,
-        address: std::net::Ipv4Addr,
+        address: std::net::IpAddr,
     ) -> Result<(), Error> {
         self.inner.set_node_address(node, address)
     }

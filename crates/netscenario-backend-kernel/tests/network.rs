@@ -14,7 +14,9 @@ use netscenario_core::{
     Backend, Direction, Error, LinkHandle, NodeHandle, ProgramHandle, RunOptions, RunResult, run,
 };
 use netscenario_model::{Impairments, Name, Scenario};
-use support::{agent_exe, assert_nothing_left, backend, namespaces_available, work_dir};
+use support::{
+    agent_exe, assert_nothing_left, backend, ipv6_available, namespaces_available, work_dir,
+};
 
 fn options(dir: &Path) -> RunOptions {
     RunOptions::new(agent_exe().unwrap(), dir)
@@ -128,10 +130,19 @@ impl Backend for NoForwarding {
     fn create_link(&mut self, name: &Name, between: [NodeHandle; 2]) -> Result<LinkHandle, Error> {
         self.0.create_link(name, between)
     }
+    fn set_ip_families(&mut self, v4: bool, v6: bool) -> Result<(), Error> {
+        self.0.set_ip_families(v4, v6)
+    }
+    fn finish_network(&mut self) -> Result<(), Error> {
+        self.0.finish_network()
+    }
+    fn address_v6(&self, link: LinkHandle, end: usize) -> Result<std::net::Ipv6Addr, Error> {
+        self.0.address_v6(link, end)
+    }
     fn set_node_address(
         &mut self,
         node: NodeHandle,
-        address: std::net::Ipv4Addr,
+        address: std::net::IpAddr,
     ) -> Result<(), Error> {
         self.0.set_node_address(node, address)
     }
@@ -416,12 +427,26 @@ fn when_the_first_link_goes_down_the_route_of_the_next_metric_takes_over() {
 /// give or take the lateness of the sender and a packet at each edge.
 #[test]
 fn a_link_that_comes_back_carries_the_routes_again() {
+    a_link_comes_back("", "network-comes-back");
+}
+
+/// The same over IPv6: the kernel removes the routes and the fixed neighbours of that family as well, and the backend puts both
+/// back (D-081).
+#[test]
+fn a_link_that_comes_back_carries_the_routes_again_over_ipv6() {
+    if !ipv6_available() {
+        return;
+    }
+    a_link_comes_back("  ip: v6\n", "network-comes-back-v6");
+}
+
+fn a_link_comes_back(prefix: &str, name: &str) {
     if !namespaces_available() || agent_exe().is_none() {
         return;
     }
-    let dir = work_dir("network-comes-back");
+    let dir = work_dir(name);
     let mut backend = backend(|_| {});
-    let mut chain = scenario(CHAIN, FLOW);
+    let mut chain = scenario(&format!("{prefix}{CHAIN}"), FLOW);
     chain.duration = "4s".parse().unwrap();
     chain.timeline = vec![
         serde_json::from_str(r#"{ "at": "1s", "link": "l2", "down": true }"#).unwrap(),
@@ -577,4 +602,233 @@ fn a_packet_larger_than_the_mtu_is_cut_into_fragments_and_arrives_whole() {
     assert!(result.directions.is_empty(), "{:?}", result.directions);
     assert_nothing_left(backend.run_id(), "after the run");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A sender that must not fragment (`dont-fragment`, D-081): a packet that fits the MTU of the link goes out as it is, and one
+/// that does not is refused by the system, every time, and counted as refused and not as lost. Next to it a packet of the same
+/// size without the flag is cut into fragments and arrives whole.
+#[test]
+fn a_sender_that_must_not_fragment_has_the_packet_that_does_not_fit_refused() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("network-dont-fragment");
+    let mut backend = backend(|_| {});
+    let result = run(
+        &mut backend,
+        &scenario(
+            "  nodes: [client, server]\n  links:\n    - { id: access, between: [client, server], mtu: 1000 }\n",
+            "  - { id: fits, kind: udp-cbr, from: client, to: server, rate: 800kbit, packet-size: 800b, dont-fragment: true }\n  - { id: too-large, kind: udp-cbr, from: client, to: server, rate: 1400kbit, packet-size: 1400b, dont-fragment: true }\n  - { id: cut, kind: udp-cbr, from: client, to: server, rate: 1400kbit, packet-size: 1400b }\n",
+        ),
+        &options(&dir),
+    )
+    .unwrap();
+    let [fits, too_large, cut] = result.workloads.as_slice() else {
+        panic!("{:?}", result.workloads.len());
+    };
+    // 800 kbit with 800-byte payloads is 125 packets a second: 250 in two seconds
+    assert_eq!(
+        (
+            fits.stats.sent,
+            fits.stats.received,
+            fits.sender.send_errors
+        ),
+        (250, 250, 0)
+    );
+    // Every packet of the second is refused by the sender: none is sent, none is lost, 250 are counted as refused
+    assert_eq!(too_large.stats.sent, 0, "{:?}", too_large.stats);
+    assert_eq!(too_large.sender.send_errors, 250, "{:?}", too_large.sender);
+    let why = too_large.sender.first_error.as_deref().unwrap_or("");
+    assert!(why.contains("Message too long"), "{why}");
+    // The second is not fragmented, the third is: one frame, and two
+    assert_eq!(too_large.frames_per_packet, 1);
+    assert_eq!(cut.frames_per_packet, 2);
+    assert_eq!((cut.stats.sent, cut.stats.received), (250, 250));
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The chain of four hops over IPv6 only (D-081): the packets arrive, the node addresses and the addresses of the links are IPv6,
+/// the receiver is written with brackets, and the packet is accounted for link by link as over IPv4.
+#[test]
+fn a_flow_over_four_hops_arrives_over_ipv6() {
+    if !namespaces_available() || agent_exe().is_none() || !ipv6_available() {
+        return;
+    }
+    let dir = work_dir("network-chain-v6");
+    let mut backend = backend(|_| {});
+    let result = run(
+        &mut backend,
+        &scenario(&format!("  ip: v6\n{CHAIN}"), FLOW),
+        &options(&dir),
+    )
+    .unwrap();
+    let media = only_workload(&result);
+    assert_eq!(
+        (media.stats.sent, media.stats.received, media.stats.lost),
+        (250, 250, 0)
+    );
+    assert_eq!(media.to_address, "[fd00:200::5]:5000");
+    assert_eq!(media.from_address, "fd00:200::1");
+    assert_eq!(media.path.as_ref().unwrap().links, ["l1", "l2", "l3", "l4"]);
+    // No IPv4 anywhere: eight ends of links, all IPv6, and the nodes
+    assert_eq!(result.addresses.len(), 8);
+    assert!(
+        result
+            .addresses
+            .iter()
+            .all(|a| a.address.starts_with("fd00:100:"))
+    );
+    assert!(
+        result
+            .nodes
+            .iter()
+            .all(|n| n.address.starts_with("fd00:200::") && n.address_v6.is_none())
+    );
+    let hops: Vec<(u64, u64, Option<u64>)> = result
+        .directions
+        .iter()
+        .map(|t| (t.sent, t.reached_node, t.lost_in_queue))
+        .collect();
+    assert_eq!(hops, [(250, 250, Some(0)); 4]);
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Canary: a host that does not forward carries no IPv6 packet either (the setting of the machine is not inherited).
+#[test]
+fn without_forwarding_in_the_routers_nothing_arrives_over_ipv6() {
+    if !namespaces_available() || agent_exe().is_none() || !ipv6_available() {
+        return;
+    }
+    let dir = work_dir("network-no-forwarding-v6");
+    let mut backend = NoForwarding(backend(|_| {}));
+    let result = run(
+        &mut backend,
+        &scenario(&format!("  ip: v6\n{CHAIN}"), FLOW),
+        &options(&dir),
+    )
+    .unwrap();
+    let media = only_workload(&result);
+    assert_eq!(media.stats.sent, 250);
+    assert_eq!(
+        media.stats.received, 0,
+        "a host in the middle does not forward"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A network with both families: each workload uses its own, IPv4 where it says nothing, and both arrive (D-081).
+#[test]
+fn a_dual_stack_network_carries_a_flow_of_each_family() {
+    if !namespaces_available() || agent_exe().is_none() || !ipv6_available() {
+        return;
+    }
+    let dir = work_dir("network-dual");
+    let mut backend = backend(|_| {});
+    let result = run(
+        &mut backend,
+        &scenario(
+            "  ip: dual\n  nodes: [client, { id: r, role: router }, server]\n  links:\n    - { id: a, between: [client, r] }\n    - { id: b, between: [r, server] }\n",
+            "  - { id: first, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b }\n  - { id: second, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b, ip: v6 }\n",
+        ),
+        &options(&dir),
+    )
+    .unwrap();
+    let [first, second] = result.workloads.as_slice() else {
+        panic!("{}", result.workloads.len());
+    };
+    assert_eq!(first.to_address, "10.200.0.3:5000");
+    assert_eq!(second.to_address, "[fd00:200::3]:5001");
+    for workload in [first, second] {
+        assert_eq!(
+            (workload.stats.sent, workload.stats.received),
+            (250, 250),
+            "{}",
+            workload.id
+        );
+    }
+    // Both families on the links and the nodes
+    assert_eq!(result.addresses.len(), 8);
+    assert_eq!(
+        result
+            .nodes
+            .iter()
+            .filter(|n| n.address_v6.is_some())
+            .count(),
+        3
+    );
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A packet over IPv6 that does not fit the first link is cut into fragments by the sender (a router never cuts, so the second
+/// link has the default MTU): 3,000 bytes over an MTU of 1,280 make 3 fragments (D-081).
+#[test]
+fn a_packet_is_cut_into_fragments_over_ipv6() {
+    if !namespaces_available() || agent_exe().is_none() || !ipv6_available() {
+        return;
+    }
+    let dir = work_dir("network-fragments-v6");
+    let mut backend = backend(|_| {});
+    let chain = with_capture(
+        &scenario(
+            "  ip: v6\n  nodes: [client, { id: r, role: router }, server]\n  links:\n    - { id: small, between: [client, r], mtu: 1280 }\n    - { id: big, between: [r, server] }\n",
+            "  - { id: media, kind: udp-cbr, from: client, to: server, rate: 3mbit, packet-size: 3000b }\n",
+        ),
+        &["small", "big"],
+    );
+    let result = run(&mut backend, &chain, &options(&dir)).unwrap();
+    let media = only_workload(&result);
+    // 3 mbit with 3000-byte payloads is 125 packets a second
+    assert_eq!(
+        (media.stats.sent, media.stats.received, media.stats.lost),
+        (250, 250, 0)
+    );
+    assert_eq!(media.frames_per_packet, 3);
+    assert_eq!(frames(&result, "small", "client"), 750);
+    assert_eq!(frames(&result, "big", "r"), 750);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Canary for the quiet of an IPv6 network: a packet that no workload sent and that enters the queue shifts the seeded loss, and the
+/// check of the queue says so. The same seed over IPv6 and over IPv4 loses the same packets, and the queue counted what the sender
+/// sent and nothing else.
+#[test]
+fn the_seeded_loss_over_ipv6_is_the_one_over_ipv4_and_the_queue_saw_the_packets_of_the_workload_only()
+ {
+    if !namespaces_available() || agent_exe().is_none() || !ipv6_available() {
+        return;
+    }
+    let mut lost = Vec::new();
+    for (name, prefix) in [("v4", ""), ("v6", "  ip: v6\n")] {
+        let dir = work_dir(&format!("network-seed-{name}"));
+        let mut backend = backend(|_| {});
+        let mut lossy = scenario(
+            &format!(
+                "{prefix}  nodes: [client, server]\n  links:\n    - {{ id: access, between: [client, server], both: {{ loss: {{ model: random, p: 20% }} }} }}\n"
+            ),
+            FLOW,
+        );
+        lossy.seed = Some(42);
+        let result = run(&mut backend, &lossy, &options(&dir)).unwrap();
+        assert!(result.seed.loss_reproducible, "{name}: {:?}", result.seed);
+        assert!(
+            result
+                .seed
+                .queue_checks
+                .iter()
+                .all(netscenario_core::QueueCheck::agrees),
+            "{name}: {:?}",
+            result.seed.queue_checks
+        );
+        let media = only_workload(&result);
+        lost.push((media.stats.lost, media.stats.received));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    assert_eq!(
+        lost[0], lost[1],
+        "v4 and v6 lose different packets: {lost:?}"
+    );
+    assert!(lost[0].0 > 20, "a loss of 20 % of 250 packets: {lost:?}");
 }

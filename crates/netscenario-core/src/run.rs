@@ -284,6 +284,9 @@ struct Flow<'a> {
     path: netscenario_model::Path,
     /// The frames a packet makes on the first link: more than one if the sender cuts it into fragments (D-081).
     frames: u64,
+    /// Why the damaged packets of this flow cannot be named by sequence number, where the path corrupts them (D-081): the tap
+    /// of the receiver reads IPv4 frames, and a fragment other than the first shows no sequence number.
+    wire_unavailable: Option<&'static str>,
     records_file: PathBuf,
     /// Where the tap of the receiver writes the packets it sees on the wire, for a workload whose direction
     /// corrupts packets (they are named by sequence number, D-040).
@@ -459,10 +462,11 @@ fn node_infos(scenario: &Scenario, provisioned: &Provisioned) -> Vec<NodeInfo> {
         .nodes
         .iter()
         .zip(&provisioned.node_addresses)
-        .map(|(node, (_, address))| NodeInfo {
+        .map(|(node, (_, ips))| NodeInfo {
             node: node.id.to_string(),
             role: node.role.as_str().to_owned(),
-            address: address.to_string(),
+            address: ips.primary().map(|a| a.to_string()).unwrap_or_default(),
+            address_v6: ips.v4.and(ips.v6).map(|a| a.to_string()),
         })
         .collect()
 }
@@ -807,14 +811,15 @@ fn workload_result(
     };
     let (series, recoveries) =
         series_of(workload, schedule, flow, scenario, options, timeline, start)?;
-    let (from_address, to_address) = addresses_of(provisioned, workload);
+    let (from_address, to_address) =
+        addresses_of(provisioned, workload, family_of(scenario, workload));
     Ok(WorkloadResult {
         id: workload.id.to_string(),
         kind: workload.kind.as_str().to_owned(),
         from: workload.from.to_string(),
         to: workload.to.to_string(),
         from_address,
-        to_address: format!("{to_address}:{}", port(index)),
+        to_address: socket_text(&to_address, port(index)),
         frames_per_packet: paths_of(scenario)
             .get(index)
             .cloned()
@@ -1067,6 +1072,10 @@ fn frames_on_the_first_link(
     workload: &Generator<'_>,
     path: &netscenario_model::Path,
 ) -> u64 {
+    // A sender that must not cut a packet sends it whole or not at all
+    if workload.dont_fragment {
+        return 1;
+    }
     let mtu = netscenario_model::mtus_of(scenario, &path.links)
         .first()
         .copied()
@@ -1074,7 +1083,7 @@ fn frames_on_the_first_link(
     netscenario_model::frames_per_packet(
         workload.packet_size.bytes(),
         mtu,
-        netscenario_model::IpFamily::V4,
+        family_of(scenario, workload),
     )
 }
 
@@ -1107,16 +1116,37 @@ fn corrupts_on_the_way(scenario: &Scenario, path: &netscenario_model::Path) -> b
 
 /// The address of the sending node and of the receiving node of a workload: the addresses of the nodes on their loopbacks
 /// (D-078), which do not depend on the path.
-fn addresses_of(provisioned: &Provisioned, workload: &Generator<'_>) -> (String, String) {
+fn addresses_of(
+    provisioned: &Provisioned,
+    workload: &Generator<'_>,
+    family: netscenario_model::IpFamily,
+) -> (String, String) {
     let address = |node: &netscenario_model::Name| {
         provisioned
             .node_addresses
             .iter()
             .find(|(name, _)| name == node)
-            .map(|(_, address)| address.to_string())
+            .and_then(|(_, ips)| ips.of(family))
+            .map(|address| address.to_string())
             .unwrap_or_default()
     };
     (address(workload.from), address(workload.to))
+}
+
+/// The family of the addresses a workload uses: its own `ip`, or the only one of the network (D-081).
+fn family_of(scenario: &Scenario, workload: &Generator<'_>) -> netscenario_model::IpFamily {
+    workload
+        .ip
+        .unwrap_or_else(|| scenario.topology.ip.default_family())
+}
+
+/// An address and a port as the agent reads them: `10.200.0.2:5000`, `[fd00:200::2]:5000`.
+fn socket_text(address: &str, port: u16) -> String {
+    if address.contains(':') {
+        format!("[{address}]:{port}")
+    } else {
+        format!("{address}:{port}")
+    }
 }
 
 /// The longest time a packet can be held back by the links of the scenario: the delay and four times the
@@ -1192,7 +1222,8 @@ fn plan<'a>(
             let stop = workload
                 .stop
                 .map_or_else(|| Duration::from(scenario.duration), Duration::from);
-            let (_, to_address) = addresses_of(provisioned, &workload);
+            let (_, to_address) =
+                addresses_of(provisioned, &workload, family_of(scenario, &workload));
             Ok(Flow {
                 index,
                 schedule: traffic::schedule_of(
@@ -1203,12 +1234,23 @@ fn plan<'a>(
                 workload,
                 from_node: node(workload.from)?,
                 to_node: node(workload.to)?,
-                to_address: format!("{to_address}:{}", port(index)),
+                to_address: socket_text(&to_address, port(index)),
                 records_file: options.out_dir.join(records_name(index)),
-                // The tap names a damaged packet by its sequence number, which only the first fragment of a packet shows
+                // The tap names a damaged packet by its sequence number, which only the first fragment of a packet shows, and it
+                // reads IPv4 frames
                 wire_file: (corrupts_on_the_way(scenario, &path)
-                    && frames_on_the_first_link(scenario, &workload, &path) == 1)
+                    && frames_on_the_first_link(scenario, &workload, &path) == 1
+                    && family_of(scenario, &workload) == netscenario_model::IpFamily::V4)
                     .then(|| options.out_dir.join(wire_name(index))),
+                wire_unavailable: if !corrupts_on_the_way(scenario, &path) {
+                    None
+                } else if family_of(scenario, &workload) == netscenario_model::IpFamily::V6 {
+                    Some("the tap of the receiver reads IPv4 frames only, so the damaged packets of an IPv6 flow are counted but not named")
+                } else if frames_on_the_first_link(scenario, &workload, &path) > 1 {
+                    Some("a packet that is cut into fragments shows its sequence number in the first fragment only, so its damaged packets are counted but not named")
+                } else {
+                    None
+                },
                 frames: frames_on_the_first_link(scenario, &workload, &path),
                 path,
                 start,
@@ -1369,6 +1411,9 @@ fn start_senders(
         arguments.push("--start-at-ns".to_owned());
         arguments.push((begin + nanos(flow.start)).to_string());
         arguments.extend(checksum_argument(&flow.workload));
+        if flow.workload.dont_fragment {
+            arguments.push("--dont-fragment".to_owned());
+        }
         // The steps this sender waits for: before which packet, and under which number the run answers
         let barriers: Vec<String> = bindings
             .iter()
@@ -1701,6 +1746,9 @@ fn name_from_the_wire(
     sent: &SendSummary,
     delivered: &records::File,
 ) -> Naming {
+    if let Some(why) = flow.wire_unavailable {
+        return Naming::Unavailable(why.to_owned());
+    }
     let Some(path) = &flow.wire_file else {
         return Naming::NotAsked;
     };
@@ -2195,7 +2243,24 @@ mod tests {
             Ok(LinkHandle(self.links_made - 1))
         }
 
-        fn set_node_address(&mut self, _: NodeHandle, _: std::net::Ipv4Addr) -> Result<(), Error> {
+        fn set_ip_families(&mut self, _: bool, _: bool) -> Result<(), Error> {
+            Ok(())
+        }
+
+        fn address_v6(&self, link: LinkHandle, end: usize) -> Result<std::net::Ipv6Addr, Error> {
+            Ok(std::net::Ipv6Addr::new(
+                0xfd00,
+                0x100,
+                u16::try_from(link.0).unwrap(),
+                0,
+                0,
+                0,
+                0,
+                1 + u16::try_from(end).unwrap(),
+            ))
+        }
+
+        fn set_node_address(&mut self, _: NodeHandle, _: std::net::IpAddr) -> Result<(), Error> {
             Ok(())
         }
 
@@ -2994,6 +3059,44 @@ mod tests {
         let options = self::options("frames-wrong");
         let result = run(&mut backend, &cut, &options).unwrap();
         assert!(!result.seed.loss_reproducible);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// In a network with both families a workload uses the family it asks for, and IPv4 where it says nothing (D-081). The
+    /// address of an IPv6 receiver is written with brackets, as the agent reads it, and the result lists the addresses of
+    /// both families.
+    #[test]
+    fn a_workload_uses_its_own_family_in_a_dual_stack_network() {
+        let dual = |workload: &str| {
+            Scenario::from_yaml(
+                &format!("version: 0\nname: t\nduration: 1s\ntopology:\n  ip: dual\n  nodes: [a, b]\n  links:\n    - {{ id: l, between: [a, b] }}\nworkloads:\n  - {{ id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b{workload} }}\n"),
+                "dual.yaml",
+            )
+            .unwrap()
+        };
+        let mut backend = Fake::new(None);
+        let options = options("family-v6");
+        let result = run(&mut backend, &dual(", ip: v6"), &options).unwrap();
+        let workload = &result.workloads[0];
+        assert_eq!(
+            (workload.from_address.as_str(), workload.to_address.as_str()),
+            ("fd00:200::1", "[fd00:200::2]:5000")
+        );
+        assert_eq!(result.nodes[0].address, "10.200.0.1");
+        assert_eq!(result.nodes[0].address_v6.as_deref(), Some("fd00:200::1"));
+        assert_eq!(result.addresses.len(), 4, "{:?}", result.addresses);
+        assert!(
+            backend
+                .calls
+                .iter()
+                .any(|call| call.starts_with("start recv"))
+        );
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+
+        let mut backend = Fake::new(None);
+        let options = self::options("family-default");
+        let result = run(&mut backend, &dual(""), &options).unwrap();
+        assert_eq!(result.workloads[0].to_address, "10.200.0.2:5000");
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 
