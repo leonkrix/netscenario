@@ -96,8 +96,10 @@ fn a_fifo_drops_the_tail_and_the_delay_is_the_queue_of_frames() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// The delay of the link comes after the queue: with a delay of 20 ms behind it no packet is faster than the delay and the
-/// time it takes to send the first frame, 20 + 4.168 ms (the physical lower bound), and the queue still drops.
+/// The delay of the link comes after the queue. No packet is faster than the delay of 20 ms (the physical lower bound: the first
+/// packet finds the burst of the shaper full and waits for nothing, so the smallest delay is the delay itself, 20.03 ms was
+/// measured). A packet that waited in the full queue has both: the largest delay is the 212.6 ms of 51 frames (see the test of the
+/// tail drop) plus the 20 ms, between 220 ms and 245 ms. The queue drops what it dropped without the delay.
 #[test]
 fn the_delay_of_the_link_comes_after_the_queue() {
     if !namespaces_available() || agent_exe().is_none() {
@@ -110,9 +112,14 @@ fn the_delay_of_the_link_comes_after_the_queue() {
     let media = &result.workloads[0];
     let delay = media.stats.delay.as_ref().unwrap();
     assert!(
-        delay.min_ns >= 24_100_000,
-        "the smallest delay is {} ns, no packet can be faster than 24.168 ms",
+        delay.min_ns >= 20_000_000,
+        "the smallest delay is {} ns, no packet can be faster than 20 ms",
         delay.min_ns
+    );
+    assert!(
+        (220_000_000..=245_000_000).contains(&delay.max_ns),
+        "the largest delay is {} ns, the model says 20 ms + 212.6 ms",
+        delay.max_ns
     );
     // The same queue, the same drops: the delay behind the queue does not change what the queue drops
     assert!(
