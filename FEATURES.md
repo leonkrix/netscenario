@@ -72,7 +72,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | LNK-07 | Corruption | S | 0.2 | done (format done with D-049; the Kernel backend applies it since D-055, with the account of D-040 per direction: lost in the queue, dropped by the node, delivered; `tests/fidelity.rs`: 10 % at three payload sizes and with a loss; `udp-checksum: false` is WRK-11; the corrupted packets are named by sequence number since D-057) |
 | LNK-08 | Rate limit (token bucket) | M | 0.1 | done (`fidelity.rs`: `a_rate_limit_counts_ethernet_frames`) |
 | LNK-09 | Queue limit and queue disciplines (FIFO, CoDel, FQ-CoDel, PIE) | M | 0.3 | planned |
-| LNK-10 | MTU and fragmentation | S | 0.3 | planned |
+| LNK-10 | MTU and fragmentation | S | 0.3 | in progress (`mtu` on a link, the sender cuts a packet that does not fit, a router never cuts, the account is by frames, [D-081](docs/decisions/D-081.md); `tests/network.rs`, the fidelity case waits for its first CI run; `dont-fragment` is not built yet) |
 | LNK-11 | Different values per direction | M | 0.1 | done (`tests/provision.rs`: `the_impairments_are_in_the_queues_of_the_right_interfaces`; `tests/agent.rs`) |
 | LNK-12 | Outages (windows without any delivery, also of the packets on their way) | M | 0.2 | done (format with D-050; the Kernel backend since D-064; `tests/timeline.rs`: nothing arrives in the window and the packets in flight are dropped; the edges are placed by the clock) |
 | LNK-13 | ECN marking | C | 0.4 | idea |

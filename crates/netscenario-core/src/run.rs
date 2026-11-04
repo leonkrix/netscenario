@@ -282,6 +282,8 @@ struct Flow<'a> {
     to_address: String,
     /// The nodes and links its packets pass (D-078).
     path: netscenario_model::Path,
+    /// The frames a packet makes on the first link: more than one if the sender cuts it into fragments (D-081).
+    frames: u64,
     records_file: PathBuf,
     /// Where the tap of the receiver writes the packets it sees on the wire, for a workload whose direction
     /// corrupts packets (they are named by sequence number, D-040).
@@ -813,6 +815,13 @@ fn workload_result(
         to: workload.to.to_string(),
         from_address,
         to_address: format!("{to_address}:{}", port(index)),
+        frames_per_packet: paths_of(scenario)
+            .get(index)
+            .cloned()
+            .flatten()
+            .map_or(1, |path| {
+                frames_on_the_first_link(scenario, workload, &path)
+            }),
         path: paths_of(scenario)
             .get(index)
             .cloned()
@@ -1027,7 +1036,7 @@ fn feed(
 fn entered_packets(
     senders: &[usize],
     feeders: &[(usize, Direction)],
-    sent_of: impl Fn(usize) -> u64,
+    sent_of: impl Fn(usize) -> u64, // the frames a sender put in
     before: &[Option<NodeCounts>],
     after: &[Option<NodeCounts>],
 ) -> Option<u64> {
@@ -1050,6 +1059,23 @@ fn way_place(key: (usize, Direction)) -> usize {
 /// Whether the packets of a workload may come out of a link in another order than they went in: a jitter or a reorder.
 fn may_reorder(impairments: &Impairments) -> bool {
     impairments.jitter.is_some() || impairments.reorder.is_some()
+}
+
+/// The frames a packet of the workload makes on the first link of its path (D-081).
+fn frames_on_the_first_link(
+    scenario: &Scenario,
+    workload: &Generator<'_>,
+    path: &netscenario_model::Path,
+) -> u64 {
+    let mtu = netscenario_model::mtus_of(scenario, &path.links)
+        .first()
+        .copied()
+        .unwrap_or(netscenario_model::DEFAULT_MTU);
+    netscenario_model::frames_per_packet(
+        workload.packet_size.bytes(),
+        mtu,
+        netscenario_model::IpFamily::V4,
+    )
 }
 
 fn nanos(duration: Duration) -> u64 {
@@ -1179,8 +1205,11 @@ fn plan<'a>(
                 to_node: node(workload.to)?,
                 to_address: format!("{to_address}:{}", port(index)),
                 records_file: options.out_dir.join(records_name(index)),
-                wire_file: corrupts_on_the_way(scenario, &path)
+                // The tap names a damaged packet by its sequence number, which only the first fragment of a packet shows
+                wire_file: (corrupts_on_the_way(scenario, &path)
+                    && frames_on_the_first_link(scenario, &workload, &path) == 1)
                     .then(|| options.out_dir.join(wire_name(index))),
+                frames: frames_on_the_first_link(scenario, &workload, &path),
                 path,
                 start,
                 duration: stop.saturating_sub(start),
@@ -1820,7 +1849,7 @@ fn tally_directions(
                 let Some(total) = entered_packets(
                     &senders,
                     &feeders,
-                    |workload| measured[workload].sent.packets,
+                    |workload| measured[workload].sent.packets * flows[workload].frames,
                     before,
                     after,
                 ) else {
@@ -1831,6 +1860,11 @@ fn tally_directions(
             Feed::Idle | Feed::Unknown => continue,
         };
         let crossing = crossings(scenario, &paths, key);
+        // The tally is by packet and a queue sees frames: a packet that is cut into fragments is not accounted for here (D-081);
+        // its queue is still checked, by frames
+        if crossing.iter().any(|c| flows[c.workload].frames > 1) {
+            continue;
+        }
         // The receivers are at the end of the last link only; at a node in the middle the packets are forwarded, and what
         // happens to them there shows on the next link
         let at_the_end = crossing.iter().all(|c| c.last);
@@ -1942,7 +1976,7 @@ fn check_queues(
                 let Some(total) = entered_packets(
                     &senders,
                     &feeders,
-                    |workload| sent[workload].packets,
+                    |workload| sent[workload].packets * flows[workload].frames,
                     before,
                     after,
                 ) else {
@@ -2162,6 +2196,10 @@ mod tests {
         }
 
         fn set_node_address(&mut self, _: NodeHandle, _: std::net::Ipv4Addr) -> Result<(), Error> {
+            Ok(())
+        }
+
+        fn set_link_mtu(&mut self, _: LinkHandle, _: u32) -> Result<(), Error> {
             Ok(())
         }
 
@@ -2928,6 +2966,34 @@ mod tests {
         };
         assert_eq!(tally("l1"), Some(1));
         assert_eq!(tally("l2"), None);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+    }
+
+    /// A queue sees frames (D-081): packets of 1,400 bytes over an MTU of 600 make 3 fragments each, so the queue of the link
+    /// has counted 30 for the 10 packets the fake sent, the check agrees, and the result says how many frames a packet makes.
+    #[test]
+    fn the_queue_of_a_link_that_cuts_the_packets_is_held_to_frames() {
+        let cut = Scenario::from_yaml(
+            "version: 0\nname: t\nseed: 5\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      mtu: 600\n      both: { loss: { model: random, p: 20% } }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 800kbit, packet-size: 1000b }\n",
+            "cut.yaml",
+        )
+        .unwrap();
+        let mut backend = Fake::counting([20, 0]);
+        let options = options("frames");
+        let result = run(&mut backend, &cut, &options).unwrap();
+        // 1000 bytes and 8 of UDP in fragments of 576: 2 frames, so 10 packets are 20 frames
+        assert_eq!(result.workloads[0].frames_per_packet, 2);
+        assert!(result.seed.loss_reproducible, "{:?}", result.seed);
+        assert_eq!(result.seed.queue_checks[0].expected, 20);
+        // Not accounted by packets: no tally
+        assert!(result.directions.is_empty(), "{:?}", result.directions);
+        let _ = std::fs::remove_dir_all(&options.out_dir);
+
+        // Canary: a queue that counted the packets and not the frames is not the queue of this scenario
+        let mut backend = Fake::counting([10, 0]);
+        let options = self::options("frames-wrong");
+        let result = run(&mut backend, &cut, &options).unwrap();
+        assert!(!result.seed.loss_reproducible);
         let _ = std::fs::remove_dir_all(&options.out_dir);
     }
 

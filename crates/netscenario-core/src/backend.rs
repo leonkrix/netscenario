@@ -501,6 +501,19 @@ pub trait Backend {
         })
     }
 
+    /// Sets the MTU of the interfaces at both ends of a link, in bytes (D-081). The default says that the backend cannot.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Backend`] if the link does not exist or the MTU cannot be set.
+    fn set_link_mtu(&mut self, _link: LinkHandle, _mtu: u32) -> Result<(), Error> {
+        Err(Error::Backend {
+            backend: self.name().to_owned(),
+            action: "set the MTU of a link".to_owned(),
+            message: "this backend cannot set the MTU of a link".to_owned(),
+        })
+    }
+
     /// Makes a node forward packets between its links (a router) or not (a host, the default). The default says that the
     /// backend cannot.
     ///

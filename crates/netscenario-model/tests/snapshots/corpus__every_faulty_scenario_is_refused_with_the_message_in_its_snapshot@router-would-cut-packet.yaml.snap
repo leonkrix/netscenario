@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/router-would-cut-packet.yaml
+---
+error: a packet of 1400 bytes of payload would be cut by a router: 1428 bytes of packet do not fit the MTU 1000 of the link 2 ('core')
+  --> router-would-cut-packet.yaml:13:85
+   |
+12 | workloads:
+13 |   - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1400b }
+   |                                                                                     ^^^^^
+   = path: workloads[0].packet-size
+   = help: a router that cuts a packet makes frames in sizes the run cannot account for; make the packet smaller, raise the MTU of that link, or put the smallest MTU first on the path (the sender cuts the packet to the MTU of the first link, and the later links carry the fragments whole)

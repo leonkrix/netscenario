@@ -1,0 +1,13 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [client, { id: edge, role: router }, server]
+  links:
+    - id: access
+      between: [client, edge]
+    - id: core
+      between: [edge, server]
+      mtu: 1000
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1400b }

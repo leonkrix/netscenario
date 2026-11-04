@@ -59,6 +59,9 @@ pub enum Feature {
     /// Routes the scenario takes a hand in: a node that is a router, listed routes, manual routing, a link `cost` or
     /// `ecmp` (D-078). Last in the list because it was added last.
     StaticRoutes,
+    /// The `mtu` of a link, and the fragments a datagram that does not fit the first link makes (D-081). Last in the list
+    /// because it was added last.
+    LinkMtu,
 }
 
 impl Feature {
@@ -86,6 +89,7 @@ impl Feature {
         Feature::PacketCapture,
         Feature::MultipleNodes,
         Feature::StaticRoutes,
+        Feature::LinkMtu,
     ];
 
     /// A short stable name, for results and logs.
@@ -114,6 +118,7 @@ impl Feature {
             Feature::PacketCapture => "packet-capture",
             Feature::MultipleNodes => "multiple-nodes",
             Feature::StaticRoutes => "static-routes",
+            Feature::LinkMtu => "link-mtu",
         }
     }
 
@@ -143,6 +148,7 @@ impl Feature {
             Feature::PacketCapture => "Packet capture",
             Feature::MultipleNodes => "Several nodes and links",
             Feature::StaticRoutes => "Routers and routes",
+            Feature::LinkMtu => "MTU, fragmentation",
         }
     }
 }
@@ -221,6 +227,9 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
     need(Feature::Ipv4, "topology".to_owned());
     for (index, link) in scenario.topology.links.iter().enumerate() {
         let base = format!("topology.links[{index}]");
+        if link.mtu.is_some() {
+            need(Feature::LinkMtu, format!("{base}.mtu"));
+        }
         for (name, impairments) in [
             ("forward", &link.forward),
             ("reverse", &link.reverse),

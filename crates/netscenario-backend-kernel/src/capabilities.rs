@@ -119,6 +119,7 @@ pub fn capabilities_probed(environment: &Environment, probed: &Probed) -> Capabi
             Feature::PointToPoint,
             Feature::MultipleNodes,
             Feature::StaticRoutes,
+            Feature::LinkMtu,
         ] {
             capabilities = capabilities.with(
                 feature,
@@ -194,6 +195,7 @@ fn by_version(environment: &Environment) -> Capabilities {
         .with(Feature::PacketCapture, Support::Exact)
         .with(Feature::MultipleNodes, Support::Exact)
         .with(Feature::StaticRoutes, Support::Exact)
+        .with(Feature::LinkMtu, Support::Exact)
         .with(Feature::UdpWithoutChecksum, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
@@ -342,7 +344,11 @@ mod tests {
         one("corrupt", Feature::Corruption, &[]);
         one("seed", Feature::SeededLoss, &[]);
         // Networks of several nodes are built from the same pairs, so they are refused with the same answer
-        let no_veth = [Feature::MultipleNodes, Feature::StaticRoutes];
+        let no_veth = [
+            Feature::MultipleNodes,
+            Feature::StaticRoutes,
+            Feature::LinkMtu,
+        ];
         one("veth", Feature::PointToPoint, &no_veth);
         let found = declared(&probed(&[(
             "veth",

@@ -19,6 +19,9 @@ pub struct LinkSpec {
     /// What the link costs the automatic routing. 1 by default.
     #[serde(default)]
     pub cost: Option<u32>,
+    /// The MTU of the link in bytes. 1500 by default.
+    #[serde(default)]
+    pub mtu: Option<u32>,
     /// The impairments from the first node of the link to the second.
     #[serde(default)]
     pub forward: Option<Impairments>,
@@ -34,6 +37,7 @@ impl LinkSpec {
     fn link(&self, id: Name, between: [Name; 2]) -> Link {
         let mut link = Link::new(id, between);
         link.cost = self.cost;
+        link.mtu = self.mtu;
         link.forward.clone_from(&self.forward);
         link.reverse.clone_from(&self.reverse);
         link.both.clone_from(&self.both);
@@ -124,6 +128,7 @@ fn joined(first: &Name, second: &Name) -> Result<Name, String> {
 fn spec_or_none(spec: Option<&LinkSpec>) -> LinkSpec {
     spec.cloned().unwrap_or(LinkSpec {
         cost: None,
+        mtu: None,
         forward: None,
         reverse: None,
         both: None,

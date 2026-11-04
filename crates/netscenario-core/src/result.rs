@@ -404,6 +404,15 @@ pub struct PathInfo {
     pub shared: bool,
 }
 
+fn one() -> u64 {
+    1
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_one(value: &u64) -> bool {
+    *value == 1
+}
+
 /// The times of a run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -471,6 +480,10 @@ pub struct WorkloadResult {
     /// The nodes and links the packets pass (D-078). Absent in a result of release 0.2 or earlier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathInfo>,
+    /// The frames a packet makes on the first link of its path: 1 if it fits the MTU, else the fragments the sender cuts it
+    /// into (D-081). A queue sees frames, and a lost frame loses the packet. 1 in a result of release 0.2 or earlier.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub frames_per_packet: u64,
     /// The rate of the payload that the schedule is meant to give: the rate of the scenario for `udp-cbr` and `udp-poisson`
     /// (for the second it is the mean), and the mean over the phases or the bursts for `udp-onoff` and `udp-bursty`, rounded
     /// down.
@@ -609,6 +622,7 @@ pub(crate) mod tests {
                 from_address: "10.100.0.1".to_owned(),
                 to_address: "10.100.0.2:5000".to_owned(),
                 path: None,
+                frames_per_packet: 1,
                 rate_bits_per_second: 1_000_000,
                 packet_size_bytes: 1000,
                 start_ns: 0,

@@ -46,6 +46,11 @@ pub(crate) enum Request {
         node: u32,
         address: String,
     },
+    /// Sets the MTU of both interfaces of a link (D-081).
+    SetMtu {
+        link: u32,
+        mtu: u32,
+    },
     /// Makes a node forward packets or not (D-078).
     SetForwarding {
         node: u32,

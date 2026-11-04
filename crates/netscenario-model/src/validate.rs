@@ -147,6 +147,19 @@ impl Scenario {
                         .with_help("the cost is a whole number; 1 is the default"),
                 );
             }
+            if let Some(mtu) = link.mtu
+                && !(crate::MIN_MTU..=crate::MAX_MTU).contains(&mtu)
+            {
+                problems.push(
+                    Problem::new(format!(
+                        "the MTU {mtu} is outside {} to {} bytes",
+                        crate::MIN_MTU,
+                        crate::MAX_MTU
+                    ))
+                    .at_path(format!("{base}.mtu"))
+                    .with_help("the MTU is the size of the largest IP packet the interface carries; 1500 is the default"),
+                );
+            }
             let [first, second] = &link.between;
             if first == second {
                 problems.push(
@@ -486,15 +499,56 @@ impl Scenario {
                 self.check_path(routes, workload.from, workload.to, base, problems);
             }
             let size = workload.packet_size.bytes();
-            if !(MIN_PACKET_SIZE..=MAX_PACKET_SIZE).contains(&size) {
+            // The links of the path, when there is one: their MTUs decide how large a packet may be (D-081)
+            let path_links = routes
+                .filter(|_| nodes_ok && workload.from != workload.to)
+                .and_then(|routes| self.topology.path(routes, workload.from, workload.to).ok())
+                .map(|path| path.links);
+            let mtus: Vec<u32> = path_links
+                .as_ref()
+                .map(|links| crate::mtus_of_topology(&self.topology, links))
+                .unwrap_or_default();
+            let sets_mtu = path_links.as_ref().is_some_and(|links| {
+                links.iter().any(|name| {
+                    self.topology
+                        .links
+                        .iter()
+                        .any(|link| link.id == *name && link.mtu.is_some())
+                })
+            });
+            // Without a link that says its MTU a packet that does not fit 1500 is a mistake; with one, a larger packet is
+            // the way to ask for fragmentation
+            let largest = if sets_mtu {
+                crate::MAX_UDP_PAYLOAD_V4
+            } else {
+                MAX_PACKET_SIZE
+            };
+            if !(MIN_PACKET_SIZE..=largest).contains(&size) {
                 problems.push(
                     Problem::new(format!(
-                        "the packet size {size} bytes is outside {MIN_PACKET_SIZE} to {MAX_PACKET_SIZE} bytes"
+                        "the packet size {size} bytes is outside {MIN_PACKET_SIZE} to {largest} bytes"
                     ))
                     .at_path(format!("{base}.packet-size"))
-                    .with_help(format!(
-                        "the smallest payload is the header of the agent ({MIN_PACKET_SIZE} bytes); the largest fits the MTU of 1500 without fragmentation ({MAX_PACKET_SIZE} bytes)"
-                    )),
+                    .with_help(if sets_mtu {
+                        format!(
+                            "the smallest payload is the header of the agent ({MIN_PACKET_SIZE} bytes); the largest is the biggest UDP datagram ({largest} bytes), which the sender cuts into fragments where it does not fit the MTU of the first link"
+                        )
+                    } else {
+                        format!(
+                            "the smallest payload is the header of the agent ({MIN_PACKET_SIZE} bytes); the largest fits the MTU of 1500 without fragmentation ({MAX_PACKET_SIZE} bytes); a link with an `mtu` allows a larger packet, which is then cut into fragments"
+                        )
+                    }),
+                );
+            } else if let Some((at, why)) = crate::path_problem(size, &mtus, crate::IpFamily::V4)
+                && let Some(links) = &path_links
+            {
+                problems.push(
+                    Problem::new(format!(
+                        "a packet of {size} bytes of payload would be cut by a router: {why} ('{}')",
+                        links[at]
+                    ))
+                    .at_path(format!("{base}.packet-size"))
+                    .with_help("a router that cuts a packet makes frames in sizes the run cannot account for; make the packet smaller, raise the MTU of that link, or put the smallest MTU first on the path (the sender cuts the packet to the MTU of the first link, and the later links carry the fragments whole)"),
                 );
             } else if !workload.udp_checksum.is_on() && size < MIN_PACKET_SIZE_WITHOUT_CHECKSUM {
                 problems.push(

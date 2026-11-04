@@ -135,6 +135,9 @@ impl Backend for NoForwarding {
     ) -> Result<(), Error> {
         self.0.set_node_address(node, address)
     }
+    fn set_link_mtu(&mut self, link: LinkHandle, mtu: u32) -> Result<(), Error> {
+        self.0.set_link_mtu(link, mtu)
+    }
     fn set_forwarding(&mut self, node: NodeHandle, _on: bool) -> Result<(), Error> {
         // No node forwards, whatever the machine has set: the routers are told to stop, as are the hosts
         self.0.set_forwarding(node, false)
@@ -539,6 +542,39 @@ fn two_flows_over_a_shared_link_arrive_and_the_account_adds_them_at_the_shared_l
         3,
         "the right-hand links have no tally: {tallied:?}"
     );
+    assert_nothing_left(backend.run_id(), "after the run");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// An MTU of 1000 on a link and packets of 1,400 bytes: the sender cuts each packet into 2 fragments, the capture sees twice the
+/// packets as frames, the receiver gets every packet whole, and the result says how many frames a packet makes (D-081). The
+/// router in the middle carries the fragments whole (its second link has an MTU of 1500).
+#[test]
+fn a_packet_larger_than_the_mtu_is_cut_into_fragments_and_arrives_whole() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let dir = work_dir("network-fragments");
+    let mut backend = backend(|_| {});
+    let chain = with_capture(
+        &scenario(
+            "  nodes: [client, { id: r, role: router }, server]\n  links:\n    - { id: small, between: [client, r], mtu: 1000 }\n    - { id: big, between: [r, server] }\n",
+            "  - { id: media, kind: udp-cbr, from: client, to: server, rate: 1400kbit, packet-size: 1400b }\n",
+        ),
+        &["small", "big"],
+    );
+    let result = run(&mut backend, &chain, &options(&dir)).unwrap();
+    let media = only_workload(&result);
+    // 1400 kbit with 1400-byte payloads is 125 packets a second: 250 in two seconds
+    assert_eq!(
+        (media.stats.sent, media.stats.received, media.stats.lost),
+        (250, 250, 0)
+    );
+    assert_eq!(media.frames_per_packet, 2);
+    assert_eq!(frames(&result, "small", "client"), 500);
+    assert_eq!(frames(&result, "big", "r"), 500);
+    // The packet is accounted for by packets, which a fragmented packet is not: no tally
+    assert!(result.directions.is_empty(), "{:?}", result.directions);
     assert_nothing_left(backend.run_id(), "after the run");
     let _ = std::fs::remove_dir_all(dir);
 }

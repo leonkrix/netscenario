@@ -156,6 +156,9 @@ fn build(
             ]));
         };
         let handle = backend.create_link(&link.id, [first, second])?;
+        if let Some(mtu) = link.mtu {
+            backend.set_link_mtu(handle, mtu)?;
+        }
         for direction in [Direction::Forward, Direction::Reverse] {
             // The states the timeline leads the direction through, the one it starts with first. A direction
             // that the timeline does not touch has only that one.
@@ -367,6 +370,11 @@ mod tests {
 
         fn set_node_address(&mut self, node: NodeHandle, address: Ipv4Addr) -> Result<(), Error> {
             self.routing.push(format!("address {} {address}", node.0));
+            Ok(())
+        }
+
+        fn set_link_mtu(&mut self, link: LinkHandle, mtu: u32) -> Result<(), Error> {
+            self.routing.push(format!("mtu {} {mtu}", link.0));
             Ok(())
         }
 

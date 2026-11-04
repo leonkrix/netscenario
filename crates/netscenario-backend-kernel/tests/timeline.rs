@@ -367,6 +367,9 @@ impl Backend for Slow {
     ) -> Result<(), Error> {
         self.inner.set_node_address(node, address)
     }
+    fn set_link_mtu(&mut self, link: LinkHandle, mtu: u32) -> Result<(), Error> {
+        self.inner.set_link_mtu(link, mtu)
+    }
     fn set_forwarding(&mut self, node: NodeHandle, on: bool) -> Result<(), Error> {
         self.inner.set_forwarding(node, on)
     }

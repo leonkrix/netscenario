@@ -384,6 +384,30 @@ impl Provisioner {
         Ok(())
     }
 
+    /// Sets the MTU of the interfaces at both ends of a link (D-081). The kernel drops a frame that is longer than the MTU of the
+    /// interface that receives it, so the two ends are always the same.
+    pub(crate) fn set_mtu(&mut self, link: u32, mtu: u32) -> Result<(), String> {
+        let link = self
+            .links
+            .get(link as usize)
+            .ok_or_else(|| format!("the link {link} does not exist in this run"))?;
+        let ends: Vec<(u32, String)> = link
+            .ends
+            .iter()
+            .map(|end| (self.nodes[end.node].pid, end.interface.clone()))
+            .collect();
+        self.failpoints.hit("mtu:start");
+        for (pid, interface) in &ends {
+            self.in_node(
+                *pid,
+                &self.tools.ip,
+                &["link", "set", interface, "mtu", &mtu.to_string()],
+            )?;
+        }
+        self.failpoints.hit("mtu:end");
+        Ok(())
+    }
+
     /// Makes a node forward packets between its links, or not (D-078).
     pub(crate) fn set_forwarding(&mut self, node: u32, on: bool) -> Result<(), String> {
         let pid = self.node_pid(node)?;

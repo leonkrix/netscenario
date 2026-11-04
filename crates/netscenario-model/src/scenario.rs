@@ -151,6 +151,10 @@ pub struct Link {
     /// What the link costs the automatic routing: the shortest path is the smallest sum. 1 by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost: Option<u32>,
+    /// The MTU of the interface at both ends of the link, in bytes (D-081). 1500 by default. A datagram that does not fit
+    /// the first link of its path is cut into fragments by the sender; later links must carry those whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtu: Option<u32>,
     /// The impairments from the first node to the second.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forward: Option<Impairments>,
@@ -170,10 +174,17 @@ impl Link {
             id,
             between,
             cost: None,
+            mtu: None,
             forward: None,
             reverse: None,
             both: None,
         }
+    }
+
+    /// The MTU, with the default if none is written.
+    #[must_use]
+    pub fn mtu(&self) -> u32 {
+        self.mtu.unwrap_or(crate::mtu::DEFAULT_MTU)
     }
 
     /// The cost, with the default if none is written.

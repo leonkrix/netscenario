@@ -365,6 +365,15 @@ impl ScenarioBuilder {
         self
     }
 
+    /// The MTU of the link that was added last, in bytes (1500 by default).
+    #[must_use]
+    pub fn link_mtu(mut self, mtu: u32) -> Self {
+        if let Some(link) = self.links.last_mut() {
+            link.mtu = Some(mtu);
+        }
+        self
+    }
+
     /// The routing: `Routing::Auto` (the default) or `Routing::Manual`.
     #[must_use]
     pub fn routing(mut self, routing: Routing) -> Self {
