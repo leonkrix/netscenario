@@ -25,6 +25,8 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [two-paths.yaml](two-paths.yaml) | Two paths with listed routes and metrics, `routing: manual`, and a link of the fast path that goes down and comes back |
 | [manual-routes.yaml](manual-routes.yaml) | Two parallel links with a `cost`, and one route set by hand over the computed ones |
 | [dumbbell.yaml](dumbbell.yaml) | The `dumbbell` shortcut: two senders and two receivers share a bottleneck between two routers |
+| [tcp-fairness.yaml](tcp-fairness.yaml) | Two reno flows with the same round trip time over a dumbbell with a bottleneck of 10 mbit and a queue: the classic fairness test, judged by the Jain index of their goodputs |
+| [tcp-fairness-unequal-rtt.yaml](tcp-fairness-unequal-rtt.yaml) | The same with a longer access link for one flow (long form): the flow with the shorter round trip takes most of the bottleneck |
 | [star-and-chain.yaml](star-and-chain.yaml) | The `star` shortcut with values for each link, and how the `chain` and `multipath` shortcuts are written |
 | [trace-replay.yaml](trace-replay.yaml) | A recorded call ([call.csv](call.csv): the moments and sizes of 695 packets) sent through a link of 2 mbit with a queue |
 | [jitter-from-samples.yaml](jitter-from-samples.yaml) | A jitter that takes its shape from a file of measured round trips ([round-trips.txt](round-trips.txt)), read when the scenario is loaded |
