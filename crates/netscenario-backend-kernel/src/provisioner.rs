@@ -184,6 +184,8 @@ pub(crate) struct Provisioner {
     v6: bool,
     /// The routes of the nodes, in the order they were added, and the links that are down at the moment.
     routes: Vec<Route>,
+    /// The address of each node on its loopback, by node and family (`true` for IPv6), which its routes name as the source.
+    node_addresses: std::collections::HashMap<(u32, bool), String>,
     down: std::collections::HashSet<u32>,
     programs: Vec<RunningProgram>,
     /// The queues planned for the directions that change in the run (D-059), by link and direction.
@@ -226,6 +228,7 @@ impl Provisioner {
             v4: true,
             v6: false,
             routes: Vec::new(),
+            node_addresses: std::collections::HashMap::new(),
             down: std::collections::HashSet::new(),
             programs: Vec::new(),
             layouts: std::collections::HashMap::new(),
@@ -705,6 +708,8 @@ impl Provisioner {
                 &["addr", "add", &format!("{address}/32"), "dev", "lo"],
             )?;
         }
+        self.node_addresses
+            .insert((node, address.contains(':')), address.to_owned());
         self.failpoints.hit("address:end");
         Ok(())
     }
@@ -799,6 +804,12 @@ impl Provisioner {
                 .map_or_else(|| "default".to_owned(), |a| format!("{a}/{host_prefix}")),
         );
         arguments.extend(["metric".to_owned(), route.metric.to_string()]);
+        // A packet that the node sends over the route has the address of the node as its source, not the address of the link it
+        // leaves by: the other nodes have a route to the node address only, so a reply to a link address would have none
+        // (a TCP connection through a router never got its answer)
+        if let Some(address) = self.node_addresses.get(&(node, route.v6)) {
+            arguments.extend(["src".to_owned(), address.clone()]);
+        }
         for hop in next_hops {
             let link = self
                 .links

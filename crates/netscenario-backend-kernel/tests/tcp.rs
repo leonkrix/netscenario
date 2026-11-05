@@ -399,3 +399,43 @@ fn the_responses_of_a_request_workload_are_its_goodput() {
     assert!(goodput.mean_bits_per_second.is_some());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A connection through a router needs the answer to find its way back. The client's address in the answer is the one the kernel
+/// chose as the source, and the other nodes have a route to the address of a node only, so the routes name that address as the
+/// source: without it the answer went to the address of the link, nothing routed it, and the connection hung until the watchdog
+/// ended the run (the first run of TCP over a dumbbell). A bulk transfer and a request workload, in both families, through two
+/// routers, with a rate on one link; every byte arrives and no connection fails.
+#[test]
+fn a_connection_through_routers_gets_its_answer_in_both_families() {
+    if !ready() {
+        return;
+    }
+    for (family, tag) in [("v4", "tcp-routed-v4"), ("v6", "tcp-routed-v6")] {
+        let dir = work_dir(tag);
+        let scenario = Scenario::from_yaml(
+            &format!(
+                "version: 0\nname: tcp-routed\nseed: 5\nduration: 6s\ntopology:\n  ip: dual\n  nodes: [client, {{ id: edge, role: router }}, {{ id: core, role: router }}, server]\n  links:\n    - {{ id: access, between: [client, edge], both: {{ delay: 5ms, rate: 20mbit }} }}\n    - {{ id: backbone, between: [edge, core], both: {{ delay: 10ms }} }}\n    - {{ id: delivery, between: [core, server], both: {{ delay: 5ms }} }}\nworkloads:\n  - {{ id: bulk, kind: tcp-bulk, from: client, to: server, bytes: 500kb, ip: {family} }}\n  - {{ id: api, kind: request-response, from: server, to: client, request: 100b, response: 2kb, interval: 100ms, stop: 3s, ip: {family} }}\n"
+            ),
+            "tcp-routed.yaml",
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        let result = go(&dir, &scenario).unwrap();
+        assert_eq!(result.tcp.len(), 2);
+        for tcp in &result.tcp {
+            assert_eq!(
+                (tcp.failed_connections, tcp.connections),
+                (0, 1),
+                "{family}, {}: {:?}",
+                tcp.kind,
+                tcp.first_error
+            );
+        }
+        // Reliable: every byte of the transfer arrived, to the byte
+        assert_eq!(
+            (result.tcp[0].bytes_sent, result.tcp[0].bytes_received),
+            (500_000, 500_000),
+            "{family}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
