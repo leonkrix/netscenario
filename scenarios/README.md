@@ -13,6 +13,8 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [link-down-and-up.yaml](link-down-and-up.yaml) | A link that goes down for five seconds and comes up again: the sender is refused, nothing is lost that was not sent |
 | [program-under-test.yaml](program-under-test.yaml) | A program of your own in a node (`kind: command`) with a readiness check and a shutdown, started by the Kernel backend ([docs/PROGRAMS.md](../docs/PROGRAMS.md); a complete example is [examples/echo-server](../examples/echo-server)) |
 | [capture-a-link.yaml](capture-a-link.yaml) | The section `measure`: both interfaces of a lossy link captured as pcap files, and the bins of the series ([docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FORMAT.md#what-is-measured)) |
+| [tcp-download.yaml](tcp-download.yaml) | `tcp-bulk`: a download over two connections of 5 mb each, with `reno`, over a link with a rate (the run follows) |
+| [request-response.yaml](request-response.yaml) | `request-response`: an API with a request every 20 ms over four connections, a little loss (the run follows) |
 | [noisy-radio.yaml](noisy-radio.yaml) | Bursts of loss (both models), reordering, duplication and corruption |
 | [three-hops.yaml](three-hops.yaml) | A chain of two routers between a client and a server: three links with their own values, the routes computed by the shortest path (D-078) |
 | [fragments.yaml](fragments.yaml) | A link with an MTU of 1000 and packets of 1,400 bytes: the sender cuts them into fragments, a lost fragment loses the packet (D-081) |

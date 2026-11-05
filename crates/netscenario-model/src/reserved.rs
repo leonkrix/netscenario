@@ -47,8 +47,6 @@ const OPTIONS_OF_A_RUN: &[(&str, &str, &str, &str)] = &[
 
 /// Values by the generic path of the key they belong to: the value and the release.
 const RESERVED_VALUES: &[(&str, &str, &str)] = &[
-    ("workloads[].kind", "tcp-bulk", "0.3"),
-    ("workloads[].kind", "request-response", "0.3"),
     ("workloads[].kind", "container", "0.5"),
     ("topology.links[].forward.loss.model", "trace", "0.3"),
     ("topology.links[].reverse.loss.model", "trace", "0.3"),

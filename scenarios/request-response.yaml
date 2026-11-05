@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# An API: a client sends a request of 200 bytes every 20 ms and the server answers with 4 kb, over four connections and a link
+# with 30 ms of delay each way and a little loss. The latency counts from the moment a request was due, so a slow response
+# delays the ones behind it in the numbers as it would in a real client with a fixed pace.
+version: 0
+name: request-response
+seed: 9
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward:
+        delay: 30ms
+        loss: { model: random, p: 0.5% }
+      reverse:
+        delay: 30ms
+workloads:
+  - id: api
+    kind: request-response
+    from: client
+    to: server
+    request: 200b
+    response: 4kb
+    connections: 4
+    interval: 20ms
+    timeout: 5s

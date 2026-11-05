@@ -72,6 +72,9 @@ pub enum Feature {
     /// The workload `trace-replay`: packets at the moments and with the sizes of a recorded trace (WRK-03, D-085). Last in the
     /// list because it was added last.
     TraceReplay,
+    /// The workloads `tcp-bulk` and `request-response`: data and requests over the TCP of the kernel (WRK-04, WRK-05, D-086).
+    /// Last in the list because it was added last.
+    TcpWorkloads,
 }
 
 impl Feature {
@@ -104,6 +107,7 @@ impl Feature {
         Feature::QueueLimit,
         Feature::QueueDisciplines,
         Feature::TraceReplay,
+        Feature::TcpWorkloads,
     ];
 
     /// A short stable name, for results and logs.
@@ -137,6 +141,7 @@ impl Feature {
             Feature::QueueLimit => "queue-limit",
             Feature::QueueDisciplines => "queue-disciplines",
             Feature::TraceReplay => "trace-replay",
+            Feature::TcpWorkloads => "tcp-workloads",
         }
     }
 
@@ -171,6 +176,7 @@ impl Feature {
             Feature::QueueLimit => "Queue limit",
             Feature::QueueDisciplines => "Queue disciplines (CoDel, FQ-CoDel, PIE)",
             Feature::TraceReplay => "Replay of a trace of packets (times and sizes)",
+            Feature::TcpWorkloads => "TCP workloads (bulk transfers, requests and responses)",
         }
     }
 }
@@ -317,6 +323,16 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             WorkloadKind::TraceReplay => {
                 need(Feature::UdpGenerators, format!("workloads[{index}]"));
                 need(Feature::TraceReplay, format!("workloads[{index}]"));
+            }
+            WorkloadKind::TcpBulk | WorkloadKind::RequestResponse => {
+                need(Feature::TcpWorkloads, format!("workloads[{index}]"));
+                let ip = workload
+                    .as_tcp_bulk()
+                    .map(|bulk| bulk.ip)
+                    .or_else(|| workload.as_request_response().map(|exchange| exchange.ip));
+                if ip == Some(Some(netscenario_model::IpFamily::V6)) {
+                    need(Feature::Ipv6, format!("workloads[{index}].ip"));
+                }
             }
             _ => {}
         }

@@ -491,6 +491,111 @@ class ScenarioBuilder:
             "udp-bursty", id, source, destination, keys, start, stop, udp_checksum
         )
 
+    def tcp_bulk(
+        self,
+        id: str,
+        source: str,
+        destination: str,
+        *,
+        bytes: str | None = None,
+        connections: int = 1,
+        cc: str | None = None,
+        start: str | None = None,
+        stop: str | None = None,
+    ) -> Self:
+        """Add a workload of data over TCP, as fast as the network allows.
+
+        Args:
+            id: The name of the workload; the metrics are named after it.
+            source: The node that opens the connections and sends.
+            destination: The node that receives.
+            bytes: What each connection sends before it ends, for example ``"5mb"``. Without it each
+                sends from ``start`` until ``stop``.
+            connections: How many connections, from 1 to 1024.
+            cc: The congestion control of the sockets (default ``"cubic"``, whatever the host's
+                default is); a machine that lacks it refuses the scenario.
+            start: When the workload starts, from the start of the measured phase (default
+                ``"0s"``).
+            stop: When it stops (default: the end of the measured phase).
+        """
+        keys: dict[str, Any] = {}
+        if bytes is not None:
+            keys["bytes"] = bytes
+        return self._tcp_workload(
+            "tcp-bulk", id, source, destination, keys, connections, cc, start, stop
+        )
+
+    def request_response(
+        self,
+        id: str,
+        source: str,
+        destination: str,
+        *,
+        request: str,
+        response: str,
+        connections: int = 1,
+        interval: str | None = None,
+        timeout: str | None = None,
+        cc: str | None = None,
+        start: str | None = None,
+        stop: str | None = None,
+    ) -> Self:
+        """Add a workload of requests and responses over TCP.
+
+        Args:
+            id: The name of the workload; the metrics are named after it.
+            source: The node that sends the requests.
+            destination: The node that answers.
+            request: The size of a request, for example ``"200b"``.
+            response: The size of a response, for example ``"4kb"``.
+            connections: How many connections, from 1 to 1024.
+            interval: The time between two requests of the whole workload (an open loop), at least
+                ``"1ms"``. Without it each connection sends the next request when the response has
+                arrived.
+            timeout: How long a request waits for its response (default ``"30s"``).
+            cc: The congestion control of the sockets (default ``"cubic"``).
+            start: When the workload starts, from the start of the measured phase.
+            stop: When it stops (default: the end of the measured phase).
+        """
+        keys: dict[str, Any] = {"request": request, "response": response}
+        if interval is not None:
+            keys["interval"] = interval
+        if timeout is not None:
+            keys["timeout"] = timeout
+        return self._tcp_workload(
+            "request-response", id, source, destination, keys, connections, cc, start, stop
+        )
+
+    def _tcp_workload(
+        self,
+        kind: str,
+        id: str,
+        source: str,
+        destination: str,
+        keys: dict[str, Any],
+        connections: int,
+        cc: str | None,
+        start: str | None,
+        stop: str | None,
+    ) -> Self:
+        workload: dict[str, Any] = {
+            "id": id,
+            "kind": kind,
+            "from": source,
+            "to": destination,
+            **keys,
+        }
+        if connections != 1:
+            workload["connections"] = connections
+        if cc is not None:
+            workload["cc"] = cc
+        if start is not None:
+            workload["start"] = start
+        if stop is not None:
+            workload["stop"] = stop
+        self._workloads.append(workload)
+        return self
+
     def _udp_workload(
         self,
         kind: str,

@@ -16,6 +16,7 @@ use crate::generators::{
 use crate::ip::IpFamily;
 use crate::measure::Measure;
 use crate::table::DelayTable;
+use crate::tcp::{RequestResponse, TcpBulk};
 use crate::topology::Topology;
 use crate::trace::PacketTrace;
 use crate::units::{Duration, Name, Probability, Rate, Size};
@@ -713,6 +714,10 @@ pub enum Workload {
     /// UDP at the moments and with the sizes of a recorded trace. After the others because the kinds are listed in the order
     /// they were added.
     TraceReplay(TraceReplay),
+    /// Data over TCP (D-086). After the others because the kinds are listed in the order they were added.
+    TcpBulk(TcpBulk),
+    /// Requests and responses over TCP (D-086).
+    RequestResponse(RequestResponse),
 }
 
 impl Workload {
@@ -726,6 +731,8 @@ impl Workload {
             Self::UdpOnOff(workload) => &workload.id,
             Self::UdpBursty(workload) => &workload.id,
             Self::TraceReplay(workload) => &workload.id,
+            Self::TcpBulk(workload) => &workload.id,
+            Self::RequestResponse(workload) => &workload.id,
         }
     }
 
@@ -739,6 +746,8 @@ impl Workload {
             Self::UdpOnOff(_) => WorkloadKind::UdpOnoff,
             Self::UdpBursty(_) => WorkloadKind::UdpBursty,
             Self::TraceReplay(_) => WorkloadKind::TraceReplay,
+            Self::TcpBulk(_) => WorkloadKind::TcpBulk,
+            Self::RequestResponse(_) => WorkloadKind::RequestResponse,
         }
     }
 
@@ -751,7 +760,25 @@ impl Workload {
             Self::UdpOnOff(workload) => Some(workload.into()),
             Self::UdpBursty(workload) => Some(workload.into()),
             Self::TraceReplay(workload) => Some(workload.into()),
-            Self::Command(_) => None,
+            Self::Command(_) | Self::TcpBulk(_) | Self::RequestResponse(_) => None,
+        }
+    }
+
+    /// The workload if it is a `tcp-bulk`.
+    #[must_use]
+    pub fn as_tcp_bulk(&self) -> Option<&TcpBulk> {
+        match self {
+            Self::TcpBulk(workload) => Some(workload),
+            _ => None,
+        }
+    }
+
+    /// The workload if it is a `request-response`.
+    #[must_use]
+    pub fn as_request_response(&self) -> Option<&RequestResponse> {
+        match self {
+            Self::RequestResponse(workload) => Some(workload),
+            _ => None,
         }
     }
 
@@ -792,6 +819,10 @@ pub enum WorkloadKind {
     /// UDP at the moments and with the sizes of a recorded trace. After the others because the kinds are listed in the order
     /// they were added.
     TraceReplay,
+    /// Data over TCP. After the others for the same reason.
+    TcpBulk,
+    /// Requests and responses over TCP.
+    RequestResponse,
 }
 
 impl WorkloadKind {
@@ -805,6 +836,8 @@ impl WorkloadKind {
             Self::UdpOnoff => "udp-onoff",
             Self::UdpBursty => "udp-bursty",
             Self::TraceReplay => "trace-replay",
+            Self::TcpBulk => "tcp-bulk",
+            Self::RequestResponse => "request-response",
         }
     }
 }
@@ -1191,6 +1224,8 @@ enum KindName {
     UdpOnoff,
     UdpBursty,
     TraceReplay,
+    TcpBulk,
+    RequestResponse,
 }
 
 /// Every key that a workload can have, for the reader: which of them belong to the kind is checked after.
@@ -1221,6 +1256,13 @@ struct WorkloadFields {
     gap: Option<Duration>,
     pause: Option<Duration>,
     trace: Option<PacketTrace>,
+    bytes: Option<Size>,
+    connections: Option<u32>,
+    cc: Option<Name>,
+    request: Option<Size>,
+    response: Option<Size>,
+    interval: Option<Duration>,
+    timeout: Option<Duration>,
 }
 
 /// The keys of a kind in the file: the ones that must be there, and the ones that may be.
@@ -1273,6 +1315,24 @@ impl KindName {
                     "dont-fragment",
                 ],
             },
+            Self::TcpBulk => Keys {
+                name: "tcp-bulk",
+                required: &["from", "to"],
+                optional: &["bytes", "connections", "cc", "start", "stop", "ip"],
+            },
+            Self::RequestResponse => Keys {
+                name: "request-response",
+                required: &["from", "to", "request", "response"],
+                optional: &[
+                    "connections",
+                    "interval",
+                    "timeout",
+                    "cc",
+                    "start",
+                    "stop",
+                    "ip",
+                ],
+            },
             Self::Command => Keys {
                 name: "command",
                 required: &["node", "run"],
@@ -1311,6 +1371,13 @@ impl<'de> Deserialize<'de> for Workload {
             ("gap", fields.gap.is_some()),
             ("pause", fields.pause.is_some()),
             ("trace", fields.trace.is_some()),
+            ("bytes", fields.bytes.is_some()),
+            ("connections", fields.connections.is_some()),
+            ("cc", fields.cc.is_some()),
+            ("request", fields.request.is_some()),
+            ("response", fields.response.is_some()),
+            ("interval", fields.interval.is_some()),
+            ("timeout", fields.timeout.is_some()),
         ];
         let keys = fields.kind.keys();
         // A file is checked for both before it gets here, with the place of each key
@@ -1397,6 +1464,31 @@ impl<'de> Deserialize<'de> for Workload {
                 udp_checksum: checksum,
                 ip: fields.ip,
                 dont_fragment: fields.dont_fragment.unwrap_or(false),
+            }),
+            KindName::TcpBulk => Self::TcpBulk(TcpBulk {
+                id: fields.id,
+                from: fields.from.ok_or_else(missing)?,
+                to: fields.to.ok_or_else(missing)?,
+                bytes: fields.bytes,
+                connections: fields.connections.unwrap_or(1),
+                cc: fields.cc,
+                start: fields.start,
+                stop: fields.stop,
+                ip: fields.ip,
+            }),
+            KindName::RequestResponse => Self::RequestResponse(RequestResponse {
+                id: fields.id,
+                from: fields.from.ok_or_else(missing)?,
+                to: fields.to.ok_or_else(missing)?,
+                request: fields.request.ok_or_else(missing)?,
+                response: fields.response.ok_or_else(missing)?,
+                connections: fields.connections.unwrap_or(1),
+                interval: fields.interval,
+                timeout: fields.timeout,
+                cc: fields.cc,
+                start: fields.start,
+                stop: fields.stop,
+                ip: fields.ip,
             }),
             KindName::Command => Self::Command(Command {
                 id: fields.id,

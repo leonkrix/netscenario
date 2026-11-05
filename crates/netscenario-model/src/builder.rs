@@ -26,6 +26,7 @@ use crate::scenario::{
     Backend, Change, Command, Direction, Event, FormatVersion, Impairments, Jitter,
     JitterDistribution, Link, Loss, Reorder, Scenario, True, UdpCbr, UdpChecksum, Workload,
 };
+use crate::tcp::{RequestResponse, TcpBulk};
 use crate::topology::{Node, Role, Route, Routing, Topology};
 use crate::units::{Duration, Name, Probability, Rate, Size};
 
@@ -461,6 +462,98 @@ impl ScenarioBuilder {
         self
     }
 
+    /// A workload that sends data over TCP from one node to the other, as fast as the network allows (`tcp-bulk`, D-086). One
+    /// connection that sends from the start to the end of the measured phase; [`bytes_each`](Self::bytes_each),
+    /// [`connections`](Self::connections) and [`congestion`](Self::congestion) change that.
+    #[must_use]
+    pub fn tcp_bulk(mut self, id: &str, from: &str, to: &str) -> Self {
+        let index = self.workloads.len();
+        let id = self.name_at(id, &format!("workloads[{index}].id"));
+        let from = self.name_at(from, &format!("workloads[{index}].from"));
+        let to = self.name_at(to, &format!("workloads[{index}].to"));
+        if let (Some(id), Some(from), Some(to)) = (id, from, to) {
+            self.workloads
+                .push(Workload::TcpBulk(TcpBulk::new(id, from, to)));
+        }
+        self
+    }
+
+    /// A workload that sends requests of one size and reads responses of another over TCP (`request-response`, D-086). One
+    /// connection in a closed loop; [`connections`](Self::connections), [`request_interval`](Self::request_interval) and
+    /// [`request_timeout`](Self::request_timeout) change that.
+    #[must_use]
+    pub fn request_response(
+        mut self,
+        id: &str,
+        from: &str,
+        to: &str,
+        request: Size,
+        response: Size,
+    ) -> Self {
+        let index = self.workloads.len();
+        let id = self.name_at(id, &format!("workloads[{index}].id"));
+        let from = self.name_at(from, &format!("workloads[{index}].from"));
+        let to = self.name_at(to, &format!("workloads[{index}].to"));
+        if let (Some(id), Some(from), Some(to)) = (id, from, to) {
+            self.workloads
+                .push(Workload::RequestResponse(RequestResponse::new(
+                    id, from, to, request, response,
+                )));
+        }
+        self
+    }
+
+    /// Makes each connection of the last `tcp-bulk` workload send this much and end.
+    #[must_use]
+    pub fn bytes_each(mut self, bytes: Size) -> Self {
+        if let Some(Workload::TcpBulk(workload)) = self.workloads.last_mut() {
+            workload.bytes = Some(bytes);
+        }
+        self
+    }
+
+    /// Sets how many connections the last TCP workload has.
+    #[must_use]
+    pub fn connections(mut self, connections: u32) -> Self {
+        match self.workloads.last_mut() {
+            Some(Workload::TcpBulk(workload)) => workload.connections = connections,
+            Some(Workload::RequestResponse(workload)) => workload.connections = connections,
+            _ => {}
+        }
+        self
+    }
+
+    /// Sets the congestion control of the last TCP workload, for example `reno` (the default is `cubic`).
+    #[must_use]
+    pub fn congestion(mut self, name: &str) -> Self {
+        let index = self.workloads.len().saturating_sub(1);
+        let name = self.name_at(name, &format!("workloads[{index}].cc"));
+        match (self.workloads.last_mut(), name) {
+            (Some(Workload::TcpBulk(workload)), Some(name)) => workload.cc = Some(name),
+            (Some(Workload::RequestResponse(workload)), Some(name)) => workload.cc = Some(name),
+            _ => {}
+        }
+        self
+    }
+
+    /// Makes the last `request-response` workload an open loop: a request is due every `interval`, whichever connection takes it.
+    #[must_use]
+    pub fn request_interval(mut self, interval: Duration) -> Self {
+        if let Some(Workload::RequestResponse(workload)) = self.workloads.last_mut() {
+            workload.interval = Some(interval);
+        }
+        self
+    }
+
+    /// Sets how long a request of the last `request-response` workload waits for its response.
+    #[must_use]
+    pub fn request_timeout(mut self, timeout: Duration) -> Self {
+        if let Some(Workload::RequestResponse(workload)) = self.workloads.last_mut() {
+            workload.timeout = Some(timeout);
+        }
+        self
+    }
+
     /// A workload that sends UDP packets as a Poisson process with the mean rate `rate` (`udp-poisson`).
     #[must_use]
     pub fn udp_poisson(
@@ -626,6 +719,14 @@ impl ScenarioBuilder {
                 workload.stop = Some(stop);
             }
             Some(Workload::UdpBursty(workload)) => {
+                workload.start = Some(start);
+                workload.stop = Some(stop);
+            }
+            Some(Workload::TcpBulk(workload)) => {
+                workload.start = Some(start);
+                workload.stop = Some(stop);
+            }
+            Some(Workload::RequestResponse(workload)) => {
                 workload.start = Some(start);
                 workload.stop = Some(stop);
             }

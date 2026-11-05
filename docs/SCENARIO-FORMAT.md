@@ -388,6 +388,44 @@ Every key is optional, and so is the section. `--bin`, `--recovery-basis`, `--re
 | `capture` | A list of link ids, each at most once; an id that is not a link is refused with a hint. Both interfaces of each link are captured, in the node at each end: `capture-<link>-<node>.pcap`. The tap sits after the queue of the interface, so a packet that the impairment dropped is in no file, see [RESULTS.md](RESULTS.md#captures-prb-09-d-047-d-073). Backends that cannot capture refuse the key by name. |
 | `packets` | A boolean, default `false`. |
 
+## TCP: data and requests (WRK-04, WRK-05, D-086)
+
+```yaml
+workloads:
+  - id: download
+    kind: tcp-bulk
+    from: server
+    to: client
+    bytes: 5mb          # each connection sends this much and ends; without it, from start to stop
+    connections: 2      # default 1, at most 1024
+    cc: reno            # the congestion control, default cubic
+  - id: api
+    kind: request-response
+    from: client
+    to: server
+    request: 200b
+    response: 4kb
+    connections: 4
+    interval: 20ms      # an open loop: a request is due every 20 ms; without it each connection waits for its response
+    timeout: 5s         # a request that waits longer failed; default 30s
+```
+
+Both use the **TCP of the machine's kernel**, with ordinary sockets, so what they measure is that kernel's TCP over the network of the scenario (the result names the kernel). They are driven by feedback and are not packet-synchronous, so a run with one is **not exact** the way a seeded UDP run is: the result says `statistical`, and a claim about them is made over repetitions. On the Kernel backend the network is built so that the segments of the stack are no larger than a frame (D-086), otherwise `netem` would handle super-packets as one packet.
+
+| Key | `tcp-bulk` | `request-response` | Meaning |
+| --- | --- | --- | --- |
+| `id`, `from`, `to` | yes | yes | As for the other workloads. `from` opens the connections and sends the data (or the requests); `to` listens. Two different nodes, with a route between them. |
+| `bytes` | no | not a key | A Size: what each connection sends before it ends. A transfer is complete when the far end has read the last byte. |
+| `request`, `response` | not keys | yes | Sizes from 1 byte to 1 GiB. |
+| `connections` | no | no | From 1 to 1024. Default 1. |
+| `interval` | not a key | no | A Duration of at least 1 ms: the time between two requests of the whole workload. The latency of a request counts from the moment it was due. Without it the loop is closed. |
+| `timeout` | not a key | no | A Duration above 0. Default 30 s. |
+| `cc` | no | no | The congestion control of the sockets: `cubic` (the default whatever the host's default is, so that a file means one thing on two machines), `reno`, `bbr` or another that the machine has. A machine that lacks it refuses the scenario. |
+| `start`, `stop` | no | no | As for the other workloads. A workload without `bytes` sends until `stop`; the data in flight at `stop` is still delivered. |
+| `ip` | no | no | `v4` or `v6`, as for the other workloads. |
+
+**What the Kernel backend does with it:** a scenario with one of these kinds is read and checked, and the Kernel backend refuses to run it until the run is built ("planned for release 0.3"); the agents that will run it are described in [AGENT.md](AGENT.md).
+
 ## A program of your own
 
 ```yaml
@@ -442,7 +480,7 @@ These keys are not part of version 0 in release 0.2. A scenario that uses one is
 | `mobility` | 0.6 | Positions over time. |
 | `model` (in a link) | 0.3 | Link models: trace, Markov, periodic (the steps over time are the `timeline`, 0.2). |
 | `address` (node, link) | later | Fixed addresses. |
-| `kind` other than `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty`, `trace-replay` and `command` | 0.3 and later | `tcp-bulk`, `request-response` and more. |
+| `kind` other than `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty`, `trace-replay`, `tcp-bulk`, `request-response` and `command` | 0.5 and later | `container` and more. |
 
 **`repetitions` is not a key of the scenario, and it is not planned as one**: how often a scenario is run is an option of a run (`netscenario run --repetitions n`, `run(..., repetitions=n)`; D-042, D-074), so that the file stays what is run and the hash of the scenario is the same for one run and for a set. A scenario that has the key is refused with a message that says so.
 

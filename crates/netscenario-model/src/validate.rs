@@ -11,6 +11,7 @@ use crate::scenario::{
     Link, Loss, Scenario, Workload,
 };
 use crate::suggest::closest;
+use crate::tcp::{MAX_CONNECTIONS, MAX_MESSAGE_BYTES};
 use crate::topology::{
     DEFAULT_DESTINATION, DEFAULT_METRIC, MAX_LINKS, MAX_NODES, MAX_ROUTES, Role, Route, Routing,
 };
@@ -29,6 +30,9 @@ pub const MIN_PACKET_SIZE: u64 = 16;
 pub const MIN_PACKET_SIZE_WITHOUT_CHECKSUM: u64 = 20;
 /// The largest payload that fits the MTU of 1500 without fragmentation (IPv4 and UDP headers take 28 bytes).
 pub const MAX_PACKET_SIZE: u64 = 1472;
+/// The shortest interval between two requests of a `request-response` workload: 1,000 requests per second, which is as far as the
+/// agent has been tried (D-086).
+pub const MIN_REQUEST_INTERVAL: Duration = Duration::from_nanos(1_000_000);
 
 impl Scenario {
     /// Checks the rules that the types cannot state and returns every problem found (none if the scenario is
@@ -374,6 +378,34 @@ impl Scenario {
                 Workload::Command(command) => {
                     crate::command::check(command, &base, nodes, nodes_ok, problems);
                 }
+                Workload::TcpBulk(bulk) => {
+                    let ends = TcpEnds {
+                        from: &bulk.from,
+                        to: &bulk.to,
+                        ip: bulk.ip,
+                        window: (bulk.start, bulk.stop),
+                        connections: bulk.connections,
+                    };
+                    self.check_tcp(&ends, &base, (nodes, nodes_ok), routes, problems);
+                    if bulk.bytes.is_some_and(|bytes| bytes.bytes() == 0) {
+                        problems.push(
+                            Problem::new("`bytes` is 0, so nothing would be sent")
+                                .at_path(format!("{base}.bytes"))
+                                .with_help("leave `bytes` out to send from `start` until `stop`"),
+                        );
+                    }
+                }
+                Workload::RequestResponse(exchange) => {
+                    let ends = TcpEnds {
+                        from: &exchange.from,
+                        to: &exchange.to,
+                        ip: exchange.ip,
+                        window: (exchange.start, exchange.stop),
+                        connections: exchange.connections,
+                    };
+                    self.check_tcp(&ends, &base, (nodes, nodes_ok), routes, problems);
+                    check_exchange(exchange, &base, problems);
+                }
                 other => {
                     if let Some(generator) = other.generator() {
                         self.check_generator(&generator, &base, nodes, nodes_ok, routes, problems);
@@ -488,9 +520,26 @@ impl Scenario {
         base: &str,
         problems: &mut Vec<Problem>,
     ) -> crate::IpFamily {
-        // The family of the flow: its own `ip`, or the only one of the network (D-081)
+        let family = self.check_ip(workload.ip, base, problems);
+        if family == crate::IpFamily::V6 && !workload.udp_checksum.is_on() {
+            problems.push(
+                Problem::new("a stream without the UDP checksum is not possible over IPv6: the protocol requires the checksum")
+                    .at_path(format!("{base}.udp-checksum"))
+                    .with_help("leave `udp-checksum` out, or use `ip: v4` for a test of corruption without the checksum"),
+            );
+        }
+        family
+    }
+
+    /// The family of a flow: its own `ip`, or the only one of the network (D-081); it must be one that the network has.
+    fn check_ip(
+        &self,
+        ip: Option<crate::IpFamily>,
+        base: &str,
+        problems: &mut Vec<Problem>,
+    ) -> crate::IpFamily {
         let mode = self.topology.ip;
-        let family = workload.ip.unwrap_or_else(|| mode.default_family());
+        let family = ip.unwrap_or_else(|| mode.default_family());
         if !mode.has(family) {
             problems.push(
                 Problem::new(format!(
@@ -506,14 +555,53 @@ impl Scenario {
                 }),
             );
         }
-        if family == crate::IpFamily::V6 && !workload.udp_checksum.is_on() {
+        family
+    }
+
+    /// The nodes, the path, the family, the window and the connections of a TCP workload.
+    fn check_tcp(
+        &self,
+        ends: &TcpEnds<'_>,
+        base: &str,
+        (nodes, nodes_ok): (&[Name], bool),
+        routes: Option<&Routes>,
+        problems: &mut Vec<Problem>,
+    ) {
+        for (key, node) in [("from", ends.from), ("to", ends.to)] {
+            if nodes_ok && !nodes.contains(node) {
+                problems.push(unknown_node(node, nodes, format!("{base}.{key}")));
+            }
+        }
+        if ends.from == ends.to {
             problems.push(
-                Problem::new("a stream without the UDP checksum is not possible over IPv6: the protocol requires the checksum")
-                    .at_path(format!("{base}.udp-checksum"))
-                    .with_help("leave `udp-checksum` out, or use `ip: v4` for a test of corruption without the checksum"),
+                Problem::new(format!(
+                    "a workload needs two different nodes, both are '{}'",
+                    ends.from
+                ))
+                .at_path(format!("{base}.to")),
             );
         }
-        family
+        if let Some(routes) = routes
+            && nodes_ok
+            && ends.from != ends.to
+            && nodes.contains(ends.from)
+            && nodes.contains(ends.to)
+        {
+            self.check_path(routes, ends.from, ends.to, base, problems);
+        }
+        self.check_ip(ends.ip, base, problems);
+        if !(1..=MAX_CONNECTIONS).contains(&ends.connections) {
+            problems.push(
+                Problem::new(format!(
+                    "{} connections are outside 1 to {MAX_CONNECTIONS}",
+                    ends.connections
+                ))
+                .at_path(format!("{base}.connections")),
+            );
+        }
+        if !self.duration.is_zero() {
+            check_window(self.duration, ends.window.0, ends.window.1, base, problems);
+        }
     }
 
     /// The packet size: in range for the family, and carried by every link of the path (D-081).
@@ -653,6 +741,49 @@ impl Scenario {
                 check_window(self.duration, workload.start, workload.stop, base, problems);
             }
         }
+    }
+}
+
+/// What a TCP workload says about where it runs.
+struct TcpEnds<'a> {
+    from: &'a Name,
+    to: &'a Name,
+    ip: Option<crate::IpFamily>,
+    window: (Option<Duration>, Option<Duration>),
+    connections: u32,
+}
+
+/// The sizes and times of a `request-response` workload (D-086).
+fn check_exchange(exchange: &crate::RequestResponse, base: &str, problems: &mut Vec<Problem>) {
+    for (key, size) in [
+        ("request", exchange.request),
+        ("response", exchange.response),
+    ] {
+        if !(1..=MAX_MESSAGE_BYTES).contains(&size.bytes()) {
+            problems.push(
+                Problem::new(format!(
+                    "the {key} of {size} is outside 1 byte to {MAX_MESSAGE_BYTES} bytes (1 GiB)"
+                ))
+                .at_path(format!("{base}.{key}")),
+            );
+        }
+    }
+    if let Some(interval) = exchange.interval
+        && interval < MIN_REQUEST_INTERVAL
+    {
+        problems.push(
+            Problem::new(format!(
+                "the interval {interval} between requests is below {MIN_REQUEST_INTERVAL}, which is 1,000 requests per second"
+            ))
+            .at_path(format!("{base}.interval"))
+            .with_help("the agent was tried up to that rate; use more connections and a closed loop for more"),
+        );
+    }
+    if exchange.timeout.is_some_and(Duration::is_zero) {
+        problems.push(
+            Problem::new("`timeout` is 0, so every request would fail")
+                .at_path(format!("{base}.timeout")),
+        );
     }
 }
 

@@ -363,3 +363,49 @@ def test_a_trace_next_to_the_scenario_becomes_its_packets(tmp_path: Path) -> Non
         ns.Scenario.load(file)
     assert "line 2: the time" in str(raised.value)
     assert raised.value.problems[0].path == "workloads[0].trace.file"
+
+
+def test_the_tcp_workloads_are_built_like_the_file_writes_them() -> None:
+    built = (
+        ns.Scenario.builder("tcp", duration="20s")
+        .nodes("a", "b")
+        .link("l", "a", "b")
+        .tcp_bulk("down", "b", "a", bytes="5mb", connections=2, cc="reno")
+        .request_response(
+            "api", "a", "b", request="200b", response="4kb", interval="20ms", timeout="5s"
+        )
+        .build()
+    )
+    assert built.data["workloads"] == [
+        {
+            "id": "down",
+            "kind": "tcp-bulk",
+            "from": "b",
+            "to": "a",
+            "bytes": "5mb",
+            "connections": 2,
+            "cc": "reno",
+        },
+        {
+            "id": "api",
+            "kind": "request-response",
+            "from": "a",
+            "to": "b",
+            "request": "200b",
+            "response": "4kb",
+            "interval": "20ms",
+            "timeout": "5s",
+        },
+    ]
+    assert "tcp-workloads" in built.needs()
+
+
+def test_canary_a_tcp_workload_with_no_connections_is_refused_with_the_path() -> None:
+    with pytest.raises(ns.ScenarioError, match=r"workloads\[0\]\.connections"):
+        (
+            ns.Scenario.builder("tcp", duration="20s")
+            .nodes("a", "b")
+            .link("l", "a", "b")
+            .tcp_bulk("down", "b", "a", connections=0)
+            .build()
+        )

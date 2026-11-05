@@ -118,8 +118,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | WRK-01 | UDP constant bit rate | M | 0.1 | done (`netscenario run`, tested in real namespaces; [AGENT.md](docs/AGENT.md)) |
 | WRK-02 | UDP Poisson, on/off and bursty | M | 0.2 | done (`udp-poisson`, `udp-onoff`, `udp-bursty`; a seeded schedule from a generator written out in the agent, pinned against an independent implementation; unit tests of the distributions with derived bounds, [patterns.rs](crates/netscenario-backend-kernel/tests/patterns.rs) in real namespaces; [AGENT.md](docs/AGENT.md), [SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md), D-071) |
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | done (`trace-replay` with a CSV file or a capture, D-085: `crates/netscenario-backend-kernel/tests/trace.rs`, `crates/netscenario-model/tests/trace.rs`; the packets are expanded into the scenario, D-083) |
-| WRK-04 | TCP bulk transfer | M | 0.3 | planned |
-| WRK-05 | Request and response (echo, latency) | M | 0.3 | planned |
+| WRK-04 | TCP bulk transfer | M | 0.3 | in progress (the agents and the format are done, D-086; the run and the result follow) |
+| WRK-05 | Request and response (echo, latency) | M | 0.3 | in progress (the agents and the format are done, D-086; the run and the result follow) |
 | WRK-06 | Your own program as a node, with the addresses in its environment | M | 0.2 | done (`kind: command` in the Kernel backend, tested in real namespaces with scripts, Python and a compiled program: [programs.rs](crates/netscenario-backend-kernel/tests/command.rs); [PROGRAMS.md](docs/PROGRAMS.md), [examples/echo-server](examples/echo-server), D-072) |
 | WRK-07 | A container as a node | S | 0.5 | planned |
 | WRK-08 | Replay of a pcap | C | 0.8 | idea |

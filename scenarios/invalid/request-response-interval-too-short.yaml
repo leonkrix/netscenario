@@ -1,0 +1,10 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+workloads:
+  - { id: api, kind: request-response, from: client, to: server, request: 100b, response: 1kb, interval: 100us }

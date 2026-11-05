@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/tcp-bulk-with-a-rate.yaml
+---
+error: the key `rate` is not used by the workload kind `tcp-bulk`
+  --> tcp-bulk-with-a-rate.yaml:10:63
+   |
+ 9 | workloads:
+10 |   - { id: download, kind: tcp-bulk, from: client, to: server, rate: 1mbit }
+   |                                                               ^^^^
+   = path: workloads[0].rate
+   = help: the workload kind `tcp-bulk` has `from`, `to`, `bytes`, `connections`, `cc`, `start`, `stop`, `ip`; `rate` belongs to udp-cbr, udp-poisson and udp-onoff
