@@ -480,9 +480,13 @@ fn a_link_comes_back(prefix: &str, name: &str) {
         media.stats.lost,
         result.events
     );
+    // Every packet sent after the step that brought the link back was done (and the sender's lateness has passed) finds
+    // the routes again, so it is received: that is what separates this from routes lost for good, whose run receives only
+    // the 125 packets of the first second. A packet at each edge is given away.
+    let after = 4_000_000_000_u64.saturating_sub(up.applied_ns + late) / gap;
     assert!(
-        media.stats.received > 340,
-        "the packets after the link came back: {} received",
+        media.stats.received >= after.saturating_sub(2),
+        "the packets sent after the link came back were {after}, and {} were received",
         media.stats.received
     );
     let _ = std::fs::remove_dir_all(dir);
