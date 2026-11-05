@@ -331,3 +331,41 @@ fn asking_for_root_without_the_rights_says_what_is_missing() {
     assert!(text.contains("Operation not permitted"), "{text}");
     assert!(text.contains("docs/COVERAGE.md"), "{text}");
 }
+
+/// The stack of a node builds no segment larger than one frame for the interface of a link, at either end, and the size follows
+/// the MTU of the link (D-086): TCP over `netem` with the offloads of the veth on lost whole super-packets at once and ran up to
+/// 79 % above the model of Mathis.
+#[test]
+fn the_stack_builds_no_segment_larger_than_a_frame_and_the_limit_follows_the_mtu() {
+    if !namespaces_available() {
+        return;
+    }
+    for (link, size) in [("", 1514), ("      mtu: 9000\n", 9014)] {
+        let dir = work_dir(&format!("segments-{size}"));
+        let mut backend = backend(|_| {});
+        let scenario = scenario("", link);
+        let built = provision(&mut backend, &scenario).unwrap();
+        let ip = tools().ip;
+        for (node, file) in [
+            (built.nodes[0].1, "client.txt"),
+            (built.nodes[1].1, "server.txt"),
+        ] {
+            let script = format!(
+                "{} -d link show l0 > {}/{file}.tmp && mv {}/{file}.tmp {}/{file}",
+                ip.display(),
+                dir.display(),
+                dir.display(),
+                dir.display()
+            );
+            backend.start_program(node, &sh(&script)).unwrap();
+        }
+        for file in ["client.txt", "server.txt"] {
+            let text = wait_for(&dir.join(file), "gso_max_size");
+            assert!(
+                text.contains(&format!("gso_max_size {size} gso_max_segs 1")),
+                "{file} for {size}: {text}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

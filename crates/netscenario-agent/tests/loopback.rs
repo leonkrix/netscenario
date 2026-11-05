@@ -23,6 +23,7 @@ fn receiver() -> Receiver {
         flow: 4,
         max_time_ns: Some(30_000_000_000),
         udp_checksum: UdpChecksum::On,
+        echo_to: None,
     })
     .unwrap()
 }
@@ -124,6 +125,7 @@ fn a_receiver_without_the_checksum_counts_a_damaged_packet_as_corrupted() {
         flow: 3,
         max_time_ns: Some(30_000_000_000),
         udp_checksum: UdpChecksum::Off,
+        echo_to: None,
     })
     .unwrap();
     let target = receiver.local_addr().unwrap();
@@ -232,6 +234,7 @@ fn the_receiver_stops_by_itself_when_its_time_is_up() {
         flow: 0,
         max_time_ns: Some(200_000_000),
         udp_checksum: UdpChecksum::On,
+        echo_to: None,
     })
     .unwrap();
     let began = Instant::now();
@@ -468,4 +471,78 @@ fn a_sender_whose_input_has_ended_does_not_wait_for_an_answer() {
         panic!("the last line must be sent: {last}");
     };
     assert_eq!((sent.packets, sent.barrier_timeouts), (30, 0));
+}
+
+/// A packet that is echoed comes back to the sender's node with its first send time, so the difference to its second arrival is
+/// the round trip, and every packet that went out comes back (D-086).
+#[test]
+fn an_echoed_stream_comes_back_with_its_first_send_time() {
+    let collector = receiver();
+    let collector_at = collector.local_addr().unwrap();
+    let far = Receiver::bind(&ReceiveConfig {
+        bind: ([127, 0, 0, 1], 0).into(),
+        flow: 5,
+        max_time_ns: Some(30_000_000_000),
+        udp_checksum: UdpChecksum::On,
+        echo_to: Some(collector_at),
+    })
+    .unwrap();
+    let far_at = far.local_addr().unwrap();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let run_receiver = |receiver: Receiver| {
+        let stop = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let mut file = Vec::new();
+            let summary = receiver.run(&stop, &mut file).unwrap();
+            (summary, file)
+        })
+    };
+    let (near, away) = (run_receiver(collector), run_receiver(far));
+    let sent = run(&SendConfig {
+        target: far_at,
+        flow: 5,
+        schedule: Stream {
+            bits_per_second: 1_000_000,
+            packet_size: 1000,
+        }
+        .into(),
+        duration_ns: 400_000_000,
+        start_at_ns: None,
+        udp_checksum: UdpChecksum::On,
+        dont_fragment: false,
+        barriers: Vec::new(),
+    })
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    stop.store(true, Ordering::SeqCst);
+    let ((back, back_file), (there, _)) = (near.join().unwrap(), away.join().unwrap());
+    assert_eq!(there.packets, sent.packets);
+    assert_eq!((there.echoed, there.echo_errors), (sent.packets, 0));
+    assert_eq!(back.packets, sent.packets, "every packet comes back");
+    let file = records::read(&back_file[..]).unwrap();
+    for record in &file.records {
+        // The send time is the first one, so the round trip is the time since then
+        assert!(record.receive_ns > record.send_ns);
+        assert!(record.delay_ns() < 1_000_000_000);
+    }
+    let mut sequences: Vec<u64> = file.records.iter().map(|r| r.sequence).collect();
+    sequences.sort_unstable();
+    assert_eq!(sequences, (0..sent.packets).collect::<Vec<_>>());
+}
+
+/// Canary: an echo of a stream without the checksum is refused when the receiver is made, not ignored.
+#[test]
+fn an_echo_of_a_stream_without_the_checksum_is_refused() {
+    let error = Receiver::bind(&ReceiveConfig {
+        bind: ([127, 0, 0, 1], 0).into(),
+        flow: 5,
+        max_time_ns: None,
+        udp_checksum: UdpChecksum::Off,
+        echo_to: Some(([127, 0, 0, 1], 9).into()),
+    })
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("without the checksum"),
+        "{error}"
+    );
 }

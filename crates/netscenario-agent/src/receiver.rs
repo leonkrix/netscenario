@@ -32,6 +32,10 @@ pub struct ReceiveConfig {
     /// Whether the stream carries the checksum of UDP. Off: the packets are version 2, and a datagram that
     /// is not a good one is counted as `corrupted`.
     pub udp_checksum: UdpChecksum,
+    /// Send every packet that was recorded on to this address, unchanged (D-086). A receiver of the sender's node, bound there,
+    /// records the packets that come back with their first send time, and the difference to their second arrival is the round
+    /// trip time. Only for a stream with the checksum of UDP.
+    pub echo_to: Option<SocketAddr>,
 }
 
 /// A receiver that is bound and not yet running.
@@ -41,6 +45,7 @@ pub struct Receiver {
     flow: u32,
     max_time_ns: Option<u64>,
     udp_checksum: UdpChecksum,
+    echo: Option<(UdpSocket, SocketAddr)>,
 }
 
 impl Receiver {
@@ -54,11 +59,28 @@ impl Receiver {
         socket.set_read_timeout(Some(POLL))?;
         // Not every system allows the size: a smaller buffer still works
         let _ = rustix::net::sockopt::set_socket_recv_buffer_size(&socket, RECEIVE_BUFFER);
+        let echo = match config.echo_to {
+            None => None,
+            Some(_) if config.udp_checksum == UdpChecksum::Off => {
+                return Err(io::Error::other(
+                    "a stream without the checksum of UDP cannot be echoed: the echo is an ordinary datagram",
+                ));
+            }
+            Some(to) => {
+                let any: SocketAddr = if to.is_ipv4() {
+                    ([0, 0, 0, 0], 0).into()
+                } else {
+                    ([0_u16; 8], 0).into()
+                };
+                Some((UdpSocket::bind(any)?, to))
+            }
+        };
         Ok(Self {
             socket,
             flow: config.flow,
             max_time_ns: config.max_time_ns,
             udp_checksum: config.udp_checksum,
+            echo,
         })
     }
 
@@ -85,6 +107,8 @@ impl Receiver {
             foreign: 0,
             corrupted: 0,
             wire_packets: None,
+            echoed: 0,
+            echo_errors: 0,
             first_receive_ns: None,
             last_receive_ns: None,
         };
@@ -119,6 +143,14 @@ impl Receiver {
                             receive_ns: received,
                         })?;
                         summary.packets += 1;
+                        if let Some((socket, to)) = &self.echo {
+                            // The packet goes back as it came, so that its send time is the first one
+                            if socket.send_to(datagram, to).is_ok() {
+                                summary.echoed += 1;
+                            } else {
+                                summary.echo_errors += 1;
+                            }
+                        }
                         summary.first_receive_ns.get_or_insert(received);
                         summary.last_receive_ns = Some(received);
                     } else if self.udp_checksum == UdpChecksum::Off {

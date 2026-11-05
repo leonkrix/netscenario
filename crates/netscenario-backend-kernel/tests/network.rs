@@ -420,16 +420,26 @@ fn when_the_first_link_goes_down_the_route_of_the_next_metric_takes_over() {
         frames(&result, "fast-in", "client"),
         frames(&result, "slow-in", "client"),
     );
-    assert_eq!(fast + slow, 500, "{fast} and {slow}");
+    // A packet that was in the queue of the interface when the link went down is not sent: the result counts it as lost (at most
+    // one, asserted above), and neither capture has it
+    let lost = media.stats.lost;
     assert!(
-        (lowest..=highest).contains(&fast),
+        (500 - lost..=500).contains(&(fast + slow)),
+        "{fast} and {slow}, {lost} lost"
+    );
+    assert!(
+        (lowest.saturating_sub(lost)..=highest).contains(&fast),
         "{fast} packets took the fast path, the step began at {} ns and ended at {} ns (so {lowest} to {highest})",
         step.started_ns,
         step.applied_ns
     );
+    // Every packet sent after the step was done (and not before the sender could be late) took the slow path: 500 packets, of
+    // which at most `highest` went the fast way. The step is some milliseconds late, more on a busy machine, and so this is
+    // worked out from the step that the result records and not from a number
     assert!(
-        slow > 300,
-        "the packets after the step took the slow path: {slow}"
+        slow + lost >= 500 - highest,
+        "the packets after the step took the slow path: {slow}, and the step ended at {} ns",
+        step.applied_ns
     );
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -531,7 +541,12 @@ fn when_the_first_link_is_back_the_route_of_the_smaller_metric_is_used_again() {
         frames(&result, "fast-in", "client"),
         frames(&result, "slow-in", "client"),
     );
-    assert_eq!(fast + slow, 500, "{fast} and {slow}");
+    // A packet that was in the queue of the interface when the link went down is not sent (at most one, asserted above)
+    let lost = media.stats.lost;
+    assert!(
+        (500 - lost..=500).contains(&(fast + slow)),
+        "{fast} and {slow}, {lost} lost"
+    );
     assert!(
         (least.saturating_sub(2)..=most).contains(&slow),
         "{slow} packets took the slow path, expected {least} to {most}: {:?}",

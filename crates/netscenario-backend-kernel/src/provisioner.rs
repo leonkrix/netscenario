@@ -24,6 +24,12 @@ use crate::tables::TableDirectory;
 /// The most links a run can address.
 const MAX_LINKS: usize = 200;
 
+/// The MTU of a link that does not say otherwise (D-081).
+const DEFAULT_MTU: u32 = 1500;
+
+/// The header of an Ethernet frame, which the largest segment of a device counts besides the MTU.
+const ETHERNET_HEADER: u32 = 14;
+
 /// The address of one end of a link: link `n` uses `10.100.n.0/30`, the first node `.1` and the second `.2`.
 /// The caller and the supervisor both compute it, so that the caller needs no question to the supervisor.
 pub(crate) fn interface_name(link: u32) -> String {
@@ -440,8 +446,32 @@ impl Provisioner {
                 }
             }
             self.in_node(pid, &self.tools.ip, &["link", "set", inside, "up"])?;
+            self.limit_segments(pid, inside, DEFAULT_MTU)?;
         }
         Ok(neighbours)
+    }
+
+    /// Keeps the stack of a node from building segments larger than one frame for this interface (D-086). With the offloads of the
+    /// veth on, TCP hands `netem` a super-packet of up to 44 segments, which `netem` drops or delays as one: reno ran 36 to 79 %
+    /// above the model of Mathis, and with the limit 0.97 to 1.16 times it (measured). `ethtool` would need a tool that the
+    /// machine may not have; the size and the number of segments that the device accepts are properties of the link that `ip`
+    /// sets.
+    fn limit_segments(&self, pid: u32, interface: &str, mtu: u32) -> Result<(), String> {
+        let size = (mtu + ETHERNET_HEADER).to_string();
+        self.in_node(
+            pid,
+            &self.tools.ip,
+            &[
+                "link",
+                "set",
+                interface,
+                "gso_max_size",
+                &size,
+                "gso_max_segs",
+                "1",
+            ],
+        )?;
+        Ok(())
     }
 
     /// A veth pair between two nodes, moved into them (the direct build of a link).
@@ -698,6 +728,7 @@ impl Provisioner {
                 &self.tools.ip,
                 &["link", "set", interface, "mtu", &mtu.to_string()],
             )?;
+            self.limit_segments(*pid, interface, mtu)?;
         }
         self.failpoints.hit("mtu:end");
         Ok(())
