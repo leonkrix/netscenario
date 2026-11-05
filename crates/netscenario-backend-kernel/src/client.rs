@@ -767,6 +767,49 @@ fn table_refusals(
     refusals
 }
 
+/// The congestion controls that the kernel offers to a socket: the words of `tcp_available_congestion_control`, or none if the
+/// file cannot be read (a kernel without TCP, or a sandbox).
+fn available_congestion_controls() -> Vec<String> {
+    std::fs::read_to_string("/proc/sys/net/ipv4/tcp_available_congestion_control")
+        .map(|text| text.split_whitespace().map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+/// The TCP workloads of `scenario` whose congestion control (or `cubic`, which a workload gets without naming one, D-086) is not
+/// among `available`. Nothing is refused when the list is empty: the machine could not say what it has, and the agent finds out
+/// when it sets the control on a socket and says so then.
+fn congestion_refusals(scenario: &Scenario, available: &[String]) -> Vec<Refusal> {
+    if available.is_empty() {
+        return Vec::new();
+    }
+    scenario
+        .workloads
+        .iter()
+        .enumerate()
+        .filter_map(|(index, workload)| {
+            let named = workload
+                .as_tcp_bulk()
+                .map(|bulk| &bulk.cc)
+                .or_else(|| workload.as_request_response().map(|exchange| &exchange.cc))?;
+            let wanted = named.as_ref().map_or(netscenario_model::DEFAULT_CONGESTION, |name| name.as_str());
+            if available.iter().any(|name| name == wanted) {
+                return None;
+            }
+            Some(Refusal {
+                feature: Feature::TcpWorkloads,
+                path: format!("workloads[{index}].cc"),
+                reason: format!(
+                    "this machine does not offer the congestion control '{wanted}' to a socket: it has {}",
+                    available.join(", ")
+                ),
+                fix: format!(
+                    "name one of them, or load the module (`sudo modprobe tcp_{wanted}`; a socket in a user namespace can use only what is loaded)"
+                ),
+            })
+        })
+        .collect()
+}
+
 /// The workloads of `scenario` that send without the checksum of UDP, refused if `ask` says that a node has no
 /// `CAP_NET_RAW`. `ask` is called at most once, and not at all if no workload needs the raw socket.
 fn raw_socket_refusals(scenario: &Scenario, ask: impl FnOnce() -> Option<String>) -> Vec<Refusal> {
@@ -847,6 +890,10 @@ impl Backend for KernelBackend {
         refusals.extend(queue_refusals(scenario, |leaf| {
             self.probed().discipline_refused(leaf).map(str::to_owned)
         }));
+        refusals.extend(congestion_refusals(
+            scenario,
+            &available_congestion_controls(),
+        ));
         refusals.extend(raw_socket_refusals(scenario, || {
             crate::doctor::raw_socket_answer(self.probed().steps())
         }));
@@ -1184,6 +1231,11 @@ impl Backend for KernelBackend {
                 Tool::Missing => "missing".to_owned(),
             },
         );
+        // What a TCP socket of the machine can use: a result about TCP is a result about this kernel (D-086)
+        let controls = available_congestion_controls();
+        if !controls.is_empty() {
+            details.insert("tcp_congestion_controls".to_owned(), controls.join(" "));
+        }
         details.insert(
             "rights".to_owned(),
             if self.own_rights {
@@ -1361,6 +1413,41 @@ mod tests {
     }
 
     const QUEUED: &str = "      forward: { rate: 2mbit, queue: { discipline: codel } }\n";
+
+    fn tcp_scenario(cc: &str) -> Scenario {
+        let workloads = format!(
+            "workloads:\n  - {{ id: down, kind: tcp-bulk, from: a, to: b{cc} }}\n  - {{ id: api, kind: request-response, from: a, to: b, request: 1b, response: 1b{cc} }}\n"
+        );
+        Scenario::from_yaml(&format!("{HEAD}{workloads}"), "t.yaml").unwrap()
+    }
+
+    /// A congestion control that the machine does not offer is refused by the workload that asks for it, with the list of what it
+    /// has; one that it offers is not, and neither is the default `cubic` when the machine has it (D-086).
+    #[test]
+    fn a_congestion_control_that_the_machine_lacks_is_refused_by_name() {
+        let has = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        let found = congestion_refusals(&tcp_scenario(", cc: bbr"), &has(&["reno", "cubic"]));
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].feature, Feature::TcpWorkloads);
+        assert_eq!(found[0].path, "workloads[0].cc");
+        assert!(
+            found[0].reason.contains("'bbr'") && found[0].reason.contains("reno, cubic"),
+            "{:?}",
+            found[0]
+        );
+        assert!(found[0].fix.contains("tcp_bbr"));
+        assert_eq!(
+            congestion_refusals(&tcp_scenario(", cc: reno"), &has(&["reno", "cubic"])),
+            []
+        );
+        // The default is cubic and a machine without it is told so, at the workload and not at a key that is not there
+        let found = congestion_refusals(&tcp_scenario(""), &has(&["reno"]));
+        assert_eq!(found.len(), 2);
+        assert!(found[0].reason.contains("'cubic'"), "{:?}", found[0]);
+        // A machine that cannot say what it has refuses nothing, and a scenario without TCP is never asked
+        assert_eq!(congestion_refusals(&tcp_scenario(", cc: bbr"), &[]), []);
+        assert_eq!(congestion_refusals(&scenario_of(""), &has(&["reno"])), []);
+    }
 
     /// A discipline the kernel refused as the leaf of the class is refused by the scenario that asks for it, with the answer of
     /// the kernel, and only that one (D-082). The others, and a link without a queue, are not.

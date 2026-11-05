@@ -628,6 +628,164 @@ class Capture:
 
 
 @dataclass(frozen=True)
+class Reproducibility:
+    """Whether a run can be repeated exactly (D-086)."""
+
+    kind: str
+    """``"exact"``: what is seeded and driven by the packet clock, which is every workload that
+    sends UDP. ``"statistical"``: anything driven by feedback, which is TCP: the same file gives a
+    different run, and a claim about it is made over repetitions."""
+    because: tuple[str, ...]
+    """Why, for ``"statistical"``: one sentence for each reason."""
+
+    @property
+    def exact(self) -> bool:
+        """Whether the same file and seed give the same run."""
+        return self.kind == "exact"
+
+
+@dataclass(frozen=True)
+class TcpTransfer:
+    """One TCP connection (``tcp-bulk`` or ``request-response``).
+
+    Times are seconds from the start of the measured phase.
+    """
+
+    connection: int
+    """The number of the connection in its workload, from 0."""
+    started: float
+    """When the connect was started."""
+    established: float
+    """When it was established."""
+    done: float
+    """When it was done: for ``tcp-bulk`` when the server had read everything (the completion of
+    the transfer), for ``request-response`` when the connection was closed. For a connection that
+    failed, when it failed."""
+    bytes_sent: int
+    """The payload bytes the client sent."""
+    bytes_received: int
+    """The payload bytes the client received (responses)."""
+    ok: bool
+    """Whether the connection did its work."""
+
+    @property
+    def duration(self) -> float:
+        """Seconds from the connect to the end."""
+        return max(0.0, self.done - self.started)
+
+
+@dataclass(frozen=True)
+class TcpGoodput:
+    """The payload that arrived at the server, by time bin."""
+
+    bin: float
+    """The width of a bin in seconds (``measure.series.bin``); right to within the interval of 10 ms
+    in which the server counts."""
+    bits_per_second: tuple[float, ...]
+    """The payload bits per second that arrived in each bin, from the start of the measured phase
+    to the last bin with data. The last bin is not scaled."""
+    mean: float | None
+    """The payload that arrived divided by the time from the start of the first connection to the
+    end of the last that was done: the goodput of the whole transfer, setup and end included.
+    ``None`` if no connection was done."""
+
+
+@dataclass(frozen=True)
+class TcpRequests:
+    """The requests of a ``request-response`` workload."""
+
+    sent: int
+    """The requests that were sent."""
+    answered: int
+    """The requests that were answered."""
+    failed: int
+    """The requests with no answer in time, or whose connection broke."""
+    latency: Delay | None
+    """From the moment a request was due to the last byte of its response, answered requests only:
+    in a closed loop the moment it was sent, in an open loop the moment on the grid, so a request
+    that waited for a busy connection has the wait in it."""
+    round_trip: Delay | None
+    """From the moment a request was sent to the last byte of its response."""
+    max_wait: float
+    """The longest a request was sent after it was due, in seconds."""
+
+
+@dataclass(frozen=True)
+class Tcp:
+    """What came of one TCP workload (``tcp-bulk`` or ``request-response``).
+
+    The kernel TCP of the machine is the subject, and the run is ``statistical`` (see
+    :class:`Reproducibility`).
+    """
+
+    id: str
+    """The id in the scenario."""
+    kind: str
+    """``"tcp-bulk"`` or ``"request-response"``."""
+    from_node: str
+    """The node that opened the connections."""
+    to_node: str
+    """The node that listened."""
+    from_address: str
+    """The address the connections were made from."""
+    to_address: str
+    """The address and port they were made to."""
+    congestion: str | None
+    """The congestion control the sockets had, as the kernel named it."""
+    connections: int
+    """How many connections were started."""
+    failed_connections: int
+    """How many failed: could not be made, broke, got no answer in time, or were stopped."""
+    start: float
+    """When the workload was to start, in seconds from the start of the measured phase."""
+    window: float
+    """How long its window is, in seconds."""
+    bytes_sent: int
+    """The payload bytes the client sent."""
+    bytes_received: int
+    """The payload bytes that arrived: at the server for ``tcp-bulk``, at the client (the
+    responses) for ``request-response``."""
+    goodput: TcpGoodput | None
+    """The payload that arrived at the server by time (``tcp-bulk``)."""
+    transfers: tuple[TcpTransfer, ...]
+    """One entry for each connection."""
+    retransmitted_segments: int
+    """The segments retransmitted over the life of the connections, from the kernel."""
+    rtt: Delay | None
+    """The smoothed round trip time of the kernel, summarised over the samples taken during the
+    transfer (every 100 ms)."""
+    requests: TcpRequests | None
+    """The requests of a ``request-response`` workload."""
+    first_error: str | None
+    """The first reason for a failed connection."""
+    info_error: str | None
+    """Why the samples of ``TCP_INFO`` could not be taken, if they could not."""
+    stopped: bool
+    """Whether the run was interrupted before the client was done."""
+    client_file: Path
+    """The file of the client: the life of the connections, the samples, the requests (the format
+    is in ``docs/AGENT.md``)."""
+    server_file: Path
+    """The file of the server: the payload by interval."""
+
+    @property
+    def complete(self) -> bool:
+        """Whether every connection did its work."""
+        return self.failed_connections == 0 and all(t.ok for t in self.transfers)
+
+    @property
+    def completion(self) -> float | None:
+        """The completion time of a transfer, or ``None`` if no connection did its work.
+
+        Seconds from the first connect to the end of the last connection that did its work.
+        """
+        done = [t for t in self.transfers if t.ok]
+        if not done:
+            return None
+        return max(t.done for t in done) - min(t.started for t in done)
+
+
+@dataclass(frozen=True)
 class QueueCheck:
     """The packets of one direction of a link that drew a number for the random loss.
 
@@ -844,6 +1002,10 @@ class Result:
     captures: tuple[Capture, ...] = ()
     """The captures of the interfaces (``measure.capture``): two for each captured link, in the
     order of the list and of ``between``."""
+    tcp: Mapping[str, Tcp] = field(default_factory=lambda: MappingProxyType({}))
+    """The TCP workloads (``tcp-bulk``, ``request-response``) by id, in scenario order."""
+    reproducibility: Reproducibility = field(default_factory=lambda: Reproducibility("exact", ()))
+    """Whether the run can be repeated exactly or has to be repeated and read with an interval."""
 
     def __getitem__(self, workload_id: str) -> Workload:
         """The workload with this id."""
@@ -958,6 +1120,11 @@ class Result:
                 {p["id"]: _program(p, directory) for p in raw.get("programs", ())}
             ),
             captures=tuple(_capture(c, directory) for c in raw.get("captures", ())),
+            tcp=MappingProxyType({t["id"]: _tcp(t, directory) for t in raw.get("tcp", ())}),
+            reproducibility=Reproducibility(
+                raw.get("reproducibility", {}).get("class", "exact"),
+                tuple(raw.get("reproducibility", {}).get("because", ())),
+            ),
             out_dir=directory,
             raw=MappingProxyType(raw),
         )
@@ -988,6 +1155,79 @@ def _queue_stats(raw: Mapping[str, Any]) -> QueueStats:
             )
             for x in raw.get("samples", ())
         ),
+    )
+
+
+def _delay(data: dict[str, Any] | None) -> Delay | None:
+    if data is None:
+        return None
+    return Delay(
+        min=_seconds(data["min_ns"]),
+        mean=_seconds(data["mean_ns"]),
+        p50=_seconds(data["p50_ns"]),
+        p90=_seconds(data["p90_ns"]),
+        p95=_seconds(data["p95_ns"]),
+        p99=_seconds(data["p99_ns"]),
+        p999=_seconds(data["p999_ns"]),
+        max=_seconds(data["max_ns"]),
+    )
+
+
+def _tcp(data: dict[str, Any], directory: Path) -> Tcp:
+    goodput = data["goodput"]
+    requests = data["requests"]
+    return Tcp(
+        id=data["id"],
+        kind=data["kind"],
+        from_node=data["from"],
+        to_node=data["to"],
+        from_address=data["from_address"],
+        to_address=data["to_address"],
+        congestion=data["congestion"],
+        connections=int(data["connections"]),
+        failed_connections=int(data["failed_connections"]),
+        start=_seconds(data["start_ns"]),
+        window=_seconds(data["window_ns"]),
+        bytes_sent=int(data["bytes_sent"]),
+        bytes_received=int(data["bytes_received"]),
+        goodput=None
+        if goodput is None
+        else TcpGoodput(
+            bin=_seconds(goodput["bin_ns"]),
+            bits_per_second=tuple(float(b) for b in goodput["bits_per_second"]),
+            mean=None
+            if goodput["mean_bits_per_second"] is None
+            else float(goodput["mean_bits_per_second"]),
+        ),
+        transfers=tuple(
+            TcpTransfer(
+                connection=int(t["connection"]),
+                started=_seconds(t["started_ns"]),
+                established=_seconds(t["established_ns"]),
+                done=_seconds(t["done_ns"]),
+                bytes_sent=int(t["bytes_sent"]),
+                bytes_received=int(t["bytes_received"]),
+                ok=bool(t["ok"]),
+            )
+            for t in data["transfers"]
+        ),
+        retransmitted_segments=int(data["retransmitted_segments"]),
+        rtt=_delay(data["rtt"]),
+        requests=None
+        if requests is None
+        else TcpRequests(
+            sent=int(requests["sent"]),
+            answered=int(requests["answered"]),
+            failed=int(requests["failed"]),
+            latency=_delay(requests["latency"]),
+            round_trip=_delay(requests["round_trip"]),
+            max_wait=_seconds(requests["max_wait_ns"]),
+        ),
+        first_error=data["first_error"],
+        info_error=data["info_error"],
+        stopped=bool(data["stopped"]),
+        client_file=directory / data["client_file"],
+        server_file=directory / data["server_file"],
     )
 
 

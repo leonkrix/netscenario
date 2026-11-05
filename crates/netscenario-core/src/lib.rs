@@ -78,6 +78,7 @@ mod seed;
 pub mod series;
 mod special;
 pub mod stats;
+mod tcp;
 pub mod timeline;
 mod traffic;
 
@@ -105,10 +106,11 @@ pub use replay::{
     WorkloadComparison, compare, replay_json, scenario_diff, scenario_hash, scenario_json,
 };
 pub use result::{
-    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, MetricSummary,
-    NodeInfo, PathInfo, ProgramOutput, ProgramResult, QueueCheck, QueueInfo, QueueSample,
-    RESULT_FORMAT, RESULT_VERSION, RouteInfo, RunResult, ScenarioInfo, SeedInfo, SenderInfo,
-    SeriesInfo, Timing, TraceInfo, WorkloadResult,
+    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, Goodput,
+    MetricSummary, NodeInfo, PathInfo, ProgramOutput, ProgramResult, QueueCheck, QueueInfo,
+    QueueSample, RESULT_FORMAT, RESULT_VERSION, Reproducibility, RequestInfo, RouteInfo, RunResult,
+    ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, TcpResult, Timing, TraceInfo, TransferInfo,
+    WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
 pub use runset::{

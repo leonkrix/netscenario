@@ -57,7 +57,7 @@ netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <n
                        [--udp-checksum <on|off>] [--wire-out <file>] [--echo-to <addr>]
 netscenario-agent tcp-serve --bind <addr> --out <file> [--flow <n>] [--congestion <name>] [--progress-interval-ns <ns>]
                             [--max-time-ns <ns>] [--ignore-stdin]
-netscenario-agent tcp-bulk --to <addr> --out <file> (--bytes <n> | --duration-ns <ns>) [--flow <n>] [--connections <n>]
+netscenario-agent tcp-bulk --to <addr> --out <file> (--bytes <n> | --duration-ns <ns> | both) [--flow <n>] [--connections <n>]
                            [--congestion <name>] [--chunk-bytes <n>] [--start-at-ns <monotonic ns>]
                            [--info-interval-ns <ns>] [--finish-timeout-ns <ns>] [--ignore-stdin]
 netscenario-agent tcp-request --to <addr> --out <file> --request-bytes <n> --response-bytes <n> --duration-ns <ns>
@@ -141,7 +141,7 @@ The kernel TCP of the machine is the subject: the agents use ordinary sockets, s
 
 A server answers a hello that it does not read by closing the connection, and counts it as `refused`.
 
-**Bulk.** The client sends its payload in chunks (`--chunk-bytes`, 65,536 by default, at most 1 MiB), each with a header of four bytes that holds its length, and ends with a chunk of length 0. The server counts the payload as it reads it, in intervals of the clock (below), and answers the end with one byte; the client reads it, and that moment is the **completion** of the transfer: the last byte has been read by the application at the far end. Then the client closes. (A half-close would tell the server the end as well, but the socket of the client would be in `TIME_WAIT` by the time the client knew, and the kernel gives no `tcp_info` for such a socket; here the server waits for the client to close first, so the socket is whole when the client takes the last sample, after the answer.) `--bytes` is what each connection sends, `--duration-ns` is how long each sends, from `--start-at-ns` or from the start; the chunk in progress at the end is finished. A line `stop` on the standard input (or its end) ends a transfer early: its connection is recorded as failed and the summary says `stopped`.
+**Bulk.** The client sends its payload in chunks (`--chunk-bytes`, 65,536 by default, at most 1 MiB), each with a header of four bytes that holds its length, and ends with a chunk of length 0. The server counts the payload as it reads it, in intervals of the clock (below), and answers the end with one byte; the client reads it, and that moment is the **completion** of the transfer: the last byte has been read by the application at the far end. Then the client closes. (A half-close would tell the server the end as well, but the socket of the client would be in `TIME_WAIT` by the time the client knew, and the kernel gives no `tcp_info` for such a socket; here the server waits for the client to close first, so the socket is whole when the client takes the last sample, after the answer.) `--bytes` is what each connection sends, `--duration-ns` is how long each sends, from `--start-at-ns` or from the start; with both a connection ends at whichever comes first, and one of them is needed. The chunk in progress at the end is finished. A line `stop` on the standard input (or its end) ends a transfer early: its connection is recorded as failed and the summary says `stopped`.
 
 **Requests.** The client sends a request of `--request-bytes` and reads a response of `--response-bytes`, again and again, on each of `--connections` connections, until `--duration-ns` has passed. Without `--interval-ns` the loop is **closed**: the next request follows the response. With it the loop is **open**: request `n` of the whole workload is due at `n × interval` from the start, whichever connection takes it, and a request that is due while its connection is busy waits, so that the latency counted from the moment it was due includes the wait (a slow server cannot hide behind the clients that waited for it). A request that gets no response in `--timeout-ns` (30 s by default) fails and its connection is not used again.
 
@@ -191,7 +191,7 @@ The records are in the order they were written, not in the order of their times.
 
 - **Static binary.** D-008 spoke of a static (musl) binary. In the Kernel backend the nodes share the file system of the host and need none; the static build belongs to the release (REL-01) and to backends where the node has its own file system.
 - Hardware or kernel timestamps (`SO_TIMESTAMPNS`): the receive time is taken in user space after the read. At the measured rates the error is a few microseconds (S8).
-- The TCP agents are in place (D-086, below); the scenario kinds `tcp-bulk` and `request-response` that use them, and their results, come with the next steps.
+- The UDP echo (`recv --echo-to`) is an option of the agent; a workload kind that uses it, with the round trip of a datagram stream in its result, is not in the scenario format yet.
 
 ## How a run starts the agent
 

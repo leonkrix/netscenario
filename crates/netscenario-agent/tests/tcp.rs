@@ -186,11 +186,11 @@ fn a_wrong_command_line_is_refused_and_names_the_option() {
                 "--to",
                 "127.0.0.1:9",
                 "--bytes",
-                "5",
+                "0",
                 "--duration-ns",
                 "5",
             ],
-            "alternatives",
+            "greater than 0",
         ),
         (
             vec![

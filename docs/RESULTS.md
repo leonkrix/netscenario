@@ -167,6 +167,8 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `events` | What the run did to the links while it ran (the timeline), below. Empty for a scenario without one. |
 | `programs` | One entry for each program of your own (`kind: command`), in the order of the scenario, below. Empty for a scenario without one. |
 | `captures` | One entry for each captured interface (`measure.capture`), two for each link, below. Empty for a scenario that captures nothing. |
+| `tcp` | One entry for each TCP workload (`tcp-bulk`, `request-response`), in the order of the scenario, [below](#tcp-wrk-04-wrk-05-prb-12-d-086). Empty for a scenario without one. |
+| `reproducibility` | `class` and `because`: `exact` for a run whose workloads are all UDP (seeded and driven by the packet clock), `statistical` for a run with a TCP workload, with one sentence for each reason. A statistical run is repeated and read with an interval (the repetitions of 0.2); it is not compared bit for bit. A result of an older release has no field and reads as `exact`. |
 | `notes` | What the backend says about how it did the run, one sentence for each fact (D-063): for example that the changes of a link were made by a `tc` process each because the `tc` that lives for the run stopped working. Not errors. Empty if the run went as usual. |
 
 ### `provenance`
@@ -304,6 +306,28 @@ One entry for each `command` workload ([PROGRAMS.md](PROGRAMS.md)). Times are in
 | `metrics` | A summary for each metric name: `name`, `unit`, `count`, `first`, `last`, `min`, `max`. |
 | `metrics_file`, `metric_readings` | The file with every reading (`null` if there was none), and how many valid readings there were in all. |
 | `bad_metric_lines`, `bad_metric_examples` | How many lines looked like metrics and were not valid, and the first five with the reason. |
+
+### `tcp` (WRK-04, WRK-05, PRB-12, D-086)
+
+One entry for each `tcp-bulk` and `request-response` workload. The kernel TCP of the machine is the subject, so the kernel is in `provenance.kernel` and the congestion controls that the machine offers are in `provenance.backend_details.tcp_congestion_controls`. Times are in nanoseconds from the start of the measured phase; they are what the agents saw on `CLOCK_MONOTONIC`. The two files of the agents are next to `result.json` (`tcp-<n>.client.streams` and `tcp-<n>.server.streams`, the format is in [AGENT.md](AGENT.md)); the entry is made from them.
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `kind`, `from`, `to` | As in the scenario. `from` opened the connections and `to` listened. |
+| `from_address`, `to_address` | The address the connections were made from, and the address and port they were made to. |
+| `congestion` | The congestion control the sockets had, as the kernel named it (`cubic` unless the workload says another). |
+| `connections`, `failed_connections` | How many were started, and how many failed: could not be made, broke, got no answer in time, or were stopped before they were done. `first_error` is the first reason. |
+| `start_ns`, `window_ns` | When the workload was to start and how long its window is. |
+| `bytes_sent`, `bytes_received` | The payload the client sent; the payload that arrived at the server (`tcp-bulk`) or the responses that arrived at the client (`request-response`). TCP is reliable, so for a transfer that was done they are the same. |
+| `transfers` | One entry for each connection: `connection`, `started_ns` (the connect), `established_ns`, `done_ns`, `bytes_sent`, `bytes_received`, `ok`. For `tcp-bulk` `done_ns` is the **completion**: the moment the server had read the last byte and said so. For a connection that failed it is the moment of the failure and `ok` is `false`. |
+| `goodput` | `tcp-bulk` only. `bits_per_second` is the payload that arrived at the server in each bin of `bin_ns` (`measure.series.bin`) from the start of the measured phase to the last bin with data; the server counts in intervals of at most 10 ms and puts each interval into the bin that holds its start, so a bin is right to within one interval. `mean_bits_per_second` is the payload of the connections that did their work divided by the time from the first connect to the last end: the goodput of the whole transfer, with the setup and the end in it. |
+| `retransmitted_segments` | The segments the connections retransmitted in all, from the last sample of `TCP_INFO` of each. |
+| `rtt` | The smoothed round trip time of the kernel, summarised over the samples taken during the transfer (every 100 ms): `min_ns`, `mean_ns`, `p50_ns`, `p90_ns`, `p95_ns`, `p99_ns`, `p999_ns`, `max_ns`, nearest rank as everywhere. It includes the queue: with a queue that holds many packets it is far above the delay of the link. `null` if no sample was taken (`info_error` says why). |
+| `requests` | `request-response` only. `sent`, `answered`, `failed`; `latency`, the time from the moment a request was **due** to the last byte of its response (answered requests only: in a closed loop a request is due when it is sent, in an open loop on the grid, so a request that waited for a busy connection has the wait in it); `round_trip`, the same from the moment the request was **sent**; `max_wait_ns`, the longest a request was sent after it was due. |
+| `stopped` | Whether the run was interrupted before the client was done. |
+| `client_file`, `server_file` | The files of the agents, relative to `result.json`. |
+
+**What a TCP run does not say.** A run with TCP is not accounted for packet by packet: `directions` is empty and the queues are not held to the packets that were sent, because the acknowledgements and the retransmissions enter the same queues and the run does not count them. The counters of the queues (`queues`) are read all the same, so the drops of a queue with a discipline are there. `seed.loss_reproducible` is `false` when a queue draws random numbers, with the reason: what TCP sends depends on its feedback. The recovery after an event of the timeline is not made for TCP yet; the goodput by bin has what it needs.
 
 ### Captures (PRB-09, D-047, D-073)
 

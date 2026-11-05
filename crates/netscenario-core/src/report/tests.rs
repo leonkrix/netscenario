@@ -220,6 +220,64 @@ fn markdown_warns_where_a_run_was_cut_short_or_cannot_repeat() {
     );
 }
 
+/// A TCP workload has a section of its own, and a run of TCP workloads only does not say that it has no workload.
+#[test]
+fn markdown_has_a_section_for_the_tcp_workloads_and_says_the_run_is_statistical() {
+    let Report::Run(mut run) = load("md-tcp", false) else {
+        panic!("a run")
+    };
+    run.result.workloads.clear();
+    run.result.tcp = vec![crate::result::TcpResult {
+        id: "down".to_owned(),
+        kind: "tcp-bulk".to_owned(),
+        from: "client".to_owned(),
+        to: "server".to_owned(),
+        from_address: "10.200.0.1".to_owned(),
+        to_address: "10.200.0.2:6000".to_owned(),
+        congestion: Some("reno".to_owned()),
+        connections: 2,
+        failed_connections: 1,
+        start_ns: 0,
+        window_ns: SECOND,
+        bytes_sent: 1_000,
+        bytes_received: 900,
+        goodput: None,
+        transfers: vec![crate::result::TransferInfo {
+            connection: 0,
+            started_ns: 0,
+            established_ns: 1,
+            done_ns: 2 * i64::try_from(SECOND).unwrap(),
+            bytes_sent: 1_000,
+            bytes_received: 0,
+            ok: true,
+        }],
+        retransmitted_segments: 4,
+        rtt: None,
+        requests: None,
+        first_error: Some("the server closed the connection".to_owned()),
+        info_error: None,
+        stopped: false,
+        client_file: "c".to_owned(),
+        server_file: "s".to_owned(),
+    }];
+    run.result.reproducibility =
+        crate::result::Reproducibility::statistical(vec!["feedback".to_owned()]);
+    let text = markdown(&Report::Run(run));
+    assert!(text.contains("### TCP workloads"), "{text}");
+    assert!(!text.contains("None."), "{text}");
+    assert!(text.contains("| Congestion control | reno |"), "{text}");
+    assert!(text.contains("| Connections (failed) | 2 (1) |"), "{text}");
+    assert!(text.contains("| Completed after | 2 s |"), "{text}");
+    assert!(
+        text.contains("> **down:** 1 of 2 connections failed: the server closed the connection"),
+        "{text}"
+    );
+    assert!(
+        text.contains("> A run with TCP is statistical: feedback"),
+        "{text}"
+    );
+}
+
 #[test]
 fn a_pipe_in_a_name_does_not_end_the_cell_of_a_markdown_table() {
     let Report::Run(mut run) = load("md-pipe", false) else {

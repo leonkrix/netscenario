@@ -48,8 +48,8 @@ const NEEDS_TC: &[Feature] = &[
 
 /// The features that the Kernel backend gets in later steps of a release: the format knows them, the backend does not
 /// apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says `✔` and the
-/// release for them. At the moment the TCP workloads: the format reads and checks them (D-086), the run follows.
-const PLANNED: &[Feature] = &[Feature::TcpWorkloads];
+/// release for them. None at the moment (the TCP workloads, D-086, were the last).
+const PLANNED: &[Feature] = &[];
 
 /// What the probe of `doctor` found out about the kernel and `tc` of this machine (D-068): for each thing a scenario
 /// can need, whether it was accepted or what was answered. The version of `tc` says what it should know; the probe says
@@ -253,7 +253,8 @@ fn by_version(environment: &Environment) -> Capabilities {
         .with(Feature::QueueLimit, Support::Exact)
         .with(Feature::QueueDisciplines, Support::Exact)
         .with(Feature::UdpWithoutChecksum, Support::Exact)
-        .with(Feature::TraceReplay, Support::Exact);
+        .with(Feature::TraceReplay, Support::Exact)
+        .with(Feature::TcpWorkloads, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
     }

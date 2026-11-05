@@ -66,6 +66,175 @@ pub struct RunResult {
     /// link, of `between` (PRB-09). Empty if nothing is captured.
     #[serde(default)]
     pub captures: Vec<CaptureResult>,
+    /// One entry for each TCP workload (`tcp-bulk`, `request-response`), in the order of the scenario (D-086). Empty for a
+    /// scenario without one.
+    #[serde(default)]
+    pub tcp: Vec<TcpResult>,
+    /// Whether the run can be repeated exactly or has to be repeated and read with an interval (D-086).
+    #[serde(default)]
+    pub reproducibility: Reproducibility,
+}
+
+/// Whether a run can be repeated exactly (D-086).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Reproducibility {
+    /// `exact`: what is seeded and driven by the packet clock, which is every workload that sends UDP; the same seed gives the
+    /// same lost packets (and `seed.loss_reproducible` says where that is not so for another reason). `statistical`: anything
+    /// driven by feedback, which is TCP: the same file gives a different run, and a claim is made over repetitions.
+    pub class: String,
+    /// Why, for `statistical`: one sentence for each reason. Empty for `exact`.
+    pub because: Vec<String>,
+}
+
+impl Reproducibility {
+    /// The class of a run that can be repeated exactly.
+    pub const EXACT: &'static str = "exact";
+    /// The class of a run that has to be repeated and read with an interval.
+    pub const STATISTICAL: &'static str = "statistical";
+
+    /// A run that can be repeated exactly.
+    #[must_use]
+    pub fn exact() -> Self {
+        Self {
+            class: Self::EXACT.to_owned(),
+            because: Vec::new(),
+        }
+    }
+
+    /// A run that cannot, and why.
+    #[must_use]
+    pub fn statistical(because: Vec<String>) -> Self {
+        Self {
+            class: Self::STATISTICAL.to_owned(),
+            because,
+        }
+    }
+}
+
+impl Default for Reproducibility {
+    /// A result of an older release has no field: its runs were UDP, which is exact.
+    fn default() -> Self {
+        Self::exact()
+    }
+}
+
+/// What came of one TCP workload (WRK-04, WRK-05, PRB-12; D-086). Times are in nanoseconds from the start of the measured phase;
+/// they are what the agents saw on `CLOCK_MONOTONIC`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct TcpResult {
+    /// The id in the scenario.
+    pub id: String,
+    /// `tcp-bulk` or `request-response`.
+    pub kind: String,
+    /// The node that opened the connections.
+    pub from: String,
+    /// The node that listened.
+    pub to: String,
+    /// The address the connections were made from.
+    pub from_address: String,
+    /// The address and port they were made to.
+    pub to_address: String,
+    /// The congestion control the sockets had, as the kernel named it.
+    pub congestion: Option<String>,
+    /// How many connections were started.
+    pub connections: u32,
+    /// How many of them failed: could not be made, broke, got no answer in time, or were stopped before they were done.
+    pub failed_connections: u32,
+    /// When the workload was to start, from the start of the measured phase.
+    pub start_ns: u64,
+    /// How long its window is (`stop` minus `start`).
+    pub window_ns: u64,
+    /// The payload bytes that the client sent.
+    pub bytes_sent: u64,
+    /// The payload bytes that arrived: at the server for `tcp-bulk`, at the client (the responses) for `request-response`.
+    pub bytes_received: u64,
+    /// The goodput: the payload that arrived at the server, by time.
+    pub goodput: Option<Goodput>,
+    /// One entry for each connection.
+    pub transfers: Vec<TransferInfo>,
+    /// The segments retransmitted over the life of the connections, from the last sample of `TCP_INFO` of each.
+    pub retransmitted_segments: u64,
+    /// The smoothed round trip time of the kernel, from the samples of `TCP_INFO` taken during the transfer.
+    pub rtt: Option<crate::stats::DelaySummary>,
+    /// The requests of a `request-response` workload.
+    pub requests: Option<RequestInfo>,
+    /// The first reason for a failed connection, as text.
+    pub first_error: Option<String>,
+    /// Why the samples of `TCP_INFO` could not be taken, if they could not.
+    pub info_error: Option<String>,
+    /// Whether the run was interrupted before the client was done.
+    pub stopped: bool,
+    /// The file of the client, relative to `result.json`: the life of the connections, the samples of `TCP_INFO`, the requests
+    /// (the format is in `docs/AGENT.md`).
+    pub client_file: String,
+    /// The file of the server: the payload by interval.
+    pub server_file: String,
+}
+
+/// The payload that arrived at the server, by time bin (D-086).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Goodput {
+    /// The width of a bin, `measure.series.bin`. The server counts in intervals of at most 10 ms and puts each interval into
+    /// the bin that holds its start, so a bin is right to within one interval.
+    pub bin_ns: u64,
+    /// The payload bits per second that arrived in each bin, from the start of the measured phase to the last bin with data. The
+    /// last bin is not scaled.
+    pub bits_per_second: Vec<u64>,
+    /// The payload that arrived divided by the time from the start of the first connection to the end of the last that was
+    /// done: the goodput of the whole transfer, with the setup and the end in it. `None` if no connection was done.
+    pub mean_bits_per_second: Option<u64>,
+}
+
+/// One TCP connection (D-086).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct TransferInfo {
+    /// The number of the connection in its workload, from 0.
+    pub connection: u32,
+    /// When the connect was started.
+    pub started_ns: i64,
+    /// When it was established.
+    pub established_ns: i64,
+    /// When it was done: for `tcp-bulk` when the server had read everything (the completion of the transfer), for
+    /// `request-response` when the connection was closed. For a connection that failed, when it failed.
+    pub done_ns: i64,
+    /// The payload bytes the client sent.
+    pub bytes_sent: u64,
+    /// The payload bytes the client received (responses).
+    pub bytes_received: u64,
+    /// Whether the connection did its work.
+    pub ok: bool,
+}
+
+impl TransferInfo {
+    /// How long the connection took from the connect to its end, in nanoseconds.
+    #[must_use]
+    pub fn duration_ns(&self) -> u64 {
+        u64::try_from(self.done_ns.saturating_sub(self.started_ns)).unwrap_or(0)
+    }
+}
+
+/// The requests of a `request-response` workload and how long they took (PRB-12; D-086).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RequestInfo {
+    /// The requests that were sent.
+    pub sent: u64,
+    /// The requests that were answered.
+    pub answered: u64,
+    /// The requests that failed: no answer in time, or the connection broke.
+    pub failed: u64,
+    /// From the moment a request was **due** to the last byte of its response: in a closed loop the moment it was sent, in an
+    /// open loop the moment on the grid, so a request that waited for a busy connection has the wait in it. Answered requests only.
+    pub latency: Option<crate::stats::DelaySummary>,
+    /// From the moment a request was sent to the last byte of its response: the round trip of the network and the server, without
+    /// the wait for a free connection.
+    pub round_trip: Option<crate::stats::DelaySummary>,
+    /// The longest a request was sent after it was due, in nanoseconds: the wait for a connection, or the lateness of the client.
+    pub max_wait_ns: u64,
 }
 
 /// A capture of one interface (PRB-09, D-047, D-073). Times are in nanoseconds from the start of the measured phase.
@@ -677,6 +846,7 @@ pub(crate) mod tests {
     use crate::stats::{FlowStats, Throughput};
 
     /// A small result for tests of code that reads results.
+    #[allow(clippy::too_many_lines)] // a fixture that fills every field
     pub(crate) fn example() -> RunResult {
         RunResult {
             format: RESULT_FORMAT.to_owned(),
@@ -766,6 +936,8 @@ pub(crate) mod tests {
             notes: vec!["a note".to_owned()],
             programs: Vec::new(),
             captures: Vec::new(),
+            tcp: Vec::new(),
+            reproducibility: Reproducibility::exact(),
             queues: Vec::new(),
             directions: vec![DirectionTally {
                 link: "l".to_owned(),

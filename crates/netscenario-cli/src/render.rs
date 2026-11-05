@@ -82,6 +82,7 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
     for workload in &result.workloads {
         workload_text(&mut text, workload);
     }
+    tcp_text(&mut text, result);
     programs_text(&mut text, result);
     captures_text(&mut text, result);
     directions_text(&mut text, result);
@@ -431,6 +432,130 @@ fn number(value: f64) -> String {
 /// The programs of your own: how each ended, its output and its metrics (WRK-06, PRB-08). What went wrong is a
 /// warning on a line of its own: a program that ended by itself, output that was dropped, metric lines that were
 /// not valid.
+/// The TCP workloads: what was sent and read, how long the transfers took, the goodput, what the kernel saw (round trip time,
+/// retransmissions) and, for requests, how long they took (D-086). A run with TCP says that it is statistical.
+fn tcp_text(text: &mut String, result: &RunResult) {
+    if result.tcp.is_empty() {
+        return;
+    }
+    for tcp in &result.tcp {
+        let _ = writeln!(
+            text,
+            "\ntcp {}  {} -> {}  {}, {} connection{}{}",
+            tcp.id,
+            tcp.from,
+            tcp.to,
+            tcp.kind,
+            tcp.connections,
+            if tcp.connections == 1 { "" } else { "s" },
+            tcp.congestion
+                .as_ref()
+                .map_or_else(String::new, |name| format!(", {name}"))
+        );
+        if tcp.failed_connections > 0 {
+            let _ = writeln!(
+                text,
+                "  warning: {} of {} connections failed: {}",
+                tcp.failed_connections,
+                tcp.connections,
+                tcp.first_error.as_deref().unwrap_or("no reason was given")
+            );
+        }
+        if tcp.stopped {
+            let _ = writeln!(text, "  the run was interrupted before the client was done");
+        }
+        match &tcp.requests {
+            Some(requests) => requests_text(text, requests),
+            None => transfers_text(text, tcp),
+        }
+        if let Some(rtt) = &tcp.rtt {
+            let _ = writeln!(
+                text,
+                "  round trip time of the kernel  min {}  median {}  p95 {}  max {}",
+                ms(rtt.min_ns),
+                ms(rtt.p50_ns),
+                ms(rtt.p95_ns),
+                ms(rtt.max_ns)
+            );
+        }
+        let _ = writeln!(
+            text,
+            "  retransmitted segments  {}",
+            tcp.retransmitted_segments
+        );
+        if let Some(why) = &tcp.info_error {
+            let _ = writeln!(text, "  note: no samples of the kernel: {why}");
+        }
+    }
+    let _ = writeln!(
+        text,
+        "\n  note: a run with TCP is {}: {}",
+        result.reproducibility.class,
+        result.reproducibility.because.join("; ")
+    );
+}
+
+/// The requests of a `request-response` workload and how long they took.
+fn requests_text(text: &mut String, requests: &netscenario_core::RequestInfo) {
+    let _ = writeln!(
+        text,
+        "  requests  sent {}  answered {}  failed {}",
+        requests.sent, requests.answered, requests.failed
+    );
+    for (what, summary) in [
+        ("latency from the moment due", &requests.latency),
+        ("round trip from the moment sent", &requests.round_trip),
+    ] {
+        if let Some(summary) = summary {
+            let _ = writeln!(
+                text,
+                "  {what}  min {}  median {}  p95 {}  p99 {}  max {}",
+                ms(summary.min_ns),
+                ms(summary.p50_ns),
+                ms(summary.p95_ns),
+                ms(summary.p99_ns),
+                ms(summary.max_ns)
+            );
+        }
+    }
+}
+
+/// The bytes of a `tcp-bulk` workload, how long its transfers took and the goodput over them.
+fn transfers_text(text: &mut String, tcp: &netscenario_core::TcpResult) {
+    let _ = writeln!(
+        text,
+        "  sent {} bytes  received {} bytes",
+        tcp.bytes_sent, tcp.bytes_received
+    );
+    let done: Vec<_> = tcp
+        .transfers
+        .iter()
+        .filter(|transfer| transfer.ok)
+        .collect();
+    if let Some(longest) = done.iter().map(|transfer| transfer.duration_ns()).max() {
+        let _ = writeln!(
+            text,
+            "  {} of {} transfers complete, the last after {}",
+            done.len(),
+            tcp.transfers.len(),
+            seconds(longest)
+        );
+    }
+    if let Some(mean) = tcp
+        .goodput
+        .as_ref()
+        .and_then(|goodput| goodput.mean_bits_per_second)
+    {
+        #[allow(clippy::cast_precision_loss)] // a rate is far below 2^52 bits per second
+        let mean = mean as f64;
+        let _ = writeln!(
+            text,
+            "  goodput  {} on average over the transfer",
+            rate(mean)
+        );
+    }
+}
+
 fn programs_text(text: &mut String, result: &RunResult) {
     for program in &result.programs {
         let how = match (program.exit_code, program.exit_signal) {

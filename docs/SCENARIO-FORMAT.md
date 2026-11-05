@@ -424,7 +424,7 @@ Both use the **TCP of the machine's kernel**, with ordinary sockets, so what the
 | `start`, `stop` | no | no | As for the other workloads. A workload without `bytes` sends until `stop`; the data in flight at `stop` is still delivered. |
 | `ip` | no | no | `v4` or `v6`, as for the other workloads. |
 
-**What the Kernel backend does with it:** a scenario with one of these kinds is read and checked, and the Kernel backend refuses to run it until the run is built ("planned for release 0.3"); the agents that will run it are described in [AGENT.md](AGENT.md).
+**What the Kernel backend does with it:** it starts a server in `to` and the clients in `from` (the agents of [AGENT.md](AGENT.md)), waits for the transfers to be done, and puts a `tcp` entry for each workload in the result ([RESULTS.md](RESULTS.md#tcp-wrk-04-wrk-05-prb-12-d-086)). The packets of a TCP workload and its acknowledgements enter the same directions as everything else, so a scenario with one is not accounted for packet by packet (`directions` and the check of the queues are left out); the counters of the queues (`queues`) are still read.
 
 ## A program of your own
 
