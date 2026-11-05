@@ -132,6 +132,24 @@ pub(crate) const TAGGED: &[Tagged] = &[
                 &["id", "from", "to", "trace"],
                 &["start", "stop", "udp-checksum", "ip", "dont-fragment"],
             ),
+            (
+                "tcp-bulk",
+                &["id", "from", "to"],
+                &["bytes", "connections", "cc", "start", "stop", "ip"],
+            ),
+            (
+                "request-response",
+                &["id", "from", "to", "request", "response"],
+                &[
+                    "connections",
+                    "interval",
+                    "timeout",
+                    "cc",
+                    "start",
+                    "stop",
+                    "ip",
+                ],
+            ),
         ],
     },
 ];

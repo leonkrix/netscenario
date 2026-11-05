@@ -1479,6 +1479,125 @@
       ],
       "type": "object"
     },
+    "RequestResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "cc": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Name"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The congestion control of the sockets: `cubic` (default), `reno`, `bbr` or another that the machine has."
+        },
+        "connections": {
+          "description": "How many connections, from 1 to 1024. Default 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "from": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that sends the requests."
+        },
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the workload. Metrics are named after it."
+        },
+        "interval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The time between two requests of the whole workload (an open loop). Without it each connection sends the next request\nwhen the response has arrived (a closed loop)."
+        },
+        "ip": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IpFamily"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network."
+        },
+        "kind": {
+          "$ref": "#/$defs/RequestResponseKind",
+          "description": "`request-response`: requests of one size answered with responses of another, over TCP."
+        },
+        "request": {
+          "$ref": "#/$defs/Size",
+          "description": "The size of a request, from 1 byte to 1 GiB."
+        },
+        "response": {
+          "$ref": "#/$defs/Size",
+          "description": "The size of a response, from 1 byte to 1 GiB."
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload starts, from the start of the measured phase. Default `0s`."
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload stops: no request is started after it. Default: the end of the measured phase."
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How long a request waits for its response before it counts as failed. Default `30s`."
+        },
+        "to": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that answers."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "from",
+        "to",
+        "request",
+        "response"
+      ],
+      "type": "object"
+    },
+    "RequestResponseKind": {
+      "enum": [
+        "request-response"
+      ],
+      "type": "string"
+    },
     "Role": {
       "description": "What a node does with packets that are not for it.",
       "oneOf": [
@@ -1684,6 +1803,104 @@
     "TableValues": {
       "description": "The 4096 entries of a delay table, each as 4 hexadecimal digits (two's complement, 8192 is one standard deviation). Written by the loader from the file of samples.",
       "pattern": "^[0-9a-fA-F]{16384}$",
+      "type": "string"
+    },
+    "TcpBulk": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Size"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The payload that each connection sends. Without it each sends from `start` until `stop`."
+        },
+        "cc": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Name"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The congestion control of the sending sockets: `cubic` (default), `reno`, `bbr` or another that the machine has."
+        },
+        "connections": {
+          "description": "How many connections, from 1 to 1024. Default 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "from": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that sends."
+        },
+        "id": {
+          "$ref": "#/$defs/Name",
+          "description": "The name of the workload. Metrics are named after it."
+        },
+        "ip": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IpFamily"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The family of the addresses of the flow: `v4` or `v6`. Default: the only family of the network."
+        },
+        "kind": {
+          "$ref": "#/$defs/TcpBulkKind",
+          "description": "`tcp-bulk`: data over TCP as fast as the network allows."
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload starts, from the start of the measured phase. Default `0s`."
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the workload stops. Default: the end of the measured phase."
+        },
+        "to": {
+          "$ref": "#/$defs/Name",
+          "description": "The node that receives."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "TcpBulkKind": {
+      "enum": [
+        "tcp-bulk"
+      ],
       "type": "string"
     },
     "Topology": {
@@ -2267,6 +2484,14 @@
         {
           "$ref": "#/$defs/TraceReplay",
           "description": "UDP at the moments and with the sizes of a recorded trace. After the others because the kinds are listed in the order\nthey were added."
+        },
+        {
+          "$ref": "#/$defs/TcpBulk",
+          "description": "Data over TCP (D-086). After the others because the kinds are listed in the order they were added."
+        },
+        {
+          "$ref": "#/$defs/RequestResponse",
+          "description": "Requests and responses over TCP (D-086)."
         }
       ],
       "description": "A workload: something that runs in a node. Either a generator that sends traffic ([`UdpCbr`],\n[`UdpPoisson`], [`UdpOnOff`], [`UdpBursty`]), or the program that is being tested ([`Command`]).\n\nIt is read by hand (see `WorkloadFields`) for the reason that `Loss` is: the derived reader for a tagged\nenum reports an error in a value at the start of the mapping and not at the value.\n\nMore kinds come in later releases, so a `match` outside this crate needs a wildcard arm."

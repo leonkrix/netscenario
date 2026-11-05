@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A download over a link of 20 mbit with 40 ms of delay each way: two connections, each fetching 5 mb, with reno. The
+# result has the goodput, the completion of each transfer and the samples of the kernel (round trip time, window, retransmissions).
+# TCP is driven by feedback, so the result says that a run of it is statistical and not exact: repeat it to read an interval.
+version: 0
+name: tcp-download
+seed: 5
+duration: 20s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      both:
+        delay: 40ms
+        rate: 20mbit
+workloads:
+  - id: download
+    kind: tcp-bulk
+    from: server
+    to: client
+    bytes: 5mb
+    connections: 2
+    cc: reno

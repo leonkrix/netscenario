@@ -3,10 +3,10 @@ source: crates/netscenario-model/tests/corpus.rs
 expression: error.render()
 input_file: scenarios/invalid/planned-workload-kind.yaml
 ---
-error: `kind: tcp-bulk` is planned for release 0.3 (see FEATURES.md)
+error: `kind: container` is planned for release 0.5 (see FEATURES.md)
   --> planned-workload-kind.yaml:13:11
    |
 12 |   - id: media
-13 |     kind: tcp-bulk
-   |           ^^^^^^^^
+13 |     kind: container
+   |           ^^^^^^^^^
    = path: workloads[0].kind

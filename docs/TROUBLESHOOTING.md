@@ -46,7 +46,7 @@ error: `both` cannot be combined with `forward` or `reverse`
 `netscenario validate file.yaml` checks a file without running it, and works on any machine. The mistakes people make most often:
 
 - **A number without a unit** (`delay: 40`) or a probability without a percent sign (`p: 0.01`). A bare number could be seconds or milliseconds, so it is refused. Write `40ms` and `1%`.
-- **A key of a later release** (a queue, a loss model such as `trace`, a workload kind such as `tcp-bulk`). The error says in which release it is planned ([FEATURES.md](../FEATURES.md)).
+- **A key of a later release** (a loss model such as `trace`, a workload kind such as `container`). The error says in which release it is planned ([FEATURES.md](../FEATURES.md)).
 - **`repetitions` in the file.** It is an option of a run, not a key: `netscenario run --repetitions 10`, or `repetitions=10` in Python ([STATISTICS.md](STATISTICS.md)).
 - **A misspelled key, value, unit or name**: the error lists the keys that are allowed there (`unknown field `dealy`, expected one of delay, jitter, loss, rate`) and, if exactly one name is close, asks `did you mean 'delay'?`. The same holds for the values of an enumeration, for a unit (`Mbit`, `min`, `mbps`) and for a node that does not exist. It is a guess: read the line the error points at.
 - **The wrong shape**: `netscenario schema` prints the JSON Schema; editors can use it to complete and check the file ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md)).

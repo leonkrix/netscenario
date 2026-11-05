@@ -1,0 +1,13 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/request-response-interval-too-short.yaml
+---
+error: the interval 100us between requests is below 1ms, which is 1,000 requests per second
+  --> request-response-interval-too-short.yaml:10:106
+   |
+ 9 | workloads:
+10 |   - { id: api, kind: request-response, from: client, to: server, request: 100b, response: 1kb, interval: 100us }
+   |                                                                                                          ^^^^^
+   = path: workloads[0].interval
+   = help: the agent was tried up to that rate; use more connections and a closed loop for more

@@ -45,6 +45,7 @@ mod shortcut;
 mod source;
 mod suggest;
 mod table;
+mod tcp;
 mod topology;
 mod trace;
 mod trace_pcap;
@@ -82,6 +83,10 @@ pub use table::{
     DelayTable, MAX_REFERENCED_FILE_BYTES, MAX_SAMPLES, MIN_SAMPLES, TABLE_ENTRIES, TABLE_SCALE,
     TableValues, parse_samples,
 };
+pub use tcp::{
+    DEFAULT_CONGESTION, DEFAULT_TIMEOUT, MAX_CONNECTIONS, MAX_MESSAGE_BYTES, RequestResponse,
+    TcpBulk,
+};
 pub use topology::{
     DEFAULT_DESTINATION, DEFAULT_METRIC, MAX_LINKS, MAX_NODES, MAX_ROUTES, Node, Role, Route,
     Routing, Topology,
@@ -95,4 +100,5 @@ pub use units::{Duration, Name, Probability, Rate, Size, ValueError};
 pub use validate::{
     MAX_BURST_PACKETS, MAX_COST, MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND, MAX_QUEUE_BYTES,
     MAX_QUEUE_PACKETS, MAX_WEIGHT, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM,
+    MIN_REQUEST_INTERVAL,
 };
