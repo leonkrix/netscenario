@@ -254,3 +254,148 @@ fn an_unknown_congestion_control_is_refused_by_name_before_anything_is_built() {
     assert!(refusal.reason.contains("'no-such-cc'"), "{refusal:?}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+fn with_timeline(link: &str, workload: &str, duration: &str, timeline: &str) -> Scenario {
+    Scenario::from_yaml(
+        &format!(
+            "version: 0\nname: tcp-test\nseed: 5\nduration: {duration}\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n{link}workloads:\n  - {workload}\ntimeline:\n{timeline}"
+        ),
+        "tcp-test.yaml",
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// A transfer on a link of 10 mbit with 20 ms each way and an outage from 6 s to 9 s. Nothing is delivered in an outage, not even a
+/// packet that was on its way (D-064), so the bins that lie wholly inside it (7 s and 8 s) have no goodput at all. The baseline is
+/// the goodput before the outage, at most the share of the rate that is payload (9.56 mbit) and, out of the slow start, not far
+/// below it. TCP sends again with the timer of retransmission, which doubles after each try from 200 ms at the least: the tries
+/// after the first one come at 0.2, 0.6, 1.4, 3.0 and 6.2 s of silence, so at the latest 3.2 s after the end of the outage one gets
+/// through, and the window is back at the baseline within a few round trips after that; 17 s leaves room.
+#[test]
+fn a_transfer_stops_in_an_outage_and_the_entry_says_when_its_goodput_is_back() {
+    if !ready() {
+        return;
+    }
+    let dir = work_dir("tcp-recovery");
+    let result = go(
+        &dir,
+        &with_timeline(
+            "      both: { delay: 20ms, rate: 10mbit }\n",
+            "{ id: down, kind: tcp-bulk, from: client, to: server, cc: reno }",
+            "22s",
+            "  - { at: 6s, link: access, outage: 3s }\n",
+        ),
+    )
+    .unwrap();
+    let tcp = only(&result);
+    assert_eq!(tcp.failed_connections, 0, "{:?}", tcp.first_error);
+    let goodput = tcp.goodput.as_ref().unwrap();
+    // Nothing arrives in the bins that lie inside the outage
+    assert_eq!(
+        goodput.bits_per_second[7], 0,
+        "{:?}",
+        goodput.bits_per_second
+    );
+    assert_eq!(
+        goodput.bits_per_second[8], 0,
+        "{:?}",
+        goodput.bits_per_second
+    );
+    // The end of the outage has an entry on the way of the data, on the goodput
+    let entry = tcp
+        .recoveries
+        .iter()
+        .find(|recovery| {
+            recovery.kind == "outage-end" && recovery.direction.as_deref() == Some("forward")
+        })
+        .unwrap_or_else(|| panic!("{:?}", tcp.recoveries));
+    assert_eq!(entry.basis, netscenario_core::Basis::Goodput);
+    assert_eq!(entry.disturbance_ns, 6_000_000_000);
+    let baseline = entry.baseline.expect("a baseline before the outage");
+    assert!(
+        (7.8e6..=10e6 * PAYLOAD_SHARE * 1.001).contains(&baseline),
+        "the baseline was {baseline} bit/s"
+    );
+    let recovered = entry.recovered_at_ns.unwrap_or_else(|| {
+        panic!(
+            "not recovered: {:?} (goodput {:?})",
+            entry.reason, goodput.bits_per_second
+        )
+    });
+    eprintln!(
+        "RECOVERED {recovered} baseline {baseline} goodput {:?}",
+        goodput.bits_per_second
+    );
+    assert!(recovered >= 9_000_000_000, "recovered at {recovered} ns");
+    assert!(recovered <= 17_000_000_000, "recovered at {recovered} ns");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A transfer that is done has not dropped to zero: an event after its end has no baseline, and the entry says that the workload
+/// was not working. The transfer of 500 kb at 10 mbit takes under a second.
+#[test]
+fn canary_a_finished_transfer_has_no_baseline_for_an_event_after_its_end() {
+    if !ready() {
+        return;
+    }
+    let dir = work_dir("tcp-recovery-done");
+    let result = go(
+        &dir,
+        &with_timeline(
+            "      both: { delay: 20ms, rate: 10mbit }\n",
+            "{ id: down, kind: tcp-bulk, from: client, to: server, bytes: 500kb }",
+            "8s",
+            "  - { at: 5s, link: access, set: { both: { rate: 2mbit } } }\n",
+        ),
+    )
+    .unwrap();
+    let tcp = only(&result);
+    assert_eq!(tcp.failed_connections, 0, "{:?}", tcp.first_error);
+    let done = tcp.completion_ns().expect("the transfer was done");
+    assert!(done < 4_000_000_000, "the transfer took {done} ns");
+    let recovery = &tcp.recoveries[0];
+    assert_eq!((recovery.baseline, recovery.time_ns), (None, None));
+    assert!(
+        recovery
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("was not working in the bins before")),
+        "{:?}",
+        recovery.reason
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A `request-response` workload has a goodput of its own: the responses by bin, each where its last byte was read, and the bins
+/// add up to the payload that arrived at the client.
+#[test]
+fn the_responses_of_a_request_workload_are_its_goodput() {
+    if !ready() {
+        return;
+    }
+    let dir = work_dir("tcp-request-goodput");
+    let result = go(
+        &dir,
+        &scenario(
+            "      forward: { delay: 10ms }\n      reverse: { delay: 10ms }\n",
+            "{ id: api, kind: request-response, from: client, to: server, request: 100b, response: 2kb, connections: 2, interval: 50ms }",
+            "3s",
+        ),
+    )
+    .unwrap();
+    let tcp = only(&result);
+    assert_eq!(tcp.failed_connections, 0, "{:?}", tcp.first_error);
+    let goodput = tcp.goodput.as_ref().expect("a goodput for the responses");
+    let bits: f64 = goodput
+        .bits_per_second
+        .iter()
+        .map(|&b| b as f64 * goodput.bin_ns as f64 / 1e9)
+        .sum();
+    let expected = tcp.bytes_received as f64 * 8.0;
+    assert!(
+        (bits - expected).abs() <= expected * 1e-6 + goodput.bits_per_second.len() as f64,
+        "{bits} bits in the bins, {expected} arrived"
+    );
+    assert!(goodput.mean_bits_per_second.is_some());
+    let _ = std::fs::remove_dir_all(dir);
+}

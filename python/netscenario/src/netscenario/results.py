@@ -284,8 +284,10 @@ class Series:
 class Recovery:
     """How long a workload took to be back at its level after an event (``docs/RESULTS.md``).
 
-    The level of a bin is the share of the packets sent in it that arrived. The baseline is the
-    median level of the last bins that sent something before the disturbance; the workload has
+    The level of a bin is the share of the packets sent in it that arrived; for a TCP workload
+    (``basis == "goodput"``) it is the goodput of the bin in bits per second, and only bins in which
+    the workload was working count. The baseline is the median level of the last bins that sent
+    something before the disturbance; the workload has
     recovered at the start of the first window of ``window_bins`` bins, beginning at the bin of the
     event, whose level is at least ``fraction`` of the baseline. The resolution is one bin
     (``Series.bin``).
@@ -300,14 +302,16 @@ class Recovery:
     direction: str | None
     """``forward`` or ``reverse``, or ``None`` for a step of the whole link."""
     basis: str
-    """``send`` or ``arrival``: the view the level was made from."""
+    """``send`` or ``arrival``: the view of the packets the level was made from; ``goodput`` for a
+    TCP workload (D-088)."""
     start: float
     """The moment from which the time is counted, in seconds from the start of the measured
     phase."""
     disturbance: float
     """When the disturbance began, in the same seconds. The baseline was taken before it."""
     baseline: float | None
-    """The baseline level (0 to 1), or ``None`` if there was none."""
+    """The baseline level (0 to 1; bits per second for ``goodput``), or ``None`` if there was
+    none."""
     level: float | None
     """The level that had to be reached again: ``fraction`` times the baseline."""
     baseline_bins: int
@@ -783,7 +787,8 @@ class Tcp:
     """The payload bytes that arrived: at the server for ``tcp-bulk``, at the client (the
     responses) for ``request-response``."""
     goodput: TcpGoodput | None
-    """The payload that arrived at the server by time (``tcp-bulk``)."""
+    """The payload that arrived at the receiving end by time: at the server for ``tcp-bulk``, the
+    responses at the client for ``request-response``."""
     transfers: tuple[TcpTransfer, ...]
     """One entry for each connection."""
     retransmitted_segments: int
@@ -804,6 +809,9 @@ class Tcp:
     is in ``docs/AGENT.md``)."""
     server_file: Path
     """The file of the server: the payload by interval."""
+    recoveries: tuple[Recovery, ...] = ()
+    """How long the workload took to be back at its goodput after each event of the timeline on its
+    path, in either direction, in the order of the events (D-088)."""
 
     @property
     def complete(self) -> bool:
@@ -1283,6 +1291,7 @@ def _tcp(data: dict[str, Any], directory: Path) -> Tcp:
         stopped=bool(data["stopped"]),
         client_file=directory / data["client_file"],
         server_file=directory / data["server_file"],
+        recoveries=tuple(_recovery(r) for r in data.get("recoveries", ())),
     )
 
 

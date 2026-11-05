@@ -117,6 +117,7 @@ fn html_run(run: &RunReport) -> Result<String, ReportError> {
     for (workload, detail) in result.workloads.iter().zip(&run.details) {
         workload_section(&mut body, result, workload, detail);
     }
+    tcp_section(&mut body, result);
     timeline_section(&mut body, result);
     programs_section(&mut body, result);
     if !result.notes.is_empty() {
@@ -233,6 +234,14 @@ fn workload_section(
         .map(|(label, value)| vec![escape(label), escape(&value)])
         .collect();
     table(out, &["Measure", ">Value"], &rows);
+    if workload.echo.is_some() {
+        let echo_rows: Vec<Vec<String>> = super::text::echo_rows(workload)
+            .into_iter()
+            .map(|(label, value)| vec![escape(label), escape(&value)])
+            .collect();
+        out.push_str("<h3>Echo: the packets that came back</h3>");
+        table(out, &["Measure", ">Value"], &echo_rows);
+    }
     let marks = event_marks(result);
     let bin_s = bin_seconds(workload, &detail.bins);
     let span = detail
@@ -531,6 +540,97 @@ fn figure(out: &mut String, svg: &str, caption: &str) {
     );
 }
 
+/// The TCP workloads: a table of numbers and the goodput over time with the events of the timeline (D-086, D-088).
+fn tcp_section(out: &mut String, result: &RunResult) {
+    for tcp in &result.tcp {
+        let _ = write!(
+            out,
+            "<h2>{}</h2><p>{} → {}, {}, {} connection{}</p>",
+            escape(&tcp.id),
+            escape(&tcp.from),
+            escape(&tcp.to),
+            escape(&tcp.kind),
+            tcp.connections,
+            if tcp.connections == 1 { "" } else { "s" }
+        );
+        if tcp.failed_connections > 0 {
+            let _ = write!(
+                out,
+                "<p class=\"warn\">{} of {} connections failed: {}</p>",
+                tcp.failed_connections,
+                tcp.connections,
+                escape(tcp.first_error.as_deref().unwrap_or("no reason was given"))
+            );
+        }
+        let rows: Vec<Vec<String>> = super::text::tcp_rows(tcp)
+            .into_iter()
+            .map(|(label, value)| vec![escape(label), escape(&value)])
+            .collect();
+        table(out, &["Measure", ">Value"], &rows);
+        if let Some(goodput) = &tcp.goodput {
+            goodput_chart(out, tcp, goodput, result);
+        }
+    }
+    if !result.tcp.is_empty() {
+        let _ = write!(
+            out,
+            "<p><small>A run with TCP is {}: {}</small></p>",
+            escape(&result.reproducibility.class),
+            escape(&result.reproducibility.because.join("; "))
+        );
+    }
+}
+
+/// The goodput of a TCP workload in each bin, in the unit that fits its size.
+fn goodput_chart(
+    out: &mut String,
+    tcp: &crate::result::TcpResult,
+    goodput: &crate::result::Goodput,
+    result: &RunResult,
+) {
+    let bin_s = goodput.bin_ns as f64 / 1e9;
+    let peak = goodput.bits_per_second.iter().copied().max().unwrap_or(0) as f64;
+    let (scale, unit) = if peak >= 1e9 {
+        (1e9, "gbit/s")
+    } else if peak >= 1e6 {
+        (1e6, "mbit/s")
+    } else {
+        (1e3, "kbit/s")
+    };
+    let marks = event_marks(result);
+    let span =
+        (goodput.bits_per_second.len() as f64 * bin_s).max(result.timing.duration_ns as f64 / 1e9);
+    let chart = LineChart {
+        title: &format!("{}: goodput over time", tcp.id),
+        description: format!(
+            "The payload that reached the receiving end, in {unit}, in bins of {} s; the dashed vertical lines are the events of the timeline.",
+            tick(bin_s)
+        ),
+        x_max: span,
+        y_label: unit,
+        y_format: &tick,
+        lines: vec![Line {
+            name: "goodput",
+            class: "line-recv",
+            points: goodput
+                .bits_per_second
+                .iter()
+                .enumerate()
+                .map(|(index, bits)| Some(((index as f64 + 0.5) * bin_s, *bits as f64 / scale)))
+                .collect(),
+        }],
+        marks: &marks,
+    };
+    figure(
+        out,
+        &line_chart(&chart),
+        &format!(
+            "Goodput: the payload that reached the receiving end in each bin. The last bin is usually part of a bin and is not scaled up. Bins of {} s.",
+            tick(bin_s)
+        ),
+    );
+}
+
 fn timeline_section(out: &mut String, result: &RunResult) {
     if result.events.is_empty() {
         return;
@@ -565,11 +665,9 @@ fn timeline_section(out: &mut String, result: &RunResult) {
         &["Event", ">At", "Link", "Direction", "Step", "Done"],
         &rows,
     );
-    let recoveries: Vec<Vec<String>> = result
-        .workloads
-        .iter()
-        .flat_map(|w| w.recoveries.iter().map(move |r| (w, r)))
-        .map(|(workload, recovery)| {
+    let recoveries: Vec<Vec<String>> = super::text::all_recoveries(result)
+        .into_iter()
+        .map(|(id, recovery)| {
             let time = recovery.time_ns.map_or_else(
                 || {
                     format!(
@@ -580,7 +678,7 @@ fn timeline_section(out: &mut String, result: &RunResult) {
                 |ns| format!("{} s", seconds(ns)),
             );
             vec![
-                escape(&workload.id),
+                escape(id),
                 format!("event {} ({})", recovery.event, escape(&recovery.kind)),
                 escape(&time),
             ]

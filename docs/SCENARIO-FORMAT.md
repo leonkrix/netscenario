@@ -383,7 +383,7 @@ Every key is optional, and so is the section. `--bin`, `--recovery-basis`, `--re
 | Key | Meaning |
 | --- | --- |
 | `series.bin` | A Duration, at least `1ms`; the measured phase may have at most a million bins. The width of a bin of `series-<id>.jsonl` and the resolution of the time to recover ([RESULTS.md](RESULTS.md)). |
-| `recovery.basis` | `send` or `arrival`: the view the level of a bin is made from. |
+| `recovery.basis` | `send` or `arrival`: the view of the packets the level of a bin is made from. It does not apply to a TCP workload, whose level is its goodput (D-088). |
 | `recovery.baseline-bins`, `recovery.window-bins` | Integers of at least 1. |
 | `recovery.fraction` | A percentage above 0 % and at most 100 %. |
 | `capture` | A list of link ids, each at most once; an id that is not a link is refused with a hint. Both interfaces of each link are captured, in the node at each end: `capture-<link>-<node>.pcap`. The tap sits after the queue of the interface, so a packet that the impairment dropped is in no file, see [RESULTS.md](RESULTS.md#captures-prb-09-d-047-d-073). Backends that cannot capture refuse the key by name. |

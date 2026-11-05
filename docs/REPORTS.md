@@ -20,12 +20,13 @@ Made for the summary of a CI job. For a run: a table with the backend, the seed,
 
 ## JUnit (`--format junit`, RPT-02)
 
-One test suite for the scenario. **One test case for each workload** (and one for each program of your own), with the metrics as `<property>` elements. The names are those of the pytest plugin, `netscenario.<scenario>.<workload>.<metric>`: `sent`, `received`, `lost`, `loss_ratio`, `reordered`, `delay_p50_s` and `delay_p99_s`, and a few more (`duplicates`, `delay_min_s`, `delay_p95_s`, `delay_max_s`, `jitter_mean_s`, `throughput_mean_bps`, `loss_runs_longest`). Times are in seconds. The suite has the version, the backend, the fingerprint of the scenario and the seed as properties.
+One test suite for the scenario. **One test case for each workload** (and one for each TCP workload and each program of your own), with the metrics as `<property>` elements. The names are those of the pytest plugin, `netscenario.<scenario>.<workload>.<metric>`: `sent`, `received`, `lost`, `loss_ratio`, `reordered`, `delay_p50_s` and `delay_p99_s`, and a few more (`duplicates`, `delay_min_s`, `delay_p95_s`, `delay_max_s`, `jitter_mean_s`, `throughput_mean_bps`, `loss_runs_longest`). Times are in seconds. The suite has the version, the backend, the fingerprint of the scenario and the seed as properties.
 
 A case is a **failure** in two cases:
 
 - the run was **interrupted** (`timing.interrupted_ns`), so the numbers are those of the part that ran: every case of the run fails;
-- the kernel **refused packets** of the workload (`sender.send_errors`) and no `down` step of the timeline explains it. A link that is shut on purpose refuses the packets sent into it, and that is what the step is for; the report then says so in the text of the case.
+- the kernel **refused packets** of the workload (`sender.send_errors`) and no `down` step of the timeline explains it. A link that is shut on purpose refuses the packets sent into it, and that is what the step is for; the report then says so in the text of the case;
+- connections of a **TCP workload** failed (`failed_connections`) and no `down` step or outage explains it (D-086). The properties of a TCP workload are `bytes_sent`, `bytes_received`, `failed_connections`, `retransmitted_segments`, `goodput_mean_bps`, `completion_s`, `rtt_p50_s`, `rtt_max_s` and, for requests, `requests_answered`, `requests_failed`, `latency_p50_s`, `latency_p95_s`, `latency_p99_s`, `latency_max_s`, `round_trip_p50_s` and `round_trip_p99_s`; a workload with an echo has `echo_received`, `echo_loss_ratio` and `round_trip_min_s` to `round_trip_max_s` as well.
 
 A warning about reproducibility is **not** a failure: it is in the text of the case. A result is only written for a run that went through, so a program with `on-exit: fail` that ended with an error has ended the run without a result and there is nothing to report; thresholds on a result (`expect`) come with a later release, and with them failures for numbers.
 
@@ -40,8 +41,11 @@ For a set: one case for each run, and the headline metrics of the set as propert
 - the **one-way delay** over time: the median and the 95th and 99th percentile of each bin, with a gap where nothing arrived;
 - the **lost packets** over time: the share of the packets sent in each bin that did not arrive;
 - the **distribution of the delays** of all packets, with the median and the 99th percentile marked;
-- the events of the timeline as dashed lines with their numbers in the first three charts, and a table of the events and of the times to recover;
-- the bins as a table in a collapsed block (the first 200).
+- the events of the timeline as dashed lines with their numbers in the first three charts, and a table of the events and of the times to recover (those of the TCP workloads too);
+- the bins as a table in a collapsed block (the first 200);
+- for a workload with an echo, a second table with the packets that came back and their round trip.
+
+For each TCP workload (D-086, D-088): the numbers of the Markdown table, the **goodput** over time with the events of the timeline as dashed lines, and the class of reproducibility of the run.
 
 For a set: for each headline metric a drawing with **one dot for each run**, the interval around the mean as a bar and the mean as a line, and the table of all metrics.
 
