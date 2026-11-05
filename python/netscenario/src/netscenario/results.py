@@ -343,6 +343,40 @@ class Throughput:
 
 
 @dataclass(frozen=True)
+class Echo:
+    """The packets of a workload with ``echo=True`` that came back to the sending node.
+
+    The far node sends every packet it recorded back, unchanged, and a receiver in the sending
+    node records it with the send time of the first trip: ``round_trip`` is the time from the
+    sending of a packet to the arrival of its echo, and the way back goes through the reverse
+    direction of the link, so its delay and its loss count.
+    """
+
+    sent: int
+    """The packets the sender handed to the kernel (the same number as the workload's)."""
+    received: int
+    """The different packets that came back."""
+    lost: int
+    """``sent - received``: the packets that did not come back, lost on the way there or back."""
+    loss_ratio: float
+    """``lost / sent``, a number between 0 and 1."""
+    duplicates: int
+    """Arrivals of a packet that had come back before."""
+    reordered: int
+    """Packets that came back after a packet with a higher sequence number (RFC 4737)."""
+    round_trip: Delay | None
+    """The round trip of the packets that came back, or ``None`` if none did."""
+    echoed: int
+    """The packets the far node sent back."""
+    echo_errors: int
+    """The packets the far node tried to send back and the system refused."""
+    foreign_datagrams: int
+    """Datagrams that reached the collector and were not packets of the agent."""
+    records_file: Path
+    """The binary file of per-packet records of the collector (``docs/AGENT.md``)."""
+
+
+@dataclass(frozen=True)
 class TraceInfo:
     """The trace a ``trace-replay`` workload replayed."""
 
@@ -472,6 +506,9 @@ class Workload:
     """The payload of the packets that arrived, in bytes: ``received`` times ``packet_size``, or for
     a trace the sum of their sizes. 0 in a result of release 0.2 or earlier, which has ``received``
     and ``packet_size``."""
+    echo: Echo | None = None
+    """The packets that came back with their round trip, for a workload with ``echo=True``; ``None``
+    for the others."""
 
     @property
     def delivery_ratio(self) -> float:
@@ -1158,6 +1195,24 @@ def _queue_stats(raw: Mapping[str, Any]) -> QueueStats:
     )
 
 
+def _echo(data: dict[str, Any] | None, directory: Path) -> Echo | None:
+    if data is None:
+        return None
+    return Echo(
+        sent=int(data["sent"]),
+        received=int(data["received"]),
+        lost=int(data["lost"]),
+        loss_ratio=float(data["loss_ratio"]),
+        duplicates=int(data["duplicates"]),
+        reordered=int(data["reordered"]),
+        round_trip=_delay(data.get("delay")),
+        echoed=int(data["echoed"]),
+        echo_errors=int(data["echo_errors"]),
+        foreign_datagrams=int(data["foreign_datagrams"]),
+        records_file=directory / data["records_file"],
+    )
+
+
 def _delay(data: dict[str, Any] | None) -> Delay | None:
     if data is None:
         return None
@@ -1477,4 +1532,5 @@ def _workload(entry: dict[str, Any], directory: Path) -> Workload:
         recoveries=tuple(_recovery(r) for r in entry.get("recoveries", ())),
         trace=_trace(entry.get("trace")),
         received_bytes=int(entry.get("received_bytes", 0)),
+        echo=_echo(entry.get("echo"), directory),
     )

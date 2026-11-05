@@ -710,6 +710,29 @@ pub struct TraceInfo {
     pub span_ns: u64,
 }
 
+/// The packets of a workload with `echo: true` that came back to the node of the sender (PRB-12, D-087).
+///
+/// The far node sends every packet it recorded back, unchanged, through the reverse direction, and a receiver in the sending
+/// node records it with the send time of the first trip. So `delay` is the **round trip** of a packet, from the moment it was
+/// sent to the moment its echo arrived, `received` is the number of packets that came back, and `lost` the packets that did not,
+/// whether the way there or the way back lost them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct EchoResult {
+    /// How many packets the far node sent back.
+    pub echoed: u64,
+    /// How many packets the system of the far node refused to send back.
+    pub echo_errors: u64,
+    /// How many datagrams reached the collector that were not packets of the agent.
+    pub foreign_datagrams: u64,
+    /// The file of per-packet records of the collector (binary, see `docs/AGENT.md`), relative to the result.
+    pub records_file: String,
+    /// The packets that came back: `sent` is the number of the workload, `received` the packets that came back, and `delay` their
+    /// round trip.
+    #[serde(flatten)]
+    pub stats: FlowStats,
+}
+
 /// The result of one workload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -742,6 +765,9 @@ pub struct WorkloadResult {
     /// The trace of a `trace-replay` workload (D-085). Absent for the others.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<TraceInfo>,
+    /// The packets that came back, with their round trip, for a workload with `echo: true` (D-087). Absent for the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echo: Option<EchoResult>,
     /// When the workload started, from the start of the measured phase, in nanoseconds.
     pub start_ns: u64,
     /// How long the workload sent, in nanoseconds.
@@ -892,6 +918,7 @@ pub(crate) mod tests {
                 rate_bits_per_second: 1_000_000,
                 packet_size_bytes: 1000,
                 trace: None,
+                echo: None,
                 start_ns: 0,
                 duration_ns: 1,
                 stats: FlowStats {

@@ -75,6 +75,9 @@ pub enum Feature {
     /// The workloads `tcp-bulk` and `request-response`: data and requests over the TCP of the kernel (WRK-04, WRK-05, D-086).
     /// Last in the list because it was added last.
     TcpWorkloads,
+    /// The key `echo` of the UDP workloads: the far node sends every packet back and the result has the round trip (PRB-12, D-087).
+    /// Last in the list because it was added last.
+    UdpEcho,
 }
 
 impl Feature {
@@ -108,6 +111,7 @@ impl Feature {
         Feature::QueueDisciplines,
         Feature::TraceReplay,
         Feature::TcpWorkloads,
+        Feature::UdpEcho,
     ];
 
     /// A short stable name, for results and logs.
@@ -142,6 +146,7 @@ impl Feature {
             Feature::QueueDisciplines => "queue-disciplines",
             Feature::TraceReplay => "trace-replay",
             Feature::TcpWorkloads => "tcp-workloads",
+            Feature::UdpEcho => "udp-echo",
         }
     }
 
@@ -177,6 +182,7 @@ impl Feature {
             Feature::QueueDisciplines => "Queue disciplines (CoDel, FQ-CoDel, PIE)",
             Feature::TraceReplay => "Replay of a trace of packets (times and sizes)",
             Feature::TcpWorkloads => "TCP workloads (bulk transfers, requests and responses)",
+            Feature::UdpEcho => "Echo of a UDP stream (the round trip of the datagrams)",
         }
     }
 }
@@ -345,6 +351,9 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             }
             if generator.ip == Some(netscenario_model::IpFamily::V6) {
                 need(Feature::Ipv6, format!("workloads[{index}].ip"));
+            }
+            if generator.echo {
+                need(Feature::UdpEcho, format!("workloads[{index}].echo"));
             }
         }
         if workload

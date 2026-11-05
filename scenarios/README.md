@@ -15,6 +15,7 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [capture-a-link.yaml](capture-a-link.yaml) | The section `measure`: both interfaces of a lossy link captured as pcap files, and the bins of the series ([docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FORMAT.md#what-is-measured)) |
 | [tcp-download.yaml](tcp-download.yaml) | `tcp-bulk`: a download over two connections of 5 mb each, with `reno`, over a link with a rate |
 | [request-response.yaml](request-response.yaml) | `request-response`: an API with a request every 20 ms over four connections, a little loss |
+| [udp-echo.yaml](udp-echo.yaml) | `echo: true`: every packet of a stream sent back by the far node, and the round trip over a way with 30 ms and a way with 40 ms, each with a loss of 1 % |
 | [noisy-radio.yaml](noisy-radio.yaml) | Bursts of loss (both models), reordering, duplication and corruption |
 | [three-hops.yaml](three-hops.yaml) | A chain of two routers between a client and a server: three links with their own values, the routes computed by the shortest path (D-078) |
 | [fragments.yaml](fragments.yaml) | A link with an MTU of 1000 and packets of 1,400 bytes: the sender cuts them into fragments, a lost fragment loses the packet (D-081) |

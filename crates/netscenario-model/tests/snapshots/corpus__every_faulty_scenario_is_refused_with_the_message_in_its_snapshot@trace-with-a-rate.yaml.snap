@@ -10,4 +10,4 @@ error: the key `rate` is not used by the workload kind `trace-replay`
 10 |   - { id: call, kind: trace-replay, from: client, to: server, trace: { file: call.csv }, rate: 1mbit }
    |                                                                                          ^^^^
    = path: workloads[0].rate
-   = help: the workload kind `trace-replay` has `from`, `to`, `trace`, `start`, `stop`, `udp-checksum`, `ip`, `dont-fragment`; `rate` belongs to udp-cbr, udp-poisson and udp-onoff
+   = help: the workload kind `trace-replay` has `from`, `to`, `trace`, `start`, `stop`, `udp-checksum`, `ip`, `dont-fragment`, `echo`; `rate` belongs to udp-cbr, udp-poisson and udp-onoff

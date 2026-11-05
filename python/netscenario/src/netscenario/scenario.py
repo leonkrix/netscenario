@@ -334,6 +334,7 @@ class ScenarioBuilder:
         start: str | None = None,
         stop: str | None = None,
         udp_checksum: bool = True,
+        echo: bool = False,
     ) -> Self:
         """Add a workload of UDP packets at a constant bit rate.
 
@@ -350,6 +351,10 @@ class ScenarioBuilder:
                 in the payload instead, so that a packet the link corrupts arrives and is counted
                 (``corrupted`` in the result) and is not dropped by the receiving kernel. The
                 payload must then be at least 20 bytes.
+            echo: ``True`` has the far node send every packet back, so that the result has the
+                round trip of the packets (``workload.echo``). The packets come back through the
+                reverse direction, so its delay and its loss count. Not with
+                ``udp_checksum=False``.
         """
         return self._udp_workload(
             "udp-cbr",
@@ -360,6 +365,7 @@ class ScenarioBuilder:
             start,
             stop,
             udp_checksum,
+            echo,
         )
 
     def udp_poisson(
@@ -373,6 +379,7 @@ class ScenarioBuilder:
         start: str | None = None,
         stop: str | None = None,
         udp_checksum: bool = True,
+        echo: bool = False,
     ) -> Self:
         """Add a workload of UDP packets as a Poisson process.
 
@@ -388,6 +395,7 @@ class ScenarioBuilder:
             start: When the workload starts (default ``"0s"``).
             stop: When it stops (default: the end of the measured phase).
             udp_checksum: See :meth:`udp_cbr`.
+            echo: See :meth:`udp_cbr`.
         """
         return self._udp_workload(
             "udp-poisson",
@@ -398,6 +406,7 @@ class ScenarioBuilder:
             start,
             stop,
             udp_checksum,
+            echo,
         )
 
     def udp_onoff(
@@ -414,6 +423,7 @@ class ScenarioBuilder:
         start: str | None = None,
         stop: str | None = None,
         udp_checksum: bool = True,
+        echo: bool = False,
     ) -> Self:
         """Add a workload that sends at a constant rate in on phases and nothing in off phases.
 
@@ -432,6 +442,7 @@ class ScenarioBuilder:
             start: When the workload starts (default ``"0s"``).
             stop: When it stops (default: the end of the measured phase).
             udp_checksum: See :meth:`udp_cbr`.
+            echo: See :meth:`udp_cbr`.
         """
         phases: dict[str, Any] = {
             "rate": rate,
@@ -442,7 +453,7 @@ class ScenarioBuilder:
         if distribution != "fixed":
             phases["distribution"] = distribution
         return self._udp_workload(
-            "udp-onoff", id, source, destination, phases, start, stop, udp_checksum
+            "udp-onoff", id, source, destination, phases, start, stop, udp_checksum, echo
         )
 
     def udp_bursty(
@@ -459,6 +470,7 @@ class ScenarioBuilder:
         start: str | None = None,
         stop: str | None = None,
         udp_checksum: bool = True,
+        echo: bool = False,
     ) -> Self:
         """Add a workload that sends bursts of packets with a pause between them.
 
@@ -478,6 +490,7 @@ class ScenarioBuilder:
             start: When the workload starts (default ``"0s"``).
             stop: When it stops (default: the end of the measured phase).
             udp_checksum: See :meth:`udp_cbr`.
+            echo: See :meth:`udp_cbr`.
         """
         keys: dict[str, Any] = {
             "packet-size": packet_size,
@@ -488,7 +501,7 @@ class ScenarioBuilder:
         if distribution != "fixed":
             keys["distribution"] = distribution
         return self._udp_workload(
-            "udp-bursty", id, source, destination, keys, start, stop, udp_checksum
+            "udp-bursty", id, source, destination, keys, start, stop, udp_checksum, echo
         )
 
     def tcp_bulk(
@@ -606,6 +619,7 @@ class ScenarioBuilder:
         start: str | None,
         stop: str | None,
         udp_checksum: bool,
+        echo: bool = False,
     ) -> Self:
         workload: dict[str, Any] = {
             "id": id,
@@ -620,6 +634,8 @@ class ScenarioBuilder:
             workload["stop"] = stop
         if not udp_checksum:
             workload["udp-checksum"] = False
+        if echo:
+            workload["echo"] = True
         self._workloads.append(workload)
         return self
 

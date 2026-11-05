@@ -163,6 +163,57 @@ fn markdown_workloads(text: &mut String, result: &RunResult) {
             let _ = writeln!(text, "\n> **{}:** {reason}", cell(&workload.id));
         }
     }
+    markdown_echo(text, result);
+}
+
+/// The round trip of the workloads that were echoed, one column each (D-087).
+fn markdown_echo(text: &mut String, result: &RunResult) {
+    let echoed: Vec<&WorkloadResult> = result
+        .workloads
+        .iter()
+        .filter(|workload| workload.echo.is_some())
+        .collect();
+    if echoed.is_empty() {
+        return;
+    }
+    let _ = writeln!(text, "\n### Echo\n");
+    let ids: Vec<String> = echoed.iter().map(|w| cell(&w.id)).collect();
+    let _ = writeln!(text, "| | {} |", ids.join(" | "));
+    let _ = writeln!(text, "| --- |{}", " ---: |".repeat(ids.len()));
+    let columns: Vec<Vec<(&str, String)>> = echoed.iter().map(|w| echo_rows(w)).collect();
+    for (index, (label, _)) in columns[0].iter().enumerate() {
+        let values: Vec<String> = columns
+            .iter()
+            .map(|column| cell(&column[index].1))
+            .collect();
+        let _ = writeln!(text, "| {label} | {} |", values.join(" | "));
+    }
+}
+
+/// The rows of the table of echoes: the packets that came back and their round trip.
+fn echo_rows(workload: &WorkloadResult) -> Vec<(&'static str, String)> {
+    let Some(echo) = &workload.echo else {
+        return Vec::new();
+    };
+    let stats = &echo.stats;
+    let trip = |pick: fn(&crate::stats::DelaySummary) -> u64| {
+        stats
+            .delay
+            .as_ref()
+            .map_or_else(|| "no packet came back".to_owned(), |d| ms(pick(d)))
+    };
+    vec![
+        ("Came back", stats.received.to_string()),
+        (
+            "Not back",
+            format!("{} ({})", stats.lost, percent(stats.loss_ratio)),
+        ),
+        ("Round trip min", trip(|d| d.min_ns)),
+        ("Round trip p50", trip(|d| d.p50_ns)),
+        ("Round trip p95", trip(|d| d.p95_ns)),
+        ("Round trip p99", trip(|d| d.p99_ns)),
+        ("Round trip max", trip(|d| d.max_ns)),
+    ]
 }
 
 /// The TCP workloads, one column each (D-086).
@@ -539,6 +590,23 @@ fn workload_properties(scenario: &str, workload: &WorkloadResult) -> Vec<(String
         format!("{prefix}.loss_runs_longest"),
         stats.loss_runs.longest.to_string(),
     ));
+    if let Some(echo) = &workload.echo {
+        found.push((
+            format!("{prefix}.echo_received"),
+            echo.stats.received.to_string(),
+        ));
+        found.push((
+            format!("{prefix}.echo_loss_ratio"),
+            echo.stats.loss_ratio.to_string(),
+        ));
+        if let Some(trip) = &echo.stats.delay {
+            found.push((format!("{prefix}.round_trip_min_s"), secs(trip.min_ns)));
+            found.push((format!("{prefix}.round_trip_p50_s"), secs(trip.p50_ns)));
+            found.push((format!("{prefix}.round_trip_p95_s"), secs(trip.p95_ns)));
+            found.push((format!("{prefix}.round_trip_p99_s"), secs(trip.p99_ns)));
+            found.push((format!("{prefix}.round_trip_max_s"), secs(trip.max_ns)));
+        }
+    }
     found
 }
 

@@ -142,7 +142,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PRB-09 | Packet capture per link | M | 0.2 | done (`measure.capture`: both interfaces of a link as `capture-<link>-<node>.pcap`, nanosecond timestamps, checked against the counter of the interface; [capture.rs](crates/netscenario-backend-kernel/tests/capture.rs): read by `tcpdump`, lost packets absent and duplicates present, timestamps against the records, a capture cut short refused, a receive buffer that overflows reported; D-047, D-073) |
 | PRB-10 | Queue occupancy and drops from the kernel | S | 0.3 | done (`queues` in the result: the counters at the end and a sample each second, D-082; `crates/netscenario-backend-kernel/tests/queues.rs`) |
 | PRB-11 | CPU and memory of the program under test | C | 0.8 | idea |
-| PRB-12 | Round trip time with percentiles (needs the echo of WRK-05) | M | 0.3 | done for TCP (the round trip of every request and the smoothed round trip time of the kernel, with percentiles); the UDP echo (`recv --echo-to`) is in the agent and not yet a workload kind ([AGENT.md](docs/AGENT.md), D-086) |
+| PRB-12 | Round trip time with percentiles (needs the echo of WRK-05) | M | 0.3 | done (the round trip of every request and the smoothed round trip time of the kernel for TCP; `echo: true` on a UDP stream for the round trip of datagrams, [echo.rs](crates/netscenario-backend-kernel/tests/echo.rs), D-086, D-087), with percentiles |
 
 ## Assertions and statistics (ASR)
 

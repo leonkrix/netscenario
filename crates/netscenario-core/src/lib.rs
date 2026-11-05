@@ -106,11 +106,11 @@ pub use replay::{
     WorkloadComparison, compare, replay_json, scenario_diff, scenario_hash, scenario_json,
 };
 pub use result::{
-    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, Goodput,
-    MetricSummary, NodeInfo, PathInfo, ProgramOutput, ProgramResult, QueueCheck, QueueInfo,
-    QueueSample, RESULT_FORMAT, RESULT_VERSION, Reproducibility, RequestInfo, RouteInfo, RunResult,
-    ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, TcpResult, Timing, TraceInfo, TransferInfo,
-    WorkloadResult,
+    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EchoResult, EventRecord,
+    Goodput, MetricSummary, NodeInfo, PathInfo, ProgramOutput, ProgramResult, QueueCheck,
+    QueueInfo, QueueSample, RESULT_FORMAT, RESULT_VERSION, Reproducibility, RequestInfo, RouteInfo,
+    RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, TcpResult, Timing, TraceInfo,
+    TransferInfo, WorkloadResult,
 };
 pub use run::{RunOptions, agent_next_to, run};
 pub use runset::{

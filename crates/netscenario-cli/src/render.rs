@@ -828,6 +828,44 @@ fn recoveries_text(text: &mut String, workload: &WorkloadResult) {
     }
 }
 
+/// The packets of a workload with an echo that came back, and their round trip (D-087).
+fn echo_text(text: &mut String, workload: &WorkloadResult) {
+    let Some(echo) = &workload.echo else {
+        return;
+    };
+    let stats = &echo.stats;
+    let _ = writeln!(
+        text,
+        "  came back {} of {}  ({:.2} % lost on the way there or back)",
+        stats.received,
+        stats.sent,
+        stats.loss_ratio * 100.0
+    );
+    match &stats.delay {
+        Some(trip) => {
+            let _ = writeln!(
+                text,
+                "  round trip  min {}  median {}  p95 {}  p99 {}  max {}",
+                ms(trip.min_ns),
+                ms(trip.p50_ns),
+                ms(trip.p95_ns),
+                ms(trip.p99_ns),
+                ms(trip.max_ns)
+            );
+        }
+        None => {
+            let _ = writeln!(text, "  round trip  no packet came back");
+        }
+    }
+    if echo.echo_errors > 0 {
+        let _ = writeln!(
+            text,
+            "  warning: the far node could not send {} packets back",
+            echo.echo_errors
+        );
+    }
+}
+
 fn workload_text(text: &mut String, workload: &WorkloadResult) {
     let stats = &workload.stats;
     // The rate of a constant bit rate stream is the one in the scenario; of the others it is a mean, and the kind is said
@@ -893,6 +931,7 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
         }
     }
     pattern_lines(text, stats);
+    echo_text(text, workload);
     let bins = &stats.throughput.bits_per_second;
     if bins.len() <= MAX_LISTED_SECONDS {
         let seconds: Vec<String> = bins.iter().map(|bits| rate(*bits)).collect();
@@ -1013,6 +1052,32 @@ pub(crate) mod tests {
             Path::new("replay"),
             &serde_json::from_str(comparison).unwrap(),
         )
+    }
+
+    /// The summary of a run says how many packets came back and their round trip, and only for a workload with an echo.
+    #[test]
+    fn the_summary_has_the_round_trip_of_an_echo() {
+        let plain = summary(&result(), Path::new("out"));
+        assert!(!plain.contains("round trip"), "{plain}");
+        let echoed = RESULT.replace(
+            r#""foreign_datagrams": 0, "records_file": "flow-0.records", "packets_file": null"#,
+            r#""foreign_datagrams": 0, "records_file": "flow-0.records", "packets_file": null,
+        "echo": {"echoed": 620, "echo_errors": 2, "foreign_datagrams": 0, "records_file": "flow-0.echo.records",
+          "sent": 625, "received": 610, "lost": 15, "loss_ratio": 0.024, "duplicates": 0, "reordered": 0, "unexpected": 0,
+          "delay": {"min_ns": 62000000, "mean_ns": 80000000, "p50_ns": 79000000, "p90_ns": 90000000,
+            "p95_ns": 92000000, "p99_ns": 99000000, "p999_ns": 100000000, "max_ns": 100000000},
+          "throughput": {"bin_ns": 1000000000, "bits_per_second": [1.0]}}"#,
+        );
+        let text = summary(&RunResult::from_json(&echoed).unwrap(), Path::new("out"));
+        assert!(text.contains("came back 610 of 625"), "{text}");
+        assert!(
+            text.contains("round trip  min 62.0 ms  median 79.0 ms"),
+            "{text}"
+        );
+        assert!(
+            text.contains("the far node could not send 2 packets back"),
+            "{text}"
+        );
     }
 
     #[test]

@@ -2026,6 +2026,10 @@
           "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
           "type": "boolean"
         },
+        "echo": {
+          "description": "`true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.",
+          "type": "boolean"
+        },
         "from": {
           "$ref": "#/$defs/Name",
           "description": "The node that sends."
@@ -2120,6 +2124,10 @@
           "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
           "type": "boolean"
         },
+        "echo": {
+          "description": "`true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.",
+          "type": "boolean"
+        },
         "from": {
           "$ref": "#/$defs/Name",
           "description": "The node that sends."
@@ -2203,6 +2211,10 @@
       "properties": {
         "dont-fragment": {
           "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
+          "type": "boolean"
+        },
+        "echo": {
+          "description": "`true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.",
           "type": "boolean"
         },
         "from": {
@@ -2298,6 +2310,10 @@
           "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
           "type": "boolean"
         },
+        "echo": {
+          "description": "`true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.",
+          "type": "boolean"
+        },
         "from": {
           "$ref": "#/$defs/Name",
           "description": "The node that sends."
@@ -2385,6 +2401,10 @@
       "properties": {
         "dont-fragment": {
           "description": "`true`: the sender refuses a packet that does not fit the MTU instead of cutting it. Default `false`.",
+          "type": "boolean"
+        },
+        "echo": {
+          "description": "`true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.",
           "type": "boolean"
         },
         "from": {

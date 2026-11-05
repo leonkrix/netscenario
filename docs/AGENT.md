@@ -122,7 +122,7 @@ A sender walks its schedule once, in order, and keeps no table of it. The run wa
 
 ## UDP echo: the round trip of a datagram stream (`--echo-to`, D-086)
 
-`recv --echo-to <addr>` sends every packet that it recorded on to `<addr>`, unchanged, from a socket of its own. A second `recv` bound at that address in the sender's node records the packets that come back: the send time in them is the first one, so the **round trip** of a packet is the receive time of the second record minus its send time, and a packet that was lost on the way there or back has no record there. The echo is an ordinary datagram and so only for a stream with the checksum of UDP; `--udp-checksum off` with `--echo-to` is refused. The summary of the receiver says how many packets it echoed (`echoed`) and how many the system refused (`echo_errors`).
+`recv --echo-to <addr>` sends every packet that it recorded on to `<addr>`, unchanged, from a socket of its own. A second `recv` bound at that address in the sender's node records the packets that come back: the send time in them is the first one, so the **round trip** of a packet is the receive time of the second record minus its send time, and a packet that was lost on the way there or back has no record there. The echo is an ordinary datagram and so only for a stream with the checksum of UDP; `--udp-checksum off` with `--echo-to` is refused. The summary of the receiver says how many packets it echoed (`echoed`) and how many the system refused (`echo_errors`). A run starts the pair for a workload with `echo: true` (D-087): the collector in the sending node first, bound at the address of the node and the port of the flow, and then the far receiver with `--echo-to` at that address.
 
 ## TCP: bulk transfers and requests (WRK-04, WRK-05, D-086)
 
@@ -191,7 +191,6 @@ The records are in the order they were written, not in the order of their times.
 
 - **Static binary.** D-008 spoke of a static (musl) binary. In the Kernel backend the nodes share the file system of the host and need none; the static build belongs to the release (REL-01) and to backends where the node has its own file system.
 - Hardware or kernel timestamps (`SO_TIMESTAMPNS`): the receive time is taken in user space after the read. At the measured rates the error is a few microseconds (S8).
-- The UDP echo (`recv --echo-to`) is an option of the agent; a workload kind that uses it, with the round trip of a datagram stream in its result, is not in the scenario format yet.
 
 ## How a run starts the agent
 

@@ -30,10 +30,10 @@ use crate::programs::Programs;
 use crate::provision::{Provisioned, impairments_of, provision};
 use crate::recovery::{self, Basis, Recovery, RecoveryOptions};
 use crate::result::{
-    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, NodeInfo,
-    PathInfo, ProgramResult, QueueCheck, QueueInfo, RESULT_FORMAT, RESULT_VERSION, Reproducibility,
-    RouteInfo, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, TcpResult, Timing,
-    TraceInfo, WorkloadResult,
+    AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EchoResult, EventRecord,
+    NodeInfo, PathInfo, ProgramResult, QueueCheck, QueueInfo, RESULT_FORMAT, RESULT_VERSION,
+    Reproducibility, RouteInfo, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo,
+    TcpResult, Timing, TraceInfo, WorkloadResult,
 };
 use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
@@ -291,6 +291,8 @@ struct Flow<'a> {
     /// of the receiver reads IPv4 frames, and a fragment other than the first shows no sequence number.
     wire_unavailable: Option<&'static str>,
     records_file: PathBuf,
+    /// Where the packets come back to, for a workload with `echo: true` (D-087).
+    echo: Option<EchoFlow>,
     /// Where the tap of the receiver writes the packets it sees on the wire, for a workload whose direction
     /// corrupts packets (they are named by sequence number, D-040).
     wire_file: Option<PathBuf>,
@@ -298,9 +300,17 @@ struct Flow<'a> {
     duration: Duration,
 }
 
+/// The place in the sending node where the far node sends the packets of a workload back to (D-087).
+struct EchoFlow {
+    address: String,
+    records_file: PathBuf,
+}
+
 /// A receiver that said `ready`, and the reason why its tap could not be opened, if it could not.
 struct Started {
     program: ProgramHandle,
+    /// The receiver in the sending node that collects the echo of the packets, if the workload has one.
+    collector: Option<ProgramHandle>,
     wire_error: Option<String>,
 }
 
@@ -314,12 +324,19 @@ enum Naming {
     Named(Vec<u64>),
 }
 
+/// What the collector in the sending node found of the packets that came back (D-087).
+struct EchoMeasured {
+    collected: ReceiveSummary,
+    records: records::File,
+}
+
 /// What came back from one workload.
 struct Measured {
     sent: SendSummary,
     received: ReceiveSummary,
     records: records::File,
     naming: Naming,
+    echo: Option<EchoMeasured>,
 }
 
 /// What the phases of a run found out besides the workloads.
@@ -667,7 +684,29 @@ fn shared_directions(scenario: &Scenario) -> Vec<String> {
         .iter()
         .filter_map(Workload::generator)
         .collect();
-    let paths = paths_of(scenario);
+    let mut paths = paths_of(scenario);
+    let mut names: Vec<String> = generators
+        .iter()
+        .map(|generator| format!("'{}'", generator.id))
+        .collect();
+    // The links a flow has crossed before the first one of its own path: the way there of an echo (D-087)
+    let mut ahead: Vec<Vec<(usize, Direction)>> = vec![Vec::new(); paths.len()];
+    // The packets that the far node sends back are a flow of their own on the way back, in the order the packets arrived
+    let routes = scenario.topology.routes();
+    for (index, generator) in generators.iter().enumerate().filter(|(_, g)| g.echo) {
+        let way_there = paths[index]
+            .as_ref()
+            .map(|path| way_keys(scenario, path))
+            .unwrap_or_default();
+        names.push(format!("'{}' (its echo)", generator.id));
+        ahead.push(way_there);
+        paths.push(
+            scenario
+                .topology
+                .path(&routes, generator.to, generator.from)
+                .ok(),
+        );
+    }
     let path_refs: Vec<Option<&netscenario_model::Path>> =
         paths.iter().map(Option::as_ref).collect();
     for (index, link) in scenario.topology.links.iter().enumerate() {
@@ -685,9 +724,9 @@ fn shared_directions(scenario: &Scenario) -> Vec<String> {
             match feed(scenario, &path_refs, (index, direction)) {
                 Feed::Idle => {}
                 Feed::Known { .. } if crossing.len() > 1 => {
-                    let names: Vec<String> = crossing
+                    let names: Vec<&str> = crossing
                         .iter()
-                        .map(|c| format!("'{}'", generators[c.workload].id))
+                        .map(|c| names[c.workload].as_str())
                         .collect();
                     reasons.push(format!(
                         "the workloads {} send into link '{}' ({word}) and its queue draws random numbers: the order in which their packets reach the queue is not fixed on a real kernel, so which packet draws which number, and so which packets are lost, can differ from run to run with the same seed",
@@ -703,24 +742,27 @@ fn shared_directions(scenario: &Scenario) -> Vec<String> {
                         continue;
                     };
                     let keys = way_keys(scenario, path);
-                    let shuffles = keys[..only.position].iter().find(|(before, way)| {
-                        timeline::states_of(scenario, *before, *way)
-                            .iter()
-                            .any(may_reorder)
-                    });
+                    let shuffles = ahead[only.workload]
+                        .iter()
+                        .chain(&keys[..only.position])
+                        .find(|(before, way)| {
+                            timeline::states_of(scenario, *before, *way)
+                                .iter()
+                                .any(may_reorder)
+                        });
                     if let Some((before, _)) = shuffles {
                         reasons.push(format!(
-                            "the packets of '{}' reach the queue of link '{}' ({word}), which draws random numbers, after link '{}', which can change the order of packets (a jitter or a reorder): which packet draws which number, and so which packets are lost, can differ from run to run with the same seed",
-                            generators[only.workload].id,
+                            "the packets of {} reach the queue of link '{}' ({word}), which draws random numbers, after link '{}', which can change the order of packets (a jitter or a reorder): which packet draws which number, and so which packets are lost, can differ from run to run with the same seed",
+                            names[only.workload],
                             link.id,
                             scenario.topology.links[*before].id
                         ));
                     }
                 }
                 Feed::Unknown => {
-                    let names: Vec<String> = crossing
+                    let names: Vec<&str> = crossing
                         .iter()
-                        .map(|c| format!("'{}'", generators[c.workload].id))
+                        .map(|c| names[c.workload].as_str())
                         .collect();
                     reasons.push(format!(
                         "the packets of {} reach the queue of link '{}' ({word}), which draws random numbers, together with the packets of other workloads or by one of several routes: the run does not know which packets enter it, so it cannot hold the queue to them and cannot say whether the lost packets are those of the seed",
@@ -920,6 +962,7 @@ fn workload_result(
         rate_bits_per_second: schedule.mean_bits_per_second(),
         packet_size_bytes: workload.packet_size.bytes(),
         trace: trace_info(workload),
+        echo: echo_result(index, flow, &schedule, first_send),
         start_ns: nanos(start),
         duration_ns: nanos(stop.saturating_sub(start)),
         stats: analyse_refused(
@@ -953,6 +996,29 @@ fn workload_result(
         packets_file,
         series: Some(series),
         recoveries,
+    })
+}
+
+/// What came back of the packets of a workload with an echo, if it has one (D-087).
+fn echo_result(
+    index: usize,
+    flow: &Measured,
+    schedule: &Schedule,
+    first_send: u64,
+) -> Option<EchoResult> {
+    let echo = flow.echo.as_ref()?;
+    Some(EchoResult {
+        echoed: flow.received.echoed,
+        echo_errors: flow.received.echo_errors,
+        foreign_datagrams: echo.collected.foreign,
+        records_file: echo_records_name(index),
+        stats: analyse_refused(
+            flow.sent.packets + flow.sent.errors,
+            &flow.sent.refused,
+            &echo.records.records,
+            &|sequence| schedule.size_of(sequence),
+            first_send,
+        ),
     })
 }
 
@@ -1276,6 +1342,10 @@ fn records_name(index: usize) -> String {
     format!("flow-{index}.records")
 }
 
+fn echo_records_name(index: usize) -> String {
+    format!("flow-{index}.echo.records")
+}
+
 fn wire_name(index: usize) -> String {
     format!("flow-{index}.wire")
 }
@@ -1400,7 +1470,7 @@ fn plan<'a>(
             let stop = workload
                 .stop
                 .map_or_else(|| Duration::from(scenario.duration), Duration::from);
-            let (_, to_address) =
+            let (from_address, to_address) =
                 addresses_of(provisioned, &workload, family_of(scenario, &workload));
             let schedule =
                 traffic::schedule_of(&workload, provisioned.seed.unwrap_or_default(), index)?;
@@ -1413,6 +1483,10 @@ fn plan<'a>(
                 to_node: node(workload.to)?,
                 to_address: socket_text(&to_address, port(index)),
                 records_file: options.out_dir.join(records_name(index)),
+                echo: workload.echo.then(|| EchoFlow {
+                    address: socket_text(&from_address, port(index)),
+                    records_file: options.out_dir.join(echo_records_name(index)),
+                }),
                 // The tap names a damaged packet by its sequence number, which only the first fragment of a packet shows, and it
                 // reads IPv4 frames
                 wire_file: (corrupts_on_the_way(scenario, &path)
@@ -1537,6 +1611,12 @@ fn start_receivers(
     let mut receivers = Vec::new();
     for flow in flows {
         control.checkpoint()?;
+        // The collector of the echo first: the packets that come back find it there
+        let collector = flow
+            .echo
+            .as_ref()
+            .map(|echo| start_collector(backend, flow, echo, options, control))
+            .transpose()?;
         let what = format!("start the receiver of '{}'", flow.workload.id);
         let mut arguments = strings(&["recv", "--bind", &flow.to_address, "--flow"]);
         arguments.push(flow.index.to_string());
@@ -1545,6 +1625,9 @@ fn start_receivers(
             &flow.records_file.display().to_string(),
         ]));
         arguments.extend(checksum_argument(&flow.workload));
+        if let Some(echo) = &flow.echo {
+            arguments.extend(strings(&["--echo-to", &echo.address]));
+        }
         if let Some(wire) = &flow.wire_file {
             arguments.extend(strings(&["--wire-out", &wire.display().to_string()]));
         }
@@ -1561,10 +1644,37 @@ fn start_receivers(
         };
         receivers.push(Started {
             program,
+            collector,
             wire_error,
         });
     }
     Ok(receivers)
+}
+
+/// Starts the receiver in the sending node that collects the packets that the far node sends back (D-087).
+fn start_collector(
+    backend: &mut dyn Backend,
+    flow: &Flow<'_>,
+    echo: &EchoFlow,
+    options: &RunOptions,
+    control: &Control<'_>,
+) -> Result<ProgramHandle, Error> {
+    let what = format!("start the collector of the echo of '{}'", flow.workload.id);
+    let mut arguments = strings(&["recv", "--bind", &echo.address, "--flow"]);
+    arguments.push(flow.index.to_string());
+    arguments.extend(strings(&[
+        "--out",
+        &echo.records_file.display().to_string(),
+    ]));
+    let program = backend.start_program(flow.from_node, &agent_program(options, &arguments))?;
+    let line = wait_for_line(backend, program, options.ready_timeout, &what, control)?;
+    match event(&line, &what)? {
+        Event::Ready { .. } => Ok(program),
+        other => Err(failure(
+            what,
+            format!("expected ready, the agent said {other:?}"),
+        )),
+    }
 }
 
 /// The senders, all with one moment to start at, so that the workloads start together. Each is paired with the
@@ -1748,7 +1858,8 @@ fn measure_with(
     captures.stop_all(backend, control)?;
     // After the wait, every packet has passed its queue; the receivers still run and the network still stands
     let after = node_counts(backend, scenario, provisioned)?;
-    let queue_checks = if programs.is_empty() && tcp.is_empty() {
+    let echoing = flows.iter().any(|flow| flow.echo.is_some());
+    let queue_checks = if programs.is_empty() && tcp.is_empty() && !echoing {
         check_queues(
             backend,
             scenario,
@@ -1759,15 +1870,16 @@ fn measure_with(
             &after,
         )?
     } else {
-        // A program, and a TCP workload with its acknowledgements, sends packets of its own into the queues; the run did not count
-        // them and cannot hold the queue to its own
+        // A program, a TCP workload with its acknowledgements, and the echo of a stream send packets of their own into the
+        // queues; the run did not count them and cannot hold the queue to its own
         Vec::new()
     };
     control.emit(&RunEvent::Collecting);
     let mut measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
     // The packets of a TCP workload and its acknowledgements enter the same directions: the run cannot tell them from the packets
     // it is accounting for, so it does not account (D-086)
-    let directions = if tcp.is_empty() {
+    // The packets that the far node sends back enter the reverse direction in the same way (D-087)
+    let directions = if tcp.is_empty() && !echoing {
         tally_directions(scenario, provisioned, &flows, &measured, &before, &after)
     } else {
         Vec::new()
@@ -1949,14 +2061,61 @@ fn stop_receivers(
             )
         })?;
         let naming = name_from_the_wire(flow, receiver, &received, &sent, &records);
+        // The far node has stopped, so nothing more is sent back: the collector reads what is left and ends
+        let echo = match (&flow.echo, receiver.collector) {
+            (Some(echo), Some(collector)) => {
+                Some(stop_collector(backend, flow, echo, collector, control)?)
+            }
+            _ => None,
+        };
         measured.push(Measured {
             sent,
             received,
             records,
             naming,
+            echo,
         });
     }
     Ok(measured)
+}
+
+/// Stops the collector of an echo and reads the records of the packets that came back (D-087).
+fn stop_collector(
+    backend: &mut dyn Backend,
+    flow: &Flow<'_>,
+    echo: &EchoFlow,
+    collector: ProgramHandle,
+    control: &Control<'_>,
+) -> Result<EchoMeasured, Error> {
+    control.checkpoint()?;
+    let what = format!("stop the collector of the echo of '{}'", flow.workload.id);
+    backend.send_line(collector, "stop")?;
+    let lines = wait_for_end(
+        backend,
+        collector,
+        Instant::now() + END_MARGIN,
+        &what,
+        control,
+    )?;
+    let collected = match lines.last().map(|line| event(line, &what)).transpose()? {
+        Some(Event::Received(summary)) => summary,
+        other => {
+            return Err(failure(
+                what,
+                format!("the collector should end with 'received', it said {other:?}"),
+            ));
+        }
+    };
+    let read_error = |error: &dyn std::fmt::Display| {
+        failure(
+            "read the records of the echo",
+            format!("{}: {error}", echo.records_file.display()),
+        )
+    };
+    let file = std::fs::File::open(&echo.records_file).map_err(|error| read_error(&error))?;
+    let records =
+        records::read(std::io::BufReader::new(file)).map_err(|error| read_error(&error))?;
+    Ok(EchoMeasured { collected, records })
 }
 
 /// Reads the file of the tap of a receiver and names the damaged packets, or says why it cannot (D-040).

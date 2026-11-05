@@ -96,6 +96,33 @@ def test_a_stream_without_the_checksum_is_written_as_a_boolean_and_checked_by_th
         )
 
 
+def test_an_echo_is_written_as_a_boolean_and_the_core_refuses_it_without_the_checksum() -> None:
+    builder = ns.Scenario.builder("t", duration="2s").nodes("a", "b").link("l", "a", "b")
+    scenario = builder.udp_poisson(
+        "w", "a", "b", rate="1mbit", packet_size="1000b", echo=True
+    ).build()
+    assert scenario.data["workloads"][0]["echo"] is True
+    plain = (
+        ns.Scenario.builder("t", duration="2s")
+        .nodes("a", "b")
+        .link("l", "a", "b")
+        .udp_cbr("w", "a", "b", rate="1mbit", packet_size="1000b")
+        .build()
+    )
+    assert "echo" not in plain.data["workloads"][0]
+    # Canary: a stream that is echoed has the checksum, and the core says so
+    with pytest.raises(ns.ScenarioError, match="cannot be echoed"):
+        (
+            ns.Scenario.builder("t", duration="2s")
+            .nodes("a", "b")
+            .link("l", "a", "b")
+            .udp_cbr(
+                "w", "a", "b", rate="1mbit", packet_size="1000b", udp_checksum=False, echo=True
+            )
+            .build()
+        )
+
+
 def test_the_traffic_patterns_built_in_code_are_the_scenario_of_the_file(repository: Path) -> None:
     loaded = ns.Scenario.load(repository / "scenarios" / "traffic-patterns.yaml")
     built = (

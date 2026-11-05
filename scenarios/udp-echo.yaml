@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A call and its round trip: a stream of 100 packets a second, every packet sent back by the far node. The way there has 30 ms
+# of delay and 1 % loss, the way back 40 ms of delay and 1 % loss, so the round trip is at least 70 ms, and a packet that is lost
+# on either way is missing from the packets that came back.
+version: 0
+name: udp-echo
+seed: 4
+duration: 10s
+topology:
+  nodes: [caller, callee]
+  links:
+    - id: access
+      between: [caller, callee]
+      forward:
+        delay: 30ms
+        loss: { model: random, p: 1% }
+      reverse:
+        delay: 40ms
+        loss: { model: random, p: 1% }
+workloads:
+  - id: call
+    kind: udp-cbr
+    from: caller
+    to: callee
+    rate: 800kbit
+    packet-size: 1000b
+    echo: true
