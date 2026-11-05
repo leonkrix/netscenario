@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# The same dumbbell as tcp-fairness.yaml, but the access link of `bob` has 22 ms instead of 2 ms: the round trip of his flow is
+# 58 ms without a queue, against 18 ms for `alice`. The flow with the shorter round trip takes most of the bottleneck (with the
+# queue in the way the kernel measures about 42 ms and 84 ms), the known bias of TCP against long paths. The dumbbell shortcut gives
+# every host the same access link, so this is the long form. It is the link that the fairness assertion must fail on.
+version: 0
+name: tcp-fairness-unequal-rtt
+seed: 11
+duration: 12s
+topology:
+  nodes: [alice, bob, { id: router-left, role: router }, { id: router-right, role: router }, carol, dave]
+  links:
+    - { id: alice-router-left, between: [alice, router-left], both: { delay: 2ms, rate: 100mbit } }
+    - { id: bob-router-left, between: [bob, router-left], both: { delay: 22ms, rate: 100mbit } }
+    - id: bottleneck
+      between: [router-left, router-right]
+      forward: { delay: 5ms, rate: 10mbit, queue: { discipline: fifo, limit: 30p } }
+      reverse: { delay: 5ms }
+    - { id: carol-router-right, between: [carol, router-right], both: { delay: 2ms, rate: 100mbit } }
+    - { id: dave-router-right, between: [dave, router-right], both: { delay: 2ms, rate: 100mbit } }
+workloads:
+  - { id: first, kind: tcp-bulk, from: alice, to: carol, cc: reno, stop: 11s }
+  - { id: second, kind: tcp-bulk, from: bob, to: dave, cc: reno, stop: 11s }
+measure:
+  series: { bin: 1s }

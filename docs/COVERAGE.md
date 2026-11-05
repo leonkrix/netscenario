@@ -33,7 +33,7 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Routers and routes           | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs)) | ✔ 0.4  | ✘     |
 | Star                         | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs)) | ✔ 0.4  | ~ 0.5 |
 | Chain with routing           | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs), [fidelity](../crates/netscenario-backend-kernel/tests/fidelity.rs)) | ✔ 0.4  | ✘     |
-| Dumbbell (shared bottleneck) | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs)) | ✔ 0.4  | ✘     |
+| Dumbbell (shared bottleneck) | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs), [fairness](../python/netscenario/tests/test_acceptance_tcp.py)) | ✔ 0.4  | ✘     |
 | Multipath, multi-homing      | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs)) | ✔ 0.4  | ✘     |
 | Arbitrary graph              | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs)) | ✔ 0.4  | ✘     |
 | Links up and down            | ✔ 0.2                                                             | ✔ 0.4  | ✔ 0.5 |

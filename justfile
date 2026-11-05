@@ -102,6 +102,19 @@ stability runs="100": py-sync py-programs
     echo "$failed of {{runs}} rounds failed"
     [ "$failed" -eq 0 ]
 
+# The same for the acceptance tests of TCP (python/netscenario/tests/test_acceptance_tcp.py): the fairness of two flows over a
+# dumbbell and the bias against a longer round trip. One round takes about three minutes, so twenty take an hour.
+stability-tcp runs="20": py-sync py-programs
+    #!/usr/bin/env bash
+    set -uo pipefail
+    failed=0
+    for i in $(seq 1 {{runs}}); do
+        echo "--- round $i of {{runs}}"
+        uv run pytest python/netscenario/tests/test_acceptance_tcp.py -q -p no:cacheprovider || failed=$((failed + 1))
+    done
+    echo "$failed of {{runs}} rounds failed"
+    [ "$failed" -eq 0 ]
+
 # Run the Python tests with the lowest supported Python (3.11, uv fetches it)
 py-test-min:
     uv run --python 3.11 --isolated --with-editable python/netscenario --with-editable python/pytest-netscenario --with pytest pytest

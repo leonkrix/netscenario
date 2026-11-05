@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# The classic fairness test: two reno flows with the same round trip time (18 ms without a queue) share a bottleneck of 10 mbit
+# with a tail-drop queue of 30 packets, about two bandwidth-delay products. Each flow sends until `stop`; the goodput of each
+# is the series `goodput` of its entry under `tcp` in the result. Read the shares of a window after the start-up (here the bins from the 3rd
+# second on), and repeat the run to see how much they vary: `netscenario run scenarios/tcp-fairness.yaml --repetitions 6`.
+# The test that judges it, with its bounds, is python/netscenario/tests/test_acceptance_tcp.py.
+version: 0
+name: tcp-fairness
+seed: 11
+duration: 12s
+topology:
+  dumbbell:
+    left: [alice, bob]
+    right: [carol, dave]
+    access:
+      both: { delay: 2ms, rate: 100mbit }
+    bottleneck:
+      forward: { delay: 5ms, rate: 10mbit, queue: { discipline: fifo, limit: 30p } }
+      reverse: { delay: 5ms }
+workloads:
+  - { id: first, kind: tcp-bulk, from: alice, to: carol, cc: reno, stop: 11s }
+  - { id: second, kind: tcp-bulk, from: bob, to: dave, cc: reno, stop: 11s }
+measure:
+  series: { bin: 1s }
