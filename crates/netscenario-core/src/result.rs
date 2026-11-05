@@ -150,7 +150,8 @@ pub struct TcpResult {
     pub bytes_sent: u64,
     /// The payload bytes that arrived: at the server for `tcp-bulk`, at the client (the responses) for `request-response`.
     pub bytes_received: u64,
-    /// The goodput: the payload that arrived at the server, by time.
+    /// The goodput: the payload that arrived at the receiving end, by time: at the server for `tcp-bulk`, at the client (the
+    /// responses) for `request-response`.
     pub goodput: Option<Goodput>,
     /// One entry for each connection.
     pub transfers: Vec<TransferInfo>,
@@ -171,14 +172,32 @@ pub struct TcpResult {
     pub client_file: String,
     /// The file of the server: the payload by interval.
     pub server_file: String,
+    /// How long the workload took to be back at its goodput after each event of the timeline on its path, in either direction
+    /// (D-088); empty without a timeline, and in a result of an older run.
+    #[serde(default)]
+    pub recoveries: Vec<crate::recovery::Recovery>,
 }
 
-/// The payload that arrived at the server, by time bin (D-086).
+impl TcpResult {
+    /// The completion time of the workload in nanoseconds: from the first connect to the end of the last connection that did its
+    /// work. `None` if no connection did.
+    #[must_use]
+    pub fn completion_ns(&self) -> Option<u64> {
+        let done = || self.transfers.iter().filter(|transfer| transfer.ok);
+        let first = done().map(|transfer| transfer.started_ns).min()?;
+        let last = done().map(|transfer| transfer.done_ns).max()?;
+        u64::try_from(last.saturating_sub(first)).ok()
+    }
+}
+
+/// The payload that arrived at the receiving end, by time bin (D-086, D-088): at the server for `tcp-bulk`, and for
+/// `request-response` the responses at the client, each in the bin of the last byte of its response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Goodput {
     /// The width of a bin, `measure.series.bin`. The server counts in intervals of at most 10 ms and puts each interval into
-    /// the bin that holds its start, so a bin is right to within one interval.
+    /// the bin that holds its start, so a bin is right to within one interval. The responses of a `request-response` workload
+    /// are counted at the moment their last byte was read.
     pub bin_ns: u64,
     /// The payload bits per second that arrived in each bin, from the start of the measured phase to the last bin with data. The
     /// last bin is not scaled.

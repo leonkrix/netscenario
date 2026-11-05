@@ -38,6 +38,9 @@ pub enum Basis {
     Send,
     /// The packets that arrived in the bin over the packets sent in it (`by_arrival`).
     Arrival,
+    /// The goodput of a TCP workload in the bin, in bits per second (D-088). Last in the list because it was added last. It is
+    /// the basis of an entry made by [`rate_recoveries`] and cannot be asked for: a word names `send` or `arrival` only.
+    Goodput,
 }
 
 impl Basis {
@@ -47,6 +50,7 @@ impl Basis {
         match self {
             Basis::Send => "send",
             Basis::Arrival => "arrival",
+            Basis::Goodput => "goodput",
         }
     }
 
@@ -146,10 +150,15 @@ pub struct Recovery {
     pub reason: Option<String>,
 }
 
+// The fraction is checked to be a number in (0, 1] and the levels are made from counts, so none of the numbers is NaN and the
+// comparison is reflexive: `TcpResult`, which holds recoveries, is `Eq`.
+impl Eq for Recovery {}
+
 /// The packets of a bin that count as delivered on a basis: the arrivals are never more than the packets sent in the bin.
 fn received_in(bin: &Bin, basis: Basis) -> u64 {
     match basis {
-        Basis::Send => bin.by_send.received,
+        // A series of packets has no goodput basis: the entries of that basis come from `rate_recoveries`
+        Basis::Send | Basis::Goodput => bin.by_send.received,
         Basis::Arrival => bin.by_arrival.received.min(bin.by_send.sent),
     }
 }
@@ -286,6 +295,105 @@ pub fn recoveries(
                 None => {
                     recovery.reason = Some(format!(
                         "the level {level:.3} was not reached again for {} bins before the run ended",
+                        options.window_bins
+                    ));
+                }
+            }
+            recovery
+        })
+        .collect()
+}
+
+/// One bin of the goodput of a workload that sets its own pace, a TCP workload (D-088).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RateBin {
+    /// The goodput in the bin, in bits per second.
+    pub bits_per_second: u64,
+    /// Whether the workload was working in all of the bin: only such a bin is a baseline or part of a window.
+    pub active: bool,
+}
+
+/// The time to recover of a workload with a level in bits per second, after each event of `events` (D-088). The bins are `bin_ns`
+/// wide and the first begins at the start of the measured phase, like those of the series of packets. The definition is that
+/// of [`recoveries`] with the goodput as the level and with the bins in which the workload was not working left out of the
+/// baseline and the windows; `options.basis` is not looked at.
+#[must_use]
+pub fn rate_recoveries(
+    events: &[EventRecord],
+    bins: &[RateBin],
+    bin_ns: u64,
+    options: &RecoveryOptions,
+) -> Vec<Recovery> {
+    let window = options.window_bins as usize;
+    events
+        .iter()
+        .filter(|event| event.kind != "outage-start")
+        .map(|event| {
+            let from_ns = event.scheduled_ns;
+            let disturbance_ns = disturbance_of(event, events);
+            let mut recovery = Recovery {
+                event: event.event,
+                kind: event.kind.clone(),
+                link: event.link.clone(),
+                direction: event.direction.clone(),
+                basis: Basis::Goodput,
+                from_ns,
+                disturbance_ns,
+                baseline: None,
+                level: None,
+                baseline_bins: options.baseline_bins,
+                window_bins: options.window_bins,
+                fraction: options.fraction,
+                recovered_at_ns: None,
+                time_ns: None,
+                reason: None,
+            };
+            let began = usize::try_from(disturbance_ns / bin_ns).unwrap_or(usize::MAX);
+            let first = began.saturating_sub(options.baseline_bins as usize);
+            let before: Vec<f64> = bins
+                .iter()
+                .take(began)
+                .skip(first)
+                .filter(|bin| bin.active)
+                .map(|bin| bin.bits_per_second as f64)
+                .collect();
+            let Some(baseline) = median(before) else {
+                recovery.reason = Some(
+                    "there is no baseline: the workload was not working in the bins before the disturbance"
+                        .to_owned(),
+                );
+                return recovery;
+            };
+            recovery.baseline = Some(baseline);
+            if baseline <= 0.0 {
+                recovery.reason = Some(
+                    "there is no baseline: nothing was delivered in the bins before the disturbance"
+                        .to_owned(),
+                );
+                return recovery;
+            }
+            let level = options.fraction * baseline;
+            recovery.level = Some(level);
+            let start = usize::try_from(from_ns / bin_ns).unwrap_or(usize::MAX);
+            let found = (start..bins.len().saturating_sub(window - 1)).find(|&at| {
+                let in_window = &bins[at..at + window];
+                in_window.iter().all(|bin| bin.active)
+                    && in_window
+                        .iter()
+                        .map(|bin| bin.bits_per_second as f64)
+                        .sum::<f64>()
+                        / window as f64
+                        >= level
+            });
+            match found {
+                Some(at) => {
+                    let begins = at as u64 * bin_ns;
+                    recovery.recovered_at_ns = Some(begins);
+                    recovery.time_ns = Some(begins.saturating_sub(from_ns));
+                }
+                None => {
+                    recovery.reason = Some(format!(
+                        "the level {level:.0} bit/s was not reached again for {} bins while the workload was working",
                         options.window_bins
                     ));
                 }
@@ -632,5 +740,121 @@ mod tests {
             Some("arrival")
         );
         assert_eq!(Basis::from_word("sent"), None);
+    }
+
+    // ---- the goodput of a TCP workload (D-088) ----
+
+    /// Bins of a second from goodputs in mbit/s; the workload works in all of them but the ones from `idle` on.
+    fn rates(mbit: &[u64], idle: usize) -> Vec<RateBin> {
+        mbit.iter()
+            .enumerate()
+            .map(|(index, rate)| RateBin {
+                bits_per_second: rate * 1_000_000,
+                active: index < idle,
+            })
+            .collect()
+    }
+
+    /// A drop to 2 mbit from 6 s to 9 s on a baseline of 10: the recovery of the drop is the first window of three bins at 9 mbit
+    /// or more, which begins at 9 s, so 3 s after the event; the baseline and the level are in bits per second.
+    #[test]
+    fn the_goodput_recovers_when_a_window_reaches_nine_tenths_of_the_baseline() {
+        let found = rate_recoveries(
+            &[event("set", 0, 6, Some("forward"))],
+            &rates(&[10, 10, 10, 10, 10, 10, 2, 2, 2, 10, 10, 10, 10], 13),
+            SECOND,
+            &RecoveryOptions::default(),
+        );
+        let r = &found[0];
+        assert_eq!(r.basis, Basis::Goodput);
+        assert_eq!((r.baseline, r.level), (Some(10e6), Some(9e6)));
+        assert_eq!(
+            (r.recovered_at_ns, r.time_ns),
+            (Some(9 * SECOND), Some(3 * SECOND))
+        );
+        // Canary: a window that holds one bin of the dip has a mean of (2 + 10 + 10) / 3 and is not a recovery
+        let slow = rate_recoveries(
+            &[event("set", 0, 6, None)],
+            &rates(&[10, 10, 10, 10, 10, 10, 2, 2, 2, 2, 10, 10, 10], 13),
+            SECOND,
+            &RecoveryOptions::default(),
+        );
+        assert_eq!(slow[0].recovered_at_ns, Some(10 * SECOND));
+    }
+
+    /// A transfer that is done has not dropped to zero: the bins after its end are no window, so a transfer that finishes before
+    /// the level is reached has no time and says why; one that has not started has no baseline.
+    #[test]
+    fn bins_outside_the_working_time_are_no_baseline_and_no_window() {
+        let finished = rate_recoveries(
+            &[event("set", 0, 6, None)],
+            &rates(&[10, 10, 10, 10, 10, 10, 2, 2, 0, 0, 0, 0], 8),
+            SECOND,
+            &RecoveryOptions::default(),
+        );
+        assert_eq!(finished[0].time_ns, None);
+        assert!(
+            finished[0]
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("while the workload was working")),
+            "{:?}",
+            finished[0].reason
+        );
+        // Not working before the disturbance: no baseline
+        let late = rate_recoveries(
+            &[event("set", 0, 3, None)],
+            &[
+                RateBin {
+                    bits_per_second: 0,
+                    active: false,
+                },
+                RateBin {
+                    bits_per_second: 0,
+                    active: false,
+                },
+                RateBin {
+                    bits_per_second: 0,
+                    active: false,
+                },
+                RateBin {
+                    bits_per_second: 5_000_000,
+                    active: true,
+                },
+                RateBin {
+                    bits_per_second: 5_000_000,
+                    active: true,
+                },
+                RateBin {
+                    bits_per_second: 5_000_000,
+                    active: true,
+                },
+            ],
+            SECOND,
+            &RecoveryOptions::default(),
+        );
+        assert!(
+            late[0]
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("was not working in the bins before")),
+            "{:?}",
+            late[0].reason
+        );
+        // The start of an outage has none, its end has, and the baseline is taken before the start
+        let outage = rate_recoveries(
+            &[
+                event("outage-start", 0, 6, Some("forward")),
+                event("outage-end", 0, 9, Some("forward")),
+            ],
+            &rates(&[10, 10, 10, 10, 10, 10, 0, 0, 0, 10, 10, 10, 10], 13),
+            SECOND,
+            &RecoveryOptions::default(),
+        );
+        assert_eq!(outage.len(), 1);
+        assert_eq!(
+            (outage[0].baseline, outage[0].time_ns),
+            (Some(10e6), Some(0))
+        );
     }
 }

@@ -486,6 +486,7 @@ fn tcp_text(text: &mut String, result: &RunResult) {
         if let Some(why) = &tcp.info_error {
             let _ = writeln!(text, "  note: no samples of the kernel: {why}");
         }
+        recoveries_text(text, &tcp.recoveries);
     }
     let _ = writeln!(
         text,
@@ -793,8 +794,8 @@ fn damaged_names_text(text: &mut String, workload: &WorkloadResult) {
 
 /// The part of the summary about one workload.
 /// The time to recover after each step of the timeline that concerns the workload (D-070).
-fn recoveries_text(text: &mut String, workload: &WorkloadResult) {
-    for recovery in &workload.recoveries {
+fn recoveries_text(text: &mut String, recoveries: &[netscenario_core::recovery::Recovery]) {
+    for recovery in recoveries {
         let what = format!(
             "  recovery after {} (event {}, link {}{}):",
             recovery.kind,
@@ -806,6 +807,19 @@ fn recoveries_text(text: &mut String, workload: &WorkloadResult) {
                 .map_or(String::new(), |direction| format!(" {direction}"))
         );
         match (recovery.time_ns, recovery.baseline, &recovery.reason) {
+            // The level of a TCP workload is a rate (D-088), that of a stream of packets a share
+            (Some(time), Some(baseline), _)
+                if recovery.basis == netscenario_core::recovery::Basis::Goodput =>
+            {
+                let _ = writeln!(
+                    text,
+                    "{what} {} (baseline {}, back to {:.1} % for {} bins, by goodput)",
+                    seconds(time),
+                    rate(baseline),
+                    recovery.fraction * 100.0,
+                    recovery.window_bins
+                );
+            }
             (Some(time), Some(baseline), _) => {
                 let _ = writeln!(
                     text,
@@ -952,7 +966,7 @@ fn workload_text(text: &mut String, workload: &WorkloadResult) {
             bins.len()
         );
     }
-    recoveries_text(text, workload);
+    recoveries_text(text, &workload.recoveries);
     if workload.sender.send_errors > 0 {
         let _ = writeln!(
             text,

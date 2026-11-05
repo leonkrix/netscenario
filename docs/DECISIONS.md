@@ -93,3 +93,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-085](decisions/D-085.md) | A trace is replayed by its moments and its sizes, read from a CSV file or a capture when the scenario is loaded | Accepted 2026-11-04 |
 | [D-086](decisions/D-086.md) | TCP and request/response are measured by their bytes and times, the kernel's TCP is the subject, and the result says whether a run can be repeated exactly | Accepted 2026-11-05 |
 | [D-087](decisions/D-087.md) | A UDP stream can be echoed, and the round trip is the time from the first send to the arrival of the echo | Accepted 2026-11-06 |
+| [D-088](decisions/D-088.md) | The level of a TCP workload is its goodput in a bin, and a bin counts only while the workload is working | Accepted 2026-11-06 |

@@ -52,6 +52,14 @@ The names are the same in the library (`netscenario_core::metric_values`), the c
 | `<workload>.jitter.last`, `.mean`, `.max` | interarrival jitter (RFC 3550); not there for fewer than two arrivals |
 | `<workload>.throughput.mean` | the payload that arrived, over the duration of the workload |
 | `<workload>.loss_runs.longest`, `.mean` | the runs of lost packets, in packets |
+| `<workload>.round_trip.min`, `.mean`, `.p50`, `.p90`, `.p95`, `.p99`, `.p999`, `.max` | a UDP workload with `echo: true`: the round trip of the packets that came back (D-087); not there if none did |
+| `<workload>.echo.received`, `.lost`, `.loss_ratio` | a UDP workload with `echo: true`: the packets that came back, those that did not (lost on the way there or back), and their share |
+| `<tcp>.goodput.mean` | a TCP workload: the payload that arrived over the transfer, from the first connect to the last end (D-086) |
+| `<tcp>.completion` | the time from the first connect to the end of the last connection that did its work; not there if none did |
+| `<tcp>.bytes_sent`, `.bytes_received`, `.connections`, `.failed_connections`, `.retransmitted_segments` | counts |
+| `<tcp>.rtt.min`, `.mean`, `.p50`, `.p90`, `.p95`, `.p99`, `.p999`, `.max` | the smoothed round trip time of the kernel; not there without samples of `TCP_INFO` |
+| `<tcp>.sent`, `.answered`, `.failed` | `request-response`: the requests |
+| `<tcp>.latency.min` ... `.max`, `<tcp>.round_trip.min` ... `.max` | `request-response`: the time from the moment a request was due, and from the moment it was sent, to the last byte of its response; answered requests only |
 | `<program>.<metric>.last`, `.min`, `.max` | a metric that a program of your own reported, in the unit of the program |
 
 A metric that is the same in every run (the packets sent by a constant stream) has a point as its interval.

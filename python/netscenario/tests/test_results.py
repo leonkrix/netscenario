@@ -652,6 +652,25 @@ def _tcp_entry() -> dict[str, Any]:
         "stopped": False,
         "client_file": "tcp-0.client.streams",
         "server_file": "tcp-0.server.streams",
+        "recoveries": [
+            {
+                "event": 0,
+                "kind": "set",
+                "link": "access",
+                "direction": "forward",
+                "basis": "goodput",
+                "from_ns": 6_000_000_000,
+                "disturbance_ns": 6_000_000_000,
+                "baseline": 9_500_000.0,
+                "level": 8_550_000.0,
+                "baseline_bins": 5,
+                "window_bins": 3,
+                "fraction": 0.9,
+                "recovered_at_ns": 9_000_000_000,
+                "time_ns": 3_000_000_000,
+                "reason": None,
+            }
+        ],
     }
 
 
@@ -693,6 +712,17 @@ def test_a_tcp_workload_is_read_in_seconds_and_a_result_without_one_has_none(
     assert tcp.requests.latency is not None
     assert tcp.requests.round_trip is None
     assert tcp.retransmitted_segments == 7
+    [recovery] = tcp.recoveries
+    assert (recovery.basis, recovery.baseline, recovery.time, recovery.recovered) == (
+        "goodput",
+        9_500_000.0,
+        3.0,
+        True,
+    )
+    # A result of an older run has none
+    older = json.loads(json.dumps(data))
+    del older["tcp"][0]["recoveries"]
+    assert ns.Result.from_json(json.dumps(older), tmp_path).tcp["down"].recoveries == ()
 
 
 def test_canary_a_tcp_workload_with_a_failed_connection_is_not_complete() -> None:

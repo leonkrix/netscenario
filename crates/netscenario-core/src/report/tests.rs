@@ -220,14 +220,9 @@ fn markdown_warns_where_a_run_was_cut_short_or_cannot_repeat() {
     );
 }
 
-/// A TCP workload has a section of its own, and a run of TCP workloads only does not say that it has no workload.
-#[test]
-fn markdown_has_a_section_for_the_tcp_workloads_and_says_the_run_is_statistical() {
-    let Report::Run(mut run) = load("md-tcp", false) else {
-        panic!("a run")
-    };
-    run.result.workloads.clear();
-    run.result.tcp = vec![crate::result::TcpResult {
+/// A TCP workload with two connections of which one failed, a goodput by bin and a recovery.
+fn a_tcp() -> crate::result::TcpResult {
+    crate::result::TcpResult {
         id: "down".to_owned(),
         kind: "tcp-bulk".to_owned(),
         from: "client".to_owned(),
@@ -241,7 +236,11 @@ fn markdown_has_a_section_for_the_tcp_workloads_and_says_the_run_is_statistical(
         window_ns: SECOND,
         bytes_sent: 1_000,
         bytes_received: 900,
-        goodput: None,
+        goodput: Some(crate::result::Goodput {
+            bin_ns: SECOND,
+            bits_per_second: vec![8_000_000, 6_000_000, 0, 9_000_000],
+            mean_bits_per_second: Some(7_000_000),
+        }),
         transfers: vec![crate::result::TransferInfo {
             connection: 0,
             started_ns: 0,
@@ -259,7 +258,34 @@ fn markdown_has_a_section_for_the_tcp_workloads_and_says_the_run_is_statistical(
         stopped: false,
         client_file: "c".to_owned(),
         server_file: "s".to_owned(),
-    }];
+        recoveries: vec![crate::recovery::Recovery {
+            event: 0,
+            kind: "set".to_owned(),
+            link: "access".to_owned(),
+            direction: Some("forward".to_owned()),
+            basis: crate::recovery::Basis::Goodput,
+            from_ns: SECOND,
+            disturbance_ns: SECOND,
+            baseline: Some(8_000_000.0),
+            level: Some(7_200_000.0),
+            baseline_bins: 5,
+            window_bins: 3,
+            fraction: 0.9,
+            recovered_at_ns: Some(3 * SECOND),
+            time_ns: Some(2 * SECOND),
+            reason: None,
+        }],
+    }
+}
+
+/// A TCP workload has a section of its own, and a run of TCP workloads only does not say that it has no workload.
+#[test]
+fn markdown_has_a_section_for_the_tcp_workloads_and_says_the_run_is_statistical() {
+    let Report::Run(mut run) = load("md-tcp", false) else {
+        panic!("a run")
+    };
+    run.result.workloads.clear();
+    run.result.tcp = vec![a_tcp()];
     run.result.reproducibility =
         crate::result::Reproducibility::statistical(vec!["feedback".to_owned()]);
     let text = markdown(&Report::Run(run));
@@ -315,6 +341,88 @@ fn the_round_trip_of_an_echo_is_in_the_markdown_and_in_the_properties() {
         panic!("a run")
     };
     assert!(!markdown(&Report::Run(plain)).contains("### Echo"));
+}
+
+/// The TCP workloads are in the HTML with their goodput over time, in the table of the times to recover and in the properties of
+/// the JUnit file; a recovery of a TCP workload is in the Markdown too.
+#[test]
+fn the_tcp_workloads_are_in_the_html_the_recoveries_and_the_properties() {
+    let Report::Run(mut run) = load("html-tcp", true) else {
+        panic!("a run")
+    };
+    run.result.workloads.clear();
+    run.details.clear();
+    run.result.tcp = vec![a_tcp()];
+    run.result.reproducibility =
+        crate::result::Reproducibility::statistical(vec!["feedback".to_owned()]);
+    let page = html(&Report::Run(run.clone())).unwrap();
+    assert!(page.contains("<h2>down</h2>"), "{page}");
+    assert!(page.contains("down: goodput over time"), "{page}");
+    assert!(
+        page.contains("A run with TCP is statistical: feedback"),
+        "{page}"
+    );
+    // The time to recover: the row of the workload and its time
+    assert!(page.contains("<h3>Time to recover</h3>"), "{page}");
+    assert!(page.contains("event 0 (set)"), "{page}");
+    assert_no_external_reference(&page);
+    let text = markdown(&Report::Run(run.clone()));
+    assert!(text.contains("### Time to recover"), "{text}");
+    assert!(
+        text.contains("| down | event 0 (set) | access | 2 s |"),
+        "{text}"
+    );
+    let junit = junit(&Report::Run(run));
+    // A connection that failed with no link shut on purpose fails the case of the workload
+    assert!(
+        junit.contains("<testcase classname=\"lte-like-link\" name=\"down\""),
+        "{junit}"
+    );
+    assert!(
+        junit.contains("1 of 2 connections of this workload failed"),
+        "{junit}"
+    );
+    for name in ["goodput_mean_bps", "completion_s", "failed_connections"] {
+        assert!(
+            junit.contains(&format!("name=\"netscenario.lte-like-link.down.{name}\"")),
+            "{name} is not in\n{junit}"
+        );
+    }
+}
+
+/// The numbers of a TCP workload under the names of a set of runs (D-088): seconds, bits per second and counts.
+#[test]
+fn the_names_of_the_metrics_of_a_tcp_workload() {
+    let mut tcp = a_tcp();
+    tcp.requests = Some(crate::result::RequestInfo {
+        sent: 10,
+        answered: 9,
+        failed: 1,
+        latency: crate::stats::DelaySummary::of(&mut [10_000_000, 20_000_000, 90_000_000]),
+        round_trip: crate::stats::DelaySummary::of(&mut [10_000_000, 20_000_000]),
+        max_wait_ns: 0,
+    });
+    let Report::Run(mut run) = load("metrics-tcp", false) else {
+        panic!("a run")
+    };
+    run.result.tcp = vec![tcp];
+    let values = crate::runset::metric_values(&run.result);
+    let at = |name: &str| {
+        *values
+            .get(name)
+            .unwrap_or_else(|| panic!("no {name} in {values:?}"))
+    };
+    assert!((at("down.goodput.mean") - 7_000_000.0).abs() < 1e-6);
+    // From the first connect, 0, to the end of the last connection that did its work, 2 s
+    assert!((at("down.completion") - 2.0).abs() < 1e-9);
+    assert!((at("down.failed_connections") - 1.0).abs() < 1e-12);
+    assert!((at("down.sent") - 10.0).abs() < 1e-12);
+    assert!((at("down.failed") - 1.0).abs() < 1e-12);
+    assert!((at("down.latency.max") - 0.090).abs() < 1e-12);
+    // The nearest rank of the median of two times is the smaller
+    assert!((at("down.round_trip.p50") - 0.010).abs() < 1e-12);
+    // No round trip time of the kernel in the sample: no name for it
+    assert!(!values.contains_key("down.rtt.p50"));
 }
 
 #[test]

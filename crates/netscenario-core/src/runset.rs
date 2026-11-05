@@ -242,6 +242,69 @@ impl RunSetResult {
     }
 }
 
+/// The statistics of a time under `prefix`, in seconds.
+#[allow(clippy::cast_precision_loss)] // times of a run are far below 2^52 nanoseconds
+fn delay_values(
+    put: &mut impl FnMut(String, f64),
+    prefix: &str,
+    delay: &crate::stats::DelaySummary,
+) {
+    for (name, value) in [
+        ("min", delay.min_ns),
+        ("mean", delay.mean_ns),
+        ("p50", delay.p50_ns),
+        ("p90", delay.p90_ns),
+        ("p95", delay.p95_ns),
+        ("p99", delay.p99_ns),
+        ("p999", delay.p999_ns),
+        ("max", delay.max_ns),
+    ] {
+        put(format!("{prefix}.{name}"), value as f64 / 1e9);
+    }
+}
+
+/// A nanosecond count of a run is far below 2^52, where a double is exact.
+#[allow(clippy::cast_precision_loss)]
+fn count_of(value: u64) -> f64 {
+    value as f64
+}
+
+/// The numbers of one TCP workload under their names (D-088).
+fn tcp_values(put: &mut impl FnMut(String, f64), tcp: &crate::result::TcpResult) {
+    let count = count_of;
+    let seconds = |nanoseconds: u64| count_of(nanoseconds) / 1e9;
+    let id = &tcp.id;
+    if let Some(mean) = tcp.goodput.as_ref().and_then(|g| g.mean_bits_per_second) {
+        put(format!("{id}.goodput.mean"), count(mean));
+    }
+    if let Some(completion) = tcp.completion_ns() {
+        put(format!("{id}.completion"), seconds(completion));
+    }
+    for (name, value) in [
+        ("bytes_sent", tcp.bytes_sent),
+        ("bytes_received", tcp.bytes_received),
+        ("connections", u64::from(tcp.connections)),
+        ("failed_connections", u64::from(tcp.failed_connections)),
+        ("retransmitted_segments", tcp.retransmitted_segments),
+    ] {
+        put(format!("{id}.{name}"), count(value));
+    }
+    if let Some(rtt) = &tcp.rtt {
+        delay_values(put, &format!("{id}.rtt"), rtt);
+    }
+    if let Some(requests) = &tcp.requests {
+        put(format!("{id}.sent"), count(requests.sent));
+        put(format!("{id}.answered"), count(requests.answered));
+        put(format!("{id}.failed"), count(requests.failed));
+        if let Some(latency) = &requests.latency {
+            delay_values(put, &format!("{id}.latency"), latency);
+        }
+        if let Some(trip) = &requests.round_trip {
+            delay_values(put, &format!("{id}.round_trip"), trip);
+        }
+    }
+}
+
 /// The metrics of one run under their names, in SI units: seconds, bits per second, ratios and counts.
 ///
 /// | Name | What |
@@ -252,6 +315,14 @@ impl RunSetResult {
 /// | `<workload>.jitter.last`, `.mean`, `.max` | interarrival jitter (RFC 3550) in seconds; absent for fewer than two arrivals |
 /// | `<workload>.throughput.mean` | the payload that arrived over the duration of the workload, in bits per second |
 /// | `<workload>.loss_runs.longest`, `.mean` | the runs of lost packets, in packets |
+/// | `<workload>.round_trip.min`, `.mean`, `.p50`, `.p90`, `.p95`, `.p99`, `.p999`, `.max` | for a workload with `echo: true`: the round trip of the packets that came back, in seconds; absent if none did (D-087) |
+/// | `<workload>.echo.received`, `.lost`, `.loss_ratio` | for a workload with `echo: true`: the packets that came back, those that did not (lost on the way there or back), and their share |
+/// | `<tcp>.goodput.mean` | a TCP workload: the payload that arrived over the transfer, in bits per second (D-086) |
+/// | `<tcp>.completion` | the time from the first connect to the end of the last connection that did its work, in seconds |
+/// | `<tcp>.bytes_sent`, `.bytes_received`, `.connections`, `.failed_connections`, `.retransmitted_segments` | counts |
+/// | `<tcp>.rtt.min`, `.mean`, `.p50`, `.p90`, `.p95`, `.p99`, `.p999`, `.max` | the smoothed round trip time of the kernel, in seconds |
+/// | `<tcp>.sent`, `.answered`, `.failed` | `request-response`: the requests |
+/// | `<tcp>.latency.*`, `<tcp>.round_trip.*` | `request-response`: from the moment a request was due, and from the moment it was sent, to the last byte of its response, in seconds, with the same statistics as the delay; answered requests only |
 /// | `<program>.<metric>.last`, `.min`, `.max` | a metric that a program of your own reported (the unit is the program's) |
 #[must_use]
 pub fn metric_values(result: &RunResult) -> BTreeMap<String, f64> {
@@ -315,6 +386,17 @@ pub fn metric_values(result: &RunResult) -> BTreeMap<String, f64> {
             count(stats.loss_runs.longest),
         );
         put(format!("{id}.loss_runs.mean"), stats.loss_runs.mean);
+        if let Some(echo) = &workload.echo {
+            put(format!("{id}.echo.received"), count(echo.stats.received));
+            put(format!("{id}.echo.lost"), count(echo.stats.lost));
+            put(format!("{id}.echo.loss_ratio"), echo.stats.loss_ratio);
+            if let Some(trip) = &echo.stats.delay {
+                delay_values(&mut put, &format!("{id}.round_trip"), trip);
+            }
+        }
+    }
+    for tcp in &result.tcp {
+        tcp_values(&mut put, tcp);
     }
     for program in &result.programs {
         for metric in &program.metrics {
@@ -564,6 +646,35 @@ mod tests {
         assert!((at("w.loss_runs.longest") - 0.0).abs() < 1e-12);
         // No jitter in the sample (fewer than two arrivals): no name for it, which the set treats as partial
         assert!(!values.contains_key("w.jitter.mean"));
+    }
+
+    /// The round trip of an echo is under `round_trip`, in seconds, and its packets under `echo` (D-087).
+    #[test]
+    fn the_names_of_the_metrics_of_an_echo() {
+        let mut result = result_with(0.5, 7);
+        let mut back = result.workloads[0].stats.clone();
+        back.loss_ratio = 0.75;
+        back.received = 1;
+        back.lost = 3;
+        back.delay = back.delay.map(|mut trip| {
+            trip.p50_ns = 140_000_000;
+            trip
+        });
+        result.workloads[0].echo = Some(crate::result::EchoResult {
+            echoed: 1,
+            echo_errors: 0,
+            foreign_datagrams: 0,
+            records_file: "flow-0.echo.records".to_owned(),
+            stats: back,
+        });
+        let values = metric_values(&result);
+        assert!((values["w.echo.loss_ratio"] - 0.75).abs() < 1e-12);
+        assert!((values["w.echo.lost"] - 3.0).abs() < 1e-12);
+        assert!((values["w.round_trip.p50"] - 0.140).abs() < 1e-12);
+        // The one-way delay is not the round trip
+        assert!((values["w.delay.p50"] - 0.002).abs() < 1e-12);
+        // A workload without an echo has neither
+        assert!(!metric_values(&result_with(0.5, 7)).contains_key("w.round_trip.p50"));
     }
 
     #[test]

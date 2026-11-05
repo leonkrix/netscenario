@@ -191,7 +191,7 @@ fn markdown_echo(text: &mut String, result: &RunResult) {
 }
 
 /// The rows of the table of echoes: the packets that came back and their round trip.
-fn echo_rows(workload: &WorkloadResult) -> Vec<(&'static str, String)> {
+pub(crate) fn echo_rows(workload: &WorkloadResult) -> Vec<(&'static str, String)> {
     let Some(echo) = &workload.echo else {
         return Vec::new();
     };
@@ -252,7 +252,7 @@ fn markdown_tcp(text: &mut String, result: &RunResult) {
 }
 
 /// The rows of one TCP workload.
-fn tcp_rows(tcp: &crate::result::TcpResult) -> Vec<(&'static str, String)> {
+pub(crate) fn tcp_rows(tcp: &crate::result::TcpResult) -> Vec<(&'static str, String)> {
     let delay = |summary: &Option<crate::stats::DelaySummary>,
                  pick: fn(&crate::stats::DelaySummary) -> u64| {
         summary
@@ -344,11 +344,7 @@ fn markdown_timeline(text: &mut String, result: &RunResult) {
             done
         );
     }
-    let recoveries: Vec<_> = result
-        .workloads
-        .iter()
-        .flat_map(|w| w.recoveries.iter().map(move |r| (w, r)))
-        .collect();
+    let recoveries = all_recoveries(result);
     if recoveries.is_empty() {
         return;
     }
@@ -357,7 +353,7 @@ fn markdown_timeline(text: &mut String, result: &RunResult) {
         text,
         "| Workload | After | Link | Time to recover |\n| --- | --- | --- | ---: |"
     );
-    for (workload, recovery) in recoveries {
+    for (id, recovery) in recoveries {
         let time = recovery.time_ns.map_or_else(
             || {
                 format!(
@@ -370,13 +366,28 @@ fn markdown_timeline(text: &mut String, result: &RunResult) {
         let _ = writeln!(
             text,
             "| {} | event {} ({}) | {} | {} |",
-            cell(&workload.id),
+            cell(id),
             recovery.event,
             cell(&recovery.kind),
             cell(&recovery.link),
             time
         );
     }
+}
+
+/// The times to recover of the workloads and then of the TCP workloads, each with the id of its workload.
+pub(crate) fn all_recoveries(result: &RunResult) -> Vec<(&str, &crate::recovery::Recovery)> {
+    result
+        .workloads
+        .iter()
+        .flat_map(|w| w.recoveries.iter().map(move |r| (w.id.as_str(), r)))
+        .chain(
+            result
+                .tcp
+                .iter()
+                .flat_map(|t| t.recoveries.iter().map(move |r| (t.id.as_str(), r))),
+        )
+        .collect()
 }
 
 fn markdown_programs(text: &mut String, result: &RunResult) {
@@ -728,8 +739,63 @@ pub fn run_properties(result: &RunResult) -> Vec<(String, String)> {
         .iter()
         .flat_map(|workload| workload_properties(scenario, workload))
         .collect();
+    for tcp in &result.tcp {
+        found.extend(tcp_properties(scenario, tcp));
+    }
     for program in &result.programs {
         found.extend(program_properties(scenario, program));
+    }
+    found
+}
+
+/// The names and values of the properties of a TCP workload, `netscenario.<scenario>.<workload>.<name>` (D-086).
+fn tcp_properties(scenario: &str, tcp: &crate::result::TcpResult) -> Vec<(String, String)> {
+    let prefix = format!("netscenario.{scenario}.{}", tcp.id);
+    let secs = |ns: u64| (ns as f64 / 1e9).to_string();
+    let mut found = vec![
+        (format!("{prefix}.bytes_sent"), tcp.bytes_sent.to_string()),
+        (
+            format!("{prefix}.bytes_received"),
+            tcp.bytes_received.to_string(),
+        ),
+        (
+            format!("{prefix}.failed_connections"),
+            tcp.failed_connections.to_string(),
+        ),
+        (
+            format!("{prefix}.retransmitted_segments"),
+            tcp.retransmitted_segments.to_string(),
+        ),
+    ];
+    if let Some(mean) = tcp.goodput.as_ref().and_then(|g| g.mean_bits_per_second) {
+        found.push((format!("{prefix}.goodput_mean_bps"), mean.to_string()));
+    }
+    if let Some(completion) = tcp.completion_ns() {
+        found.push((format!("{prefix}.completion_s"), secs(completion)));
+    }
+    if let Some(rtt) = &tcp.rtt {
+        found.push((format!("{prefix}.rtt_p50_s"), secs(rtt.p50_ns)));
+        found.push((format!("{prefix}.rtt_max_s"), secs(rtt.max_ns)));
+    }
+    if let Some(requests) = &tcp.requests {
+        found.push((
+            format!("{prefix}.requests_answered"),
+            requests.answered.to_string(),
+        ));
+        found.push((
+            format!("{prefix}.requests_failed"),
+            requests.failed.to_string(),
+        ));
+        if let Some(latency) = &requests.latency {
+            found.push((format!("{prefix}.latency_p50_s"), secs(latency.p50_ns)));
+            found.push((format!("{prefix}.latency_p95_s"), secs(latency.p95_ns)));
+            found.push((format!("{prefix}.latency_p99_s"), secs(latency.p99_ns)));
+            found.push((format!("{prefix}.latency_max_s"), secs(latency.max_ns)));
+        }
+        if let Some(trip) = &requests.round_trip {
+            found.push((format!("{prefix}.round_trip_p50_s"), secs(trip.p50_ns)));
+            found.push((format!("{prefix}.round_trip_p99_s"), secs(trip.p99_ns)));
+        }
     }
     found
 }
@@ -793,6 +859,22 @@ fn junit_run(result: &RunResult) -> String {
             properties: workload_properties(scenario, workload),
             failure: failure_of(result, workload),
             out,
+        });
+    }
+    for tcp in &result.tcp {
+        let completion = tcp.completion_ns().map_or_else(
+            || "not completed".to_owned(),
+            |ns| format!("{} s", seconds(ns)),
+        );
+        cases.push(Case {
+            name: tcp.id.clone(),
+            seconds: tcp.window_ns as f64 / 1e9,
+            properties: tcp_properties(scenario, tcp),
+            failure: super::tcp_failure_of(result, tcp),
+            out: format!(
+                "{} -> {}: {}, {} connections ({} failed), completion {completion}",
+                tcp.from, tcp.to, tcp.kind, tcp.connections, tcp.failed_connections
+            ),
         });
     }
     for program in &result.programs {

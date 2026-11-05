@@ -430,10 +430,11 @@ pub fn run(
         clock_reasons,
         programs,
         captures,
-        tcp,
+        mut tcp,
         reproducibility,
     } = measured?;
     torn_down?;
+    tcp_recoveries(scenario, &mut tcp, &events);
 
     let timeline = Timeline {
         begin_ns,
@@ -857,6 +858,74 @@ fn series_of(
         },
         recoveries,
     ))
+}
+
+/// The time to recover of the TCP workloads after the steps of the timeline on their paths, in either direction (D-088).
+fn tcp_recoveries(scenario: &Scenario, results: &mut [TcpResult], events: &[EventRecord]) {
+    let routes = scenario.topology.routes();
+    let options = recovery_options(scenario);
+    for result in results {
+        let Some(goodput) = &result.goodput else {
+            continue;
+        };
+        let Some((from, to)) = scenario.workloads.iter().find_map(|workload| {
+            (workload.id().as_str() == result.id)
+                .then(|| {
+                    workload
+                        .as_tcp_bulk()
+                        .map(|bulk| (&bulk.from, &bulk.to))
+                        .or_else(|| {
+                            workload
+                                .as_request_response()
+                                .map(|exchange| (&exchange.from, &exchange.to))
+                        })
+                })
+                .flatten()
+        }) else {
+            continue;
+        };
+        let Ok(path) = scenario.topology.path(&routes, from, to) else {
+            continue;
+        };
+        // The working time: from the first connect to the end of the last connection
+        let began = result
+            .transfers
+            .iter()
+            .map(|transfer| transfer.started_ns)
+            .min();
+        let ended = result
+            .transfers
+            .iter()
+            .map(|transfer| transfer.done_ns)
+            .max();
+        let (Some(began), Some(ended)) = (began, ended) else {
+            continue;
+        };
+        let (began, ended) = (
+            u64::try_from(began).unwrap_or(0),
+            u64::try_from(ended).unwrap_or(0),
+        );
+        let bin_ns = goodput.bin_ns.max(1);
+        let count = goodput
+            .bits_per_second
+            .len()
+            .max(usize::try_from(ended / bin_ns).unwrap_or(usize::MAX));
+        let bins: Vec<recovery::RateBin> = (0..count)
+            .map(|index| {
+                let start = index as u64 * bin_ns;
+                recovery::RateBin {
+                    bits_per_second: goodput.bits_per_second.get(index).copied().unwrap_or(0),
+                    active: start >= began && start + bin_ns <= ended,
+                }
+            })
+            .collect();
+        let concerning: Vec<EventRecord> = events
+            .iter()
+            .filter(|event| path.links.iter().any(|link| event.link == link.as_str()))
+            .cloned()
+            .collect();
+        result.recoveries = recovery::rate_recoveries(&concerning, &bins, bin_ns, &options);
+    }
 }
 
 /// The results of all the workloads, in the order of the scenario.

@@ -334,5 +334,26 @@ pub(crate) fn failure_of(result: &RunResult, workload: &WorkloadResult) -> Optio
     None
 }
 
+/// Why a TCP workload fails its case in the JUnit file: the run was interrupted, or connections failed although no link was shut on
+/// purpose (D-077, D-086). A connection that breaks during an outage of the scenario is what the scenario asks for.
+pub(crate) fn tcp_failure_of(result: &RunResult, tcp: &crate::result::TcpResult) -> Option<String> {
+    if let Some(interrupted) = result.timing.interrupted_ns {
+        return Some(format!(
+            "the run was interrupted after {} s of {} s, so this is the result of the part that ran",
+            seconds(interrupted),
+            seconds(result.timing.duration_ns)
+        ));
+    }
+    if tcp.failed_connections > 0 && !link_shut_on_purpose(result) {
+        return Some(format!(
+            "{} of {} connections of this workload failed and no link was shut on purpose: {}",
+            tcp.failed_connections,
+            tcp.connections,
+            tcp.first_error.as_deref().unwrap_or("no reason given")
+        ));
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests;

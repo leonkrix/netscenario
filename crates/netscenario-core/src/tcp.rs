@@ -465,7 +465,16 @@ fn result_of(
     })?;
     let transfers = transfers_of(&client, begin);
     let (retransmitted_segments, rtt) = kernel_view(&client);
-    let goodput = goodput_of(&server, &transfers, begin, bin);
+    let goodput = match plan.spec {
+        Spec::Bulk { .. } => goodput_of(&bulk_points(&server), &transfers, begin, bin, |t| {
+            t.bytes_sent
+        }),
+        Spec::Exchange { .. } => {
+            goodput_of(&response_points(&client), &transfers, begin, bin, |t| {
+                t.bytes_received
+            })
+        }
+    };
     let requests = matches!(plan.spec, Spec::Exchange { .. }).then(|| requests_of(&client));
     let bytes_received = match plan.spec {
         Spec::Bulk { .. } => served.map_or(0, |served| served.bytes_received),
@@ -499,6 +508,7 @@ fn result_of(
         stopped: said.stopped,
         client_file: relative_name(&plan.client_file, out_dir),
         server_file: relative_name(&plan.server_file, out_dir),
+        recoveries: Vec::new(),
     })
 }
 
@@ -556,31 +566,48 @@ fn kernel_view(client: &streams::File) -> (u64, Option<DelaySummary>) {
     (retransmitted, DelaySummary::of(&mut rtts))
 }
 
-/// The payload that the server read, by time bin, and the mean over the transfer.
-fn goodput_of(
-    server: &streams::File,
-    transfers: &[TransferInfo],
-    begin: u64,
-    bin: Duration,
-) -> Option<Goodput> {
-    let bin_ns = nanos(bin).max(1);
-    let progress: Vec<_> = server
+/// The moments and sizes of what the server read: one point for each interval of its progress.
+fn bulk_points(server: &streams::File) -> Vec<(u64, u64)> {
+    server
         .records
         .iter()
         .filter(|record| record.kind == Kind::Progress)
-        .collect();
-    if progress.is_empty() {
+        .map(|record| (record.t, record.a))
+        .collect()
+}
+
+/// The moments and sizes of the responses that arrived: the bytes of an answered request at the moment of its last byte.
+fn response_points(client: &streams::File) -> Vec<(u64, u64)> {
+    client
+        .records
+        .iter()
+        .filter(|record| record.kind == Kind::Request && record.status != STATUS_FAILED)
+        .map(|record| (record.b, record.d))
+        .collect()
+}
+
+/// The payload that arrived at the receiving end, by time bin (`points` are the moment and the bytes), and the mean over the
+/// transfer: the payload of the connections that did their work (`bytes_of`) over the time from the first connect to the last end.
+fn goodput_of(
+    points: &[(u64, u64)],
+    transfers: &[TransferInfo],
+    begin: u64,
+    bin: Duration,
+    bytes_of: fn(&TransferInfo) -> u64,
+) -> Option<Goodput> {
+    let bin_ns = nanos(bin).max(1);
+    if points.is_empty() {
         return None;
     }
     let index = |t: u64| usize::try_from(t.saturating_sub(begin) / bin_ns).unwrap_or(usize::MAX);
-    let bins = progress
+    let bins = points
         .iter()
-        .map(|record| index(record.t))
+        .map(|(t, _)| index(*t))
         .max()
         .map_or(0, |last| last + 1);
     let mut bytes = vec![0_u128; bins];
-    for record in &progress {
-        bytes[index(record.t)] += u128::from(record.a);
+    for (t, count) in points {
+        bytes[index(*t)] += u128::from(*count);
     }
     let to_bits = |bytes: u128, over_ns: u128| {
         u64::try_from(bytes * 8 * 1_000_000_000 / over_ns.max(1)).unwrap_or(u64::MAX)
@@ -595,7 +622,7 @@ fn goodput_of(
         .map(|(first, last)| {
             let total: u128 = done
                 .iter()
-                .map(|transfer| u128::from(transfer.bytes_sent))
+                .map(|transfer| u128::from(bytes_of(transfer)))
                 .sum();
             to_bits(total, u128::from(u64::try_from(last - first).unwrap_or(0)))
         });
@@ -689,7 +716,14 @@ mod tests {
             bytes_received: 0,
             ok: true,
         }];
-        let goodput = goodput_of(&server, &transfers, BEGIN, Duration::from_millis(100)).unwrap();
+        let goodput = goodput_of(
+            &bulk_points(&server),
+            &transfers,
+            BEGIN,
+            Duration::from_millis(100),
+            |t| t.bytes_sent,
+        )
+        .unwrap();
         // 250,000 bytes in 100 ms is 20 mbit/s, 250,000 again, none, then 125,000
         assert_eq!(
             goodput.bits_per_second,
@@ -704,7 +738,7 @@ mod tests {
     #[test]
     fn no_data_is_no_goodput_and_a_failed_connection_is_left_out_of_the_mean() {
         assert_eq!(
-            goodput_of(&file(Vec::new()), &[], BEGIN, Duration::from_secs(1)),
+            goodput_of(&[], &[], BEGIN, Duration::from_secs(1), |t| t.bytes_sent),
             None
         );
         let server = file(vec![record(
@@ -724,23 +758,25 @@ mod tests {
             ok,
         };
         let goodput = goodput_of(
-            &server,
+            &bulk_points(&server),
             &[
                 transfer(true, 1_000_000_000),
                 transfer(false, 50_000_000_000),
             ],
             BEGIN,
             Duration::from_secs(1),
+            |t| t.bytes_sent,
         )
         .unwrap();
         // 1,000 bytes in the one second of the connection that did its work, not in the 50 s of the one that failed
         assert_eq!(goodput.mean_bits_per_second, Some(8_000));
         assert_eq!(
             goodput_of(
-                &server,
+                &bulk_points(&server),
                 &[transfer(false, 1)],
                 BEGIN,
-                Duration::from_secs(1)
+                Duration::from_secs(1),
+                |t| t.bytes_sent
             )
             .unwrap()
             .mean_bits_per_second,
