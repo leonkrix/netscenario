@@ -43,6 +43,9 @@ enum Metric {
     /// The largest delay of the run.
     MaxDelayMs,
     P99DelayMs,
+    /// The 99.9th percentile: the ninth largest of 8,000 delays (nearest rank 7,992). The upper bound of a cap goes here and not on the
+    /// largest delay, which one late packet raises.
+    P999DelayMs,
     StdevDelayMs,
     LossRatio,
     ReorderedRatio,
@@ -87,6 +90,7 @@ impl Metric {
             Metric::MinDelayMs => "smallest delay",
             Metric::MaxDelayMs => "largest delay",
             Metric::P99DelayMs => "99th percentile of the delay",
+            Metric::P999DelayMs => "99.9th percentile of the delay",
             Metric::StdevDelayMs => "standard deviation of the delay",
             Metric::LossRatio => "loss",
             Metric::ReorderedRatio => "reordered packets",
@@ -134,6 +138,21 @@ struct Bound {
     reason: &'static str,
 }
 
+impl Bound {
+    /// The range that passes, as the tables and the failures say it. A bound without an upper end ends in infinity.
+    fn range(&self) -> String {
+        if self.hi.is_infinite() {
+            format!("at least {}", self.metric.show(self.lo))
+        } else {
+            format!(
+                "{} to {}",
+                self.metric.show(self.lo),
+                self.metric.show(self.hi)
+            )
+        }
+    }
+}
+
 /// What a run measured.
 #[derive(Debug)]
 struct Measurement {
@@ -169,6 +188,7 @@ impl Measurement {
             Metric::MaxDelayMs => self.delays_ms[self.delays_ms.len() - 1],
             // Nearest rank, as in the results (docs/RESULTS.md)
             Metric::P99DelayMs => self.delays_ms[(self.delays_ms.len() * 99).div_ceil(100) - 1],
+            Metric::P999DelayMs => self.delays_ms[(self.delays_ms.len() * 999).div_ceil(1000) - 1],
             Metric::StdevDelayMs => (self
                 .delays_ms
                 .iter()
@@ -1360,8 +1380,15 @@ fn cases() -> Vec<Case> {
                     metric: Metric::MaxDelayMs,
                     expected: 79.999,
                     lo: 79.999,
+                    hi: f64::INFINITY,
+                    reason: "PHYSICS and MODEL: the largest entry is 32767, 4 amounts; 1.07 % of the entries are that large, so among 8,000 delays there is one at the top with a chance of 1 - 1e-37 and none is below 80.0 ms. There is no upper bound: one late packet is routine on a shared machine, the cap is judged on the 99.9th percentile",
+                },
+                Bound {
+                    metric: Metric::P999DelayMs,
+                    expected: 79.999,
+                    lo: 79.999,
                     hi: 80.5,
-                    reason: "PHYSICS and MODEL: the largest entry is 32767, 4 amounts, so no delay is above 80.0 ms; 1.07 % of the entries are that large, so among 8,000 delays there is one at the top with a chance of 1 - 1e-37; 0.5 ms of noise above",
+                    reason: "PHYSICS and MODEL: no delay is above the largest entry, 80.0 ms, and 1.07 % of the entries are that large, so the ninth largest of 8,000 delays is at the cap with a chance of 1 - 1e-25; 0.5 ms of noise above, and nine packets would have to be late at once",
                 },
             ],
         },
@@ -1408,8 +1435,15 @@ fn cases() -> Vec<Case> {
                     metric: Metric::MaxDelayMs,
                     expected: 78.805,
                     lo: 76.968,
+                    hi: f64::INFINITY,
+                    reason: "MODEL: the largest of 8,000 delays is above the 99.74 % quantile (76.97 ms) with a chance of 1 - 1e-9. There is no upper bound: one late packet is routine on a shared machine (2.3 ms above the cap on a runner), the cap is judged on the 99.9th percentile",
+                },
+                Bound {
+                    metric: Metric::P999DelayMs,
+                    expected: 77.594,
+                    lo: 76.422,
                     hi: 79.305,
-                    reason: "PHYSICS and MODEL: the largest entry is 31789, so no delay is above 78.805 ms (0.5 ms of noise above); the largest of 8,000 delays is above the 99.74 % quantile (76.97 ms) with a chance of 1 - 1e-9",
+                    reason: "PHYSICS and MODEL: no delay is above the largest entry, 31789, 78.805 ms (0.5 ms of noise above, and nine packets would have to be late at once); the ninth largest of 8,000 delays is the 99.9 % quantile of the table, 77.594 ms, and is above its 99.5 % quantile (76.422 ms, 0.51 % of the entries) with a chance of 1 - 1e-9",
                 },
             ],
         },
@@ -1456,8 +1490,15 @@ fn cases() -> Vec<Case> {
                     metric: Metric::MaxDelayMs,
                     expected: 164.75,
                     lo: 139.76,
+                    hi: f64::INFINITY,
+                    reason: "MODEL: the largest of 8,000 delays is above the 99.74 % quantile (139.76 ms) with a chance of 1 - 1e-9. A table that was not scaled would stop at 4 deviations (132 ms) and a `normal` one at 3.5. There is no upper bound: one late packet is routine on a shared machine, the cap is judged on the 99.9th percentile",
+                },
+                Bound {
+                    metric: Metric::P999DelayMs,
+                    expected: 147.26,
+                    lo: 134.0,
                     hi: 165.25,
-                    reason: "PHYSICS and MODEL: the largest entry is 32759 at scale 2.024, 8.09 deviations: no delay is above 164.75 ms; the largest of 8,000 delays is above the 99.74 % quantile (139.76 ms) with a chance of 1 - 1e-9. A table that was not scaled would stop at 4 deviations (132 ms) and a `normal` one at 3.5",
+                    reason: "PHYSICS and MODEL: the largest entry is 32759 at scale 2.024, 8.09 deviations: no delay is above 164.75 ms (0.5 ms of noise above, and nine packets would have to be late at once); the ninth largest of 8,000 delays is the 99.9 % quantile of the exponential, 100 ms + 8 ms x (ln 1000 - 1) = 147.26 ms, and is above 134.0 ms (the 99.475 % quantile, 0.525 % of the delays) with a chance of 1 - 1e-9",
                 },
             ],
         },
@@ -1691,14 +1732,13 @@ fn fragment(case: &Case, measurement: &Measurement, verdicts: &[Verdict<'_>]) ->
         };
         let _ = writeln!(
             text,
-            "| {} | {} | {} {} | {} | {} to {} | {} |",
+            "| {} | {} | {} {} | {} | {} | {} |",
             metric.label(),
             metric.show(bound.expected),
             metric.show(verdict.value),
             if verdict.passed() { "✔" } else { "✘" },
             deviation,
-            metric.show(bound.lo),
-            metric.show(bound.hi),
+            bound.range(),
             bound.reason
         );
     }
@@ -1786,11 +1826,10 @@ fn run_and_judge(id: &str) {
         .filter(|v| !v.passed())
         .map(|v| {
             format!(
-                "{}: {} is outside {} to {}",
+                "{}: {} is outside {}",
                 v.bound.metric.label(),
                 v.bound.metric.show(v.value),
-                v.bound.metric.show(v.bound.lo),
-                v.bound.metric.show(v.bound.hi)
+                v.bound.range()
             )
         })
         .collect();
@@ -2177,7 +2216,8 @@ fn the_judging_of_the_table_cases_tells_the_shape_from_the_moments() {
         [
             Metric::MedianDelayMs,
             Metric::MinDelayMs,
-            Metric::MaxDelayMs
+            Metric::MaxDelayMs,
+            Metric::P999DelayMs
         ]
     );
     // The same for the table of iproute2: an even spread of the same mean and deviation fails
@@ -2187,13 +2227,46 @@ fn the_judging_of_the_table_cases_tells_the_shape_from_the_moments() {
         [
             Metric::MedianDelayMs,
             Metric::MinDelayMs,
-            Metric::MaxDelayMs
+            Metric::MaxDelayMs,
+            Metric::P999DelayMs
         ]
     );
-    // A delay that is cut short at the top (a table that was not scaled up) fails the largest delay and only that
+    // A delay that is cut short at the top (a table that was not scaled up) fails the largest delay and the 99.9th percentile
     let cut = quantiles(8000, |u| 100.0 + 8.0 * ((-(1.0 - u).ln()).min(4.0) - 1.0));
     let failed = failing_metrics("29-jitter-table", &synthetic(&cut, 0.0, 0.0, 0.0));
     assert!(failed.contains(&Metric::MaxDelayMs), "{failed:?}");
+    assert!(failed.contains(&Metric::P999DelayMs), "{failed:?}");
+}
+
+/// One late packet is routine on a shared machine (a runner delivered one 2.3 ms above the largest entry of the table)
+/// and must not fail the cap; a cap that does not hold, with the delays of many packets above it, must.
+#[test]
+fn the_cap_of_a_table_is_judged_on_the_99_9th_percentile_and_not_on_one_packet() {
+    // A shape that fits the bounds of the case on both ends, from 26 ms up to 78 ms (the cap is 78.805 ms)
+    let faithful = quantiles(8000, |u| 26.0 + 52.0 * u);
+    let failing = |delays: &[f64]| {
+        let failed = failing_metrics("28-jitter-paretonormal", &synthetic(delays, 0.0, 0.0, 0.0));
+        (
+            failed.contains(&Metric::MaxDelayMs),
+            failed.contains(&Metric::P999DelayMs),
+        )
+    };
+    assert_eq!(failing(&faithful), (false, false));
+    // The eight largest packets 3 ms above the cap: the ninth largest decides
+    let mut late = faithful.clone();
+    for delay in late.iter_mut().rev().take(8) {
+        *delay = 81.8;
+    }
+    assert_eq!(failing(&late), (false, false));
+    // Nine packets above the cap are more than 0.1 % of the delays: the cap does not hold
+    let mut broken = faithful.clone();
+    for delay in broken.iter_mut().rev().take(9) {
+        *delay = 81.8;
+    }
+    assert_eq!(failing(&broken), (false, true));
+    // A tail that stops short of the table fails from below, whatever the noise does
+    let cut = quantiles(8000, |u| 26.0 + 40.0 * u);
+    assert_eq!(failing(&cut), (true, true));
 }
 
 // ---- canaries: networks that are wrong on purpose must fail ----

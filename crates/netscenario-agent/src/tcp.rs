@@ -608,13 +608,34 @@ pub struct BulkConfig {
     pub finish_timeout_ns: u64,
 }
 
-/// How much a bulk connection sends.
+/// How much a bulk connection sends: a number of payload bytes, a time from the start, or both, and it ends at whichever comes
+/// first. At least one is set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Amount {
+pub struct Amount {
     /// This many payload bytes.
-    Bytes(u64),
-    /// For this many nanoseconds from the start, then the end.
-    Duration(u64),
+    pub bytes: Option<u64>,
+    /// For this many nanoseconds from the start.
+    pub duration_ns: Option<u64>,
+}
+
+impl Amount {
+    /// This many bytes, however long it takes.
+    #[must_use]
+    pub fn bytes(bytes: u64) -> Self {
+        Self {
+            bytes: Some(bytes),
+            duration_ns: None,
+        }
+    }
+
+    /// As much as fits in this time.
+    #[must_use]
+    pub fn duration(duration_ns: u64) -> Self {
+        Self {
+            bytes: None,
+            duration_ns: Some(duration_ns),
+        }
+    }
 }
 
 /// What a request client sends.
@@ -920,20 +941,17 @@ fn send_chunks(
         if stop.load(Ordering::SeqCst) {
             return Ok(false);
         }
-        let size = match config.amount {
-            Amount::Bytes(total) => {
-                if sent >= total {
-                    break;
-                }
-                u32::try_from((total - sent).min(u64::from(chunk))).unwrap_or(chunk)
-            }
-            Amount::Duration(length) => {
-                if monotonic_ns() >= begin.saturating_add(length) {
-                    break;
-                }
-                chunk
-            }
-        };
+        if config.amount.bytes.is_some_and(|total| sent >= total)
+            || config
+                .amount
+                .duration_ns
+                .is_some_and(|length| monotonic_ns() >= begin.saturating_add(length))
+        {
+            break;
+        }
+        let size = config.amount.bytes.map_or(chunk, |total| {
+            u32::try_from((total - sent).min(u64::from(chunk))).unwrap_or(chunk)
+        });
         buffer[0..4].copy_from_slice(&size.to_be_bytes());
         if !write_all(stream, &buffer[..4 + size as usize], stop)? {
             return Ok(false);
@@ -1123,7 +1141,13 @@ fn requests(
         if request.len() >= 8 {
             request[0..8].copy_from_slice(&number.to_be_bytes());
         }
+        // In a closed loop a request is due when it is sent: one reading, so that the two moments are the same
         let sent = monotonic_ns();
+        let due = if config.interval_ns.is_none() {
+            sent
+        } else {
+            due
+        };
         let answered = write_all(stream, &request, stop).and_then(|written| {
             if !written {
                 return Ok(Fill::Stopped);
@@ -1281,7 +1305,7 @@ mod tests {
         let (summary, served, server_file) = with_server(&serve_config(), |address| {
             let config = BulkConfig {
                 common: common(address, 2),
-                amount: Amount::Bytes(total),
+                amount: Amount::bytes(total),
                 chunk_bytes: 65_536,
                 finish_timeout_ns: DEFAULT_FINISH_TIMEOUT_NS,
             };
@@ -1341,7 +1365,7 @@ mod tests {
         let (summary, served, _) = with_server(&serve_config(), |address| {
             let config = BulkConfig {
                 common: common(address, 1),
-                amount: Amount::Duration(300_000_000),
+                amount: Amount::duration(300_000_000),
                 chunk_bytes: 16_384,
                 finish_timeout_ns: DEFAULT_FINISH_TIMEOUT_NS,
             };
@@ -1447,7 +1471,7 @@ mod tests {
         let client_file = Shared::default();
         let config = BulkConfig {
             common: common(address, 1),
-            amount: Amount::Bytes(1000),
+            amount: Amount::bytes(1000),
             chunk_bytes: 1000,
             finish_timeout_ns: 1_000_000_000,
         };
@@ -1470,7 +1494,7 @@ mod tests {
             common.congestion = Some("reno".to_owned());
             let config = BulkConfig {
                 common,
-                amount: Amount::Bytes(10_000),
+                amount: Amount::bytes(10_000),
                 chunk_bytes: 5_000,
                 finish_timeout_ns: DEFAULT_FINISH_TIMEOUT_NS,
             };
@@ -1487,7 +1511,7 @@ mod tests {
             common.congestion = Some("nonexistent-cc".to_owned());
             let config = BulkConfig {
                 common,
-                amount: Amount::Bytes(10_000),
+                amount: Amount::bytes(10_000),
                 chunk_bytes: 5_000,
                 finish_timeout_ns: 1_000_000_000,
             };
@@ -1511,7 +1535,7 @@ mod tests {
             let closed = stranger.read(&mut byte).map_or(true, |n| n == 0);
             let config = BulkConfig {
                 common: common(address, 1),
-                amount: Amount::Bytes(5_000),
+                amount: Amount::bytes(5_000),
                 chunk_bytes: 5_000,
                 finish_timeout_ns: DEFAULT_FINISH_TIMEOUT_NS,
             };
@@ -1526,13 +1550,49 @@ mod tests {
         );
     }
 
+    /// With both limits a connection ends at whichever comes first: the time here, since the bytes would take far longer.
+    #[test]
+    fn a_connection_with_bytes_and_a_time_ends_at_the_one_that_comes_first() {
+        let started = Instant::now();
+        let (summary, served, _) = with_server(&serve_config(), |address| {
+            let config = BulkConfig {
+                common: common(address, 1),
+                amount: Amount {
+                    bytes: Some(1 << 40),
+                    duration_ns: Some(200_000_000),
+                },
+                chunk_bytes: 16_384,
+                finish_timeout_ns: DEFAULT_FINISH_TIMEOUT_NS,
+            };
+            run_bulk(&config, &AtomicBool::new(false), Shared::default()).unwrap()
+        });
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(summary.failed, 0, "{:?}", summary.first_error);
+        assert!(summary.bytes_sent > 0 && summary.bytes_sent < 1 << 40);
+        assert_eq!(served.bytes_received, summary.bytes_sent);
+        // And the bytes when they come first: 50,000 bytes are sent whole though the time is long
+        let (summary, _, _) = with_server(&serve_config(), |address| {
+            let config = BulkConfig {
+                common: common(address, 1),
+                amount: Amount {
+                    bytes: Some(50_000),
+                    duration_ns: Some(60_000_000_000),
+                },
+                chunk_bytes: 16_384,
+                finish_timeout_ns: DEFAULT_FINISH_TIMEOUT_NS,
+            };
+            run_bulk(&config, &AtomicBool::new(false), Shared::default()).unwrap()
+        });
+        assert_eq!(summary.bytes_sent, 50_000);
+    }
+
     #[test]
     fn a_stop_ends_a_transfer_early_and_says_so() {
         let stop = Arc::new(AtomicBool::new(false));
         let (summary, _, _) = with_server(&serve_config(), |address| {
             let config = BulkConfig {
                 common: common(address, 1),
-                amount: Amount::Duration(30_000_000_000),
+                amount: Amount::duration(30_000_000_000),
                 chunk_bytes: 16_384,
                 finish_timeout_ns: DEFAULT_FINISH_TIMEOUT_NS,
             };

@@ -76,6 +76,7 @@ fn markdown_run(result: &RunResult) -> String {
         );
     }
     markdown_workloads(&mut text, result);
+    markdown_tcp(&mut text, result);
     markdown_timeline(&mut text, result);
     markdown_programs(&mut text, result);
     if !result.notes.is_empty() {
@@ -131,6 +132,10 @@ pub(crate) fn workload_rows(workload: &WorkloadResult) -> Vec<(&'static str, Str
 }
 
 fn markdown_workloads(text: &mut String, result: &RunResult) {
+    // A scenario of TCP workloads only has its section below
+    if result.workloads.is_empty() && !result.tcp.is_empty() {
+        return;
+    }
     let _ = writeln!(text, "\n### Workloads\n");
     if result.workloads.is_empty() {
         let _ = writeln!(text, "None.");
@@ -158,6 +163,104 @@ fn markdown_workloads(text: &mut String, result: &RunResult) {
             let _ = writeln!(text, "\n> **{}:** {reason}", cell(&workload.id));
         }
     }
+}
+
+/// The TCP workloads, one column each (D-086).
+fn markdown_tcp(text: &mut String, result: &RunResult) {
+    if result.tcp.is_empty() {
+        return;
+    }
+    let _ = writeln!(text, "\n### TCP workloads\n");
+    let ids: Vec<String> = result.tcp.iter().map(|t| cell(&t.id)).collect();
+    let _ = writeln!(text, "| | {} |", ids.join(" | "));
+    let _ = writeln!(text, "| --- |{}", " ---: |".repeat(ids.len()));
+    let columns: Vec<Vec<(&str, String)>> = result.tcp.iter().map(tcp_rows).collect();
+    for (index, (label, _)) in columns[0].iter().enumerate() {
+        let values: Vec<String> = columns
+            .iter()
+            .map(|column| cell(&column[index].1))
+            .collect();
+        let _ = writeln!(text, "| {label} | {} |", values.join(" | "));
+    }
+    for tcp in result.tcp.iter().filter(|tcp| tcp.failed_connections > 0) {
+        let _ = writeln!(
+            text,
+            "\n> **{}:** {} of {} connections failed: {}",
+            cell(&tcp.id),
+            tcp.failed_connections,
+            tcp.connections,
+            cell(tcp.first_error.as_deref().unwrap_or("no reason was given"))
+        );
+    }
+    let _ = writeln!(
+        text,
+        "\n> A run with TCP is {}: {}",
+        result.reproducibility.class,
+        cell(&result.reproducibility.because.join("; "))
+    );
+}
+
+/// The rows of one TCP workload.
+fn tcp_rows(tcp: &crate::result::TcpResult) -> Vec<(&'static str, String)> {
+    let delay = |summary: &Option<crate::stats::DelaySummary>,
+                 pick: fn(&crate::stats::DelaySummary) -> u64| {
+        summary
+            .as_ref()
+            .map_or_else(|| "n/a".to_owned(), |d| ms(pick(d)))
+    };
+    let mut rows = vec![
+        ("Flow", format!("{} → {}", tcp.from, tcp.to)),
+        ("Kind", tcp.kind.clone()),
+        (
+            "Congestion control",
+            tcp.congestion.clone().unwrap_or_else(|| "n/a".to_owned()),
+        ),
+        (
+            "Connections (failed)",
+            format!("{} ({})", tcp.connections, tcp.failed_connections),
+        ),
+        ("Payload sent", format!("{} bytes", tcp.bytes_sent)),
+        ("Payload received", format!("{} bytes", tcp.bytes_received)),
+    ];
+    if let Some(requests) = &tcp.requests {
+        rows.push((
+            "Requests answered",
+            format!("{} of {}", requests.answered, requests.sent),
+        ));
+        rows.push(("Latency p50", delay(&requests.latency, |d| d.p50_ns)));
+        rows.push(("Latency p99", delay(&requests.latency, |d| d.p99_ns)));
+        rows.push(("Round trip p50", delay(&requests.round_trip, |d| d.p50_ns)));
+    } else {
+        let done = tcp
+            .transfers
+            .iter()
+            .filter(|t| t.ok)
+            .map(crate::result::TransferInfo::duration_ns)
+            .max();
+        rows.push((
+            "Completed after",
+            done.map_or_else(
+                || "not completed".to_owned(),
+                |ns| format!("{} s", seconds(ns)),
+            ),
+        ));
+        rows.push((
+            "Goodput (mean)",
+            tcp.goodput
+                .as_ref()
+                .and_then(|g| g.mean_bits_per_second)
+                .map_or_else(|| "n/a".to_owned(), |bits| rate(bits as f64)),
+        ));
+    }
+    rows.push((
+        "Round trip time of the kernel p50",
+        delay(&tcp.rtt, |d| d.p50_ns),
+    ));
+    rows.push((
+        "Retransmitted segments",
+        tcp.retransmitted_segments.to_string(),
+    ));
+    rows
 }
 
 fn markdown_timeline(text: &mut String, result: &RunResult) {

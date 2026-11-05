@@ -31,11 +31,13 @@ use crate::provision::{Provisioned, impairments_of, provision};
 use crate::recovery::{self, Basis, Recovery, RecoveryOptions};
 use crate::result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EventRecord, NodeInfo,
-    PathInfo, ProgramResult, QueueCheck, QueueInfo, RESULT_FORMAT, RESULT_VERSION, RouteInfo,
-    RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, Timing, TraceInfo, WorkloadResult,
+    PathInfo, ProgramResult, QueueCheck, QueueInfo, RESULT_FORMAT, RESULT_VERSION, Reproducibility,
+    RouteInfo, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo, TcpResult, Timing,
+    TraceInfo, WorkloadResult,
 };
 use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
+use crate::tcp::Tcp;
 use crate::timeline;
 use crate::{barriers, drive, traffic};
 
@@ -339,6 +341,10 @@ struct Measurement {
     programs: Vec<ProgramResult>,
     /// What came of the captures of the interfaces.
     captures: Vec<CaptureResult>,
+    /// What came of the TCP workloads.
+    tcp: Vec<TcpResult>,
+    /// Whether the run can be repeated exactly (D-086).
+    reproducibility: Reproducibility,
 }
 
 /// A scenario that refers to a file must have it read before it runs (D-083): the table is made when the scenario is loaded.
@@ -407,6 +413,8 @@ pub fn run(
         clock_reasons,
         programs,
         captures,
+        tcp,
+        reproducibility,
     } = measured?;
     torn_down?;
 
@@ -462,7 +470,20 @@ pub fn run(
         notes,
         programs,
         captures,
+        tcp,
+        reproducibility,
     };
+    write_outputs(scenario, options, &result)?;
+    control.emit(&RunEvent::Finished);
+    Ok(result)
+}
+
+/// Writes the scenario as it ran, and then the result, into the directory of the run.
+fn write_outputs(
+    scenario: &Scenario,
+    options: &RunOptions,
+    result: &RunResult,
+) -> Result<(), Error> {
     // The scenario as it ran, so that the run can be replayed (ENV-03, D-075): it is written first, so that a directory with a
     // result always has it
     let scenario_path = options.out_dir.join(crate::replay::SCENARIO_FILE);
@@ -475,8 +496,7 @@ pub fn run(
     let path = options.out_dir.join("result.json");
     std::fs::write(&path, result.to_json())
         .map_err(|error| failure("write the result", format!("{}: {error}", path.display())))?;
-    control.emit(&RunEvent::Finished);
-    Ok(result)
+    Ok(())
 }
 
 /// The nodes of the network with their roles and the addresses the workloads use for them (D-078).
@@ -547,6 +567,35 @@ fn programs_into_random_queues(scenario: &Scenario) -> Vec<String> {
     reasons
 }
 
+/// A TCP workload sends what its feedback lets it send, so the packets that reach a queue that draws random numbers are not the
+/// same in every run, and the lost packets are not those of the seed (D-086).
+fn tcp_into_random_queues(scenario: &Scenario) -> Vec<String> {
+    let Some(first) = scenario.workloads.iter().find(|workload| {
+        workload.as_tcp_bulk().is_some() || workload.as_request_response().is_some()
+    }) else {
+        return Vec::new();
+    };
+    let mut reasons = Vec::new();
+    for (index, link) in scenario.topology.links.iter().enumerate() {
+        for (direction, word) in [
+            (Direction::Forward, "forward"),
+            (Direction::Reverse, "reverse"),
+        ] {
+            if timeline::states_of(scenario, index, direction)
+                .iter()
+                .any(Impairments::is_random)
+            {
+                reasons.push(format!(
+                    "the TCP workload '{}' sends into link '{}' ({word}), whose queue draws random numbers: what TCP sends depends on its feedback, so which packets meet which number can differ from run to run with the same seed",
+                    first.id(),
+                    link.id
+                ));
+            }
+        }
+    }
+    reasons
+}
+
 fn not_reproducible_because(
     scenario: &Scenario,
     provisioned: &Provisioned,
@@ -594,6 +643,7 @@ fn not_reproducible_because(
     reasons.extend(clock_reasons);
     reasons.extend(shared_directions(scenario));
     reasons.extend(programs_into_random_queues(scenario));
+    reasons.extend(tcp_into_random_queues(scenario));
     if corrupts {
         reasons.push(
             "the scenario corrupts packets: the seed fixes which packets are corrupted, but not where `netem` flips the bit, and a bit in the source address of the Ethernet header harms nothing, so a few corrupted packets arrive in one run and are dropped in another (the packets lost in the queue are the same)"
@@ -1268,7 +1318,7 @@ fn family_of(scenario: &Scenario, workload: &Generator<'_>) -> netscenario_model
 }
 
 /// An address and a port as the agent reads them: `10.200.0.2:5000`, `[fd00:200::2]:5000`.
-fn socket_text(address: &str, port: u16) -> String {
+pub(crate) fn socket_text(address: &str, port: u16) -> String {
     if address.contains(':') {
         format!("[{address}]:{port}")
     } else {
@@ -1587,30 +1637,33 @@ fn measure(
 ) -> Result<Measurement, Error> {
     let mut programs = Programs::default();
     let mut captures = Captures::default();
+    let mut tcp = Tcp::plan(scenario, provisioned, options, series_bin(scenario))?;
     let measured = measure_with(
         backend,
         scenario,
         options,
         provisioned,
         control,
-        (&mut programs, &mut captures),
+        (&mut programs, &mut captures, &mut tcp),
     );
     if measured.is_err() {
         // The process groups of the programs are not ended by the teardown of the network: they are ended here
         programs.kill_all(backend);
         captures.kill_all(backend);
+        tcp.kill_all(backend);
     }
     measured
 }
 
 /// Steps 5 to 7 with the programs of your own in `programs`.
+#[allow(clippy::too_many_lines)] // the steps of a run in their order, each of them a call
 fn measure_with(
     backend: &mut dyn Backend,
     scenario: &Scenario,
     options: &RunOptions,
     provisioned: &Provisioned,
     control: &Control<'_>,
-    (programs, captures): (&mut Programs, &mut Captures),
+    (programs, captures, tcp): (&mut Programs, &mut Captures, &mut Tcp),
 ) -> Result<Measurement, Error> {
     control.checkpoint()?;
     if !options.agent.is_file() {
@@ -1629,8 +1682,9 @@ fn measure_with(
     captures.start(backend, scenario, provisioned, options, control)?;
     programs.start(backend, scenario, provisioned, options, control)?;
     let receivers = start_receivers(backend, &flows, options, control)?;
+    tcp.start_servers(backend, options, control)?;
     control.emit(&RunEvent::ReceiversReady {
-        count: receivers.len(),
+        count: receivers.len() + tcp_servers(tcp),
     });
     control.checkpoint()?;
     // What the nodes had counted before the first packet; the nodes are new, but a run reads the difference
@@ -1652,6 +1706,7 @@ fn measure_with(
         .collect();
     let plan = barriers::plan(scenario, &sending, &steps, options.barriers);
     let senders = start_senders(backend, &flows, options, begin, &plan.bindings)?;
+    tcp.start_clients(backend, options, begin)?;
 
     let latest_end = flows
         .iter()
@@ -1683,6 +1738,8 @@ fn measure_with(
     let events = driven.events;
     let interrupted_ns = driven.interrupted_ns;
     control.workloads_done();
+    // The TCP clients end by themselves, the last of them when the far end has read what is in flight
+    tcp.finish(backend, control, interrupted_ns.is_some())?;
 
     // The packets that are still in the network arrive before the receivers are told to stop
     let (settle, settle_note) = settle(backend, scenario, provisioned, options, control)?;
@@ -1691,7 +1748,7 @@ fn measure_with(
     captures.stop_all(backend, control)?;
     // After the wait, every packet has passed its queue; the receivers still run and the network still stands
     let after = node_counts(backend, scenario, provisioned)?;
-    let queue_checks = if programs.is_empty() {
+    let queue_checks = if programs.is_empty() && tcp.is_empty() {
         check_queues(
             backend,
             scenario,
@@ -1702,12 +1759,19 @@ fn measure_with(
             &after,
         )?
     } else {
-        // A program sends packets of its own into the queues; the run did not count them and cannot hold the queue to its own
+        // A program, and a TCP workload with its acknowledgements, sends packets of its own into the queues; the run did not count
+        // them and cannot hold the queue to its own
         Vec::new()
     };
     control.emit(&RunEvent::Collecting);
     let mut measured = stop_receivers(backend, &receivers, &flows, sent, control)?;
-    let directions = tally_directions(scenario, provisioned, &flows, &measured, &before, &after);
+    // The packets of a TCP workload and its acknowledgements enter the same directions: the run cannot tell them from the packets
+    // it is accounting for, so it does not account (D-086)
+    let directions = if tcp.is_empty() {
+        tally_directions(scenario, provisioned, &flows, &measured, &before, &after)
+    } else {
+        Vec::new()
+    };
     refuse_names_after_buffer_drops(scenario, provisioned, &flows, &directions, &mut measured);
     let queues = queue_infos(backend, scenario, provisioned, &sampler)?;
     Ok(Measurement {
@@ -1723,7 +1787,18 @@ fn measure_with(
         clock_reasons: plan.reasons,
         programs: std::mem::take(programs).into_results(begin),
         captures: std::mem::take(captures).into_results(begin),
+        reproducibility: if tcp.is_empty() {
+            Reproducibility::exact()
+        } else {
+            Reproducibility::statistical(tcp.reasons())
+        },
+        tcp: std::mem::take(tcp).into_results(begin, &options.out_dir)?,
     })
+}
+
+/// The number of TCP servers, for the progress of the run.
+fn tcp_servers(tcp: &Tcp) -> usize {
+    tcp.servers()
 }
 
 /// How long the run gives the receivers, after the queues are empty, to read the packets that the links let go.

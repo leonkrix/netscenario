@@ -585,3 +585,130 @@ def test_the_trace_of_a_trace_replay_and_the_bytes_that_arrived() -> None:
     assert (replayed.trace.smallest, replayed.trace.largest) == (16, 1472)
     assert replayed.trace.span == pytest.approx(12.34)
     assert replayed.trace.sha256 == "ab" * 32
+
+
+def _tcp_entry() -> dict[str, Any]:
+    delay = {
+        "min_ns": 40_000_000,
+        "mean_ns": 50_000_000,
+        "p50_ns": 45_000_000,
+        "p90_ns": 60_000_000,
+        "p95_ns": 70_000_000,
+        "p99_ns": 80_000_000,
+        "p999_ns": 90_000_000,
+        "max_ns": 90_000_000,
+    }
+    return {
+        "id": "down",
+        "kind": "tcp-bulk",
+        "from": "client",
+        "to": "server",
+        "from_address": "10.200.0.1",
+        "to_address": "10.200.0.2:6000",
+        "congestion": "cubic",
+        "connections": 2,
+        "failed_connections": 1,
+        "start_ns": 0,
+        "window_ns": 3_000_000_000,
+        "bytes_sent": 2_000_000,
+        "bytes_received": 1_900_000,
+        "goodput": {
+            "bin_ns": 1_000_000_000,
+            "bits_per_second": [8_000_000, 6_000_000],
+            "mean_bits_per_second": 7_500_000,
+        },
+        "transfers": [
+            {
+                "connection": 1,
+                "started_ns": 2_000_000,
+                "established_ns": 50_000_000,
+                "done_ns": 5_000_000_000,
+                "bytes_sent": 400_000,
+                "bytes_received": 0,
+                "ok": False,
+            },
+            {
+                "connection": 0,
+                "started_ns": 1_000_000,
+                "established_ns": 45_000_000,
+                "done_ns": 2_001_000_000,
+                "bytes_sent": 1_600_000,
+                "bytes_received": 0,
+                "ok": True,
+            },
+        ],
+        "retransmitted_segments": 7,
+        "rtt": delay,
+        "requests": {
+            "sent": 10,
+            "answered": 9,
+            "failed": 1,
+            "latency": delay,
+            "round_trip": None,
+            "max_wait_ns": 3_000_000,
+        },
+        "first_error": "the server closed the connection",
+        "info_error": None,
+        "stopped": False,
+        "client_file": "tcp-0.client.streams",
+        "server_file": "tcp-0.server.streams",
+    }
+
+
+def test_a_tcp_workload_is_read_in_seconds_and_a_result_without_one_has_none(
+    tmp_path: Path,
+) -> None:
+    plain = result()
+    assert plain.tcp == {}
+    assert plain.reproducibility.exact
+    assert plain.reproducibility.because == ()
+    data = json.loads(json.dumps(RESULT))
+    data["tcp"] = [_tcp_entry()]
+    data["reproducibility"] = {"class": "statistical", "because": ["feedback"]}
+    read = ns.Result.from_json(json.dumps(data), tmp_path)
+    assert (read.reproducibility.kind, read.reproducibility.because) == (
+        "statistical",
+        ("feedback",),
+    )
+    assert not read.reproducibility.exact
+    tcp = read.tcp["down"]
+    assert (tcp.kind, tcp.congestion, tcp.connections, tcp.failed_connections) == (
+        "tcp-bulk",
+        "cubic",
+        2,
+        1,
+    )
+    assert (tcp.start, tcp.window) == (0.0, 3.0)
+    assert tcp.client_file == tmp_path / "tcp-0.client.streams"
+    assert tcp.goodput is not None
+    assert (tcp.goodput.bin, tcp.goodput.bits_per_second, tcp.goodput.mean) == (
+        1.0,
+        (8e6, 6e6),
+        7.5e6,
+    )
+    assert tcp.rtt is not None
+    assert (tcp.rtt.min, tcp.rtt.median, tcp.rtt.p99) == (0.04, 0.045, 0.08)
+    assert tcp.requests is not None
+    assert (tcp.requests.answered, tcp.requests.failed, tcp.requests.max_wait) == (9, 1, 0.003)
+    assert tcp.requests.latency is not None
+    assert tcp.requests.round_trip is None
+    assert tcp.retransmitted_segments == 7
+
+
+def test_canary_a_tcp_workload_with_a_failed_connection_is_not_complete() -> None:
+    data = json.loads(json.dumps(RESULT))
+    data["tcp"] = [_tcp_entry()]
+    tcp = ns.Result.from_json(json.dumps(data), Path("/out")).tcp["down"]
+    assert not tcp.complete
+    # The completion counts the connection that did its work, from the first connect to its end
+    assert tcp.completion == pytest.approx(2.0, abs=1e-6)
+    assert tcp.transfers[1].duration == pytest.approx(2.0, abs=1e-6)
+    entry = _tcp_entry()
+    transfers: list[dict[str, Any]] = entry["transfers"]
+    fine = entry | {"failed_connections": 0, "transfers": [{**t, "ok": True} for t in transfers]}
+    data["tcp"] = [fine]
+    assert ns.Result.from_json(json.dumps(data), Path("/out")).tcp["down"].complete
+    # No connection that did its work: no completion
+    broken = entry | {"transfers": [{**t, "ok": False} for t in transfers]}
+    data["tcp"] = [broken]
+    assert ns.Result.from_json(json.dumps(data), Path("/out")).tcp["down"].completion is None

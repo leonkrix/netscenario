@@ -43,6 +43,28 @@ pub struct DelaySummary {
     pub max_ns: u64,
 }
 
+impl DelaySummary {
+    /// The summary of times in nanoseconds, or `None` for no time at all. The values are sorted by the call.
+    #[must_use]
+    pub fn of(values: &mut [u64]) -> Option<Self> {
+        values.sort_unstable();
+        let last = *values.last()?;
+        Some(Self {
+            min_ns: values[0],
+            mean_ns: u64::try_from(
+                values.iter().map(|&d| u128::from(d)).sum::<u128>() / values.len() as u128,
+            )
+            .unwrap_or(u64::MAX),
+            p50_ns: nearest_rank(values, 500),
+            p90_ns: nearest_rank(values, 900),
+            p95_ns: nearest_rank(values, 950),
+            p99_ns: nearest_rank(values, 990),
+            p999_ns: nearest_rank(values, 999),
+            max_ns: last,
+        })
+    }
+}
+
 /// The payload that came through in each second.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -207,20 +229,7 @@ pub fn analyse_refused(
         .into_iter()
         .filter(|record| !was_refused(record.sequence))
         .collect();
-    delays.sort_unstable();
-    let delay = (!delays.is_empty()).then(|| DelaySummary {
-        min_ns: delays[0],
-        mean_ns: u64::try_from(
-            delays.iter().map(|&d| u128::from(d)).sum::<u128>() / delays.len() as u128,
-        )
-        .unwrap_or(u64::MAX),
-        p50_ns: nearest_rank(&delays, 500),
-        p90_ns: nearest_rank(&delays, 900),
-        p95_ns: nearest_rank(&delays, 950),
-        p99_ns: nearest_rank(&delays, 990),
-        p999_ns: nearest_rank(&delays, 999),
-        max_ns: delays[delays.len() - 1],
-    });
+    let delay = DelaySummary::of(&mut delays);
     let seconds = THROUGHPUT_BIN_NS as f64 / 1e9;
     FlowStats {
         sent,

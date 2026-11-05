@@ -52,7 +52,7 @@ Usage:
   netscenario-agent capture --interface <name> --out <file.pcap> [--flow <n>] [--receive-buffer <bytes>]
   netscenario-agent tcp-serve --bind <addr> --out <file> [--flow <n>] [--congestion <name>] [--progress-interval-ns <ns>]
                               [--max-time-ns <ns>] [--ignore-stdin]
-  netscenario-agent tcp-bulk --to <addr> --out <file> (--bytes <n> | --duration-ns <ns>) [--flow <n>] [--connections <n>]
+  netscenario-agent tcp-bulk --to <addr> --out <file> (--bytes <n> | --duration-ns <ns> | both) [--flow <n>] [--connections <n>]
                              [--congestion <name>] [--chunk-bytes <n>] [--start-at-ns <monotonic ns>]
                              [--info-interval-ns <ns>] [--finish-timeout-ns <ns>] [--ignore-stdin]
   netscenario-agent tcp-request --to <addr> --out <file> --request-bytes <n> --response-bytes <n> --duration-ns <ns>
@@ -732,18 +732,18 @@ fn tcp_bulk_command(
         options.optional::<u64>("bytes")?,
         options.optional::<u64>("duration-ns")?,
     ) {
-        (Some(bytes), None) if bytes > 0 => Amount::Bytes(bytes),
-        (None, Some(duration)) if duration > 0 => Amount::Duration(duration),
-        (Some(_), Some(_)) => {
+        (Some(0), _) | (_, Some(0)) => {
             return Err(Problem::Usage(
-                "--bytes and --duration-ns are alternatives: give one".to_owned(),
+                "--bytes and --duration-ns are greater than 0".to_owned(),
             ));
         }
-        _ => {
+        (None, None) => {
             return Err(Problem::Usage(
-                "give --bytes or --duration-ns, greater than 0".to_owned(),
+                "give --bytes or --duration-ns (or both: the transfer ends at whichever comes first)"
+                    .to_owned(),
             ));
         }
+        (bytes, duration_ns) => Amount { bytes, duration_ns },
     };
     let config = BulkConfig {
         common: client_config(options)?,
