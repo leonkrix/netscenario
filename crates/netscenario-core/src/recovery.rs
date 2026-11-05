@@ -31,8 +31,12 @@ use crate::result::EventRecord;
 use crate::series::Bin;
 
 /// Which view of the series the level is made from.
+///
+/// Not exhaustive: `Goodput` was added after the first release, which broke a `match` over the two variants, and another view may
+/// follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Basis {
     /// The packets sent in the bin that arrived (`by_send`).
     Send,
