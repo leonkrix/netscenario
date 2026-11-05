@@ -750,6 +750,21 @@ impl ScenarioBuilder {
         self
     }
 
+    /// Has the receiving node send every packet of the last UDP workload back (`echo: true`, D-087), so that the result has
+    /// the round trip. Not with [`without_udp_checksum`](Self::without_udp_checksum).
+    #[must_use]
+    pub fn with_echo(mut self) -> Self {
+        match self.workloads.last_mut() {
+            Some(Workload::UdpCbr(workload)) => workload.echo = true,
+            Some(Workload::UdpPoisson(workload)) => workload.echo = true,
+            Some(Workload::UdpOnOff(workload)) => workload.echo = true,
+            Some(Workload::UdpBursty(workload)) => workload.echo = true,
+            Some(Workload::TraceReplay(workload)) => workload.echo = true,
+            _ => {}
+        }
+        self
+    }
+
     /// Builds the scenario and checks it with [`Scenario::validate`].
     ///
     /// # Errors

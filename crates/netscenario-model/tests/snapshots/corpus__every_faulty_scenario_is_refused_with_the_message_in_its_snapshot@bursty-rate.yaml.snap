@@ -10,4 +10,4 @@ error: the key `rate` is not used by the workload kind `udp-bursty`
 10 |   - { id: b, kind: udp-bursty, from: client, to: server, packet-size: 1000b, rate: 1mbit, burst-packets: 4, gap: 1ms, pause: 10ms }
    |                                                                              ^^^^
    = path: workloads[0].rate
-   = help: the workload kind `udp-bursty` has `from`, `to`, `packet-size`, `burst-packets`, `gap`, `pause`, `distribution`, `start`, `stop`, `udp-checksum`, `ip`, `dont-fragment`; `rate` belongs to udp-cbr, udp-poisson and udp-onoff
+   = help: the workload kind `udp-bursty` has `from`, `to`, `packet-size`, `burst-packets`, `gap`, `pause`, `distribution`, `start`, `stop`, `udp-checksum`, `ip`, `dont-fragment`, `echo`; `rate` belongs to udp-cbr, udp-poisson and udp-onoff

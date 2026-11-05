@@ -278,6 +278,45 @@ fn markdown_has_a_section_for_the_tcp_workloads_and_says_the_run_is_statistical(
     );
 }
 
+/// A workload with an echo has a table of its own for the round trip, and the JUnit properties name it.
+#[test]
+fn the_round_trip_of_an_echo_is_in_the_markdown_and_in_the_properties() {
+    let Report::Run(mut run) = load("md-echo", false) else {
+        panic!("a run")
+    };
+    let stats = run.result.workloads[0].stats.clone();
+    let mut back = stats.clone();
+    back.received = stats.received - 3;
+    back.lost = stats.lost + 3;
+    back.delay = back.delay.map(|mut trip| {
+        trip.min_ns = 80_000_000;
+        trip.p50_ns = 85_000_000;
+        trip
+    });
+    run.result.workloads[0].echo = Some(crate::result::EchoResult {
+        echoed: stats.received,
+        echo_errors: 0,
+        foreign_datagrams: 0,
+        records_file: "flow-0.echo.records".to_owned(),
+        stats: back,
+    });
+    let text = markdown(&Report::Run(run.clone()));
+    assert!(text.contains("### Echo"), "{text}");
+    assert!(text.contains("| Round trip min | 80.00 ms |"), "{text}");
+    assert!(text.contains("| Round trip p50 | 85.00 ms |"), "{text}");
+    assert!(text.contains("| Came back | 2000 |"), "{text}");
+    let junit = junit(&Report::Run(run));
+    assert!(
+        junit.contains(".round_trip_min_s\" value=\"0.08\""),
+        "{junit}"
+    );
+    // A run without an echo has neither
+    let Report::Run(plain) = load("md-no-echo", false) else {
+        panic!("a run")
+    };
+    assert!(!markdown(&Report::Run(plain)).contains("### Echo"));
+}
+
 #[test]
 fn a_pipe_in_a_name_does_not_end_the_cell_of_a_markdown_table() {
     let Report::Run(mut run) = load("md-pipe", false) else {

@@ -712,3 +712,33 @@ def test_canary_a_tcp_workload_with_a_failed_connection_is_not_complete() -> Non
     broken = entry | {"transfers": [{**t, "ok": False} for t in transfers]}
     data["tcp"] = [broken]
     assert ns.Result.from_json(json.dumps(data), Path("/out")).tcp["down"].completion is None
+
+
+def test_the_echo_of_a_workload_is_read_in_seconds_and_a_workload_without_one_has_none(
+    tmp_path: Path,
+) -> None:
+    assert result()["media"].echo is None
+    data = json.loads(json.dumps(RESULT))
+    data["workloads"][0]["echo"] = {
+        "echoed": 620,
+        "echo_errors": 2,
+        "foreign_datagrams": 1,
+        "records_file": "flow-0.echo.records",
+        "sent": 625,
+        "received": 600,
+        "lost": 25,
+        "loss_ratio": 0.04,
+        "duplicates": 1,
+        "reordered": 2,
+        "unexpected": 0,
+        "delay": data["workloads"][0]["delay"],
+        "throughput": {"bin_ns": 1_000_000_000, "bits_per_second": [1.0]},
+    }
+    echo = ns.Result.from_json(json.dumps(data), tmp_path)["media"].echo
+    assert echo is not None
+    assert (echo.sent, echo.received, echo.lost, echo.loss_ratio) == (625, 600, 25, 0.04)
+    assert (echo.echoed, echo.echo_errors, echo.foreign_datagrams) == (620, 2, 1)
+    assert (echo.duplicates, echo.reordered) == (1, 2)
+    assert echo.round_trip is not None
+    assert (echo.round_trip.min, echo.round_trip.p50) == (0.031168696, 0.04261547)
+    assert echo.records_file == tmp_path / "flow-0.echo.records"

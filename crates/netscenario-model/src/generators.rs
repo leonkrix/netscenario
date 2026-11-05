@@ -65,6 +65,10 @@ pub struct UdpPoisson {
     /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
     /// Default: off.
     pub dont_fragment: bool,
+    /// Whether the receiving node sends every packet back and the node of the sender collects them, so that the result has the
+    /// round trip of the packets (`echo: true`, D-087). The packets come back through the reverse direction, so its delay and
+    /// its loss count. Not with `udp-checksum: false`. Default: off.
+    pub echo: bool,
 }
 
 impl UdpPoisson {
@@ -82,6 +86,7 @@ impl UdpPoisson {
             udp_checksum: UdpChecksum::On,
             ip: None,
             dont_fragment: false,
+            echo: false,
         }
     }
 }
@@ -120,6 +125,10 @@ pub struct UdpOnOff {
     /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
     /// Default: off.
     pub dont_fragment: bool,
+    /// Whether the receiving node sends every packet back and the node of the sender collects them, so that the result has the
+    /// round trip of the packets (`echo: true`, D-087). The packets come back through the reverse direction, so its delay and
+    /// its loss count. Not with `udp-checksum: false`. Default: off.
+    pub echo: bool,
 }
 
 impl UdpOnOff {
@@ -148,6 +157,7 @@ impl UdpOnOff {
             udp_checksum: UdpChecksum::On,
             ip: None,
             dont_fragment: false,
+            echo: false,
         }
     }
 }
@@ -186,6 +196,10 @@ pub struct UdpBursty {
     /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
     /// Default: off.
     pub dont_fragment: bool,
+    /// Whether the receiving node sends every packet back and the node of the sender collects them, so that the result has the
+    /// round trip of the packets (`echo: true`, D-087). The packets come back through the reverse direction, so its delay and
+    /// its loss count. Not with `udp-checksum: false`. Default: off.
+    pub echo: bool,
 }
 
 impl UdpBursty {
@@ -214,6 +228,7 @@ impl UdpBursty {
             udp_checksum: UdpChecksum::On,
             ip: None,
             dont_fragment: false,
+            echo: false,
         }
     }
 }
@@ -245,6 +260,10 @@ pub struct TraceReplay {
     /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
     /// Default: off.
     pub dont_fragment: bool,
+    /// Whether the receiving node sends every packet back and the node of the sender collects them, so that the result has the
+    /// round trip of the packets (`echo: true`, D-087). The packets come back through the reverse direction, so its delay and
+    /// its loss count. Not with `udp-checksum: false`. Default: off.
+    pub echo: bool,
 }
 
 impl TraceReplay {
@@ -261,6 +280,7 @@ impl TraceReplay {
             udp_checksum: UdpChecksum::On,
             ip: None,
             dont_fragment: false,
+            echo: false,
         }
     }
 }
@@ -347,6 +367,10 @@ pub struct Generator<'a> {
     /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
     /// Default: off.
     pub dont_fragment: bool,
+    /// Whether the receiving node sends every packet back and the node of the sender collects them, so that the result has the
+    /// round trip of the packets (`echo: true`, D-087). The packets come back through the reverse direction, so its delay and
+    /// its loss count. Not with `udp-checksum: false`. Default: off.
+    pub echo: bool,
     /// When the packets leave.
     pub pattern: Pattern,
     /// The trace of a `trace-replay` workload; `packet_size` is then its largest payload.
@@ -376,6 +400,7 @@ impl<'a> From<&'a UdpCbr> for Generator<'a> {
             udp_checksum: workload.udp_checksum,
             ip: workload.ip,
             dont_fragment: workload.dont_fragment,
+            echo: workload.echo,
             pattern: Pattern::Cbr {
                 rate: workload.rate,
             },
@@ -397,6 +422,7 @@ impl<'a> From<&'a UdpPoisson> for Generator<'a> {
             udp_checksum: workload.udp_checksum,
             ip: workload.ip,
             dont_fragment: workload.dont_fragment,
+            echo: workload.echo,
             pattern: Pattern::Poisson {
                 rate: workload.rate,
             },
@@ -418,6 +444,7 @@ impl<'a> From<&'a UdpOnOff> for Generator<'a> {
             udp_checksum: workload.udp_checksum,
             ip: workload.ip,
             dont_fragment: workload.dont_fragment,
+            echo: workload.echo,
             pattern: Pattern::OnOff {
                 rate: workload.rate,
                 on: workload.on,
@@ -442,6 +469,7 @@ impl<'a> From<&'a UdpBursty> for Generator<'a> {
             udp_checksum: workload.udp_checksum,
             ip: workload.ip,
             dont_fragment: workload.dont_fragment,
+            echo: workload.echo,
             pattern: Pattern::Bursty {
                 packets: workload.burst_packets,
                 gap: workload.gap,
@@ -476,6 +504,7 @@ impl<'a> From<&'a TraceReplay> for Generator<'a> {
             udp_checksum: workload.udp_checksum,
             ip: workload.ip,
             dont_fragment: workload.dont_fragment,
+            echo: workload.echo,
             pattern: Pattern::Trace,
             trace: Some(&workload.trace),
         }
@@ -544,6 +573,9 @@ struct TraceReplayFile<'a> {
         skip_serializing_if = "std::ops::Not::not"
     )]
     dont_fragment: bool,
+    /// `true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    echo: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -585,6 +617,9 @@ struct UdpPoissonFile<'a> {
         skip_serializing_if = "std::ops::Not::not"
     )]
     dont_fragment: bool,
+    /// `true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    echo: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -633,6 +668,9 @@ struct UdpOnOffFile<'a> {
         skip_serializing_if = "std::ops::Not::not"
     )]
     dont_fragment: bool,
+    /// `true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    echo: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -682,6 +720,9 @@ struct UdpBurstyFile<'a> {
         skip_serializing_if = "std::ops::Not::not"
     )]
     dont_fragment: bool,
+    /// `true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    echo: bool,
 }
 
 impl Serialize for UdpPoisson {
@@ -698,6 +739,7 @@ impl Serialize for UdpPoisson {
             udp_checksum: self.udp_checksum,
             ip: &self.ip,
             dont_fragment: self.dont_fragment,
+            echo: self.echo,
         }
         .serialize(serializer)
     }
@@ -720,6 +762,7 @@ impl Serialize for UdpOnOff {
             udp_checksum: self.udp_checksum,
             ip: &self.ip,
             dont_fragment: self.dont_fragment,
+            echo: self.echo,
         }
         .serialize(serializer)
     }
@@ -742,6 +785,7 @@ impl Serialize for UdpBursty {
             udp_checksum: self.udp_checksum,
             ip: &self.ip,
             dont_fragment: self.dont_fragment,
+            echo: self.echo,
         }
         .serialize(serializer)
     }
@@ -760,6 +804,7 @@ impl Serialize for TraceReplay {
             udp_checksum: self.udp_checksum,
             ip: &self.ip,
             dont_fragment: self.dont_fragment,
+            echo: self.echo,
         }
         .serialize(serializer)
     }

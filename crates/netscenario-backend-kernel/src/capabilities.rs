@@ -254,7 +254,8 @@ fn by_version(environment: &Environment) -> Capabilities {
         .with(Feature::QueueDisciplines, Support::Exact)
         .with(Feature::UdpWithoutChecksum, Support::Exact)
         .with(Feature::TraceReplay, Support::Exact)
-        .with(Feature::TcpWorkloads, Support::Exact);
+        .with(Feature::TcpWorkloads, Support::Exact)
+        .with(Feature::UdpEcho, Support::Exact);
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
     }

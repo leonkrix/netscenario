@@ -513,7 +513,7 @@ impl Scenario {
     }
 
     /// The family of the flow: its own `ip`, or the only one of the network (D-081). The family must be one the network has,
-    /// and over IPv6 the checksum of UDP cannot be off.
+    /// over IPv6 the checksum of UDP cannot be off, and a stream that is echoed has the checksum.
     fn check_family(
         &self,
         workload: &Generator<'_>,
@@ -526,6 +526,13 @@ impl Scenario {
                 Problem::new("a stream without the UDP checksum is not possible over IPv6: the protocol requires the checksum")
                     .at_path(format!("{base}.udp-checksum"))
                     .with_help("leave `udp-checksum` out, or use `ip: v4` for a test of corruption without the checksum"),
+            );
+        }
+        if workload.echo && !workload.udp_checksum.is_on() {
+            problems.push(
+                Problem::new("a stream without the UDP checksum cannot be echoed: the echo is an ordinary datagram, which the checksum protects")
+                    .at_path(format!("{base}.echo"))
+                    .with_help("leave `echo` out, or leave `udp-checksum` out to measure the round trip"),
             );
         }
         family

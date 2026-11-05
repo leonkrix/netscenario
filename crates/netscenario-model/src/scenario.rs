@@ -909,6 +909,10 @@ pub struct UdpCbr {
     /// Whether the sender refuses a packet that does not fit the MTU instead of cutting it (`dont-fragment: true`, D-081).
     /// Default: off.
     pub dont_fragment: bool,
+    /// Whether the receiving node sends every packet back and the node of the sender collects them, so that the result has the
+    /// round trip of the packets (`echo: true`, D-087). The packets come back through the reverse direction, so its delay and
+    /// its loss count. Not with `udp-checksum: false`. Default: off.
+    pub echo: bool,
 }
 
 impl UdpCbr {
@@ -926,6 +930,7 @@ impl UdpCbr {
             udp_checksum: UdpChecksum::On,
             ip: None,
             dont_fragment: false,
+            echo: false,
         }
     }
 }
@@ -1117,6 +1122,9 @@ struct UdpCbrFile<'a> {
         skip_serializing_if = "std::ops::Not::not"
     )]
     dont_fragment: bool,
+    /// `true`: the receiving node sends every packet back, and the result has the round trip (D-087). Default `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    echo: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -1173,6 +1181,7 @@ impl Serialize for UdpCbr {
             udp_checksum: self.udp_checksum,
             ip: &self.ip,
             dont_fragment: self.dont_fragment,
+            echo: self.echo,
         }
         .serialize(serializer)
     }
@@ -1243,6 +1252,7 @@ struct WorkloadFields {
     udp_checksum: Option<UdpChecksum>,
     ip: Option<IpFamily>,
     dont_fragment: Option<bool>,
+    echo: Option<bool>,
     node: Option<Name>,
     run: Option<Vec<String>>,
     env: Option<BTreeMap<String, String>>,
@@ -1274,7 +1284,14 @@ struct Keys {
 
 impl KindName {
     fn keys(&self) -> Keys {
-        const WINDOW: [&str; 5] = ["start", "stop", "udp-checksum", "ip", "dont-fragment"];
+        const WINDOW: [&str; 6] = [
+            "start",
+            "stop",
+            "udp-checksum",
+            "ip",
+            "dont-fragment",
+            "echo",
+        ];
         match self {
             Self::UdpCbr => Keys {
                 name: "udp-cbr",
@@ -1296,6 +1313,7 @@ impl KindName {
                     "udp-checksum",
                     "ip",
                     "dont-fragment",
+                    "echo",
                 ],
             },
             Self::TraceReplay => Keys {
@@ -1313,6 +1331,7 @@ impl KindName {
                     "udp-checksum",
                     "ip",
                     "dont-fragment",
+                    "echo",
                 ],
             },
             Self::TcpBulk => Keys {
@@ -1358,6 +1377,7 @@ impl<'de> Deserialize<'de> for Workload {
             ("udp-checksum", fields.udp_checksum.is_some()),
             ("ip", fields.ip.is_some()),
             ("dont-fragment", fields.dont_fragment.is_some()),
+            ("echo", fields.echo.is_some()),
             ("node", fields.node.is_some()),
             ("run", fields.run.is_some()),
             ("env", fields.env.is_some()),
@@ -1411,6 +1431,7 @@ impl<'de> Deserialize<'de> for Workload {
                 udp_checksum: checksum,
                 ip: fields.ip,
                 dont_fragment: fields.dont_fragment.unwrap_or(false),
+                echo: fields.echo.unwrap_or(false),
             }),
             KindName::UdpPoisson => Self::UdpPoisson(UdpPoisson {
                 id: fields.id,
@@ -1423,6 +1444,7 @@ impl<'de> Deserialize<'de> for Workload {
                 udp_checksum: checksum,
                 ip: fields.ip,
                 dont_fragment: fields.dont_fragment.unwrap_or(false),
+                echo: fields.echo.unwrap_or(false),
             }),
             KindName::UdpOnoff => Self::UdpOnOff(UdpOnOff {
                 id: fields.id,
@@ -1438,6 +1460,7 @@ impl<'de> Deserialize<'de> for Workload {
                 udp_checksum: checksum,
                 ip: fields.ip,
                 dont_fragment: fields.dont_fragment.unwrap_or(false),
+                echo: fields.echo.unwrap_or(false),
             }),
             KindName::UdpBursty => Self::UdpBursty(UdpBursty {
                 id: fields.id,
@@ -1453,6 +1476,7 @@ impl<'de> Deserialize<'de> for Workload {
                 udp_checksum: checksum,
                 ip: fields.ip,
                 dont_fragment: fields.dont_fragment.unwrap_or(false),
+                echo: fields.echo.unwrap_or(false),
             }),
             KindName::TraceReplay => Self::TraceReplay(TraceReplay {
                 id: fields.id,
@@ -1464,6 +1488,7 @@ impl<'de> Deserialize<'de> for Workload {
                 udp_checksum: checksum,
                 ip: fields.ip,
                 dont_fragment: fields.dont_fragment.unwrap_or(false),
+                echo: fields.echo.unwrap_or(false),
             }),
             KindName::TcpBulk => Self::TcpBulk(TcpBulk {
                 id: fields.id,
