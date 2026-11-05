@@ -9,7 +9,8 @@
 //!
 //! The pieces are libraries first so that they can be tested without starting a process: [`wire`] is the
 //! packet, [`records`] the file, [`schedule`] the moments at which packets leave, [`tap`] the reader of the
-//! frames that reach an interface, and [`cli`] the command line of the program `netscenario-agent`.
+//! frames that reach an interface, [`tcp`] the TCP server and clients with their records ([`streams`], and the `tcp_info` of
+//! a connection from [`sockdiag`]), and [`cli`] the command line of the program `netscenario-agent`.
 
 pub mod capture;
 pub mod cli;
@@ -22,6 +23,9 @@ pub mod records;
 pub mod rng;
 pub mod schedule;
 pub mod sender;
+pub mod sockdiag;
+pub mod streams;
 pub mod tap;
+pub mod tcp;
 pub mod trace;
 pub mod wire;

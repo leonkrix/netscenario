@@ -164,6 +164,8 @@ step() {
   if out=$("$@" 2>&1); then echo "ok $name"; else echo "fail $name $(printf %s "$out" | tr '\n' ' ')"; fi
 }
 step veth "$1" link add np0 type veth peer name np1
+# The stack of a node must not build segments larger than a frame for a link, or `netem` handles super-packets (D-086)
+step segments "$1" link set np1 gso_max_size 1514 gso_max_segs 1
 # netem keeps corrupt, reorder, rate and slot across a change, so every step starts from a bare interface (D-048)
 step netem "$2" qdisc replace dev np0 root netem limit 1000 delay 1000us loss random 1% rate 1mbit
 "$2" qdisc del dev np0 root >/dev/null 2>&1
@@ -715,6 +717,7 @@ fn kernel_checks(findings: &Findings, tc: &Tool, checks: &mut Vec<Check>) {
         not_tested,
     ));
     checks.push(ipv6_check(&after_veth("ipv6"), not_tested));
+    checks.push(segments_check(&after_veth("segments"), not_tested));
     checks.push(raw_socket_check(&step("rawsocket"), not_tested));
 }
 
@@ -802,6 +805,29 @@ fn network_check(forwarding: &Outcome, route: &Outcome, not_tested: &str) -> Che
             Some("a node needs `net.ipv4.ip_forward` and `ip route add ... via ...`; scenarios with several nodes or routers are refused here, point to point still runs".to_owned()),
         ),
         _ => kernel("network", title, Status::Info, not_tested, None),
+    }
+}
+
+/// The limit on the size of the segments of a link (D-086). Every run sets it on every interface, so a machine that refuses it
+/// cannot run any scenario.
+fn segments_check(outcome: &Outcome, not_tested: &str) -> Check {
+    let title = "segment size of a link";
+    match outcome {
+        Some(Ok(())) => kernel(
+            "segments",
+            title,
+            Status::Ok,
+            "`ip` sets the largest segment of an interface, so that TCP is not handled by `netem` as super-packets",
+            None,
+        ),
+        Some(Err(error)) => kernel(
+            "segments",
+            title,
+            Status::Fail,
+            error,
+            Some("`ip link set <if> gso_max_size <n> gso_max_segs 1` is refused; the iproute2 of the machine is too old (4.12 or newer is needed)".to_owned()),
+        ),
+        None => kernel("segments", title, Status::Info, not_tested, None),
     }
 }
 
@@ -1126,6 +1152,7 @@ mod tests {
             "forwarding",
             "route",
             "ipv6",
+            "segments",
             "rawsocket",
         ]
         .into_iter()

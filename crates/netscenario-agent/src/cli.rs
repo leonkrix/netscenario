@@ -28,6 +28,10 @@ use crate::receiver::{ReceiveConfig, Receiver};
 use crate::schedule::{Distribution, Schedule, Stream};
 use crate::sender::{Barrier, Barriers, SendConfig, run_with as send_with};
 use crate::tap::Tap;
+use crate::tcp::{
+    self, Amount, BulkConfig, ClientConfig, RequestConfig, ServeConfig, Server, run_bulk,
+    run_requests,
+};
 
 /// The exit code for success.
 pub const OK: u8 = 0;
@@ -44,8 +48,16 @@ Usage:
                          [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>] [--dont-fragment]
                          [--barriers <packet>:<id>,...]
   netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
-                         [--udp-checksum <on|off>] [--wire-out <file>]
+                         [--udp-checksum <on|off>] [--wire-out <file>] [--echo-to <addr>]
   netscenario-agent capture --interface <name> --out <file.pcap> [--flow <n>] [--receive-buffer <bytes>]
+  netscenario-agent tcp-serve --bind <addr> --out <file> [--flow <n>] [--congestion <name>] [--progress-interval-ns <ns>]
+                              [--max-time-ns <ns>] [--ignore-stdin]
+  netscenario-agent tcp-bulk --to <addr> --out <file> (--bytes <n> | --duration-ns <ns>) [--flow <n>] [--connections <n>]
+                             [--congestion <name>] [--chunk-bytes <n>] [--start-at-ns <monotonic ns>]
+                             [--info-interval-ns <ns>] [--finish-timeout-ns <ns>] [--ignore-stdin]
+  netscenario-agent tcp-request --to <addr> --out <file> --request-bytes <n> --response-bytes <n> --duration-ns <ns>
+                                [--interval-ns <ns>] [--flow <n>] [--connections <n>] [--congestion <name>]
+                                [--start-at-ns <monotonic ns>] [--info-interval-ns <ns>] [--timeout-ns <ns>] [--ignore-stdin]
 
 The agent is started by netscenario inside a node; see docs/AGENT.md.
 ";
@@ -146,6 +158,7 @@ where
                 "max-time-ns",
                 "udp-checksum",
                 "wire-out",
+                "echo-to",
             ],
             &["ignore-stdin"],
         )
@@ -154,6 +167,15 @@ where
         "capture" => Options::parse(rest, &["interface", "out", "flow", "receive-buffer"], &[])
             .map_err(Problem::Usage)
             .and_then(|options| capture_command(&options, stdin, out)),
+        "tcp-serve" => Options::parse(rest, TCP_SERVE_OPTIONS, &["ignore-stdin"])
+            .map_err(Problem::Usage)
+            .and_then(|options| tcp_serve_command(&options, stdin, out)),
+        "tcp-bulk" => Options::parse(rest, TCP_BULK_OPTIONS, &["ignore-stdin"])
+            .map_err(Problem::Usage)
+            .and_then(|options| tcp_bulk_command(&options, stdin, out)),
+        "tcp-request" => Options::parse(rest, TCP_REQUEST_OPTIONS, &["ignore-stdin"])
+            .map_err(Problem::Usage)
+            .and_then(|options| tcp_request_command(&options, stdin, out)),
         other => Err(Problem::Usage(format!("unknown command '{other}'"))),
     };
     match result {
@@ -493,6 +515,7 @@ fn recv_command(
         flow: options.optional("flow")?.unwrap_or(0),
         max_time_ns: options.optional("max-time-ns")?,
         udp_checksum: options.optional("udp-checksum")?.unwrap_or_default(),
+        echo_to: options.optional("echo-to")?,
     };
     let path: String = options.required("out")?;
     let file = std::fs::File::create(&path)
@@ -551,6 +574,221 @@ fn recv_command(
         summary.wire_packets = tap.join().ok().and_then(Result::ok).map(|tap| tap.packets);
     }
     say(out, &Event::Received(summary));
+    Ok(OK)
+}
+
+/// The options of `tcp-serve` that take a value.
+const TCP_SERVE_OPTIONS: &[&str] = &[
+    "bind",
+    "out",
+    "flow",
+    "congestion",
+    "progress-interval-ns",
+    "max-time-ns",
+];
+
+/// The options of `tcp-bulk` that take a value.
+const TCP_BULK_OPTIONS: &[&str] = &[
+    "to",
+    "out",
+    "flow",
+    "connections",
+    "bytes",
+    "duration-ns",
+    "congestion",
+    "chunk-bytes",
+    "start-at-ns",
+    "info-interval-ns",
+    "finish-timeout-ns",
+];
+
+/// The options of `tcp-request` that take a value.
+const TCP_REQUEST_OPTIONS: &[&str] = &[
+    "to",
+    "out",
+    "flow",
+    "connections",
+    "request-bytes",
+    "response-bytes",
+    "duration-ns",
+    "interval-ns",
+    "congestion",
+    "start-at-ns",
+    "info-interval-ns",
+    "timeout-ns",
+];
+
+/// The most connections of one TCP workload. Each is a thread and a socket in the node.
+const MAX_TCP_CONNECTIONS: u32 = 1024;
+
+/// The largest request or response, in bytes: what the hello can say and a buffer can hold.
+const MAX_MESSAGE_BYTES: u32 = 1 << 30;
+
+/// Sets `stop` on the line `stop` or the end of the input, unless the command was told to ignore its input.
+fn stop_on_input(options: &Options, stdin: impl BufRead + Send + 'static, stop: &Arc<AtomicBool>) {
+    if options.has("ignore-stdin") {
+        return;
+    }
+    let stop = Arc::clone(stop);
+    std::thread::spawn(move || {
+        for line in stdin.lines() {
+            if line.is_ok_and(|line| line.trim() == "stop") {
+                break;
+            }
+        }
+        stop.store(true, Ordering::SeqCst);
+    });
+}
+
+fn create_file(options: &Options) -> Result<std::fs::File, Problem> {
+    let path: String = options.required("out")?;
+    std::fs::File::create(&path)
+        .map_err(|error| Problem::Failed(format!("cannot create {path}: {error}")))
+}
+
+/// A number in `from..=to`, or the usage error that names the option.
+fn in_range<T: std::str::FromStr + PartialOrd + std::fmt::Display + Copy>(
+    options: &Options,
+    name: &str,
+    default: Option<T>,
+    from: T,
+    to: T,
+) -> Result<T, String> {
+    let given = options.optional::<T>(name)?;
+    let Some(value) = given.or(default) else {
+        return Err(format!("the option --{name} is required"));
+    };
+    if value < from || value > to {
+        return Err(format!("--{name} is from {from} to {to}, not {value}"));
+    }
+    Ok(value)
+}
+
+/// What the TCP clients have in common, from the options.
+fn client_config(options: &Options) -> Result<ClientConfig, String> {
+    Ok(ClientConfig {
+        target: options.required::<SocketAddr>("to")?,
+        flow: options.optional("flow")?.unwrap_or(0),
+        connections: in_range(options, "connections", Some(1), 1, MAX_TCP_CONNECTIONS)?,
+        congestion: options.optional("congestion")?,
+        start_at_ns: options.optional("start-at-ns")?,
+        info_interval_ns: options
+            .optional("info-interval-ns")?
+            .unwrap_or(tcp::DEFAULT_INFO_INTERVAL_NS),
+    })
+}
+
+/// `tcp-serve --bind <addr> --out <file>`: serves the connections of the TCP clients until it reads `stop` (or its input ends),
+/// and writes what it read as records (D-086).
+fn tcp_serve_command(
+    options: &Options,
+    stdin: impl BufRead + Send + 'static,
+    out: &mut impl Write,
+) -> Result<u8, Problem> {
+    let config = ServeConfig {
+        bind: options.required::<SocketAddr>("bind")?,
+        flow: options.optional("flow")?.unwrap_or(0),
+        progress_interval_ns: in_range(
+            options,
+            "progress-interval-ns",
+            Some(tcp::DEFAULT_PROGRESS_INTERVAL_NS),
+            1_000_000,
+            60_000_000_000,
+        )?,
+        congestion: options.optional("congestion")?,
+        max_time_ns: options.optional("max-time-ns")?,
+    };
+    let file = create_file(options)?;
+    let server = Server::bind(&config)
+        .map_err(|error| Problem::Failed(format!("cannot listen on {}: {error}", config.bind)))?;
+    let address = server
+        .local_addr()
+        .map_err(|error| Problem::Failed(error.to_string()))?;
+    let stop = Arc::new(AtomicBool::new(false));
+    stop_on_input(options, stdin, &stop);
+    say(
+        out,
+        &Event::Ready {
+            flow: config.flow,
+            address: address.to_string(),
+            wire_error: None,
+        },
+    );
+    let summary = server
+        .run(&stop, file)
+        .map_err(|error| Problem::Failed(format!("cannot serve: {error}")))?;
+    say(out, &Event::Served(summary));
+    Ok(OK)
+}
+
+/// `tcp-bulk --to <addr> --out <file> --bytes <n>` (or `--duration-ns <ns>`): sends data over one or more connections to a
+/// `tcp-serve`, and writes the life of the connections and the samples of `TCP_INFO` as records (D-086).
+fn tcp_bulk_command(
+    options: &Options,
+    stdin: impl BufRead + Send + 'static,
+    out: &mut impl Write,
+) -> Result<u8, Problem> {
+    let amount = match (
+        options.optional::<u64>("bytes")?,
+        options.optional::<u64>("duration-ns")?,
+    ) {
+        (Some(bytes), None) if bytes > 0 => Amount::Bytes(bytes),
+        (None, Some(duration)) if duration > 0 => Amount::Duration(duration),
+        (Some(_), Some(_)) => {
+            return Err(Problem::Usage(
+                "--bytes and --duration-ns are alternatives: give one".to_owned(),
+            ));
+        }
+        _ => {
+            return Err(Problem::Usage(
+                "give --bytes or --duration-ns, greater than 0".to_owned(),
+            ));
+        }
+    };
+    let config = BulkConfig {
+        common: client_config(options)?,
+        amount,
+        chunk_bytes: in_range(options, "chunk-bytes", Some(65_536), 1, tcp::MAX_CHUNK)?,
+        finish_timeout_ns: options
+            .optional("finish-timeout-ns")?
+            .unwrap_or(tcp::DEFAULT_FINISH_TIMEOUT_NS),
+    };
+    let file = create_file(options)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    stop_on_input(options, stdin, &stop);
+    let summary = run_bulk(&config, &stop, file)
+        .map_err(|error| Problem::Failed(format!("cannot write the records: {error}")))?;
+    say(out, &Event::Tcp(summary));
+    Ok(OK)
+}
+
+/// `tcp-request --to <addr> --out <file> --request-bytes <n> --response-bytes <n> --duration-ns <ns>`: sends requests to a
+/// `tcp-serve` and reads the responses, in a closed loop or (with `--interval-ns`) on a grid of moments, and writes one record
+/// for each request (D-086).
+fn tcp_request_command(
+    options: &Options,
+    stdin: impl BufRead + Send + 'static,
+    out: &mut impl Write,
+) -> Result<u8, Problem> {
+    let config = RequestConfig {
+        common: client_config(options)?,
+        request_bytes: in_range(options, "request-bytes", None, 1, MAX_MESSAGE_BYTES)?,
+        response_bytes: in_range(options, "response-bytes", None, 1, MAX_MESSAGE_BYTES)?,
+        duration_ns: in_range(options, "duration-ns", None, 1, u64::MAX)?,
+        interval_ns: options
+            .optional::<u64>("interval-ns")?
+            .map(|_| in_range(options, "interval-ns", None, 1, u64::MAX))
+            .transpose()?,
+        timeout_ns: options
+            .optional("timeout-ns")?
+            .unwrap_or(tcp::DEFAULT_REQUEST_TIMEOUT_NS),
+    };
+    let file = create_file(options)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    stop_on_input(options, stdin, &stop);
+    let summary = run_requests(&config, &stop, file)
+        .map_err(|error| Problem::Failed(format!("cannot write the records: {error}")))?;
+    say(out, &Event::Tcp(summary));
     Ok(OK)
 }
 

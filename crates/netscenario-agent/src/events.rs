@@ -47,6 +47,63 @@ pub enum Event {
     },
     /// The capture is done.
     Captured(CaptureSummary),
+    /// The TCP server is done (`tcp-serve`, D-086). It says `ready` first, like the receiver. After the other variants because
+    /// it was added last.
+    Served(ServeSummary),
+    /// A TCP client is done (`tcp-bulk` or `tcp-request`, D-086).
+    Tcp(TcpSummary),
+}
+
+/// What the TCP server did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServeSummary {
+    /// The workload.
+    pub flow: u32,
+    /// How many connections were accepted.
+    pub connections: u32,
+    /// How many of them did not say a hello that the server reads (or asked for a congestion control that it could not give).
+    /// They are in `connections` and carry nothing.
+    pub refused: u32,
+    /// The payload bytes read: the data of the bulk connections and the requests, without the framing of the agent.
+    pub bytes_received: u64,
+    /// The requests that were answered.
+    pub requests: u64,
+    /// When the first data arrived (`CLOCK_MONOTONIC`, nanoseconds), if any did.
+    pub first_receive_ns: Option<u64>,
+    /// When the last data arrived, if any did.
+    pub last_receive_ns: Option<u64>,
+}
+
+/// What a TCP client did, over all its connections.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TcpSummary {
+    /// The workload.
+    pub flow: u32,
+    /// How many connections were started.
+    pub connections: u32,
+    /// How many of them failed (could not connect, were refused a congestion control, broke, got no answer in time, or were
+    /// stopped before they were done).
+    pub failed: u32,
+    /// The payload bytes sent.
+    pub bytes_sent: u64,
+    /// The payload bytes of responses that were read completely.
+    pub bytes_received: u64,
+    /// The requests that were answered.
+    pub requests: u64,
+    /// The requests that were not.
+    pub requests_failed: u64,
+    /// The congestion control the sockets have, as the kernel names it.
+    pub congestion: Option<String>,
+    /// The first reason for a failure, as text.
+    pub first_error: Option<String>,
+    /// Why the samples of `TCP_INFO` could not be taken, if they could not. The transfer goes on without them.
+    pub info_error: Option<String>,
+    /// When the first connection was started (`CLOCK_MONOTONIC`, nanoseconds), if one was.
+    pub first_ns: Option<u64>,
+    /// When the last connection was done.
+    pub last_ns: Option<u64>,
+    /// Whether the run told the client to stop (a line `stop` on its standard input) before it was done.
+    pub stopped: bool,
 }
 
 /// What a capture wrote and how it checked itself (D-047).
@@ -151,6 +208,13 @@ pub struct ReceiveSummary {
     /// How many packets of the stream the tap saw on the interface, delivered or not, if it ran (`--wire-out`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wire_packets: Option<u64>,
+    /// How many packets were sent back to the sender's node (`--echo-to`, D-086), and how many of those the system refused.
+    /// Zero without `--echo-to`.
+    #[serde(default)]
+    pub echoed: u64,
+    /// See `echoed`.
+    #[serde(default)]
+    pub echo_errors: u64,
     /// When the first packet arrived, if one did.
     pub first_receive_ns: Option<u64>,
     /// When the last packet arrived, if one did.
@@ -192,5 +256,42 @@ mod tests {
             "{text}"
         );
         assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), sent);
+    }
+
+    #[test]
+    fn the_tcp_events_are_named_and_survive_the_line() {
+        let served = Event::Served(ServeSummary {
+            flow: 4,
+            connections: 2,
+            refused: 1,
+            bytes_received: 10,
+            requests: 0,
+            first_receive_ns: Some(1),
+            last_receive_ns: None,
+        });
+        let text = serde_json::to_string(&served).unwrap();
+        assert!(
+            text.starts_with(r#"{"event":"served","flow":4,"connections":2"#),
+            "{text}"
+        );
+        assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), served);
+        let tcp = Event::Tcp(TcpSummary {
+            flow: 4,
+            connections: 1,
+            failed: 0,
+            bytes_sent: 5,
+            bytes_received: 6,
+            requests: 1,
+            requests_failed: 0,
+            congestion: Some("cubic".to_owned()),
+            first_error: None,
+            info_error: None,
+            first_ns: Some(1),
+            last_ns: Some(2),
+            stopped: false,
+        });
+        let text = serde_json::to_string(&tcp).unwrap();
+        assert!(text.starts_with(r#"{"event":"tcp","flow":4"#), "{text}");
+        assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), tcp);
     }
 }

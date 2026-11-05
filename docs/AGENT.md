@@ -54,7 +54,15 @@ netscenario-agent send --to <addr> --size <bytes> --duration-ns <ns> [--rate <bi
                        [--on-ns <ns> --off-ns <ns>] [--burst-packets <n> --gap-ns <ns> --pause-ns <ns>]
                        [--flow <n>] [--start-at-ns <monotonic ns>] [--udp-checksum <on|off>]
 netscenario-agent recv --bind <addr> --out <file> [--flow <n>] [--max-time-ns <ns>] [--ignore-stdin]
-                       [--udp-checksum <on|off>] [--wire-out <file>]
+                       [--udp-checksum <on|off>] [--wire-out <file>] [--echo-to <addr>]
+netscenario-agent tcp-serve --bind <addr> --out <file> [--flow <n>] [--congestion <name>] [--progress-interval-ns <ns>]
+                            [--max-time-ns <ns>] [--ignore-stdin]
+netscenario-agent tcp-bulk --to <addr> --out <file> (--bytes <n> | --duration-ns <ns>) [--flow <n>] [--connections <n>]
+                           [--congestion <name>] [--chunk-bytes <n>] [--start-at-ns <monotonic ns>]
+                           [--info-interval-ns <ns>] [--finish-timeout-ns <ns>] [--ignore-stdin]
+netscenario-agent tcp-request --to <addr> --out <file> --request-bytes <n> --response-bytes <n> --duration-ns <ns>
+                              [--interval-ns <ns>] [--flow <n>] [--connections <n>] [--congestion <name>]
+                              [--start-at-ns <monotonic ns>] [--info-interval-ns <ns>] [--timeout-ns <ns>] [--ignore-stdin]
 ```
 
 Numbers are plain integers: bits per second, bytes, nanoseconds. The units of a scenario file are resolved by the program that starts the agent. Exit codes: 0 done, 1 failed (the reason is on standard error), 2 the command line is wrong.
@@ -112,11 +120,78 @@ The first outputs are pinned, from an implementation in Python that shares nothi
 
 A sender walks its schedule once, in order, and keeps no table of it. The run walks it again after the fact (the series, the packet that a step of the timeline waits for), in one pass for all the steps; it gets the same moments because the walk is a function of the schedule and the seed. The packets are numbered in the order of their moments, and a schedule that cannot make a packet (an on phase of zero, a burst of no packets, a burst with no time to the next) makes none and is refused by the sender.
 
+## UDP echo: the round trip of a datagram stream (`--echo-to`, D-086)
+
+`recv --echo-to <addr>` sends every packet that it recorded on to `<addr>`, unchanged, from a socket of its own. A second `recv` bound at that address in the sender's node records the packets that come back: the send time in them is the first one, so the **round trip** of a packet is the receive time of the second record minus its send time, and a packet that was lost on the way there or back has no record there. The echo is an ordinary datagram and so only for a stream with the checksum of UDP; `--udp-checksum off` with `--echo-to` is refused. The summary of the receiver says how many packets it echoed (`echoed`) and how many the system refused (`echo_errors`).
+
+## TCP: bulk transfers and requests (WRK-04, WRK-05, D-086)
+
+The kernel TCP of the machine is the subject: the agents use ordinary sockets, so the congestion control, the windows and the timers are the kernel's. `tcp-serve` in one node waits for connections; `tcp-bulk` and `tcp-request` in another make them. Every connection starts with a **hello** of 32 bytes from the client, so the server needs nothing on its command line about what comes:
+
+| Bytes | Field | Meaning |
+| --- | --- | --- |
+| 0 to 3 | magic | `NSTP` |
+| 4 | version | `1` |
+| 5 | mode | `1` bulk, `2` requests |
+| 6 to 7 | reserved | zero |
+| 8 to 11 | connection | The number of the connection in its workload, from 0 |
+| 12 to 15 | request size | Bytes of a request (requests only, at least 1) |
+| 16 to 19 | response size | Bytes of a response (requests only, at least 1) |
+| 20 to 31 | reserved | zero |
+
+A server answers a hello that it does not read by closing the connection, and counts it as `refused`.
+
+**Bulk.** The client sends its payload in chunks (`--chunk-bytes`, 65,536 by default, at most 1 MiB), each with a header of four bytes that holds its length, and ends with a chunk of length 0. The server counts the payload as it reads it, in intervals of the clock (below), and answers the end with one byte; the client reads it, and that moment is the **completion** of the transfer: the last byte has been read by the application at the far end. Then the client closes. (A half-close would tell the server the end as well, but the socket of the client would be in `TIME_WAIT` by the time the client knew, and the kernel gives no `tcp_info` for such a socket; here the server waits for the client to close first, so the socket is whole when the client takes the last sample, after the answer.) `--bytes` is what each connection sends, `--duration-ns` is how long each sends, from `--start-at-ns` or from the start; the chunk in progress at the end is finished. A line `stop` on the standard input (or its end) ends a transfer early: its connection is recorded as failed and the summary says `stopped`.
+
+**Requests.** The client sends a request of `--request-bytes` and reads a response of `--response-bytes`, again and again, on each of `--connections` connections, until `--duration-ns` has passed. Without `--interval-ns` the loop is **closed**: the next request follows the response. With it the loop is **open**: request `n` of the whole workload is due at `n × interval` from the start, whichever connection takes it, and a request that is due while its connection is busy waits, so that the latency counted from the moment it was due includes the wait (a slow server cannot hide behind the clients that waited for it). A request that gets no response in `--timeout-ns` (30 s by default) fails and its connection is not used again.
+
+**Congestion control.** `--congestion <name>` is set on every socket of the client (and, on the server, on the sockets that answer) and read back; a name the machine lacks is a failed connection whose reason names it (`the congestion control 'bbr' cannot be used here: ...`). Without it the socket has what the kernel gives, and the summary says which (`congestion`). The scenario layer, not the agent, decides the default (D-086).
+
+**Samples of `TCP_INFO`.** Every `--info-interval-ns` (100 ms by default; 0 takes none) a thread of the client asks the kernel for the `tcp_info` of each connection and writes the round trip time, the congestion window, the retransmitted segments so far and the bytes acknowledged so far; a last sample is taken at the end of the connection. The agent asks through a `sock_diag` netlink socket, because `getsockopt(TCP_INFO)` has no safe wrapper and the workspace has no `unsafe` (D-025). A kernel without `sock_diag` gives no samples, and the summary says why (`info_error`).
+
+### The stream record file (version 1)
+
+The agents write a file of records of 48 bytes after a header of 16, in network byte order, with every time on `CLOCK_MONOTONIC` in nanoseconds, the clock of the records of the UDP agents. `netscenario_agent::streams` reads and writes it (a test pins the exact bytes, and a fuzz target reads arbitrary input).
+
+| Header bytes | Field | Meaning |
+| --- | --- | --- |
+| 0 to 7 | magic | `NSSTREAM` |
+| 8 to 9 | version | `1` |
+| 10 to 11 | record size | `48` |
+| 12 to 15 | flow | The number of the workload |
+
+| Record bytes | Field | Meaning |
+| --- | --- | --- |
+| 0 | kind | 1 progress, 2 info, 3 connection, 4 request |
+| 1 | status | 0 ok; for info 1 is the last sample; 2 failed |
+| 2 to 3 | reserved | zero |
+| 4 to 7 | connection | From 0 |
+| 8 to 47 | `t`, `a`, `b`, `c`, `d` | Five numbers of eight bytes, by kind: |
+
+| Kind | Written by | `t` | `a` | `b` | `c` | `d` |
+| --- | --- | --- | --- | --- | --- | --- |
+| progress | the server | start of the interval (a multiple of `--progress-interval-ns`, 10 ms by default) | payload bytes read in it | reads it took | 0 | 0 |
+| info | a client | the moment of the sample | round trip time in microseconds | congestion window in segments | retransmitted segments so far | bytes acknowledged so far (the SYN counts as one: use differences) |
+| connection | a client | connect started | established | done (the answer of the server for bulk; the close for requests) | payload bytes sent | bytes received (requests) |
+| request | a client | due | sent | last byte of the response read | request bytes | response bytes (0 if it failed) |
+
+The records are in the order they were written, not in the order of their times. A file that ends inside a record, holds a kind this version does not have, or is of another version is an error when it is read and not a shorter file: a record that is skipped is a number that is missing from a result. The server writes a progress record only for an interval in which a connection read something; a series by time bin is made by the run from these, with the resolution of the interval.
+
+### What the agents say
+
+```json
+{"event":"ready","flow":6,"address":"10.100.0.2:40000"}
+{"event":"served","flow":6,"connections":3,"refused":0,"bytes_received":4006000,"requests":30,"first_receive_ns":120,"last_receive_ns":456}
+{"event":"tcp","flow":6,"connections":2,"failed":0,"bytes_sent":4000000,"bytes_received":0,"requests":0,"requests_failed":0,"congestion":"cubic","first_error":null,"info_error":null,"first_ns":100,"last_ns":900,"stopped":false}
+```
+
+`tcp-serve` says `ready` when it listens (the clients start after it), runs until it reads `stop` or its input ends (or until `--max-time-ns`), and then says `served`. A connection that is still open when the stop comes is given half a second without data to finish. The clients say `tcp` when they are done; a failure of a connection is in the summary and in its record, and the exit code is 0 unless the command line was wrong (2) or the file could not be written (1).
+
 ## Not in this version
 
 - **Static binary.** D-008 spoke of a static (musl) binary. In the Kernel backend the nodes share the file system of the host and need none; the static build belongs to the release (REL-01) and to backends where the node has its own file system.
 - Hardware or kernel timestamps (`SO_TIMESTAMPNS`): the receive time is taken in user space after the read. At the measured rates the error is a few microseconds (S8).
-- TCP (WRK-04), request and response (WRK-05).
+- The TCP agents are in place (D-086, below); the scenario kinds `tcp-bulk` and `request-response` that use them, and their results, come with the next steps.
 
 ## How a run starts the agent
 
