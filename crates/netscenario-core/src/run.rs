@@ -28,7 +28,7 @@ use crate::export::write_packets_refused;
 use crate::machine::collect;
 use crate::observe::{CancelToken, RunEvent, RunObserver};
 use crate::programs::Programs;
-use crate::provision::{Provisioned, impairments_of, provision};
+use crate::provision::{Provisioned, impairments_of};
 use crate::recovery::{self, Basis, Recovery, RecoveryOptions};
 use crate::result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EchoResult, EventRecord,
@@ -389,7 +389,7 @@ fn check_files_are_read(scenario: &Scenario) -> Result<(), Error> {
 ///
 /// # Errors
 ///
-/// - the errors of [`provision`] (the scenario is refused, or the network cannot be built),
+/// - the errors of [`provision`](crate::provision) (the scenario is refused, or the network cannot be built),
 /// - [`Error::Run`] if an agent does not start, does not answer in time or ends badly, or a file cannot be
 ///   written,
 /// - [`Error::Backend`] if the backend fails while the run is going,
@@ -506,15 +506,17 @@ fn start<'a>(
     backend: &mut dyn Backend,
     original: &'a Scenario,
 ) -> Result<(crate::models::Compiled<'a>, Provisioned), Error> {
-    let problems = original.validate();
+    let problems = crate::provision::checked(original);
     if !problems.is_empty() {
         return Err(Error::InvalidScenario(problems));
     }
     // The backend is asked about the scenario as the file writes it, so that a refusal names the model and not an event that the
-    // model made; the models and the repeating events then become the events of the timeline (D-090)
-    check(original, &backend.capabilities(), false)?;
+    // model made, and a Markov chain is judged by its mean stays and not by the stays one seed draws; the models and the repeating
+    // events then become the events of the timeline (D-090)
+    let accepted = check(original, &backend.capabilities())?;
     let models = crate::models::compile(original)?;
-    let mut provisioned = provision(backend, &models.scenario)?;
+    let mut provisioned =
+        crate::provision::provision_accepted(backend, &models.scenario, accepted)?;
     provisioned.seed_drawn |= models.seed_drawn;
     Ok((models, provisioned))
 }
@@ -2587,6 +2589,7 @@ mod tests {
     use crate::backend::{BackendInfo, Direction, LinkHandle, ProgramExit, ProgramState};
     use crate::capability::{Capabilities, Support};
     use crate::feature::Feature;
+    use crate::provision::provision;
 
     /// A backend that plays the agent: the receiver writes a record file of its own and says what the real
     /// one says, the sender reports what it was told to send.

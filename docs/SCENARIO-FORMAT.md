@@ -73,6 +73,7 @@ workloads:
 | `seed` | no | An unsigned 64-bit integer. Without it the tool draws one and records it in the result, so every run can be repeated (ENV-01), provided the backend can apply a seed to its loss (the Kernel backend with iproute2 6.6.0 or newer). Where it cannot, a scenario with loss still runs, and the result says that the loss is not reproducible. |
 | `duration` | yes | A Duration greater than zero. The measured phase runs from the start of the workloads to this time. The setup and the teardown are not part of it. |
 | `backend` | no | `auto` (the default) or `kernel`. `engine` and `proxy` are refused until releases 0.4 and 0.5. |
+| `allow-limited` | no | A list of ids of features: the restrictions of a backend that the scenario accepts, see [Limited features](#limited-features). |
 | `topology` | yes | See below. |
 | `workloads` | yes | A list with at least one workload. |
 | `timeline` | no | A list of events, see [Timeline](#timeline). |
@@ -329,6 +330,61 @@ A **state** is a complete overlay on the link as the file writes it: `set` names
 
 Examples: [leo-pass.yaml](../scenarios/leo-pass.yaml) (a periodic pattern with a handover), [signal-states.yaml](../scenarios/signal-states.yaml) (a chain of three signal states), [flapping-link.yaml](../scenarios/flapping-link.yaml) (events that repeat).
 
+### Traces
+
+```yaml
+links:
+  - id: cell
+    between: [phone, server]
+    both: { delay: 30ms }                     # what the link is outside the trace
+    model:
+      kind: trace
+      forward: { file: uplink.csv }           # time,rate,delay,loss
+      reverse: { file: downlink.mahimahi, format: mahimahi, window: 100ms }
+```
+
+A **trace** (LMD-03, D-091) is a model whose rows come from a file: the rate, the delay and the loss of a link over time, recorded on a real network or made by hand. It is read like any model (D-090): when a run begins the rows become the `set` events of the timeline, applied before the first packet that a workload sends at or after their moment, and `events` of the result lists them with `from_model: true`. The files follow D-083: a path relative to the directory of the scenario file, inside it, at most 16 MiB, read once when the scenario is loaded; what is made of them and the SHA-256 of the file are written into the scenario, so a result passed on and a replay need no file.
+
+| Key of the model | Meaning |
+| --- | --- |
+| `kind` | `trace`. |
+| `forward`, `reverse`, `both` | The trace of that direction. `both` is the same trace for both and is not written together with the others. At least one. Each direction has its own trace and its own length. |
+| `begin` | When the trace begins, from the start of the measured phase. Before that the link is what the file says. Default `0s`. |
+| `repeat` | `true` (the default): the trace begins again when it is over. `false`: the link is what the file says after it. |
+
+| Key of a direction | Meaning |
+| --- | --- |
+| `file` | The file. Required. |
+| `format` | `csv` or `mahimahi`. A name that ends in `.csv` is a CSV file; a Mahimahi trace has no usual extension, so it is written. |
+| `window` | Mahimahi only: how much of the trace makes one rate. A whole number of milliseconds, default `100ms`. |
+| `period` | CSV only: how long one pass of the trace is. Default: the last row lasts as long as the row before it. |
+| `sha256` | The SHA-256 of the file. The loader writes it; if you write it, the file must have exactly that content. |
+
+**CSV** is a header and a row for each change, every value with its unit; lines that start with `#` and empty lines are skipped:
+
+```
+time,rate,delay,loss
+0s,18mbit,38ms,0%
+5s,14mbit,40ms,0%
+10s,9mbit,46ms,0.1%
+```
+
+The header names `time` and at least one of `rate`, `delay`, `loss`, in any order. From the time of a row until the next, the link has the values of the row; a column that the file does not have is not written by the trace, and the link keeps what the scenario says for it. The times rise. A `rate` of `0` is a row in which nothing is delivered, see below. At most 10,000 rows. Example: [cell-drive.yaml](../scenarios/cell-drive.yaml).
+
+**Mahimahi** is the format of the trace-driven link of that tool: a line for each opportunity to deliver a packet, the time in whole milliseconds, not falling; the trace lasts until its last line, and the opportunities in each `window` give the rate of that window: their number times 1,514 bytes (an IP packet of 1,500 bytes and the Ethernet header, which is what the shapers count) over the width of the window. A window of 100 ms with 100 opportunities is 12.112 mbit. A trace of 100 minutes needs a window of at least 600 ms to stay within 10,000 rows; the message says the window that fits. The delivery is by the byte and not by the packet. Example: [mahimahi-walk.yaml](../scenarios/mahimahi-walk.yaml).
+
+**A trace that changes the rate faster than the backend follows** is a restriction, see [Limited features](#limited-features): the Kernel backend follows a rate to within 0.4 % at steps of 100 ms, within 2 % at 20 ms, and not below that. So a trace with steps of 100 ms and more needs nothing, one with steps closer than 100 ms and not closer than 20 ms is run when the scenario lists `fast-rate-steps` in `allow-limited`, and one with steps closer than 20 ms is refused (a Mahimahi trace takes a wider `window`). A row without a delivery (a Mahimahi window without an opportunity, or a CSV `rate` of 0) needs `stalled-link`: a shaper cannot stop, so the row is the rate at which one frame is delivered in it.
+
+**What the reader refuses besides the types:** a trace without a direction, `both` together with `forward` or `reverse`, `states`, `start` or `stay` in a trace, `window` in a CSV and `period` in a Mahimahi trace, a name whose format is not known, a file that is no trace (the message has the line), rows that do not rise, more than 10,000 rows, a SHA-256 that does not match, and a trace that would make more events than a link may have (10,000, D-090). On a link with a trace the `timeline` of the file may not `set` a key that the trace writes. A `queue` may wait for a rate that a trace (or a state, or a step) brings.
+
+### Limited features
+
+```yaml
+allow-limited: [fast-rate-steps, stalled-link]
+```
+
+A backend that reproduces a feature only in part refuses it, with the line to write, unless the scenario lists its id in `allow-limited` (D-092). The result then has `accepted_restrictions`, the id and the restriction as the backend states it with the numbers that were measured, and the summary and the reports print them. The list is checked against the scenario as the file writes it, so a model is judged by its states and rows (a Markov chain by its mean stays) and the seed cannot decide whether a run is allowed. An id that names no feature is an error with a suggestion; a feature that the backend cannot reproduce at all is refused whatever the list says. The ids are the `id` of the features in the output of `netscenario doctor` and the rows of [COVERAGE.md](COVERAGE.md): `fast-rate-steps` (the rate changes at intervals closer than 100 ms), `stalled-link` (a trace row in which nothing is delivered).
+
 ## Workloads
 
 ```yaml
@@ -523,10 +579,9 @@ These keys are not part of version 0 in release 0.2. A scenario that uses one is
 
 | Key | Planned in | Meaning |
 | --- | --- | --- |
-| `allow-limited`, `expect`, `params`, `include` | 0.3 | Accepted restrictions, assertions in the file, parameters and includes. |
+| `expect`, `params`, `include` | 0.3 | Assertions in the file, parameters and includes. |
 | `matrix` | 0.5 | Sweeps. |
 | `mobility` | 0.6 | Positions over time. |
-| `kind: trace` (in the `model` of a link) | 0.3 | A link model from a recorded trace (LMD-03). |
 | `address` (node, link) | later | Fixed addresses. |
 | `kind` other than `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty`, `trace-replay`, `tcp-bulk`, `request-response` and `command` | 0.5 and later | `container` and more. |
 
@@ -590,7 +645,7 @@ The following sketches show where the format is heading. They are **not** part o
 
 The keys `corrupt`, `reorder`, `duplicate`, `udp-checksum` and the loss models of release 0.2 are in Part 1.
 
-**Link models (0.3 to 0.6).** `model: { kind: trace, file: ..., format: mahimahi }`, Markov, periodic and geometry-based models, with mobility (0.6). A model replaces the static values of its link. Traces are files named by a path; hashes of their content come with 0.3.
+**Link models (0.6).** Geometry-based models, with mobility (0.6). (Periodic, Markov and trace models are in Part 1.) A model replaces the static values of its link.
 
 **Expectations in the file (0.3).**
 
@@ -601,8 +656,6 @@ expect:
 ```
 
 **Parameters and sweeps (0.3, 0.5).** Values such as `{rtt / 2}` with units and `+ - * /` only; the file stays data. `matrix` describes the grid and the tool runs and judges it.
-
-**Limited features (0.3).** A backend that can do a feature only in part refuses it unless the scenario lists it in `allow-limited`; the result records every accepted restriction.
 
 ## Decisions on the questions of the design
 

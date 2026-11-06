@@ -508,11 +508,16 @@ fn the_examples_compile_to_valid_scenarios() {
         if path.extension().is_none_or(|extension| extension != "yaml") {
             continue;
         }
-        let Ok(scenario) =
+        let Ok(mut scenario) =
             Scenario::from_yaml(&std::fs::read_to_string(&path).unwrap(), "example.yaml")
         else {
             continue;
         };
+        // The files that the example names (a trace) are next to it
+        let problems = scenario.resolve_files(|name| {
+            std::fs::read(path.with_file_name(name)).map_err(|error| format!("{name}: {error}"))
+        });
+        assert_eq!(problems, Vec::new(), "{}", path.display());
         if !scenario.has_models() {
             continue;
         }

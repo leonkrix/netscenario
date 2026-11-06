@@ -190,6 +190,9 @@ pub(crate) struct Provisioner {
     programs: Vec<RunningProgram>,
     /// The queues planned for the directions that change in the run (D-059), by link and direction.
     layouts: std::collections::HashMap<(u32, Way), netem::Layout>,
+    /// The same for the directions that are built as a tree through the fabric and change in the run (D-091), with the state each
+    /// one has now: a step changes only what differs from it.
+    trees: std::collections::HashMap<(u32, Way), (crate::fabric::QueuePlan, Impairments)>,
     /// The directions that have queues, because `apply` built them. A direction that impairs nothing has none.
     built: std::collections::HashSet<(u32, Way)>,
     /// The `tc -batch` that makes the changes of the node whose holder has this process id (D-063). `None`: there is
@@ -232,6 +235,7 @@ impl Provisioner {
             down: std::collections::HashSet::new(),
             programs: Vec::new(),
             layouts: std::collections::HashMap::new(),
+            trees: std::collections::HashMap::new(),
             built: std::collections::HashSet::new(),
             batches: HashMap::new(),
             notes: Vec::new(),
@@ -903,6 +907,20 @@ impl Provisioner {
         if self.links.get(link as usize).is_none() {
             return Err(format!("the link {link} does not exist in this run"));
         }
+        // A direction of a link through the fabric with a queue, or with a rate that changes, is a tree whose parts are changed one
+        // by one (D-091)
+        let through_fabric = self
+            .links
+            .get(link as usize)
+            .is_some_and(|link| link.fabric.is_some());
+        let tree = through_fabric
+            && (states.iter().any(|state| state.queue.is_some())
+                || states.iter().any(|state| state.rate != states[0].rate));
+        if tree {
+            let plan = crate::fabric::QueuePlan::of(states)?;
+            self.trees.insert((link, way), (plan, states[0].clone()));
+            return Ok(());
+        }
         let layout = netem::Layout::of(states, false)?;
         self.layouts.insert((link, way), layout);
         Ok(())
@@ -911,6 +929,10 @@ impl Provisioner {
     /// Adds the blackout queue of an outage (D-064) to the layout that `plan` made. It must come before `apply`, which
     /// builds the queues, and after `plan`.
     pub(crate) fn plan_outage(&mut self, link: u32, way: Way) -> Result<(), String> {
+        if let Some((plan, _)) = self.trees.get_mut(&(link, way)) {
+            *plan = plan.clone().with_blackout();
+            return Ok(());
+        }
         let layout = self.layouts.remove(&(link, way)).ok_or_else(|| {
             format!("the direction of link {link} has to be planned with its states before it is planned for an outage")
         })?;
@@ -926,6 +948,9 @@ impl Provisioner {
         way: Way,
         impairments: &Impairments,
     ) -> Result<(), String> {
+        if self.trees.contains_key(&(link, way)) {
+            return self.change_tree(link, way, impairments);
+        }
         let layout = self.layouts.get(&(link, way)).ok_or_else(|| {
             format!("the direction of link {link} was not planned for changes, so its queues may not fit the new state")
         })?;
@@ -942,6 +967,14 @@ impl Provisioner {
     /// Begins or ends an outage of a direction that `apply` built with a blackout queue (D-064): the loss of 100 %
     /// of that queue is switched on or off, and nothing else is touched.
     pub(crate) fn set_outage(&mut self, link: u32, way: Way, on: bool) -> Result<(), String> {
+        if let Some((plan, _)) = self.trees.get(&(link, way)) {
+            let port = self.port_of(link, way)?;
+            let blackout = plan.blackout_line(&port, on).ok_or_else(|| {
+                format!("the direction of link {link} was not planned for an outage, so it has no queue to hold one")
+            })?;
+            let fabric = self.fabric_pid()?;
+            return self.run_lines(fabric, &[blackout]);
+        }
         let (pid, interface) = self.interface_of(link, way)?;
         let command = self
             .layouts
@@ -1114,6 +1147,53 @@ impl Provisioner {
         Ok((self.nodes[end.node].pid, end.interface.clone()))
     }
 
+    /// The port of the fabric that the packets of a direction leave the fabric by: the one towards the receiver.
+    fn port_of(&self, link: u32, way: Way) -> Result<String, String> {
+        let ports = self
+            .links
+            .get(link as usize)
+            .and_then(|link| link.fabric.clone())
+            .ok_or_else(|| "a direction with a queue needs a link through the fabric".to_owned())?;
+        Ok(match way {
+            Way::Forward => ports[1].clone(),
+            Way::Reverse => ports[0].clone(),
+        })
+    }
+
+    /// Writes a state into the tree of a direction that `apply` built from a plan (D-091): the parts whose values differ from the
+    /// state before, each whole, in the node and in the fabric; the leaf, with what it holds, is not touched.
+    fn change_tree(
+        &mut self,
+        link: u32,
+        way: Way,
+        impairments: &Impairments,
+    ) -> Result<(), String> {
+        let port = self.port_of(link, way)?;
+        let (pid, interface) = self.interface_of(link, way)?;
+        let Some((plan, last)) = self.trees.get(&(link, way)) else {
+            return Err(format!(
+                "the direction of link {link} was not planned for changes"
+            ));
+        };
+        if !plan.fits(impairments) {
+            return Err(
+                "the new state needs a queue that this direction was not built with".to_owned(),
+            );
+        }
+        let step = plan.step(&interface, &port, last, impairments)?;
+        if !step.node.is_empty() {
+            self.run_lines(pid, &step.node)?;
+        }
+        if !step.fabric.is_empty() {
+            let fabric = self.fabric_pid()?;
+            self.run_lines(fabric, &step.fabric)?;
+        }
+        if let Some((_, last)) = self.trees.get_mut(&(link, way)) {
+            *last = impairments.clone();
+        }
+        Ok(())
+    }
+
     pub(crate) fn apply(
         &mut self,
         link: u32,
@@ -1133,29 +1213,40 @@ impl Provisioner {
             Way::Forward => &link.ends[0],
             Way::Reverse => &link.ends[1],
         };
-        // A direction with a `queue` is built as the tree of a queue, with the delay in the fabric (D-079, D-082)
-        if impairments.queue.is_some() {
-            let ports = link.fabric.clone().ok_or_else(|| {
-                "a direction with a queue needs a link through the fabric".to_owned()
-            })?;
+        // A direction with a `queue`, or with a rate that changes, is built as the tree of a queue, with the delay in the fabric
+        // (D-079, D-082, D-091)
+        if impairments.queue.is_some() || self.trees.contains_key(&(link_index, way)) {
+            let port = self.port_of(link_index, way)?;
             let (interface, pid) = (end.interface.clone(), self.nodes[end.node].pid);
-            // The packets leave the fabric by the port towards the receiver
-            let port = match way {
-                Way::Forward => &ports[1],
-                Way::Reverse => &ports[0],
+            let planned = self.trees.contains_key(&(link_index, way));
+            let plan = match self.trees.get(&(link_index, way)) {
+                Some((plan, _)) => plan.clone(),
+                None => crate::fabric::QueuePlan::of(std::slice::from_ref(impairments))?,
             };
-            let tree = crate::fabric::queue_tree(&interface, port, impairments, seed)?;
+            let tree = plan.build(&interface, &port, impairments, seed)?;
             for line in &tree.node {
                 let words: Vec<&str> = line.split(' ').collect();
                 self.in_node(pid, &self.tools.tc, &words)?;
             }
-            if let Some(line) = &tree.fabric {
+            if !tree.fabric.is_empty() {
                 let fabric = self.fabric_pid()?;
-                let words: Vec<&str> = line.split(' ').collect();
-                self.in_node(fabric, &self.tools.tc, &words)?;
+                for line in &tree.fabric {
+                    let words: Vec<&str> = line.split(' ').collect();
+                    self.in_node(fabric, &self.tools.tc, &words)?;
+                }
             }
+            self.trees
+                .insert((link_index, way), (plan, impairments.clone()));
             self.built.insert((link_index, way));
             self.queued.insert((link_index, way));
+            // A direction that changes gets the `tc` that makes its changes before the workloads start (D-063)
+            if planned {
+                self.start_batch(pid);
+                if !tree.fabric.is_empty() {
+                    let fabric = self.fabric_pid()?;
+                    self.start_batch(fabric);
+                }
+            }
             self.failpoints.hit("apply:end");
             return Ok(());
         }

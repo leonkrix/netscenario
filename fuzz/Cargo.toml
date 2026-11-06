@@ -106,3 +106,10 @@ path = "fuzz_targets/report.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "linktraces"
+path = "fuzz_targets/linktraces.rs"
+test = false
+doc = false
+bench = false

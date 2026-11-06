@@ -46,7 +46,7 @@
 //!         },
 //!     );
 //!
-//! let error = check(&scenario, &backend, false).unwrap_err();
+//! let error = check(&scenario, &backend).unwrap_err();
 //! assert!(error.to_string().contains("path: seed"));
 //! # Ok::<(), netscenario_model::Error>(())
 //! ```
@@ -91,7 +91,7 @@ pub use backend::{
 pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, check};
 pub use error::Error;
 pub use export::{write_packets, write_packets_marked, write_packets_refused};
-pub use feature::{Feature, Requirement, requirements};
+pub use feature::{FAST_RATE_STEP, FASTEST_RATE_STEP, Feature, Requirement, requirements};
 pub use files::{read_referenced, resolve_files};
 pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
 pub use models::expand_models;
@@ -99,8 +99,8 @@ pub use netscenario_model::sha256_hex;
 pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering};
 pub use provision::{
-    NodeAddress, NodeIps, Provisioned, has_queue, impairments_of, node_address, node_address_v6,
-    provision,
+    NodeAddress, NodeIps, Provisioned, has_queue, impairments_of, needs_fabric, node_address,
+    node_address_v6, provision,
 };
 pub use recovery::{Basis, Recovery, RecoveryOptions};
 pub use replay::{

@@ -90,11 +90,33 @@ pub struct Provisioned {
 /// - [`Error::Capability`] if the backend cannot reproduce it exactly,
 /// - [`Error::Backend`] if the backend fails to build it.
 pub fn provision(backend: &mut dyn Backend, scenario: &Scenario) -> Result<Provisioned, Error> {
+    let problems = checked(scenario);
+    if !problems.is_empty() {
+        return Err(Error::InvalidScenario(problems));
+    }
+    let accepted = check(scenario, &backend.capabilities())?;
+    provision_accepted(backend, scenario, accepted)
+}
+
+/// The problems of a scenario before anything is built: the rules of the format, and the entries of `allow-limited` that name no
+/// feature.
+pub(crate) fn checked(scenario: &Scenario) -> Vec<Problem> {
+    let mut problems = scenario.validate();
+    problems.extend(crate::capability::unknown_allowed_features(scenario));
+    problems
+}
+
+/// Builds the network of `scenario`, which was checked against the capabilities of the backend as `accepted` says. The run checks
+/// the scenario as the file writes it, with its models, and builds the one that the models made (D-090).
+pub(crate) fn provision_accepted(
+    backend: &mut dyn Backend,
+    scenario: &Scenario,
+    accepted: Vec<Accepted>,
+) -> Result<Provisioned, Error> {
     let problems = scenario.validate();
     if !problems.is_empty() {
         return Err(Error::InvalidScenario(problems));
     }
-    let accepted = check(scenario, &backend.capabilities(), false)?;
     backend.check_values(scenario)?;
     let can_seed = backend.capabilities().support(Feature::SeededLoss) == Support::Exact;
     // The moments of the packets of a Poisson source (and of the others with drawn phases) come from the seed too, whatever
@@ -183,7 +205,7 @@ fn build(
     // queue counts a packet that no workload sent
     let mut links = Vec::new();
     let mut addresses = Vec::new();
-    for link in &scenario.topology.links {
+    for (index, link) in scenario.topology.links.iter().enumerate() {
         let (Some(first), Some(second)) = (node(&link.between[0]), node(&link.between[1])) else {
             // `validate` has checked this, so it only happens if that check and this code disagree
             return Err(Error::InvalidScenario(vec![
@@ -194,8 +216,8 @@ fn build(
                 .at_path("topology.links"),
             ]));
         };
-        // A direction with a queue needs the fabric (D-079); the other links keep the direct build
-        let handle = if has_queue(link) {
+        // A direction with a queue, or with a rate that changes, needs the fabric (D-079); the other links keep the direct build
+        let handle = if needs_fabric(scenario, index, link) {
             backend.create_link_through_fabric(&link.id, [first, second])?
         } else {
             backend.create_link(&link.id, [first, second])?
@@ -353,6 +375,19 @@ fn routing(
         }
     }
     Ok(addresses)
+}
+
+/// Whether the link number `index` is built through the fabric: a direction has a `queue`, or the rate of a direction changes
+/// during the run, which a queue of the kernel follows and a `netem` does not (D-079, D-091).
+#[must_use]
+pub fn needs_fabric(scenario: &Scenario, index: usize, link: &Link) -> bool {
+    has_queue(link)
+        || [Direction::Forward, Direction::Reverse]
+            .into_iter()
+            .any(|direction| {
+                let states = timeline::states_of(scenario, index, direction);
+                states.iter().any(|state| state.rate != states[0].rate)
+            })
 }
 
 /// Whether a direction of the link has a `queue`, which makes the Kernel backend build it through the fabric (D-079).

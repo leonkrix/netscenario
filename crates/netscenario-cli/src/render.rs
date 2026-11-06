@@ -79,6 +79,13 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
             "  warning: the loss of this run is not reproducible: {reason}"
         );
     }
+    for accepted in &result.accepted_restrictions {
+        let _ = writeln!(
+            text,
+            "  accepted restriction ({}): {}",
+            accepted.feature, accepted.restriction
+        );
+    }
     for workload in &result.workloads {
         workload_text(&mut text, workload);
     }
@@ -1437,6 +1444,19 @@ result: out/result.json
             summary(&result, Path::new("out"))
                 .contains("  note: the changes were made the slow way\n")
         );
+    }
+
+    #[test]
+    fn the_restrictions_the_scenario_accepted_are_shown_and_only_when_there_are_some() {
+        let mut result = result();
+        assert!(!summary(&result, Path::new("out")).contains("accepted restriction"));
+        result.accepted_restrictions = vec![netscenario_core::AcceptedRestriction::new(
+            "fast-rate-steps",
+            "up to 2 % fewer bytes at steps of 20 ms",
+        )];
+        assert!(summary(&result, Path::new("out")).contains(
+            "  accepted restriction (fast-rate-steps): up to 2 % fewer bytes at steps of 20 ms\n"
+        ));
     }
 
     #[test]

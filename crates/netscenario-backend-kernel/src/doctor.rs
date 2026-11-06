@@ -1002,8 +1002,15 @@ fn feature_checks(tc: Tool, probed: &Probed, checks: &mut Vec<Check>) {
     for feature in Feature::ALL {
         let (status, detail, fix) = match declared.support(*feature) {
             Support::Exact => (Status::Ok, "exact".to_owned(), None),
+            // A restriction of the backend itself is information on every machine; one that this machine adds is a warning
             Support::Limited { restriction } => {
-                (Status::Warn, format!("only in part: {restriction}"), None)
+                let by_design = complete.support(*feature) == declared.support(*feature);
+                let status = if by_design {
+                    Status::Info
+                } else {
+                    Status::Warn
+                };
+                (status, format!("only in part: {restriction}"), None)
             }
             // Not on a complete machine either: the backend does not have it yet, which is no fault of this
             // machine and nothing to fix on it

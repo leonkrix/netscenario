@@ -83,7 +83,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | LMD-01 | Static model | M | 0.1 | done (a link keeps its values for the whole run; changes over time are TML-01, 0.2) |
 | LMD-02 | Scheduled steps | M | 0.2 | done (format with D-050; the Kernel backend applies the steps by the clock or at a barrier of the workload, D-060, D-062, D-064) |
-| LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces) | M | 0.3 | planned |
+| LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces) | M | 0.3 | done (`model: { kind: trace }` with a CSV or a Mahimahi file for each direction, D-091; a rate that changes is a class of `htb` that is changed, so a trace is followed to within 0.4 % at steps of 100 ms; closer steps need `allow-limited`, D-092: `crates/netscenario-backend-kernel/tests/traces.rs`, `crates/netscenario-model/tests/link_traces.rs`) |
 | LMD-04 | Markov models with states and transitions | S | 0.3 | done (D-090; `tests/models.rs` of the model and of the Kernel backend: the share of time against the stationary distribution, the same seed gives the same states and lost packets) |
 | LMD-05 | Periodic patterns (a satellite pass, a duty cycle) | S | 0.3 | done (D-090; the period is exact, and the run does what the same events written by hand do) |
 | LMD-06 | Geometry-based: distance to loss, delay and rate (free space, log-distance) | M | 0.6 | planned |
@@ -163,7 +163,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | done (the CI runs the Kernel backend a second time as root, and as an ordinary user with the two ambient capabilities: `tests/rights.rs`, D-035) |
 | BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | done (the CI runs the tests as an ordinary user on `ubuntu-22.04` and `ubuntu-24.04`) |
-| BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | done (`tests/refusal.rs`, `tests/coverage.rs`, `capability.rs`; D-023) |
+| BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | done (`tests/refusal.rs`, `tests/coverage.rs`, `capability.rs`; D-023; a restriction that a scenario accepts with `allow-limited` is recorded in the result, D-092) |
 | BKD-04 | Cleanup guarantee: no leftovers after a crash (PID namespace, D-022), and `netscenario clean` as a safety net | M | 0.1 | done (the guarantee is tested at 18 steps in `tests/crash.rs`; `clean` in `tests/clean.rs`, D-024) |
 | BKD-05 | Netlink instead of calls to `ip` and `tc` | S | 0.4 | planned |
 | BKD-06 | Packet engine in userspace (deterministic, no root) | M | 0.4? | planned |

@@ -6,7 +6,6 @@ use crate::source::{self, Kind, SourceIndex};
 
 /// Keys by the path of the mapping they stand in (indices as `[]`): key and the release.
 const RESERVED_KEYS: &[(&str, &str, &str)] = &[
-    ("", "allow-limited", "0.3"),
     ("", "expect", "0.3"),
     ("", "params", "0.3"),
     ("", "include", "0.3"),
@@ -50,7 +49,6 @@ const RESERVED_VALUES: &[(&str, &str, &str)] = &[
     ("topology.links[].forward.loss.model", "trace", "0.3"),
     ("topology.links[].reverse.loss.model", "trace", "0.3"),
     ("topology.links[].both.loss.model", "trace", "0.3"),
-    ("topology.links[].model.kind", "trace", "0.3"),
 ];
 
 fn planned(what: &str, release: &str) -> String {

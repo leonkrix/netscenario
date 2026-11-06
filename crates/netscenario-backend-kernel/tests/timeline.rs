@@ -1061,15 +1061,13 @@ fn the_drop_is_in_the_bins(bins: &[series::Bin]) {
         (50_000_000..100_000_000).contains(&before.p50_ns),
         "{before:?}"
     );
-    // In the drop 1.1516 mbit arrive in a second, and nothing is lost: the packets wait in the queue
-    for bin in &bins[4..6] {
-        assert!(
-            bin.by_arrival.bits.abs_diff(1_151_500) <= 16_000,
-            "bin {}: {} bits",
-            bin.bin,
-            bin.by_arrival.bits
-        );
-    }
+    // In the drop 1.1516 mbit arrive in a second, and nothing is lost: the packets wait in the queue. Bin 4 holds the packets that
+    // left the link from 3.95 s to 4.95 s
+    assert!(
+        bins[4].by_arrival.bits.abs_diff(1_151_500) <= 16_000,
+        "bin 4: {} bits",
+        bins[4].by_arrival.bits
+    );
     for bin in &bins[3..8] {
         assert_eq!(bin.by_send.lost, 0, "bin {}", bin.bin);
     }
@@ -1079,9 +1077,17 @@ fn the_drop_is_in_the_bins(bins: &[series::Bin]) {
         "the packets of second 4 wait in the queue: {:?}",
         delay(&bins[4])
     );
-    // After the drop the queue empties faster than the packets come: more arrive in a second than were sent in it
+    // After the drop the queue empties faster than the packets come: more arrive in a second than were sent in it. The rate is
+    // back at 5 s (a class of `htb` follows the step, D-091), so the 212 packets of the queue and the 250 that come leave at
+    // 480 a second, and the queue is empty at about 5.9 s: bin 5 holds the departures from 4.95 s to 5.95 s, 7 at the rate of the
+    // drop and the rest at 4 mbit, which is 456 packets with the edge of a packet or two. Bin 6 is the stream again.
     assert!(
-        bins[6].by_arrival.received >= 260,
+        bins[5].by_arrival.received.abs_diff(456) <= 6,
+        "{} arrivals in bin 5",
+        bins[5].by_arrival.received
+    );
+    assert!(
+        bins[6].by_arrival.received.abs_diff(250) <= 3,
         "{} arrivals in bin 6",
         bins[6].by_arrival.received
     );
@@ -1157,18 +1163,18 @@ fn the_recoveries_follow_from_the_bins(
     assert_eq!(workload.recoveries[2].disturbance_ns, 9_000_000_000);
     assert_eq!(workload.recoveries[2].from_ns, 11_000_000_000);
 
-    // The same series seen from the receiver, from the file and the library: the drop takes 3 s to recover from
+    // The same series seen from the receiver, from the file and the library: the drop takes 2 s to recover from
     let mut arrival = RecoveryOptions::default();
     arrival.basis = Basis::Arrival;
     let found = recovery::recoveries(&result.events, bins, bin_ns, &arrival);
     let times: Vec<(usize, Option<u64>)> = found.iter().map(|r| (r.event, r.time_ns)).collect();
     assert_eq!(
         (times[0], times[2]),
-        ((0, Some(3_000_000_000)), (2, Some(0)))
+        ((0, Some(2_000_000_000)), (2, Some(0)))
     );
-    assert_eq!(found[0].recovered_at_ns, Some(6_000_000_000));
+    assert_eq!(found[0].recovered_at_ns, Some(5_000_000_000));
     // The restore at 5 s has a baseline of bins that are already in the drop (the median of 0.95, 1, 1, 0.6, 0.58 is
-    // 0.95), and the window 5 to 7 (86 %) is close to the 85 % that it asks for: it is back within a bin or two
+    // 0.95), and the stream is whole from bin 5 on: it is back at once or within a bin
     assert!(
         times[1].1.is_some_and(|time| time <= 1_000_000_000),
         "{:?}",
@@ -1189,16 +1195,16 @@ fn the_recoveries_follow_from_the_bins(
 /// - Frames are the payload and 42 bytes, so 1.2 mbit of frames is 143.95 packets a second, 1.1516 mbit of payload, 58 %
 ///   of what is sent. In bins 4 and 5 that is what arrives. The queue of the link grows by 106 packets a second for 2 s:
 ///   212 packets, far below the queue of the link, so nothing is lost, and the packets wait (0.05 s at 3 s, 1.5 s at 5 s).
-/// - `netem` works out the moment a packet leaves when the packet enters, so the 212 packets that are queued at 5 s keep
-///   their spacing of 1.2 mbit and leave until 6.47 s, and the packets behind them leave at 4 mbit (480 a second) next
-///   to the 250 that come. Bin 6 has more arrivals than packets sent in it, which the cap of the level
-///   (`min(arrived, sent)`) must not count twice, and the queue is empty again at about 8 s.
+/// - The rate is a class of `htb` that is changed at each step (D-091), so the 212 packets that are queued at 5 s leave at the
+///   new rate at once: they and the 250 that come leave at 4 mbit (480 a second), and the queue is empty at about 5.9 s. Bin 5
+///   has more arrivals than packets sent in it, which the cap of the level (`min(arrived, sent)`) must not count twice. (A
+///   `netem` rate worked out the moment a packet leaves when the packet entered, so the 212 packets kept their spacing of
+///   1.2 mbit until 6.47 s, D-070.)
 /// - The outage is a window at the delivery: bin 10 is inside it and has no arrival, bin 9 has the packets that arrived
 ///   before the start step was done. Seen from the sender the packets sent from 50 ms before 9 s to 50 ms before 11 s
 ///   are lost, so the lost packets are in bins 8 to 10 and not where the silence is.
-/// - The recovery after the drop is 0 s seen from the sender (nothing was lost, the packets came late) and 3 s seen from
-///   the receiver (bins 3 to 5 are at 58 to 60 %, the window 5 to 7 is at 86 %, and the first window at 90 % of the
-///   baseline is 6 to 8). After the end of the outage both are 0: the link is back at that moment and the packets lost
+/// - The recovery after the drop is 0 s seen from the sender (nothing was lost, the packets came late) and 2 s seen from
+///   the receiver (bins 3 and 4 are at 58 to 60 %, and from bin 5 on the stream is whole). After the end of the outage both are 0: the link is back at that moment and the packets lost
 ///   were sent before it.
 #[test]
 fn the_series_of_a_drop_in_bandwidth_and_an_outage_shows_both_in_both_views_and_the_recovery_is_read_from_it()

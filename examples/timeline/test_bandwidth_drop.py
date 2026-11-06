@@ -24,9 +24,10 @@ def test_the_drop_and_the_outage_are_in_the_series(netscenario: Runner) -> None:
     # While the link is slow (3 s to 5 s) about 58 % of it arrives each second (1.2 mbit of
     # frames, which are the payload and 42 bytes, is 1.15 mbit of payload), and nothing is lost:
     # the rest waits in the queue of the link, which is why the delay of the packets of second 4
-    # is above half a second
-    for second in (4, 5):
-        assert abs(bins[second].by_arrival.bits - 1_151_500) <= 16_000, second
+    # is above half a second. At 5 s the rate is back and the queue empties at the full rate, so
+    # more than the stream arrives in the next second
+    assert abs(bins[4].by_arrival.bits - 1_151_500) <= 16_000
+    assert bins[5].by_arrival.bits > 2_500_000
     assert all(bins[second].by_send.lost == 0 for second in range(3, 8))
     delay = bins[4].by_send.delay
     assert delay is not None

@@ -206,7 +206,18 @@ impl Scenario {
                 ("both", &link.both),
             ] {
                 if let Some(impairments) = impairments {
-                    check_impairments(impairments, &format!("{base}.{name}"), problems);
+                    let mut found = Vec::new();
+                    check_impairments(impairments, &format!("{base}.{name}"), &mut found);
+                    // A `queue` waits for a rate, which a model of the link may bring (a state, a trace)
+                    if link
+                        .model
+                        .as_ref()
+                        .is_some_and(|model| model.may_write_rate(name))
+                        || self.timeline_sets_rate(link, name)
+                    {
+                        found.retain(|problem| !problem.message.starts_with(NO_RATE_FOR_QUEUE));
+                    }
+                    problems.extend(found);
                 }
             }
         }
@@ -1331,6 +1342,28 @@ pub const MAX_QUEUE_PACKETS: u32 = 1_000_000;
 /// The largest queue in bytes.
 pub const MAX_QUEUE_BYTES: u64 = 1 << 30;
 
+impl Scenario {
+    /// Whether a step of the timeline sets a rate for the part of `link` written as `side` (`forward`, `reverse` or `both`): the
+    /// rate that a `queue` of the link waits for may come from a step.
+    fn timeline_sets_rate(&self, link: &Link, side: &str) -> bool {
+        let sets = |part: &Option<ImpairmentsChange>| {
+            part.as_ref().is_some_and(|part| !part.rate.is_keep())
+        };
+        self.timeline
+            .iter()
+            .filter(|event| event.link == link.id)
+            .filter_map(|event| event.set.as_ref())
+            .any(|change| match side {
+                "forward" => sets(&change.forward) || sets(&change.both),
+                "reverse" => sets(&change.reverse) || sets(&change.both),
+                _ => sets(&change.both) || (sets(&change.forward) && sets(&change.reverse)),
+            })
+    }
+}
+
+/// The start of the problem of a `queue` without a `rate`.
+const NO_RATE_FOR_QUEUE: &str = "a `queue` holds the packets that wait for the rate";
+
 /// The queue of a direction (D-082): it needs a rate to wait for, its limit is in the unit its discipline counts, and its
 /// parameters are those of its discipline.
 fn check_queue(impairments: &Impairments, base: &str, problems: &mut Vec<Problem>) {
@@ -1340,9 +1373,13 @@ fn check_queue(impairments: &Impairments, base: &str, problems: &mut Vec<Problem
     let path = format!("{base}.queue");
     if impairments.rate.is_none() {
         problems.push(
-            Problem::new("a `queue` holds the packets that wait for the rate, and this direction has no `rate`")
-                .at_path(path.clone())
-                .with_help("add a `rate` next to `queue`; without one nothing waits and the queue stays empty"),
+            Problem::new(format!(
+                "{NO_RATE_FOR_QUEUE}, and this direction has no `rate`"
+            ))
+            .at_path(path.clone())
+            .with_help(
+                "add a `rate` next to `queue`; without one nothing waits and the queue stays empty",
+            ),
         );
     }
     for key in queue.foreign_keys() {

@@ -598,6 +598,17 @@ pub struct AcceptedRestriction {
     pub restriction: String,
 }
 
+impl AcceptedRestriction {
+    /// A restriction of the feature with the id `feature`.
+    #[must_use]
+    pub fn new(feature: &str, restriction: &str) -> Self {
+        Self {
+            feature: feature.to_owned(),
+            restriction: restriction.to_owned(),
+        }
+    }
+}
+
 /// The address of a node on a link.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]

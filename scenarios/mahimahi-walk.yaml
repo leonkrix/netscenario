@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A downlink from a Mahimahi trace (LMD-03): walk.mahimahi has a line for each opportunity to deliver a packet, the time in
+# milliseconds, and its opportunities in each window of 50 ms give the rate of that window. Windows closer than 100 ms are followed
+# only in part by the Kernel backend (the shaper delivers up to 2 % fewer bytes at 20 ms), so the scenario accepts the restriction
+# and the result records that it did. The delay is the one of the link, outside the trace.
+version: 0
+name: mahimahi-walk
+duration: 24s
+allow-limited: [fast-rate-steps]
+topology:
+  nodes: [phone, server]
+  links:
+    - id: cell
+      between: [phone, server]
+      both: { delay: 30ms }
+      model:
+        kind: trace
+        reverse: { file: walk.mahimahi, format: mahimahi, window: 50ms }
+workloads:
+  - { id: download, kind: udp-cbr, from: server, to: phone, rate: 40mbit, packet-size: 1472b }

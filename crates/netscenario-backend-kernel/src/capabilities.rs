@@ -44,12 +44,25 @@ const NEEDS_TC: &[Feature] = &[
     Feature::Outages,
     Feature::QueueLimit,
     Feature::QueueDisciplines,
+    Feature::RateSteps,
+    Feature::LinkTraces,
 ];
 
 /// The features that the Kernel backend gets in later steps of a release: the format knows them, the backend does not
 /// apply them yet, and says so instead of leaving them out silently. The page `docs/COVERAGE.md` says `✔` and the
 /// release for them. None at the moment (the TCP workloads, D-086, were the last).
 const PLANNED: &[Feature] = &[];
+
+/// What the Kernel backend does with a rate that changes faster than every 100 ms (D-091): the rate is a class of `htb` whose tokens
+/// are kept at a change, measured on kernels 6.8 and 7.0 (the delivered bytes against the rate times the time): 0.4 % short at steps
+/// of 100 ms, 2 % short at 20 ms.
+const FAST_RATE_STEPS: &str = "the rate is a shaper of the kernel that is changed at each step; it delivers up to 0.4 % fewer bytes than the rate says at steps of 100 ms and up to 2 % fewer at steps of 20 ms";
+
+/// What the Kernel backend does with a rate that changes faster than every 20 ms (D-091): 17 % short at 5 ms, 41 % at 2 ms.
+const VERY_FAST_RATE_STEPS: &str = "a shaper of the kernel delivers 17 % fewer bytes than the rate says at steps of 5 ms and 41 % fewer at 2 ms; below 20 ms it does not follow the rate";
+
+/// What the Kernel backend does with a row of a trace in which nothing is delivered (D-091).
+const STALLED_LINK: &str = "a shaper of the kernel cannot stop, so a row without a delivery is the rate at which one frame of 1,514 bytes is delivered in the row, and the packet at the head of the queue may leave up to one row late";
 
 /// What the probe of `doctor` found out about the kernel and `tc` of this machine (D-068): for each thing a scenario
 /// can need, whether it was accepted or what was answered. The version of `tc` says what it should know; the probe says
@@ -136,6 +149,8 @@ pub fn capabilities_probed(environment: &Environment, probed: &Probed) -> Capabi
             Feature::Ipv6,
             Feature::QueueLimit,
             Feature::QueueDisciplines,
+            Feature::RateSteps,
+            Feature::LinkTraces,
         ] {
             capabilities = capabilities.with(
                 feature,
@@ -163,7 +178,12 @@ pub fn capabilities_probed(environment: &Environment, probed: &Probed) -> Capabi
     // The tree of a link with a queue: the redirect of the fabric, and `netem`, `htb` and a class below it (D-079)
     for step in ["fabric", "queuetree"] {
         if let Some(why) = probed.refused(step) {
-            for feature in [Feature::QueueLimit, Feature::QueueDisciplines] {
+            for feature in [
+                Feature::QueueLimit,
+                Feature::QueueDisciplines,
+                Feature::RateSteps,
+                Feature::LinkTraces,
+            ] {
                 capabilities = capabilities.with(
                     feature,
                     unsupported(
@@ -255,7 +275,26 @@ fn by_version(environment: &Environment) -> Capabilities {
         .with(Feature::UdpWithoutChecksum, Support::Exact)
         .with(Feature::TraceReplay, Support::Exact)
         .with(Feature::TcpWorkloads, Support::Exact)
-        .with(Feature::UdpEcho, Support::Exact);
+        .with(Feature::UdpEcho, Support::Exact)
+        .with(
+            Feature::FastRateSteps,
+            Support::Limited {
+                restriction: FAST_RATE_STEPS.to_owned(),
+            },
+        )
+        .with(
+            Feature::VeryFastRateSteps,
+            Support::Unsupported {
+                reason: VERY_FAST_RATE_STEPS.to_owned(),
+                fix: format!("make the steps at least 20 ms apart (for a Mahimahi trace, a `window` of 20ms or more), {ENGINE}"),
+            },
+        )
+        .with(
+            Feature::StalledLink,
+            Support::Limited {
+                restriction: STALLED_LINK.to_owned(),
+            },
+        );
     for feature in NEEDS_TC {
         capabilities = capabilities.with(*feature, tc_support(&environment.tc, None));
     }
@@ -422,6 +461,8 @@ mod tests {
             Feature::Ipv6,
             Feature::QueueLimit,
             Feature::QueueDisciplines,
+            Feature::RateSteps,
+            Feature::LinkTraces,
         ];
         one("veth", Feature::PointToPoint, &no_veth);
         // Forwarding and a route are what a network of several nodes needs; IPv6 stands on its own
@@ -432,13 +473,16 @@ mod tests {
             &[Feature::MultipleNodes],
         );
         one("ipv6", Feature::Ipv6, &[]);
-        // The tree of a queue stands on its own: the two queue features go with it, the rest does not
-        one(
-            "queuetree",
+        // The tree of a queue stands on its own: the two queue features and the ones that are built on it go with it, the rest
+        // does not
+        let on_the_tree = [
             Feature::QueueLimit,
-            &[Feature::QueueDisciplines],
-        );
-        one("fabric", Feature::QueueDisciplines, &[Feature::QueueLimit]);
+            Feature::QueueDisciplines,
+            Feature::RateSteps,
+            Feature::LinkTraces,
+        ];
+        one("queuetree", Feature::QueueLimit, &on_the_tree);
+        one("fabric", Feature::QueueDisciplines, &on_the_tree);
         let found = declared(&probed(&[(
             "veth",
             "Error: Specified qdisc kind is unknown.",
@@ -481,8 +525,14 @@ mod tests {
     #[test]
     fn a_complete_machine_supports_every_feature() {
         let capabilities = capabilities(&Environment::complete());
+        // What a shaper of the kernel follows only in part, or not at all, is declared as that (D-091)
+        let restricted = [
+            Feature::FastRateSteps,
+            Feature::VeryFastRateSteps,
+            Feature::StalledLink,
+        ];
         for feature in Feature::ALL {
-            if PLANNED.contains(feature) {
+            if PLANNED.contains(feature) || restricted.contains(feature) {
                 continue;
             }
             assert_eq!(
@@ -491,6 +541,18 @@ mod tests {
                 "{feature:?}"
             );
         }
+        assert!(matches!(
+            capabilities.support(Feature::FastRateSteps),
+            Support::Limited { .. }
+        ));
+        assert!(matches!(
+            capabilities.support(Feature::StalledLink),
+            Support::Limited { .. }
+        ));
+        assert!(matches!(
+            capabilities.support(Feature::VeryFastRateSteps),
+            Support::Unsupported { .. }
+        ));
     }
 
     /// Canary for the list above: a feature that is planned is refused with a reason that says when, and it

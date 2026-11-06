@@ -78,7 +78,31 @@ pub enum Feature {
     /// The key `echo` of the UDP workloads: the far node sends every packet back and the result has the round trip (PRB-12, D-087).
     /// Last in the list because it was added last.
     UdpEcho,
+    /// A rate that changes during the run: a step, a state of a model, or a row of a trace that sets it (LMD-03, D-091). Last in
+    /// the list because it was added last.
+    RateSteps,
+    /// A `model` of the kind `trace`: the rate, the delay and the loss of a link over time from a file (LMD-03, D-091). Last in
+    /// the list because it was added last.
+    LinkTraces,
+    /// The rate of a direction changes at intervals below [`FAST_RATE_STEP`]: a shaper keeps up only in part (D-091). Last in the
+    /// list because it was added last.
+    FastRateSteps,
+    /// The rate of a direction changes at intervals below [`FASTEST_RATE_STEP`]: no shaper of the kernel follows (D-091). Last in
+    /// the list because it was added last.
+    VeryFastRateSteps,
+    /// A trace has a row in which nothing is delivered (a rate of 0): a shaper cannot stop (D-091). Last in the list because it was
+    /// added last.
+    StalledLink,
 }
+
+/// The rate of a direction that changes at shorter intervals than this is a feature of its own: a backend that shapes with a
+/// kernel queue follows it only in part (D-091).
+pub const FAST_RATE_STEP: netscenario_model::Duration =
+    netscenario_model::Duration::from_nanos(100_000_000);
+
+/// The rate of a direction that changes at shorter intervals than this is beyond what a kernel queue follows (D-091).
+pub const FASTEST_RATE_STEP: netscenario_model::Duration =
+    netscenario_model::Duration::from_nanos(20_000_000);
 
 impl Feature {
     /// Every feature, in the order of the coverage matrix.
@@ -112,6 +136,11 @@ impl Feature {
         Feature::TraceReplay,
         Feature::TcpWorkloads,
         Feature::UdpEcho,
+        Feature::RateSteps,
+        Feature::LinkTraces,
+        Feature::FastRateSteps,
+        Feature::VeryFastRateSteps,
+        Feature::StalledLink,
     ];
 
     /// A short stable name, for results and logs.
@@ -147,6 +176,11 @@ impl Feature {
             Feature::TraceReplay => "trace-replay",
             Feature::TcpWorkloads => "tcp-workloads",
             Feature::UdpEcho => "udp-echo",
+            Feature::RateSteps => "rate-steps",
+            Feature::LinkTraces => "link-traces",
+            Feature::FastRateSteps => "fast-rate-steps",
+            Feature::VeryFastRateSteps => "very-fast-rate-steps",
+            Feature::StalledLink => "stalled-link",
         }
     }
 
@@ -183,6 +217,11 @@ impl Feature {
             Feature::TraceReplay => "Replay of a trace of packets (times and sizes)",
             Feature::TcpWorkloads => "TCP workloads (bulk transfers, requests and responses)",
             Feature::UdpEcho => "Echo of a UDP stream (the round trip of the datagrams)",
+            Feature::RateSteps => "A rate that changes during the run (steps, models, traces)",
+            Feature::LinkTraces => "Trace-driven rate, delay and loss (CSV, Mahimahi)",
+            Feature::FastRateSteps => "Rate steps closer than 100 ms",
+            Feature::VeryFastRateSteps => "Rate steps closer than 20 ms",
+            Feature::StalledLink => "A trace row in which nothing is delivered",
         }
     }
 }
@@ -324,6 +363,41 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             if state.down.is_some() {
                 need(Feature::LinkDownUp, path);
             }
+        }
+    }
+    // A trace brings the values of its columns in steps
+    for (index, link) in scenario.topology.links.iter().enumerate() {
+        let Some(model) = &link.model else { continue };
+        let path = format!("topology.links[{index}].model");
+        for (_, trace) in model.traces() {
+            need(Feature::LinkTraces, path.clone());
+            need(Feature::ScheduledSteps, path.clone());
+            let Some(points) = &trace.points else {
+                continue;
+            };
+            if points.writes_rate() {
+                need(Feature::RateLimit, path.clone());
+            }
+            if points.writes_delay() {
+                need(Feature::FixedDelay, path.clone());
+            }
+            if points.writes_loss() {
+                need(Feature::IndependentLoss, path.clone());
+            }
+            if points.has_stalls() {
+                need(Feature::StalledLink, path.clone());
+            }
+        }
+    }
+    // A rate that changes needs a shaper that can be changed, and the faster it changes the less exactly it is followed
+    for change in scenario.rate_changes() {
+        need(Feature::RateSteps, change.path.clone());
+        match change.shortest {
+            Some(gap) if gap < FASTEST_RATE_STEP => {
+                need(Feature::VeryFastRateSteps, change.path);
+            }
+            Some(gap) if gap < FAST_RATE_STEP => need(Feature::FastRateSteps, change.path),
+            _ => {}
         }
     }
     for (index, event) in scenario.timeline.iter().enumerate() {

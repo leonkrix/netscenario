@@ -119,6 +119,7 @@ impl Backend {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(title = "netscenario scenario")]
+#[non_exhaustive]
 pub struct Scenario {
     /// The format version: 0.
     pub version: FormatVersion,
@@ -133,6 +134,15 @@ pub struct Scenario {
     /// The backend. `auto` (the default) or `kernel`.
     #[serde(default, skip_serializing_if = "Backend::is_default")]
     pub backend: Backend,
+    /// The restrictions of a backend that the scenario accepts (D-092): the ids of the features that the backend may reproduce only
+    /// in part. A feature that is not listed here is refused when the backend reproduces it only in part, and the result lists
+    /// the restrictions that were accepted.
+    #[serde(
+        default,
+        rename = "allow-limited",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub allow_limited: Vec<Name>,
     /// The nodes, the links between them and the routes.
     pub topology: Topology,
     /// What sends traffic. At least one.
@@ -144,6 +154,31 @@ pub struct Scenario {
     /// time to recover, the packets to capture. Absent if the defaults are wanted.
     #[serde(default, skip_serializing_if = "Measure::is_default")]
     pub measure: Measure,
+}
+
+impl Scenario {
+    /// A scenario with the given name, length, topology and workloads, and everything else at its default: no seed, the backend
+    /// `auto`, no timeline, no accepted restriction, the default measures. Set the other fields on the result.
+    #[must_use]
+    pub fn new(
+        name: Name,
+        duration: Duration,
+        topology: Topology,
+        workloads: Vec<Workload>,
+    ) -> Self {
+        Self {
+            version: FormatVersion,
+            name,
+            seed: None,
+            duration,
+            backend: Backend::Auto,
+            allow_limited: Vec::new(),
+            topology,
+            workloads,
+            timeline: Vec::new(),
+            measure: Measure::default(),
+        }
+    }
 }
 
 /// A link between two nodes, with the impairments of each direction.

@@ -485,6 +485,14 @@ fn duplicate_tree_refusals(
             // behind them if it has an outage, so a duplication in any state, also one that has no rate of its own,
             // is a duplicating queue next to another one
             let states = states_of(scenario, index, direction);
+            // A direction through the fabric is not a tree of `netem`: the duplicating one has a shaper below it, and the blackout
+            // is on the port of the fabric (D-079, D-091)
+            if states
+                .iter()
+                .any(|state| state.queue.is_some() || state.rate != states[0].rate)
+            {
+                continue;
+            }
             let Ok(layout) =
                 crate::netem::Layout::of(&states, outages.contains(&(index, direction)))
             else {
@@ -549,12 +557,11 @@ fn duplicate_tree_refusals(
 /// in flight and starts its random numbers over: the backend refuses it and names the step that leads to the
 /// second distribution.
 /// What the Kernel backend cannot do with a `queue` (D-079, D-082): a discipline the kernel refused as the leaf of the class
-/// (`refused` is asked with `pfifo`, `codel`, `fqcodel` or `pie`), and a link with a queue that a step changes or an outage
-/// interrupts, because the queues of such a link are built once with the link.
+/// (`refused` is asked with `pfifo`, `codel`, `fqcodel` or `pie`). The steps of the timeline and the outages work on a link with a
+/// queue (D-091): the class, the loss and the delay are changed, the leaf is not.
 fn queue_refusals(scenario: &Scenario, refused: impl Fn(&str) -> Option<String>) -> Vec<Refusal> {
     use netscenario_model::Discipline;
     let mut refusals = Vec::new();
-    let mut queued: Vec<usize> = Vec::new();
     for (index, link) in scenario.topology.links.iter().enumerate() {
         for (name, impairments) in [
             ("forward", &link.forward),
@@ -564,9 +571,6 @@ fn queue_refusals(scenario: &Scenario, refused: impl Fn(&str) -> Option<String>)
             let Some(queue) = impairments.as_ref().and_then(|i| i.queue.as_ref()) else {
                 continue;
             };
-            if !queued.contains(&index) {
-                queued.push(index);
-            }
             let (leaf, module, feature) = match queue.discipline {
                 Discipline::Fifo => ("pfifo", "sch_fifo", Feature::QueueLimit),
                 Discipline::Codel => ("codel", "sch_codel", Feature::QueueDisciplines),
@@ -584,37 +588,6 @@ fn queue_refusals(scenario: &Scenario, refused: impl Fn(&str) -> Option<String>)
                     fix: format!(
                         "the kernel needs the module `{module}` (`sudo modprobe {module}`), or the Engine backend (planned for release 0.4)"
                     ),
-                });
-            }
-        }
-    }
-    for (index, event) in scenario.timeline.iter().enumerate() {
-        let Some(link) = scenario
-            .topology
-            .links
-            .iter()
-            .position(|link| link.id == event.link)
-            .filter(|link| queued.contains(link))
-        else {
-            continue;
-        };
-        for (what, feature, present) in [
-            (
-                "a step that sets values",
-                Feature::ScheduledSteps,
-                event.set.is_some(),
-            ),
-            ("an outage", Feature::Outages, event.outage.is_some()),
-        ] {
-            if present {
-                refusals.push(Refusal {
-                    feature,
-                    path: format!("timeline[{index}]"),
-                    reason: format!(
-                        "link '{}' has a `queue`, and {what} would change a link that is built through the fabric: its queues are built once with the link",
-                        scenario.topology.links[link].id
-                    ),
-                    fix: "take the `queue` out of the link, or the step out of the timeline (`down` and `up` work on a link with a queue), or use the Engine backend (planned for release 0.4)".to_owned(),
                 });
             }
         }
@@ -1471,10 +1444,9 @@ mod tests {
         assert_eq!(queue_refusals(&scenario_of(""), refused), []);
     }
 
-    /// A link built through the fabric is built once: a step that sets values and an outage on it are refused with the name of the
-    /// link, and `down` and `up` are not (D-079). A link without a queue keeps its steps.
+    /// The steps of the timeline and the outages are not refused on a link with a queue (D-091): the tree is changed in place.
     #[test]
-    fn steps_that_change_a_link_with_a_queue_are_refused_and_down_and_up_are_not() {
+    fn steps_and_outages_on_a_link_with_a_queue_are_not_refused() {
         let timeline = |steps: &str| {
             Scenario::from_yaml(
                 &format!("{HEAD}{QUEUED}{WORKLOAD}timeline:\n{steps}"),
@@ -1483,27 +1455,13 @@ mod tests {
             .unwrap()
         };
         let none = |_: &str| None;
-        let set = timeline("  - { at: 2s, link: l, set: { forward: { rate: 1mbit } } }\n");
-        let found = queue_refusals(&set, none);
-        assert!(
-            matches!(found.as_slice(), [r] if r.feature == Feature::ScheduledSteps
-                && r.path == "timeline[0]" && r.reason.contains("link 'l'")),
-            "{found:?}"
-        );
-        let outage = timeline("  - { at: 2s, link: l, outage: 1s }\n");
-        assert!(
-            matches!(queue_refusals(&outage, none).as_slice(), [r] if r.feature == Feature::Outages)
-        );
-        let down =
-            timeline("  - { at: 2s, link: l, down: true }\n  - { at: 3s, link: l, up: true }\n");
-        assert_eq!(queue_refusals(&down, none), []);
-        // The same step on a link without a queue is the business of the other checks
-        let plain = Scenario::from_yaml(
-            &format!("{HEAD}{WORKLOAD}timeline:\n  - {{ at: 2s, link: l, set: {{ forward: {{ delay: 5ms }} }} }}\n"),
-            "t.yaml",
-        )
-        .unwrap();
-        assert_eq!(queue_refusals(&plain, none), []);
+        for steps in [
+            "  - { at: 2s, link: l, set: { forward: { rate: 1mbit } } }\n",
+            "  - { at: 2s, link: l, outage: 1s }\n",
+            "  - { at: 2s, link: l, down: true }\n  - { at: 3s, link: l, up: true }\n",
+        ] {
+            assert_eq!(queue_refusals(&timeline(steps), none), [], "{steps}");
+        }
     }
 
     /// The jitter with the distribution `normal` is refused where `tc` finds no table (D-068): in a link and in a step,

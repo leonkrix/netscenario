@@ -420,6 +420,11 @@ impl crate::scenario::Scenario {
     #[must_use]
     pub fn unresolved_files(&self) -> Vec<String> {
         let mut files = self.unresolved_table_files();
+        for file in self.unresolved_link_trace_files() {
+            if !files.contains(&file) {
+                files.push(file);
+            }
+        }
         for workload in &self.workloads {
             if let crate::Workload::TraceReplay(replay) = workload
                 && replay.trace.packets.is_none()
@@ -441,6 +446,7 @@ impl crate::scenario::Scenario {
     ) -> Vec<crate::error::Problem> {
         let mut work = self.clone();
         let mut problems = work.resolve_tables(&mut read);
+        problems.extend(work.resolve_link_traces(&mut read));
         problems.extend(work.resolve_traces(&mut read));
         if problems.is_empty() {
             *self = work;
