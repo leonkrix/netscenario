@@ -387,7 +387,8 @@ One entry for each **step** of the timeline, in the order the run did them. An e
 
 | Field | Meaning |
 | --- | --- |
-| `event` | The place of the event in `timeline` of the scenario, from 0. |
+| `event` | The place of the event in `timeline` of the scenario as the run made it, from 0: an event that repeats is its copies one after the other, and the events that the models of the links made come last (D-090). |
+| `from_model` | `true` if a model made the event and not the file. Left out when `false`. |
 | `kind` | `set`, `outage-start`, `outage-end`, `down` or `up` (D-064). The two ends of an outage are two steps, always done by the clock (`packet` is `null`); `down` and `up` have no `direction`. |
 | `link`, `direction` | The link, and `forward` or `reverse`; `null` for a step of the whole link. |
 | `scheduled_ns` | When the file says it happens, in nanoseconds from the start of the measured phase, the moment at which the workloads start. |

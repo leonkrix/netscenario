@@ -95,3 +95,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-087](decisions/D-087.md) | A UDP stream can be echoed, and the round trip is the time from the first send to the arrival of the echo | Accepted 2026-11-06 |
 | [D-088](decisions/D-088.md) | The level of a TCP workload is its goodput in a bin, and a bin counts only while the workload is working | Accepted 2026-11-06 |
 | [D-089](decisions/D-089.md) | The routes of a node name its own address as the source of what it sends | Accepted 2026-11-05 |
+| [D-090](decisions/D-090.md) | Models over time are compiled into the steps of the timeline when a run begins | Accepted 2026-11-06 |

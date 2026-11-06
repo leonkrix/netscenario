@@ -33,6 +33,7 @@ mod generators;
 mod graph;
 mod hash;
 mod ip;
+mod link_model;
 mod measure;
 mod mtu;
 mod queue;
@@ -51,6 +52,7 @@ mod trace;
 mod trace_pcap;
 pub mod units;
 mod validate;
+mod validate_model;
 
 pub use builder::ScenarioBuilder;
 pub use command::{MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ENV_ENTRIES, RESERVED_ENV_PREFIX};
@@ -61,6 +63,9 @@ pub use generators::{
 pub use graph::{Destination, Path, PathError, RouteEntry, Routes};
 pub use hash::sha256_hex;
 pub use ip::{IpFamily, IpMode};
+pub use link_model::{
+    Compiled, LinkModel, MAX_EVENTS, MAX_EVENTS_PER_LINK, ModelKind, ModelState, Uniform,
+};
 pub use measure::{
     MAX_BINS, MIN_BIN, Measure, MeasureOverrides, RecoveryBasis, RecoverySettings, SeriesSettings,
 };

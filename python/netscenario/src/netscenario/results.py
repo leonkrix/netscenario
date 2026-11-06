@@ -158,7 +158,8 @@ class TimelineStep:
     """
 
     event: int
-    """The place of the event in ``timeline`` of the scenario."""
+    """The place of the event in ``timeline`` of the scenario as the run made it: an event that
+    repeats is its copies one after the other, and the events of the models come last."""
     kind: str
     """``set``, ``outage-start``, ``outage-end``, ``down`` or ``up``."""
     link: str
@@ -177,6 +178,9 @@ class TimelineStep:
     held: float | None = None
     """For a step done at a barrier: how long the sender waited for it at the slot of that packet,
     in seconds (0 if it was done by then). ``None`` for a step done by the clock."""
+    from_model: bool = False
+    """Whether a model of the link made the step and not the file. ``event`` is then its place in
+    the timeline that the run made from the models, after the events of the file."""
 
     @property
     def lateness(self) -> float:
@@ -1157,6 +1161,7 @@ class Result:
                     applied=_seconds(e["applied_ns"]),
                     packet=e.get("packet"),
                     held=None if e.get("held_ns") is None else _seconds(e["held_ns"]),
+                    from_model=bool(e.get("from_model", False)),
                 )
                 for e in raw.get("events", ())
             ),

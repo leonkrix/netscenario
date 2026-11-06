@@ -56,6 +56,19 @@ pub fn derive_bootstrap_seed(set_seed: u64, metric: &str) -> u64 {
     mix(mix(set_seed) ^ mix(hash ^ 0x5851_f42d_4c95_7f2d))
 }
 
+/// The seed of the numbers that the model of one link draws (a Markov chain, D-090), from the seed of the scenario and the **name**
+/// of the link, not its place: a link added before it, or a model on another link, does not change its states. The name is hashed
+/// with FNV-1a (64 bit), which is fixed and published. Pinned like the others.
+#[must_use]
+pub fn derive_model_seed(scenario_seed: u64, link: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in link.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    mix(mix(scenario_seed) ^ mix(hash ^ 0x2545_f491_4f6c_dd1d))
+}
+
 /// A seed for a run whose scenario has none. It comes from the random keys that the standard library draws
 /// from the system for its hash tables, so two runs get different seeds, and the seed is recorded in the
 /// result so that the run can be repeated.
@@ -164,4 +177,13 @@ mod tests {
         11_207_990_962_961_007_184,
         15_833_557_950_962_919_465,
     ];
+
+    /// Values from an implementation of the same derivation in Python that shares nothing with this code.
+    #[test]
+    fn the_seed_of_a_model_depends_on_the_name_of_the_link_and_is_pinned() {
+        assert_eq!(derive_model_seed(0, "l"), 0x8c3f_ff19_0c9c_e449);
+        assert_eq!(derive_model_seed(1234, "sat"), 0xbe51_1a4d_2a86_db5c);
+        assert_eq!(derive_model_seed(1234, "l"), 0xceaa_13a0_d788_027c);
+        assert_eq!(derive_model_seed(1235, "sat"), 0x248a_bca1_d953_2677);
+    }
 }

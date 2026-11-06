@@ -148,7 +148,31 @@ impl Event {
             outage: None,
             down: None,
             up: None,
+            every: None,
+            until: None,
+            count: None,
         }
+    }
+
+    /// Repeats the event every `every`, until the end of the measured phase (TML-03).
+    #[must_use]
+    pub fn repeating(mut self, every: Duration) -> Self {
+        self.every = Some(every);
+        self
+    }
+
+    /// With a repeating event: stops before `until`.
+    #[must_use]
+    pub fn until(mut self, until: Duration) -> Self {
+        self.until = Some(until);
+        self
+    }
+
+    /// With a repeating event: happens `count` times in all.
+    #[must_use]
+    pub fn times(mut self, count: u32) -> Self {
+        self.count = Some(count);
+        self
     }
 
     /// At `at`, change values of `link`.

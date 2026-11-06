@@ -305,6 +305,27 @@ pub fn requirements(scenario: &Scenario) -> Vec<Requirement> {
             );
         }
     }
+    // The states of a model are asked for the same way: what a state leads to, and the outage or the `down` that it is
+    for (index, link) in scenario.topology.links.iter().enumerate() {
+        let Some(model) = &link.model else { continue };
+        for (state_index, state) in model.states.iter().enumerate() {
+            let path = format!("topology.links[{index}].model.states[{state_index}]");
+            if let Some(change) = &state.set {
+                need(Feature::ScheduledSteps, format!("{path}.set"));
+                let [forward, reverse] = link.with_change(change);
+                needs_of(&forward, &format!("{path}.set"), &mut need);
+                if reverse != forward {
+                    needs_of(&reverse, &format!("{path}.set"), &mut need);
+                }
+            }
+            if state.outage.is_some() {
+                need(Feature::Outages, path.clone());
+            }
+            if state.down.is_some() {
+                need(Feature::LinkDownUp, path);
+            }
+        }
+    }
     for (index, event) in scenario.timeline.iter().enumerate() {
         let path = format!("timeline[{index}]");
         if event.set.is_some() {

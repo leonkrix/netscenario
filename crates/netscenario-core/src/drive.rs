@@ -369,6 +369,7 @@ fn do_step(
         applied_ns: since(monotonic_ns()),
         packet,
         held_ns: None,
+        from_model: false,
     })
 }
 

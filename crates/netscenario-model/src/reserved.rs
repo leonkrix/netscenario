@@ -12,7 +12,6 @@ const RESERVED_KEYS: &[(&str, &str, &str)] = &[
     ("", "include", "0.3"),
     ("", "matrix", "0.5"),
     ("", "mobility", "0.6"),
-    ("topology.links[]", "model", "0.3"),
     ("topology.links[]", "address", "a later release"),
 ];
 
@@ -51,6 +50,7 @@ const RESERVED_VALUES: &[(&str, &str, &str)] = &[
     ("topology.links[].forward.loss.model", "trace", "0.3"),
     ("topology.links[].reverse.loss.model", "trace", "0.3"),
     ("topology.links[].both.loss.model", "trace", "0.3"),
+    ("topology.links[].model.kind", "trace", "0.3"),
 ];
 
 fn planned(what: &str, release: &str) -> String {

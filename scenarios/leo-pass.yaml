@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A low orbit satellite link as a periodic pattern (LMD-05): 40 s in view at 20 mbit, 6 s while the satellite hands over (nothing
+# is delivered), 14 s with a weaker signal (4 mbit and some loss), and again. The values of the link are what it has outside the
+# states; a state names only what it changes. `netscenario expand --seed 1` writes the events that the model makes.
+version: 0
+name: leo-pass
+seed: 4
+duration: 120s
+topology:
+  nodes: [terminal, gateway]
+  links:
+    - id: hop
+      between: [terminal, gateway]
+      both: { delay: 35ms, rate: 20mbit, queue: { limit: 100p } }
+      model:
+        kind: periodic
+        states:
+          - { id: in-view, for: 40s }
+          - { id: handover, for: 6s, outage: true }
+          - { id: weak, for: 14s, set: { both: { rate: 4mbit, loss: { model: random, p: 1% } } } }
+workloads:
+  - { id: stream, kind: udp-cbr, from: terminal, to: gateway, rate: 3mbit, packet-size: 1200b }
+measure:
+  series: { bin: 1s }

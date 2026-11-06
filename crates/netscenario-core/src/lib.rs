@@ -63,6 +63,7 @@ mod feature;
 mod files;
 mod machine;
 pub mod metrics;
+mod models;
 mod observe;
 pub mod patterns;
 mod programs;
@@ -93,6 +94,7 @@ pub use export::{write_packets, write_packets_marked, write_packets_refused};
 pub use feature::{Feature, Requirement, requirements};
 pub use files::{read_referenced, resolve_files};
 pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
+pub use models::expand_models;
 pub use netscenario_model::sha256_hex;
 pub use observe::{CancelToken, RunEvent, RunObserver};
 pub use patterns::{ExtentSummary, Jitter, LateTimeSummary, LossRuns, Reordering};
@@ -119,5 +121,6 @@ pub use runset::{
     metric_values, run_set,
 };
 pub use seed::{
-    derive_bootstrap_seed, derive_repetition_seed, derive_seed, derive_stage_seed, draw_seed,
+    derive_bootstrap_seed, derive_model_seed, derive_repetition_seed, derive_seed,
+    derive_stage_seed, draw_seed,
 };

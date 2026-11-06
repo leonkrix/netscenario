@@ -14,6 +14,7 @@ use crate::generators::{
     Generator, PhaseDistribution, TraceReplay, UdpBursty, UdpOnOff, UdpPoisson,
 };
 use crate::ip::IpFamily;
+use crate::link_model::LinkModel;
 use crate::measure::Measure;
 use crate::table::DelayTable;
 use crate::tcp::{RequestResponse, TcpBulk};
@@ -170,6 +171,10 @@ pub struct Link {
     /// The same impairments in both directions. Cannot be combined with `forward` or `reverse`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub both: Option<Impairments>,
+    /// How the link changes over time: a periodic pattern or a Markov chain (LMD-05, LMD-04, D-090). The values above are what the
+    /// link has outside the states.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<LinkModel>,
 }
 
 impl Link {
@@ -184,6 +189,7 @@ impl Link {
             forward: None,
             reverse: None,
             both: None,
+            model: None,
         }
     }
 
@@ -526,8 +532,12 @@ impl JsonSchema for True {
 /// A `set`, a `down` and an `up` are applied before the first packet that its workload sends at or after the moment
 /// (D-038), so the same seed gives the same lost packets; an `outage` is placed by the clock (D-064). Events at the
 /// same moment are applied in the order of the file.
+///
+/// New keys are added to this type in later releases: make one with the constructors of the builder or read a file. (It is
+/// `non_exhaustive` since the keys of a repeating event came, which was a break of its own.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Event {
     /// The moment, from the start of the measured phase. Before the end of it.
     pub at: Duration,
@@ -552,6 +562,16 @@ pub struct Event {
     /// The interface of the link comes up again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub up: Option<True>,
+    /// Repeats the event every so often, the first time at `at` (TML-03). Until `until` or for `count` times; with neither, until
+    /// the end of the measured phase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub every: Option<Duration>,
+    /// The moment before which the event repeats. Needs `every`; not with `count`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<Duration>,
+    /// How many times the event happens in all. Needs `every`; not with `until`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
 }
 
 /// What `set` changes, for each direction. `both` changes the two directions.

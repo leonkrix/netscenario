@@ -21,6 +21,14 @@ fuzz_target!(|data: &[u8]| {
             let again = Scenario::from_yaml(&json, "again.json")
                 .unwrap_or_else(|error| panic!("written out and refused: {error}\n{json}"));
             assert_eq!(again, scenario, "written out and read again, not the same");
+            // The models and the repeating events make events that are valid (a bound that they break is a refusal, not a panic)
+            if let Ok(compiled) = scenario.compile(&mut |_| Box::new(|| 0.5)) {
+                assert_eq!(
+                    compiled.scenario.validate(),
+                    Vec::new(),
+                    "compiled, yet not valid"
+                );
+            }
         }
         Err(error) => {
             assert!(!error.render().is_empty());

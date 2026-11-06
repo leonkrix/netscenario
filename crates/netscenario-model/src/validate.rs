@@ -59,6 +59,7 @@ impl Scenario {
         let routes = structure_ok.then(|| self.topology.routes());
         self.check_workloads(&nodes, nodes_ok, routes.as_ref(), &mut problems);
         self.check_timeline(&mut problems);
+        self.check_models(&mut problems);
         self.check_measure(&mut problems);
         problems
     }
@@ -1025,18 +1026,41 @@ impl Scenario {
                 problems.push(unknown_link(&event.link, &ids, format!("{base}.link")));
             }
             check_actions(event, &base, problems);
+            crate::validate_model::check_repeats(event, &base, self.duration, problems);
+        }
+        // An event that repeats is its copies, each one a place in the walk (the problem names the event of the file)
+        let mut expanded: Vec<(usize, Event)> = Vec::new();
+        for (index, event) in self.timeline.iter().enumerate() {
+            let valid = event.every.is_none_or(|every| !every.is_zero())
+                && !(event.until.is_some() && event.count.is_some());
+            match crate::link_model::repeated(event, self.duration) {
+                Ok(copies) if valid => {
+                    expanded.extend(copies.into_iter().map(|copy| (index, copy)));
+                }
+                Ok(_) => expanded.push((index, event.clone())),
+                Err(problem) => {
+                    problems.push(problem.at_path(format!("timeline[{index}].every")));
+                    expanded.push((index, event.clone()));
+                }
+            }
         }
         // The steps in time order (events at one moment in the order of the file) lead through states
-        let mut order: Vec<usize> = (0..self.timeline.len()).collect();
-        order.sort_by_key(|index| (self.timeline[*index].at, *index));
+        let mut order: Vec<usize> = (0..expanded.len()).collect();
+        order.sort_by_key(|index| (expanded[*index].1.at, *index));
         for link in &self.topology.links {
-            self.walk_link(link, &order, problems);
+            Self::walk_link(link, &expanded, &order, self.duration, problems);
         }
     }
 
     /// The states of one link after each step: the impairments must stay valid, an outage must not overlap
     /// another, and a link goes down only if it is up.
-    fn walk_link(&self, link: &Link, order: &[usize], problems: &mut Vec<Problem>) {
+    fn walk_link(
+        link: &Link,
+        events: &[(usize, Event)],
+        order: &[usize],
+        duration: Duration,
+        problems: &mut Vec<Problem>,
+    ) {
         let start = |own: &Option<Impairments>| {
             own.clone()
                 .or_else(|| link.both.clone())
@@ -1048,8 +1072,9 @@ impl Scenario {
             is_down: false,
             windows: Vec::new(),
         };
-        for &index in order {
-            let event = &self.timeline[index];
+        for &position in order {
+            let (index, event) = &events[position];
+            let index = *index;
             if event.link != link.id {
                 continue;
             }
@@ -1058,7 +1083,7 @@ impl Scenario {
                 state.step_set(change, &base, problems);
             }
             if let Some(length) = event.outage {
-                state.step_outage(event, length, self.duration, index, problems);
+                state.step_outage(event, length, duration, index, problems);
             }
             if event.down.is_some() {
                 if state.is_down {
@@ -1397,7 +1422,11 @@ fn check_queue(impairments: &Impairments, base: &str, problems: &mut Vec<Problem
     }
 }
 
-fn check_impairments(impairments: &Impairments, base: &str, problems: &mut Vec<Problem>) {
+pub(crate) fn check_impairments(
+    impairments: &Impairments,
+    base: &str,
+    problems: &mut Vec<Problem>,
+) {
     check_queue(impairments, base, problems);
     if let Some(Loss::Markov4 { p13, p14, .. }) = &impairments.loss {
         check_sum("p13", *p13, "p14", *p14, &format!("{base}.loss"), problems);

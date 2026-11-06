@@ -31,6 +31,9 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [tcp-multipath.yaml](tcp-multipath.yaml) | Sixteen TCP connections over two paths of 4 and 8 mbit with the weights 1 and 2: together they carry the sum of the rates |
 | [tcp-multipath-weights.yaml](tcp-multipath-weights.yaml) | 32 light connections over two paths with the weights 1 and 7: the share of the slow path, counted by `capture` |
 | [tcp-queue.yaml](tcp-queue.yaml) | Two reno connections over a bottleneck with CoDel: the time in the queue stays near the target, where a FIFO of the same size keeps most of a second |
+| [leo-pass.yaml](leo-pass.yaml) | A periodic model (LMD-05): a link of 20 mbit that is in view for 40 s, loses everything for a handover of 6 s and is weak for 14 s, and again |
+| [signal-states.yaml](signal-states.yaml) | A Markov chain of three signal states with the chances of the next one (LMD-04): the same seed gives the same states and the same lost packets |
+| [flapping-link.yaml](flapping-link.yaml) | Events that repeat (TML-03): an outage of 400 ms every 10 s, and a rate that halves every 20 s |
 | [star-and-chain.yaml](star-and-chain.yaml) | The `star` shortcut with values for each link, and how the `chain` and `multipath` shortcuts are written |
 | [trace-replay.yaml](trace-replay.yaml) | A recorded call ([call.csv](call.csv): the moments and sizes of 695 packets) sent through a link of 2 mbit with a queue |
 | [jitter-from-samples.yaml](jitter-from-samples.yaml) | A jitter that takes its shape from a file of measured round trips ([round-trips.txt](round-trips.txt)), read when the scenario is loaded |
