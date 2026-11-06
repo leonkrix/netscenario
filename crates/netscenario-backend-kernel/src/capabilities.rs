@@ -62,7 +62,7 @@ const FAST_RATE_STEPS: &str = "the rate is a shaper of the kernel that is change
 const VERY_FAST_RATE_STEPS: &str = "a shaper of the kernel delivers 17 % fewer bytes than the rate says at steps of 5 ms and 41 % fewer at 2 ms; below 20 ms it does not follow the rate";
 
 /// What the Kernel backend does with a row of a trace in which nothing is delivered (D-091).
-const STALLED_LINK: &str = "a shaper of the kernel cannot stop, so a row without a delivery is the rate at which one frame of 1,514 bytes is delivered in the row, and the packet at the head of the queue may leave up to one row late";
+const STALLED_LINK: &str = "a shaper of the kernel cannot stop, so a row without a delivery is the rate at which one frame of 1,514 bytes is delivered in the row, and a stall may last up to one row longer than the trace says (a second frame leaves if the step that ends the stall is applied late, and its cost is paid after the rate has returned)";
 
 /// What the probe of `doctor` found out about the kernel and `tc` of this machine (D-068): for each thing a scenario
 /// can need, whether it was accepted or what was answered. The version of `tc` says what it should know; the probe says

@@ -10,10 +10,12 @@ def parse_scenario(
     source_name: str,
     base_dir: str | None = None,
     allow_outside_files: bool = False,
+    params: list[tuple[str, str]] | None = None,
 ) -> str:
     """Read and check a scenario; return it as canonical JSON. Raises ``ScenarioError``.
 
-    The files the scenario refers to are read from ``base_dir`` and become part of the result.
+    The files the scenario refers to or includes are read from ``base_dir``; what is made of the
+    files it refers to becomes part of the result. ``params`` are the values of its parameters.
     """
 
 def needs(text: str, source_name: str) -> list[str]:

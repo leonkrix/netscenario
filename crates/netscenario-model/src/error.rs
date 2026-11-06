@@ -15,14 +15,27 @@ pub struct Location {
     pub column: usize,
 }
 
+/// Where a value was written when it is not in the scenario file itself: in a file that the scenario includes, or in a template
+/// (D-093).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct Origin {
+    /// The file that the location is in, if it is not the scenario file.
+    pub(crate) file: Option<String>,
+    /// The places of use that led to the value, from the inside out: `used from scenario.yaml:12:5 (template `access`)`.
+    pub(crate) chain: Vec<String>,
+}
+
 /// One thing that is wrong with a scenario.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Problem {
     /// The path of the value in the scenario (`topology.links[0].between[1]`), if the problem is about a
     /// value of the contents.
     pub path: Option<String>,
     /// Where it is in the file, if the scenario was read from a file.
     pub location: Option<Location>,
+    /// Where the value was written, if that is not the scenario file itself or if it was made by a template (D-093).
+    pub(crate) origin: Option<Box<Origin>>,
     /// How many characters the mark under the place covers.
     pub length: usize,
     /// What is wrong: what was found and what was expected.
@@ -38,6 +51,7 @@ impl Problem {
         Self {
             path: None,
             location: None,
+            origin: None,
             length: 1,
             message: message.into(),
             help: None,
@@ -48,6 +62,27 @@ impl Problem {
     #[must_use]
     pub fn at_path(mut self, path: impl Into<String>) -> Self {
         self.path = Some(path.into());
+        self
+    }
+
+    /// The file that the location is in, if it is not the scenario file itself but one that it includes (D-093).
+    #[must_use]
+    pub fn file(&self) -> Option<&str> {
+        self.origin.as_deref()?.file.as_deref()
+    }
+
+    /// The places of use that led to the value, from the inside out, if it comes from a template or an included file:
+    /// `used from scenario.yaml:12:5 (template `access`)`.
+    #[must_use]
+    pub fn chain(&self) -> &[String] {
+        self.origin.as_deref().map_or(&[], |origin| &origin.chain)
+    }
+
+    /// The same problem, written in `file` (`None`: the scenario file) and reached through the places of use `chain`.
+    #[must_use]
+    pub(crate) fn written_in(mut self, file: Option<String>, chain: Vec<String>) -> Self {
+        self.origin =
+            (file.is_some() || !chain.is_empty()).then(|| Box::new(Origin { file, chain }));
         self
     }
 
@@ -72,15 +107,28 @@ impl Problem {
 pub struct Error {
     source_name: String,
     source: String,
+    /// The files that the scenario includes, by the name that problems give them.
+    others: Vec<(String, String)>,
     problems: Vec<Problem>,
 }
 
 impl Error {
     pub(crate) fn new(source_name: &str, source: &str, problems: Vec<Problem>) -> Self {
+        Self::with_sources(source_name, source, Vec::new(), problems)
+    }
+
+    /// An error whose problems may be in the files `others` (name and text) that the scenario includes.
+    pub(crate) fn with_sources(
+        source_name: &str,
+        source: &str,
+        others: Vec<(String, String)>,
+        problems: Vec<Problem>,
+    ) -> Self {
         debug_assert!(!problems.is_empty(), "an error has at least one problem");
         Self {
             source_name: source_name.to_owned(),
             source: source.to_owned(),
+            others,
             problems,
         }
     }
@@ -94,13 +142,21 @@ impl Error {
     /// The text shown to a person: every problem with the line of the file and a mark under the place.
     #[must_use]
     pub fn render(&self) -> String {
-        let lines: Vec<&str> = self.source.lines().collect();
         let mut out = String::new();
         for (index, problem) in self.problems.iter().enumerate() {
             if index > 0 {
                 out.push('\n');
             }
-            render_problem(&mut out, problem, &self.source_name, &lines);
+            let (name, text) = match problem.file() {
+                Some(file) => self
+                    .others
+                    .iter()
+                    .find(|(name, _)| name == file)
+                    .map_or((file, ""), |(name, text)| (name.as_str(), text.as_str())),
+                None => (self.source_name.as_str(), self.source.as_str()),
+            };
+            let lines: Vec<&str> = text.lines().collect();
+            render_problem(&mut out, problem, name, &lines);
         }
         out
     }
@@ -113,6 +169,9 @@ fn render_problem(out: &mut String, problem: &Problem, source_name: &str, lines:
     let mut notes: Vec<String> = Vec::new();
     if let Some(path) = &problem.path {
         notes.push(format!("path: {path}"));
+    }
+    for used in problem.chain() {
+        notes.push(used.clone());
     }
     if let Some(help) = &problem.help {
         notes.push(format!("help: {help}"));

@@ -147,6 +147,15 @@ impl CapabilityError {
             .map_or_else(String::new, |error| error.render())
     }
 
+    /// Like [`render`](Self::render), for a scenario that was read from the file: when the scenario used parameters, templates or
+    /// includes (D-093), each refusal is shown at the line where its value was written, in the template or the included file.
+    #[must_use]
+    pub fn render_for(&self, scenario: &Scenario, source_name: &str, source: &str) -> String {
+        scenario
+            .problems_in_source(source_name, source, self.problems())
+            .map_or_else(String::new, |error| error.render())
+    }
+
     /// The refusals as problems with a path, in the form that the reading of a file uses.
     #[must_use]
     pub fn problems(&self) -> Vec<Problem> {

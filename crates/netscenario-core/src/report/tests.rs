@@ -249,6 +249,35 @@ fn the_restrictions_a_scenario_accepted_are_said_in_both_reports() {
     );
 }
 
+/// The parameters of the scenario are said in both reports, in the table with the other facts of the run, and only when there
+/// are some (D-093).
+#[test]
+fn the_parameters_of_a_scenario_are_said_in_both_reports() {
+    let Report::Run(mut run) = load("md-params", true) else {
+        panic!("a run")
+    };
+    assert!(!markdown(&Report::Run(run.clone())).contains("| Parameters |"));
+    assert!(
+        !html(&Report::Run(run.clone()))
+            .unwrap()
+            .contains("<dt>Parameters</dt>")
+    );
+    run.result.scenario.params = [("rtt", "40ms"), ("label", "<a|b>")]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
+    let text = markdown(&Report::Run(run.clone()));
+    assert!(
+        text.contains("| Parameters | label=<a\\|b>, rtt=40ms |"),
+        "{text}"
+    );
+    let page = html(&Report::Run(run)).unwrap();
+    assert!(
+        page.contains("<dt>Parameters</dt><dd>label=&lt;a|b&gt;, rtt=40ms</dd>"),
+        "{page}"
+    );
+}
+
 /// A TCP workload with two connections of which one failed, a goodput by bin and a recovery.
 fn a_tcp() -> crate::result::TcpResult {
     crate::result::TcpResult {

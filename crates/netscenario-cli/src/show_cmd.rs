@@ -9,18 +9,21 @@ use std::io::Write;
 use netscenario_model::{Destination, Impairments, Scenario, Workload};
 use serde_json::{Value, json};
 
+use crate::args::PARAM;
 use crate::args::{Parsed, Spec};
 use crate::exit;
 use crate::validate::{ALLOW_OUTSIDE_FILES, load};
 
 pub(crate) const EXPAND_HELP: &str = "\
-Usage: netscenario expand <file> [--seed <n>] [--json] [--allow-outside-files]
+Usage: netscenario expand <file> [--param <name>=<value>]... [--seed <n>] [--json] [--allow-outside-files]
 
 Prints a scenario in its long form: a shortcut of the topology (chain, star, dumbbell, multipath) becomes the nodes
 and links it makes, with their names. Comments of the file are not kept. The long form has the same canonical text and
 the same hash as the shortcut, so the run is the same. Use it to learn the names of what a shortcut made (for a route or
 an event of the timeline) and to start from a shortcut and change one link.
 
+  --param <name>=<value>  give a value to a parameter of the scenario (`params:`); the long form has the parameters, templates and
+              includes expanded, which is what a run reads
   --seed <n>  also write the models of the links and the events that repeat as the events they make with this seed, which is
               what a run with that seed does (the seed of the file if the option is left out and the file has one)
   --json    print the canonical JSON that the hash of the scenario is made of (a table made from a file of samples is in it)
@@ -30,12 +33,13 @@ Exit codes: 0 done, 2 the scenario is not valid or the file cannot be read.
 ";
 
 pub(crate) const SHOW_HELP: &str = "\
-Usage: netscenario show <file> [--format text|dot|json] [--allow-outside-files]
+Usage: netscenario show <file> [--param <name>=<value>]... [--format text|dot|json] [--allow-outside-files]
 
 Shows the network of a scenario: the nodes with their roles, the links with their values, the routes of every node (the
 automatic ones and the listed ones) and the path that the packets of each workload take. Nothing is run. The addresses are
 assigned when a run starts and are in its result.
 
+  --param <name>=<value>  give a value to a parameter of the scenario (`params:`)
   --format text   a readable listing (the default)
   --format dot    a Graphviz graph (pipe it to `dot -Tsvg`)
   --format json   all of it, for tools
@@ -45,11 +49,11 @@ Exit codes: 0 done, 2 the scenario is not valid or the file cannot be read.
 ";
 
 const EXPAND_SPEC: Spec = Spec {
-    values: &["seed"],
+    values: &["seed", PARAM],
     flags: &["json", ALLOW_OUTSIDE_FILES],
 };
 const SHOW_SPEC: Spec = Spec {
-    values: &["format"],
+    values: &["format", PARAM],
     flags: &[ALLOW_OUTSIDE_FILES],
 };
 
@@ -64,7 +68,7 @@ fn scenario_of(
         Ok(path) => path,
         Err(message) => return Err(crate::usage_error(err, command, &message, help)),
     };
-    let loaded = match load(path, parsed.flag(ALLOW_OUTSIDE_FILES)) {
+    let loaded = match load(path, parsed.flag(ALLOW_OUTSIDE_FILES), parsed.all(PARAM)) {
         Ok(loaded) => loaded,
         Err(message) => {
             let _ = writeln!(err, "netscenario: {message}");

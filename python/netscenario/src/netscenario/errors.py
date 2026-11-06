@@ -32,6 +32,12 @@ class ScenarioProblem:
     """The column in the line (counted from 1), if the scenario was read from a file."""
     help: str | None
     """How to fix it, if there is something useful to say."""
+    file: str | None = None
+    """The file that ``line`` and ``column`` are in, if it is not the scenario file itself but a
+    file that the scenario includes."""
+    chain: tuple[str, ...] = ()
+    """The places of use that led to the value, from the inside out, if it comes from a template or
+    an included file: ``used from scenario.yaml:12:5 (template `access`)``."""
 
 
 class ScenarioError(NetscenarioError):
@@ -100,11 +106,21 @@ class Cancelled(NetscenarioError):  # noqa: N818 - it is not an error of the pro
     """
 
 
+_NativeProblem = tuple[str, str | None, int | None, int | None, str | None, str | None, list[str]]
+"""A problem as the native module hands it over: message, path, line, column, help, file, chain."""
+
+
 def from_native(kind: str, message: str, details: object) -> NetscenarioError:
     """Make the exception that the native module asks for (called from Rust, not API)."""
     if kind == "scenario":
-        problems = cast("list[tuple[str, str | None, int | None, int | None, str | None]]", details)
-        return ScenarioError(message, tuple(ScenarioProblem(*problem) for problem in problems))
+        problems = cast("list[_NativeProblem]", details)
+        return ScenarioError(
+            message,
+            tuple(
+                ScenarioProblem(*problem[:5], file=problem[5], chain=tuple(problem[6]))
+                for problem in problems
+            ),
+        )
     if kind == "capability":
         backend, refusals = cast("tuple[str, list[tuple[str, str, str, str]]]", details)
         return CapabilityError(message, backend, tuple(Refusal(*refusal) for refusal in refusals))

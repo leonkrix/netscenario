@@ -62,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [scenario, units, packet, records, streams, result, metrics, runset, report, samples, traces, linktraces, captures]
+        target: [scenario, units, packet, records, streams, result, metrics, runset, report, samples, traces, linktraces, expand, captures]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

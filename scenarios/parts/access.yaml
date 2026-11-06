@@ -1,0 +1,12 @@
+# A link as a file (SCN-05, D-093): `params:` are the values it takes, `content:` is what a place of use is replaced by. The file
+# is used with `include: parts/access.yaml` and `with:`; it sees nothing of the scenario that includes it.
+params:
+  id:
+  from:
+  to:
+  rate: 10mbit
+  delay: 10ms
+content:
+  id: "{id}"
+  between: ["{from}", "{to}"]
+  both: { delay: "{delay}", rate: "{rate}" }

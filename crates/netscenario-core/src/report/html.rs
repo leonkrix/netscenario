@@ -164,6 +164,9 @@ fn summary(out: &mut String, result: &RunResult) {
                 .unwrap_or("processor unknown")
         )
     );
+    if let Some(params) = result.scenario.params_line() {
+        let _ = write!(out, "<dt>Parameters</dt><dd>{}</dd>", escape(&params));
+    }
     out.push_str("</dl>");
     if let Some(interrupted) = result.timing.interrupted_ns {
         let _ = write!(

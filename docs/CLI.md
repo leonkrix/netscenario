@@ -34,7 +34,7 @@ Errors go to standard error, results to standard output; with `--json` standard 
 ## `run`
 
 ```text
-netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--json] [--allow-outside-files]
+netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [--param <name>=<value>]... [--json] [--allow-outside-files]
                        [--repetitions <n>] [--statistic mean|median] [--confidence <percent>]
                        [--bin <duration>] [--recovery-basis send|arrival] [--recovery-baseline <bins>]
                        [--recovery-window <bins>] [--recovery-fraction <percent>]
@@ -59,6 +59,7 @@ What a run measures is in the scenario, in the section `measure` ([SCENARIO-FORM
 | `--statistic mean\|median` | With `--repetitions`: what the interval is around. Default `mean`. |
 | `--confidence <percent>` | With `--repetitions`: the level of the interval, above 0 and below 100 (`95` or `95%`). Default 95. |
 | `--json` | Print `result.json` (with `--repetitions`: `runset.json`) on standard output instead of the summary. The file is written either way. |
+| `--param <name>=<value>` | Give a value to a parameter of the scenario (`params:` in the file), as often as there are parameters; `--param flows=4 --param rtt=100ms`. A name that is not declared, or a value of another kind than the default, is refused; a parameter without a default must be given. The result records the values (`scenario.params`) and they are part of the hash (D-093). Also for `validate`, `expand`, `show` and, for the file of `--scenario`, `replay`. |
 | `--allow-outside-files` | Let the scenario read the files it refers to (a file of delay samples for a jitter) from outside the directory of the scenario file. Without it a path that leads out of that directory is refused (D-083). Also for `validate`, `expand`, `show` and `replay --scenario`. |
 
 **Ctrl-C** (or SIGTERM) while the workloads run stops them, waits for the packets that are still in the network (the settle time), writes the result of the part that ran and exits with 130 (143). The summary says how long it ran, and `result.json` has `timing.interrupted_ns`. The steps of the timeline that were not due are not done, and the packets that were not sent are not lost: the result counts what the senders sent. **Ctrl-C a second time quits at once**; the network is removed all the same (D-022). The supervisor, the nodes and the agents are in a process group of their own, so the signal of the terminal reaches the program only and the run can stop in an orderly way (D-066).
@@ -106,7 +107,7 @@ Makes a report from a result directory: a run (`--out` of `run`) or a set of run
 ## `validate`
 
 ```text
-netscenario validate <file> [--json] [--allow-outside-files]
+netscenario validate <file> [--param <name>=<value>]... [--json] [--allow-outside-files]
 ```
 
 Checks the syntax, the keys, every value with its unit, and the rules between values. A valid scenario prints its name, the number of nodes, links and workloads, the duration and the features it needs (the rows of [COVERAGE.md](COVERAGE.md) that a backend has to reproduce). A faulty one prints every problem with the line, the column, the path and a hint, and exits with 2.
@@ -121,7 +122,7 @@ With `--json` the answer is one JSON object on standard output:
 {"valid":false,"file":"bad.yaml","problems":[{"message":"the node 'sever' does not exist","path":"topology.links[0].between[1]","line":8,"column":20,"help":"did you mean 'server'? the nodes are: a, server"}]}
 ```
 
-`line`, `column`, `path` and `help` are `null` when a problem has none (a problem about the file as a whole has no line).
+`line`, `column`, `path` and `help` are `null` when a problem has none (a problem about the file as a whole has no line). `file` is the file that `line` and `column` are in when it is not the scenario file but a file it includes or a template, and `chain` lists the places of use that led to the value (`used from scenario.yaml:12:5 (file 'parts/access.yaml')`), from the inside out; both are `null` and empty otherwise (D-093).
 
 ## `expand` and `show`
 

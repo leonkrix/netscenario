@@ -63,6 +63,19 @@ scenario = (
 
 Values with a unit are strings, as in the file (`"40ms"`, `"10mbit"`, `"1200b"`, `"1%"`): a bare number is refused, because `40` could be 40 seconds or 40 milliseconds. The built scenario above is equal to the one in `scenarios/lte-like.yaml` (a test compares them). `scenario.needs()` lists the features a backend has to reproduce; `scenario.with_seed(7)` gives a copy; `scenario.data` is the canonical form as a plain `dict`.
 
+### Parameters and includes
+
+A file with `params:`, `templates:` or `include:` ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#parameters-templates-and-includes)) is read the same way. The values of its parameters are given as `params`, by name, in `Scenario.load`, `Scenario.from_yaml` and `ns.run`; the others keep their defaults, and a parameter without a default must be given:
+
+```python
+scenario = ns.Scenario.load("scenarios/parameters.yaml", params={"rtt": "100ms", "rate": "2mbit"})
+slow = scenario.with_params(rate="1mbit")               # the file is read again; the other values stay
+result = ns.run("scenarios/parameters.yaml", params={"share": 0.5})
+result.scenario_params                                   # {"rate": "10mbit", "rtt": "40ms", "share": "0.5"}
+```
+
+A value is a string as the file writes it (`"40ms"`), or a number or a bool; the kind has to be that of the default. `Scenario.params` is the record of the values, and `Scenario.data` and `to_json()` are the scenario after the expansion, which is what is hashed and replayed. An included file is read from the directory of the file (`load`; with `from_yaml`, give `base_dir`). A problem in a template or an included file has `ScenarioProblem.file` and `.chain` besides the line: the file the line is in, and the places of use that led there.
+
 ## Results
 
 `ns.run` returns a frozen `Result` whose numbers are in **SI units**: times in seconds, rates in bits per second, sizes in bytes, ratios from 0 to 1. The fields are those of `result.json` ([RESULTS.md](RESULTS.md)).

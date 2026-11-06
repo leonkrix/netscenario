@@ -133,7 +133,7 @@ spikes:
     bash spikes/run-all.sh
 
 # Fuzz one parser for a while (D-045; needs `rustup toolchain install nightly` and `cargo install --locked cargo-fuzz`).
-# target is scenario, units, packet, records, streams, result, metrics, runset, report, samples, traces, linktraces or captures. Inputs that crash it are kept in fuzz/artifacts/<target>/.
+# target is scenario, units, packet, records, streams, result, metrics, runset, report, samples, traces, linktraces, expand or captures. Inputs that crash it are kept in fuzz/artifacts/<target>/.
 fuzz target seconds="60":
     #!/usr/bin/env bash
     set -euo pipefail

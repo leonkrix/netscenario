@@ -1,0 +1,12 @@
+version: 0
+name: t
+duration: 10s
+templates:
+  access:
+    content: { id: l, between: [a, b] }
+topology:
+  nodes: [a, b]
+  links:
+    - use: acces
+workloads:
+  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }

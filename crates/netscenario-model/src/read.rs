@@ -1,8 +1,11 @@
 //! Reading a scenario from a file.
 
+use std::sync::Arc;
+
 use serde_saphyr::{MergeKeyPolicy, Options};
 
 use crate::error::{Error, Location, Problem};
+use crate::expand::{self, LoadOptions, Origins};
 use crate::required;
 use crate::reserved;
 use crate::scenario::Scenario;
@@ -38,10 +41,27 @@ impl Scenario {
     /// or a rule that the contents break (a node that does not exist). Each problem has the line and column,
     /// and those about the contents have the path of the value.
     pub fn from_yaml(text: &str, source_name: &str) -> Result<Self, Error> {
-        let fail = |problems: Vec<Problem>| Error::new(source_name, text, sorted(problems));
+        Self::from_yaml_with(text, source_name, &LoadOptions::new())
+    }
+
+    /// Reads a scenario like [`Scenario::from_yaml`], with the values of its parameters and the source of the files it includes
+    /// (SCN-05, D-093). A file that uses no parameter, template or include reads as it is; one that does is expanded first, and
+    /// what is checked is the scenario that results. A problem is shown at the line where its value was written, which may be in
+    /// a template or an included file, with the places of use that led to it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::from_yaml`], and a parameter that has no value or is not declared, an expression that cannot be
+    /// evaluated, a template or file that cannot be found or read, a cycle, and the limits of the expansion.
+    pub fn from_yaml_with(
+        text: &str,
+        source_name: &str,
+        load: &LoadOptions<'_>,
+    ) -> Result<Self, Error> {
+        let early = |problems: Vec<Problem>| Error::new(source_name, text, sorted(problems));
 
         if text.len() > MAX_FILE_BYTES {
-            return Err(fail(vec![
+            return Err(early(vec![
                 Problem::new(format!(
                     "the file is larger than {MAX_FILE_BYTES} bytes ({} bytes)",
                     text.len()
@@ -50,12 +70,29 @@ impl Scenario {
             ]));
         }
         if text.trim().is_empty() {
-            return Err(fail(vec![
+            return Err(early(vec![
                 Problem::new("the file is empty").with_help("a scenario starts with `version: 0`"),
             ]));
         }
 
-        let (index, mut problems) = source::index(text);
+        // Parameters, templates and includes, if the file has them: what is checked below is the text they make
+        let expansion = expand::expand(text, source_name, load)?;
+        let (provenance, expanded) = match expansion {
+            Some(expansion) => (Some(Arc::new(expansion.provenance)), Some(expansion.text)),
+            None => (None, None),
+        };
+        let checked = expanded.as_deref().unwrap_or(text);
+        let fail = |problems: Vec<Problem>| match &provenance {
+            Some(provenance) => Error::with_sources(
+                source_name,
+                text,
+                provenance.other_sources(),
+                sorted(problems.into_iter().map(|p| provenance.apply(p)).collect()),
+            ),
+            None => early(problems),
+        };
+
+        let (index, mut problems) = source::index(checked);
         if problems.is_empty() && index.is_empty() && !index.is_broken() {
             return Err(fail(vec![
                 Problem::new("the file has no content, only comments")
@@ -74,7 +111,7 @@ impl Scenario {
             }
         }
 
-        let scenario: Scenario = match serde_saphyr::from_str_with_options(text, options()) {
+        let mut scenario: Scenario = match serde_saphyr::from_str_with_options(checked, options()) {
             Ok(scenario) => scenario,
             Err(error) => return Err(fail(vec![syntax_problem(&error, &index)])),
         };
@@ -85,10 +122,40 @@ impl Scenario {
             .map(|problem| locate(problem, &index))
             .collect();
         if problems.is_empty() {
+            scenario.origins = Origins(provenance);
             Ok(scenario)
         } else {
             Err(fail(problems))
         }
+    }
+
+    /// Problems that were found after the scenario was read, such as a feature that a backend cannot reproduce, as an error with
+    /// the place of each path in the file the scenario was read from; with a scenario that was expanded (D-093), in the template
+    /// or the included file where the value was written. `None` if there are no problems.
+    #[must_use]
+    pub fn problems_in_source(
+        &self,
+        source_name: &str,
+        source: &str,
+        problems: Vec<Problem>,
+    ) -> Option<Error> {
+        let Some(provenance) = &self.origins.0 else {
+            return Error::in_source(source_name, source, problems);
+        };
+        if problems.is_empty() {
+            return None;
+        }
+        let (index, _) = crate::source::index(provenance.expanded());
+        let located = problems
+            .into_iter()
+            .map(|problem| provenance.apply(locate(problem, &index)))
+            .collect();
+        Some(Error::with_sources(
+            source_name,
+            source,
+            provenance.other_sources(),
+            sorted(located),
+        ))
     }
 }
 
@@ -140,14 +207,24 @@ fn locate(mut problem: Problem, index: &SourceIndex) -> Problem {
 }
 
 fn sorted(mut problems: Vec<Problem>) -> Vec<Problem> {
-    // The order of the file; problems at the same place by their text, so that the order never depends on a hash
+    // The order of the file, the files that it includes after it; problems at the same place by their text, so that the order
+    // never depends on a hash
     problems.sort_by_cached_key(|problem| {
         let (line, column) = problem.location.map_or((0, 0), |l| (l.line, l.column));
-        (line, column, problem.message.clone())
+        (
+            problem.file().map(str::to_owned),
+            line,
+            column,
+            problem.message.clone(),
+        )
     });
     // The links of a shortcut share the place of their values, so the same fault is found once for each link
-    problems
-        .dedup_by(|a, b| a.path == b.path && a.location == b.location && a.message == b.message);
+    problems.dedup_by(|a, b| {
+        a.path == b.path
+            && a.location == b.location
+            && a.file() == b.file()
+            && a.message == b.message
+    });
     problems
 }
 

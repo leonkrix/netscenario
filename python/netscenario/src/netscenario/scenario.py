@@ -12,6 +12,7 @@ import json
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -105,6 +106,36 @@ def _without_places(error: ScenarioError) -> ScenarioError:
     return ScenarioError("\n".join(lines), problems)
 
 
+ParamValue = str | int | float | bool
+"""What a parameter of a scenario can be given: ``"40ms"``, ``4``, ``0.5``, ``True``."""
+
+
+def _param_text(name: str, value: ParamValue) -> str:
+    """The text of a parameter value, as the file would write it."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        text = repr(value)
+        if "e" in text:
+            # The shortest text that reads back, without an exponent, which no scenario reads
+            text = format(Decimal(text), "f")
+            text = text.rstrip("0").rstrip(".") if "." in text else text
+        if text in {"inf", "-inf", "nan"}:
+            msg = f"the parameter {name!r} is {text}, which is no value of a scenario"
+            raise ValueError(msg)
+        return text
+    return str(value)
+
+
+@dataclass(frozen=True)
+class _Reading:
+    """How a scenario was read, to read it again with other parameters."""
+
+    base_dir: str | None
+    allow_outside_files: bool
+    params: tuple[tuple[str, str], ...]
+
+
 class Scenario:
     """A scenario that has been read and checked.
 
@@ -112,7 +143,14 @@ class Scenario:
     :meth:`with_seed` gives a changed copy.
     """
 
-    def __init__(self, source: str, source_name: str, canonical: str) -> None:
+    def __init__(
+        self,
+        source: str,
+        source_name: str,
+        canonical: str,
+        *,
+        reading: _Reading | None = None,
+    ) -> None:
         """Hold a scenario that the core has checked.
 
         Use :meth:`load`, :meth:`from_yaml` or :meth:`builder` to make one.
@@ -121,6 +159,7 @@ class Scenario:
         self._source_name = source_name
         self._canonical = canonical
         self._data: dict[str, Any] = json.loads(canonical)
+        self._reading = reading
 
     @classmethod
     def from_yaml(
@@ -130,6 +169,7 @@ class Scenario:
         name: str = "<string>",
         base_dir: str | os.PathLike[str] | None = None,
         allow_outside_files: bool = False,
+        params: Mapping[str, ParamValue] | None = None,
     ) -> Self:
         """Read a scenario from YAML (or JSON) text.
 
@@ -137,34 +177,49 @@ class Scenario:
             text: The scenario.
             name: What messages call the text, usually the name of a file.
             base_dir: The directory that the files named in the scenario are relative to (a table
-                of delay samples). Needed only for a scenario that refers to a file; without it
-                such a scenario is refused. :meth:`load` gives the directory of the file.
+                of delay samples, an included file). Needed only for a scenario that refers to a
+                file; without it such a scenario is refused. :meth:`load` gives the directory of
+                the file.
             allow_outside_files: Let the scenario read files from outside ``base_dir``. A path that
                 leaves the directory is refused by default, so that a scenario from elsewhere
                 cannot read what is not next to it.
+            params: The values of the parameters that the scenario declares (``params:``), by
+                name: ``{"rtt": "40ms", "flows": 4}``. A parameter that is not given has its
+                default; one that has none must be given. A name that the scenario does not
+                declare, or a value of another kind than the default, is refused.
 
         Raises:
             ScenarioError: The scenario is not valid, or a file it refers to cannot be used. Every
-                problem is listed, with line, column, path and a hint.
+                problem is listed, with line, column, path and a hint; one that is in an included
+                file or a template says so (``ScenarioProblem.file`` and ``chain``).
         """
         base = None if base_dir is None else str(Path(base_dir))
+        given = [(key, _param_text(key, value)) for key, value in (params or {}).items()]
         return cls(
             text,
             name,
-            _native.parse_scenario(text, name, base, allow_outside_files),
+            _native.parse_scenario(text, name, base, allow_outside_files, given),
+            reading=_Reading(base, allow_outside_files, tuple(given)),
         )
 
     @classmethod
-    def load(cls, path: str | os.PathLike[str], *, allow_outside_files: bool = False) -> Self:
+    def load(
+        cls,
+        path: str | os.PathLike[str],
+        *,
+        allow_outside_files: bool = False,
+        params: Mapping[str, ParamValue] | None = None,
+    ) -> Self:
         """Read a scenario from a file.
 
-        The files that the scenario refers to are read from the directory of the file. What is
-        made of them (the table of a jitter) becomes part of the scenario, and
-        :meth:`to_json` holds it, so a recorded scenario needs no file.
+        The files that the scenario refers to or includes are read from the directory of the
+        file. What is made of the files that it refers to (the table of a jitter) becomes part of
+        the scenario, and :meth:`to_json` holds it, so a recorded scenario needs no file.
 
         Args:
             path: The scenario file.
             allow_outside_files: Let the scenario read files from outside its directory.
+            params: The values of the parameters of the scenario, see :meth:`from_yaml`.
 
         Raises:
             ScenarioError: The scenario is not valid, or a file it refers to cannot be used.
@@ -176,6 +231,7 @@ class Scenario:
             name=str(path),
             base_dir=file.resolve().parent,
             allow_outside_files=allow_outside_files,
+            params=params,
         )
 
     @staticmethod
@@ -207,6 +263,50 @@ class Scenario:
     def name(self) -> str:
         """The name of the scenario."""
         return str(self._data["name"])
+
+    @property
+    def params(self) -> dict[str, str]:
+        """The parameters of the scenario with the values it was made with, as text.
+
+        Empty for a scenario without parameters. It is the record that the result and the hash
+        carry: a scenario made with other values is another scenario.
+        """
+        return dict(self._data.get("params", {}))
+
+    def with_params(self, **values: ParamValue) -> Scenario:
+        """The scenario read again with other values for some of its parameters.
+
+        The values given earlier stay unless they are given again. This reads the file again
+        (the text it was read from and the files it includes); a scenario made with
+        :meth:`builder` or changed with :meth:`with_seed` has no parameters to change.
+
+        Raises:
+            ScenarioError: A value is of another kind than the default, or the scenario declares
+                no parameter of that name.
+            ValueError: The scenario cannot be read again.
+        """
+        reading = self._reading
+        if reading is None:
+            msg = (
+                "this scenario was not read from a file or text with parameters; "
+                "give the values to Scenario.load(path, params=...)"
+            )
+            raise ValueError(msg)
+        given = dict(reading.params)
+        given.update((key, _param_text(key, value)) for key, value in values.items())
+        pairs = list(given.items())
+        return Scenario(
+            self._source,
+            self._source_name,
+            _native.parse_scenario(
+                self._source,
+                self._source_name,
+                reading.base_dir,
+                reading.allow_outside_files,
+                pairs,
+            ),
+            reading=_Reading(reading.base_dir, reading.allow_outside_files, tuple(pairs)),
+        )
 
     @property
     def seed(self) -> int | None:

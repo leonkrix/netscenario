@@ -1,0 +1,14 @@
+version: 0
+name: t
+duration: 10s
+params:
+  rtt:
+  rate: 10mbit
+topology:
+  nodes: [a, b]
+  links:
+    - id: l
+      between: [a, b]
+      both: { delay: "{rtt / 2}", rate: "{rate}" }
+workloads:
+  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }

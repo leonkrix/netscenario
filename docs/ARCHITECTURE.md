@@ -65,7 +65,7 @@ The layout of the repository: a Cargo workspace plus Python packages. The two ba
 
 | Path                                | Purpose                                                           |
 | ----------------------------------- | ----------------------------------------------------------------- |
-| `crates/netscenario-model`          | Scenario types, units, validation, JSON Schema. No system access. |
+| `crates/netscenario-model`          | Scenario types, units, validation, JSON Schema, the expansion of parameters, templates and includes (D-093). No system access: the files an `include:` names come from a `FileSource` that the caller gives (the core has the one that reads a directory). |
 | `crates/netscenario-core`           | Run lifecycle, timeline, link models, statistics, results         |
 | `crates/netscenario-backend-kernel` | Namespaces, links, `netem`, cleanup                               |
 | `crates/netscenario-backend-packet` | Packet-level emulator (from 0.4)                                  |

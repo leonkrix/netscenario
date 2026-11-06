@@ -36,6 +36,9 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [flapping-link.yaml](flapping-link.yaml) | Events that repeat (TML-03): an outage of 400 ms every 10 s, and a rate that halves every 20 s |
 | [cell-drive.yaml](cell-drive.yaml) | A trace (LMD-03): the rate, the delay and the loss of a drive through a cell from a CSV file ([cell-drive.csv](cell-drive.csv)), one row every 5 s |
 | [mahimahi-walk.yaml](mahimahi-walk.yaml) | A downlink from a Mahimahi trace ([walk.mahimahi](walk.mahimahi)) in windows of 50 ms, which the Kernel backend follows only in part: the scenario accepts it with `allow-limited` |
+| [parameters.yaml](parameters.yaml) | Parameters (SCN-05): `params:` with defaults, `"{rtt / 2}"` and `"{rate * share}"` in the values, `--param rtt=100ms` on the command line. |
+| [templates.yaml](templates.yaml) | A template (SCN-05) for the link that is needed twice, used with `use:` and `with:`. |
+| [include.yaml](include.yaml) | Includes (SCN-05): a link and a list of workloads from files in [parts/](parts/). |
 | [star-and-chain.yaml](star-and-chain.yaml) | The `star` shortcut with values for each link, and how the `chain` and `multipath` shortcuts are written |
 | [trace-replay.yaml](trace-replay.yaml) | A recorded call ([call.csv](call.csv): the moments and sizes of 695 packets) sent through a link of 2 mbit with a queue |
 | [jitter-from-samples.yaml](jitter-from-samples.yaml) | A jitter that takes its shape from a file of measured round trips ([round-trips.txt](round-trips.txt)), read when the scenario is loaded |

@@ -17,8 +17,7 @@ use crate::error::{Location, Problem};
 /// How deep the nesting of a file may be.
 const MAX_DEPTH: usize = 32;
 
-const REUSE_HELP: &str =
-    "write the value out instead; reuse comes with parameters and includes in release 0.3";
+const REUSE_HELP: &str = "write the value out, or use `params:` and `templates:` (docs/SCENARIO-FORMAT.md, \"Parameters, templates and includes\")";
 
 /// What kind of node a value is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,14 +275,14 @@ enum Frame {
     },
 }
 
-fn location(span: &Span) -> Location {
+pub(crate) fn location(span: &Span) -> Location {
     Location {
         line: span.start.line(),
         column: span.start.col() + 1,
     }
 }
 
-fn length(span: &Span) -> usize {
+pub(crate) fn length(span: &Span) -> usize {
     if span.start.line() == span.end.line() {
         span.end.col().saturating_sub(span.start.col()).max(1)
     } else {

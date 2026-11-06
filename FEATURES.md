@@ -33,7 +33,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | SCN-02 | Validation with precise errors (line, column and source line for every error, the path in the file for errors of content, what was expected, how to fix it; reserved keys name their release) | M | 0.1 | done |
 | SCN-03 | Units and durations parsed strictly (`40ms`, `10mbit`, `2%`) | M | 0.1 | done |
 | SCN-04 | Scenarios built in code (Python and Rust builders), same model as the file | M | 0.1 | done (the Rust builder, and the Python builder, which gives the same canonical form as the file: a test compares them) |
-| SCN-05 | Parameters, includes and templates (reuse a link, vary a value) | S | 0.3 | planned |
+| SCN-05 | Parameters, includes and templates (reuse a link, vary a value) | S | 0.3 | done (`params:` with `--param name=value`, exact `{expressions}`, `templates:` with `use:`, files with `include:`; the expanded scenario is what is hashed, recorded and replayed, and an error names the file, the line and each place of use, D-093: `crates/netscenario-model/tests/expand.rs`, `python/netscenario/tests/test_params.py`, the fuzz target `expand`, the examples [parameters](scenarios/parameters.yaml), [templates](scenarios/templates.yaml), [include](scenarios/include.yaml)) |
 | SCN-06 | Profile library: 3G, LTE, 5G, Wi-Fi, DSL, GEO and LEO satellite, datacenter, lossy radio | S | 0.3 | planned |
 | SCN-07 | Matrices and sweeps (grids, random sampling) | S | 0.5 | planned |
 | SCN-08 | Migration between schema versions (`netscenario migrate`) | S | 0.7 | planned |

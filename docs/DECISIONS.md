@@ -98,3 +98,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-090](decisions/D-090.md) | Models over time are compiled into the steps of the timeline when a run begins | Accepted 2026-11-06 |
 | [D-091](decisions/D-091.md) | A trace is a model whose rows come from a file, and a rate that changes is a class of `htb` that is changed | Accepted 2026-11-06 |
 | [D-092](decisions/D-092.md) | A scenario accepts the restrictions of a backend one feature at a time, and the result records them | Accepted 2026-11-06 |
+| [D-093](decisions/D-093.md) | Parameters, templates and includes are expanded when a file is read, and the file stays data | Accepted 2026-11-06 |
