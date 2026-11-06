@@ -22,13 +22,15 @@ fn exception<'py>(py: Python<'py>, kind: &str, message: &str, details: Bound<'py
     }
 }
 
-/// A problem as the tuple `(message, path, line, column, help)` that the Python side takes apart.
+/// A problem as the tuple `(message, path, line, column, help, file, chain)` that the Python side takes apart.
 type ProblemTuple = (
     String,
     Option<String>,
     Option<usize>,
     Option<usize>,
     Option<String>,
+    Option<String>,
+    Vec<String>,
 );
 
 /// A scenario that is not valid: every problem with its place.
@@ -43,6 +45,8 @@ pub(crate) fn scenario(py: Python<'_>, error: &netscenario_model::Error) -> PyEr
                 problem.location.map(|l| l.line),
                 problem.location.map(|l| l.column),
                 problem.help.clone(),
+                problem.file().map(str::to_owned),
+                problem.chain().to_vec(),
             )
         })
         .collect();

@@ -24,44 +24,50 @@ fn version() -> &'static str {
 /// Reads and checks a scenario (YAML or JSON text) and returns it as canonical JSON: the keys in the order of
 /// the format, defaults left out. Raises `ScenarioError` with every problem if it is not valid.
 ///
-/// The files that the scenario refers to (a table of delay samples) are read from `base_dir` (D-083); the canonical JSON
-/// holds what is made of them. Without a `base_dir` a scenario that refers to a file is refused, because there is nowhere to
-/// look. A path that leaves `base_dir` is refused unless `allow_outside_files`.
+/// The files that the scenario refers to (a table of delay samples) and the files it includes (D-093) are read from `base_dir`
+/// (D-083); the canonical JSON holds what is made of them. Without a `base_dir` a scenario that refers to a file is refused,
+/// because there is nowhere to look. A path that leaves `base_dir` is refused unless `allow_outside_files`. `params` are the
+/// values of the parameters of the scenario, by name.
 #[pyfunction]
-#[pyo3(signature = (text, source_name, base_dir=None, allow_outside_files=false))]
+#[pyo3(signature = (text, source_name, base_dir=None, allow_outside_files=false, params=None))]
 fn parse_scenario(
     py: Python<'_>,
     text: &str,
     source_name: &str,
     base_dir: Option<&str>,
     allow_outside_files: bool,
+    params: Option<Vec<(String, String)>>,
 ) -> PyResult<String> {
-    let mut scenario =
-        Scenario::from_yaml(text, source_name).map_err(|error| errors::scenario(py, &error))?;
+    let params = params.unwrap_or_default();
+    let loaded = if let Some(base) = base_dir {
+        netscenario_core::load_scenario(
+            text,
+            source_name,
+            std::path::Path::new(base),
+            allow_outside_files,
+            &params,
+        )
+    } else {
+        let mut options = netscenario_model::LoadOptions::new();
+        for (name, value) in &params {
+            options = options.param(name, value);
+        }
+        Scenario::from_yaml_with(text, source_name, &options)
+    };
+    let scenario = loaded.map_err(|error| errors::scenario(py, &error))?;
     let wanted = scenario.unresolved_files();
     if !wanted.is_empty() {
-        if let Some(base) = base_dir {
-            netscenario_core::resolve_files(
-                &mut scenario,
-                source_name,
-                text,
-                std::path::Path::new(base),
-                allow_outside_files,
-            )
-            .map_err(|error| errors::scenario(py, &error))?;
-        } else {
-            let problems = wanted
-                .iter()
-                .map(|file| {
-                    netscenario_model::Problem::new(format!(
-                        "the scenario refers to the file '{file}', and there is no directory to look for it in"
-                    ))
-                    .with_help("read the scenario with `Scenario.load(path)`, or give `base_dir`")
-                })
-                .collect();
-            if let Some(error) = netscenario_model::Error::in_source(source_name, text, problems) {
-                return Err(errors::scenario(py, &error));
-            }
+        let problems = wanted
+            .iter()
+            .map(|file| {
+                netscenario_model::Problem::new(format!(
+                    "the scenario refers to the file '{file}', and there is no directory to look for it in"
+                ))
+                .with_help("read the scenario with `Scenario.load(path)`, or give `base_dir`")
+            })
+            .collect();
+        if let Some(error) = scenario.problems_in_source(source_name, text, problems) {
+            return Err(errors::scenario(py, &error));
         }
     }
     serde_json::to_string(&scenario).map_err(|error| {

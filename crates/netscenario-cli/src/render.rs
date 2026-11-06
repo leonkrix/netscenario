@@ -73,6 +73,9 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
             let _ = writeln!(text, "  no seed (the backend cannot apply one)");
         }
     }
+    if let Some(params) = result.scenario.params_line() {
+        let _ = writeln!(text, "  parameters {params}");
+    }
     for reason in &result.seed.not_reproducible_because {
         let _ = writeln!(
             text,
@@ -1457,6 +1460,19 @@ result: out/result.json
         assert!(summary(&result, Path::new("out")).contains(
             "  accepted restriction (fast-rate-steps): up to 2 % fewer bytes at steps of 20 ms\n"
         ));
+    }
+
+    #[test]
+    fn the_parameters_of_the_run_are_shown_and_only_when_there_are_some() {
+        let mut result = result();
+        assert!(!summary(&result, Path::new("out")).contains("parameters"));
+        result.scenario.params = [("rtt", "40ms"), ("rate", "10mbit")]
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect();
+        assert!(
+            summary(&result, Path::new("out")).contains("\n  parameters rate=10mbit, rtt=40ms\n")
+        );
     }
 
     #[test]

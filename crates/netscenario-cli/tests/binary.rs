@@ -1134,3 +1134,146 @@ fn the_expanded_scenario_needs_no_file() -> io::Result<()> {
     let _ = std::fs::remove_dir_all(root);
     Ok(())
 }
+
+// ---- parameters, templates and includes (SCN-05, D-093) ----
+
+const PARAMETERS: &str = "version: 0
+name: parameters
+duration: 5s
+params:
+  rtt: 40ms
+  flows:
+topology:
+  nodes: [client, server]
+  links:
+    - include: parts/access.yaml
+      with: { id: access, delay: \"{rtt / 2}\" }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: \"{2mbit / flows}\", packet-size: 1200b }
+";
+
+const ACCESS: &str = "params:
+  id:
+  delay: 10ms
+content:
+  id: \"{id}\"
+  between: [client, server]
+  both: { delay: \"{delay}\" }
+";
+
+#[test]
+fn a_parameter_is_given_on_the_command_line_and_the_expanded_scenario_is_shown() -> io::Result<()> {
+    let dir = work_dir("params");
+    std::fs::create_dir_all(dir.join("parts"))?;
+    std::fs::write(dir.join("parts/access.yaml"), ACCESS)?;
+    std::fs::write(dir.join("scenario.yaml"), PARAMETERS)?;
+    // It must be given
+    let missing = netscenario_in(&dir, &["validate", "scenario.yaml"])?;
+    assert_eq!(missing.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&missing.stderr);
+    assert!(
+        text.contains("this scenario needs a value for `flows`"),
+        "{text}"
+    );
+    assert!(text.contains("--param flows=<value>"), "{text}");
+    // The long form has the values in it, and the record of the parameters
+    let shown = netscenario_in(
+        &dir,
+        &[
+            "expand",
+            "scenario.yaml",
+            "--param",
+            "flows=4",
+            "--param=rtt=100ms",
+        ],
+    )?;
+    assert_eq!(
+        shown.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&shown.stderr)
+    );
+    let text = String::from_utf8_lossy(&shown.stdout);
+    assert!(text.contains("delay: 50ms"), "{text}");
+    assert!(text.contains("rate: 500kbit"), "{text}");
+    assert!(
+        text.contains("flows: '4'") || text.contains("flows: \"4\""),
+        "{text}"
+    );
+    // A wrong value, an unknown name and a word that is no name=value are refused with the way out
+    let wrong = netscenario_in(
+        &dir,
+        &[
+            "validate",
+            "scenario.yaml",
+            "--param",
+            "flows=4",
+            "--param",
+            "rtt=3mbit",
+        ],
+    )?;
+    assert_eq!(wrong.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&wrong.stderr).contains("is a duration, and a rate was given"));
+    let unknown = netscenario_in(
+        &dir,
+        &[
+            "validate",
+            "scenario.yaml",
+            "--param",
+            "flows=4",
+            "--param",
+            "rt=1ms",
+        ],
+    )?;
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("did you mean `rtt`?"));
+    let bare = netscenario_in(&dir, &["validate", "scenario.yaml", "--param", "flows"])?;
+    assert_eq!(bare.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bare.stderr).contains("is not name=value"));
+    // Canary: the same command line without the parameter is the one that failed above
+    let given = netscenario_in(&dir, &["validate", "scenario.yaml", "--param", "flows=4"])?;
+    assert_eq!(
+        given.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&given.stderr)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn a_fault_in_an_included_file_is_shown_in_that_file_with_the_place_of_the_include()
+-> io::Result<()> {
+    let dir = work_dir("include-fault");
+    std::fs::create_dir_all(dir.join("parts"))?;
+    std::fs::write(
+        dir.join("parts/access.yaml"),
+        ACCESS.replace("{delay}", "{delay / 0}"),
+    )?;
+    std::fs::write(dir.join("scenario.yaml"), PARAMETERS)?;
+    let output = netscenario_in(&dir, &["validate", "scenario.yaml", "--param", "flows=2"])?;
+    assert_eq!(output.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("error: division by zero"), "{text}");
+    assert!(text.contains("--> parts/access.yaml:7:"), "{text}");
+    assert!(
+        text.contains("= used from scenario.yaml:10:7 (file 'parts/access.yaml')"),
+        "{text}"
+    );
+    // With --json the file and the chain are in the problem
+    let json = netscenario_in(
+        &dir,
+        &["validate", "scenario.yaml", "--param", "flows=2", "--json"],
+    )?;
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let problem = &value["problems"][0];
+    assert_eq!(problem["file"], "parts/access.yaml");
+    assert!(
+        problem["chain"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("used from scenario.yaml:10:7")
+    );
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}

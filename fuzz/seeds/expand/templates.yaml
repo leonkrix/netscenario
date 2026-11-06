@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Templates (SCN-05, D-093): a link that is needed twice with other values is written once under `templates:` and used with
+# `use:`. A template sees only its own parameters, so it reads the same wherever it is used; `with:` gives the values, as
+# expressions in the scope of the place of use.
+version: 0
+name: templates
+duration: 10s
+params:
+  rtt: 40ms
+templates:
+  access:
+    params:
+      id:
+      node:
+      rate: 10mbit
+      delay: 5ms
+    content:
+      id: "{id}"
+      between: ["{node}", hub]
+      both: { delay: "{delay}", rate: "{rate}" }
+topology:
+  nodes: [near, far, { id: hub, role: router }, server]
+  links:
+    - use: access
+      with: { id: near-access, node: near, delay: "{rtt / 8}" }
+    - use: access
+      with: { id: far-access, node: far, delay: "{rtt / 2}", rate: 2mbit }
+    - { id: uplink, between: [hub, server], both: { rate: 20mbit } }
+workloads:
+  - { id: near-stream, kind: udp-cbr, from: near, to: server, rate: 1mbit, packet-size: 1200b }
+  - { id: far-stream, kind: udp-cbr, from: far, to: server, rate: 1mbit, packet-size: 1200b }

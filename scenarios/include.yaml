@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Includes (SCN-05, D-093): the pieces of a scenario that are used again live in files of their own (parts/). The paths are
+# relative to the file that includes, below the directory of the scenario unless --allow-outside-files; a file is read once.
+version: 0
+name: include
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - include: parts/access.yaml
+      with: { id: access, from: client, to: server, delay: 20ms }
+workloads:
+  - include: parts/streams.yaml
+    with: { from: client, to: server, rate: 2mbit }

@@ -7,7 +7,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use netscenario_model::Scenario;
+use netscenario_model::{FileSource, LoadOptions, Scenario};
+
+/// The files below the directory of the scenario file, as the command line reads them.
+struct Directory(PathBuf);
+
+impl FileSource for Directory {
+    fn read(&self, path: &str) -> Result<String, String> {
+        fs::read_to_string(self.0.join(path))
+            .map_err(|error| format!("cannot read '{path}': {error}"))
+    }
+}
 
 fn scenarios_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scenarios")
@@ -56,7 +66,8 @@ fn every_example_scenario_is_valid_and_survives_a_round_trip() {
     for path in files {
         let name = file_name(&path);
         let text = fs::read_to_string(&path).unwrap();
-        let scenario = Scenario::from_yaml(&text, &name)
+        let files = Directory(path.parent().unwrap().to_owned());
+        let scenario = Scenario::from_yaml_with(&text, &name, &LoadOptions::new().files(&files))
             .unwrap_or_else(|error| panic!("{name} is not valid:\n{error}"));
 
         let written = serde_saphyr::to_string(&scenario).unwrap();

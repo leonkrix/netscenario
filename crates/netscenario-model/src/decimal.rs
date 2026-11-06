@@ -60,6 +60,11 @@ pub(crate) fn split(text: &str) -> Result<(Decimal, &str), SplitError> {
 }
 
 impl Decimal {
+    /// The number as a fraction `(numerator, denominator)`, or `None` if it does not fit.
+    pub(crate) fn ratio(self) -> Option<(u128, u128)> {
+        Some((self.digits, 10u128.checked_pow(self.scale)?))
+    }
+
     /// `self * factor` as a whole number, or `None` if it is not whole or does not fit into 64 bits.
     pub(crate) fn times_whole(self, factor: u64) -> Result<u64, NotWhole> {
         let product = self

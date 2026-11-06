@@ -9,7 +9,7 @@ error: anchors are not part of the scenario format
  9 |       forward:
 10 |         delay: &d 40ms
    |                   ^^^^
-   = help: write the value out instead; reuse comes with parameters and includes in release 0.3
+   = help: write the value out, or use `params:` and `templates:` (docs/SCENARIO-FORMAT.md, "Parameters, templates and includes")
 
 error: aliases are not part of the scenario format
   --> yaml-alias.yaml:12:16
@@ -17,4 +17,4 @@ error: aliases are not part of the scenario format
 11 |       reverse:
 12 |         delay: *d
    |                ^^
-   = help: write the value out instead; reuse comes with parameters and includes in release 0.3
+   = help: write the value out, or use `params:` and `templates:` (docs/SCENARIO-FORMAT.md, "Parameters, templates and includes")

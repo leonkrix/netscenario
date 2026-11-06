@@ -1,0 +1,8 @@
+# Workloads as a file: the content is a list, so its items are spliced into the list that includes it.
+params:
+  from:
+  to:
+  rate: 1mbit
+content:
+  - { id: first, kind: udp-cbr, from: "{from}", to: "{to}", rate: "{rate}", packet-size: 1200b }
+  - { id: second, kind: udp-cbr, from: "{from}", to: "{to}", rate: "{rate / 2}", packet-size: 600b }

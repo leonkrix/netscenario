@@ -278,6 +278,84 @@ fn format(value: u64, kind: &Kind) -> String {
     unreachable!("the smallest unit has factor 1 and divides every value")
 }
 
+/// The kinds of quantity that the format writes with a unit. Expressions of a scenario (D-093) compute with them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Dimension {
+    Duration,
+    Rate,
+    Size,
+    Percent,
+}
+
+impl Dimension {
+    /// What it is called in a message.
+    pub(crate) fn what(self) -> &'static str {
+        match self {
+            Self::Duration => "duration",
+            Self::Rate => "rate",
+            Self::Size => "size",
+            Self::Percent => "percentage",
+        }
+    }
+
+    fn table(self) -> Option<&'static Kind> {
+        match self {
+            Self::Duration => Some(&DURATION),
+            Self::Rate => Some(&RATE),
+            Self::Size => Some(&SIZE),
+            Self::Percent => None,
+        }
+    }
+
+    /// The smallest unit, for a message about a result that is not a whole number of it.
+    pub(crate) fn smallest(self) -> &'static str {
+        self.table()
+            .map_or("millionths of a percent", |kind| kind.smallest)
+    }
+}
+
+/// Millionths of a percent in `1%`.
+const PERCENT_UNIT: u128 = 1_000_000;
+
+/// Reads `text` as a number with one of the units of the format and returns the kind and the amount in the smallest unit as a
+/// fraction. `None` if it is not one.
+pub(crate) fn read_quantity(text: &str) -> Option<(Dimension, (u128, u128))> {
+    let (number, unit) = decimal::split(text).ok()?;
+    let (numerator, denominator) = number.ratio()?;
+    let find = |dimension: Dimension| -> Option<u128> {
+        dimension
+            .table()?
+            .units
+            .iter()
+            .find(|(name, _)| *name == unit)
+            .map(|(_, factor)| u128::from(*factor))
+    };
+    for dimension in [Dimension::Duration, Dimension::Rate, Dimension::Size] {
+        if let Some(factor) = find(dimension) {
+            return Some((dimension, (numerator.checked_mul(factor)?, denominator)));
+        }
+    }
+    (unit == "%").then_some(())?;
+    Some((
+        Dimension::Percent,
+        (numerator.checked_mul(PERCENT_UNIT)?, denominator),
+    ))
+}
+
+/// Writes an amount in the smallest unit of `dimension` the way the format prints it: the largest unit that divides it.
+pub(crate) fn write_quantity(dimension: Dimension, amount: u64) -> String {
+    if let Some(kind) = dimension.table() {
+        return format(amount, kind);
+    }
+    let (whole, fraction) = (amount / 1_000_000, amount % 1_000_000);
+    if fraction == 0 {
+        format!("{whole}%")
+    } else {
+        let digits = format!("{fraction:06}");
+        format!("{whole}.{}%", digits.trim_end_matches('0'))
+    }
+}
+
 /// Reads a string value, and says "has no unit" for a bare number instead of "invalid type".
 fn deserialize_value<'de, D, T>(
     deserializer: D,

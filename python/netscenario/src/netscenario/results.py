@@ -1048,6 +1048,9 @@ class Result:
     working. Empty if the run went as usual."""
     programs: Mapping[str, Program] = field(default_factory=lambda: MappingProxyType({}))
     """The programs of your own (``kind: command``) by id, in the order of the scenario."""
+    scenario_params: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    """The parameters of the scenario with the values the run was made with, as text. Empty for a
+    scenario without parameters."""
     captures: tuple[Capture, ...] = ()
     """The captures of the interfaces (``measure.capture``): two for each captured link, in the
     order of the list and of ``between``."""
@@ -1169,6 +1172,7 @@ class Result:
             programs=MappingProxyType(
                 {p["id"]: _program(p, directory) for p in raw.get("programs", ())}
             ),
+            scenario_params=MappingProxyType(dict(raw["scenario"].get("params", {}))),
             captures=tuple(_capture(c, directory) for c in raw.get("captures", ())),
             tcp=MappingProxyType({t["id"]: _tcp(t, directory) for t in raw.get("tcp", ())}),
             reproducibility=Reproducibility(

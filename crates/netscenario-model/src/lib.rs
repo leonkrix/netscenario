@@ -29,6 +29,7 @@ mod builder;
 mod command;
 mod decimal;
 pub mod error;
+mod expand;
 mod generators;
 mod graph;
 mod hash;
@@ -59,6 +60,7 @@ mod validate_model;
 pub use builder::ScenarioBuilder;
 pub use command::{MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ENV_ENTRIES, RESERVED_ENV_PREFIX};
 pub use error::{Error, Location, Problem};
+pub use expand::{FileSource, LoadOptions, MAX_EXPANDED_NODES, MAX_USE_DEPTH, MAX_USES};
 pub use generators::{
     Generator, Pattern, PhaseDistribution, TraceReplay, UdpBursty, UdpOnOff, UdpPoisson,
 };

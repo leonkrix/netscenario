@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Parameters (SCN-05, D-093): the values that change from run to run are declared once at the top and used as "{...}" below. Run it
+# as it is, or with other values:
+#
+#   netscenario run scenarios/parameters.yaml --param rtt=100ms --param rate=2mbit
+#
+# An expression has numbers with units, parameters and + - * /, with exact arithmetic; a calculation that does not end in a whole
+# number of the smallest unit is refused. The result records the values the run was made with.
+version: 0
+name: parameters
+duration: 10s
+params:
+  rtt: 40ms
+  rate: 10mbit
+  share: 0.8
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      both: { delay: "{rtt / 2}", rate: "{rate}", queue: { limit: 100p } }
+workloads:
+  # The stream asks for a share of the link, so a change of `rate` changes both
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: "{rate * share}", packet-size: 1200b }

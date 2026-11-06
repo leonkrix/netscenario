@@ -453,6 +453,7 @@ pub fn run(
         scenario: ScenarioInfo {
             name: scenario.name.to_string(),
             hash: crate::replay::scenario_hash(original),
+            params: original.params.clone(),
         },
         provenance: collect(&backend.describe(), started),
         seed: SeedInfo {

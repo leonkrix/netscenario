@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Includes (SCN-05, D-093): the pieces of a scenario that are used again live in files of their own (parts/). The paths are
+# relative to the file that includes, below the directory of the scenario unless --allow-outside-files; a file is read once.
+version: 0
+name: include
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - include: parts/access.yaml
+      with: { id: access, from: client, to: server, delay: 20ms }
+workloads:
+  - include: parts/streams.yaml
+    with: { from: client, to: server, rate: 2mbit }
+
+====
+# A link as a file (SCN-05, D-093): `params:` are the values it takes, `content:` is what a place of use is replaced by. The file
+# is used with `include: parts/access.yaml` and `with:`; it sees nothing of the scenario that includes it.
+params:
+  id:
+  from:
+  to:
+  rate: 10mbit
+  delay: 10ms
+content:
+  id: "{id}"
+  between: ["{from}", "{to}"]
+  both: { delay: "{delay}", rate: "{rate}" }
+
+====
+# Workloads as a file: the content is a list, so its items are spliced into the list that includes it.
+params:
+  from:
+  to:
+  rate: 1mbit
+content:
+  - { id: first, kind: udp-cbr, from: "{from}", to: "{to}", rate: "{rate}", packet-size: 1200b }
+  - { id: second, kind: udp-cbr, from: "{from}", to: "{to}", rate: "{rate / 2}", packet-size: 600b }

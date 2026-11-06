@@ -9,4 +9,4 @@ error: merge keys (<<) are not part of the scenario format
  9 |       forward:
 10 |         <<: { delay: 40ms }
    |         ^^
-   = help: write the value out instead; reuse comes with parameters and includes in release 0.3
+   = help: write the value out, or use `params:` and `templates:` (docs/SCENARIO-FORMAT.md, "Parameters, templates and includes")

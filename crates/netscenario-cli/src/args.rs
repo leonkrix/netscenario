@@ -3,6 +3,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+/// The options that may be given more than once; every use is kept.
+const REPEATABLE: &[&str] = &[PARAM];
+
+/// The option that gives the value of a parameter of the scenario (D-093): `--param name=value`.
+pub(crate) const PARAM: &str = "param";
+
 /// What a command accepts.
 pub(crate) struct Spec {
     /// Options that take a value.
@@ -17,6 +23,7 @@ pub(crate) struct Parsed {
     /// The words that are not options, in order.
     pub(crate) positionals: Vec<String>,
     values: HashMap<String, String>,
+    repeated: HashMap<String, Vec<String>>,
     flags: HashSet<String>,
     /// Whether `-h` or `--help` was given.
     pub(crate) help: bool,
@@ -60,7 +67,13 @@ impl Parsed {
                         .ok_or_else(|| format!("the option --{name} needs a value"))?
                         .to_owned(),
                 };
-                if parsed.values.insert(name.to_owned(), value).is_some() {
+                if REPEATABLE.contains(&name) {
+                    parsed
+                        .repeated
+                        .entry(name.to_owned())
+                        .or_default()
+                        .push(value);
+                } else if parsed.values.insert(name.to_owned(), value).is_some() {
                     return Err(format!("the option --{name} is given twice"));
                 }
             } else {
@@ -81,6 +94,11 @@ impl Parsed {
 
     pub(crate) fn flag(&self, name: &str) -> bool {
         self.flags.contains(name)
+    }
+
+    /// Every value of an option that may be given more than once, in the order given.
+    pub(crate) fn all(&self, name: &str) -> &[String] {
+        self.repeated.get(name).map_or(&[], Vec::as_slice)
     }
 
     pub(crate) fn value(&self, name: &str) -> Option<&str> {
@@ -119,6 +137,20 @@ mod tests {
         assert!(parsed.flag("json") && !parsed.help);
         assert_eq!(parsed.value("missing"), None);
         assert!(!parsed.flag("missing"));
+    }
+
+    /// `--param` is the one option that may be given again; the others still say that they were given twice (canary).
+    #[test]
+    fn param_may_be_given_more_than_once_and_the_other_options_may_not() {
+        let spec = Spec {
+            values: &["out", PARAM],
+            flags: &[],
+        };
+        let parsed = Parsed::parse(&["--param", "a=1", "--param=b=2", "file.yaml"], &spec).unwrap();
+        assert_eq!(parsed.all(PARAM), ["a=1", "b=2"]);
+        assert_eq!(parsed.all("out"), &[] as &[String]);
+        let twice = Parsed::parse(&["--out", "x", "--out", "y"], &spec).unwrap_err();
+        assert_eq!(twice, "the option --out is given twice");
     }
 
     #[test]

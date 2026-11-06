@@ -125,14 +125,27 @@ fn a_periodic_pattern_does_what_the_same_events_written_by_hand_do() {
             "packet {n} between the outages was lost"
         );
     }
-    for n in sequence_at(3.2)..sequence_at(3.8) {
+    // An outage begins when its step is applied, which is by the clock and late on a busy machine (the result records how late: 115 ms
+    // under load were seen), and a packet that was sent just before it still takes the 20 ms of the link and 5 ms of the receiver
+    // to arrive. So nothing arrives from the lateness of the step and 25 ms after the moment of the outage to its end.
+    let began_late = |second: u64| -> f64 {
+        modelled
+            .events
+            .iter()
+            .filter(|e| e.kind == "outage-start" && e.direction.as_deref() == Some("forward"))
+            .find(|e| e.scheduled_ns / 1_000_000_000 == second)
+            .map_or(0.0, |e| (e.applied_ns - e.scheduled_ns) as f64 / 1e9)
+            + 0.025
+    };
+    for n in sequence_at(3.2_f64.max(3.0 + began_late(3)))..sequence_at(3.8) {
         assert!(!arrived.contains(&n), "packet {n} arrived in the outage");
     }
     // Nothing arrived inside either window, whatever the edges
     for record in &records {
         let at = record.receive_ns.saturating_sub(base);
         let inside = |from: u64, to: u64| {
-            at > from * 1_000_000_000 + 100_000_000 && at < to * 1_000_000_000 - 100_000_000
+            at as f64 > from as f64 * 1e9 + began_late(from) * 1e9
+                && at < to * 1_000_000_000 - 100_000_000
         };
         assert!(
             !inside(3, 4) && !inside(8, 9),

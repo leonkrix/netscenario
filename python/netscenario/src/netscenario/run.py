@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import overload
@@ -15,7 +15,7 @@ from netscenario.errors import BackendError
 from netscenario.events import RunEvent, make_event
 from netscenario.results import Result
 from netscenario.runset import RunSet
-from netscenario.scenario import Scenario
+from netscenario.scenario import ParamValue, Scenario
 
 CancelToken = _native.CancelToken
 """A request to stop a run.
@@ -45,6 +45,7 @@ def run(
     recovery_window: int | None = None,
     recovery_fraction: float | None = None,
     working_dir: str | os.PathLike[str] | None = None,
+    params: Mapping[str, ParamValue] | None = None,
 ) -> Result: ...
 
 
@@ -68,6 +69,7 @@ def run(
     recovery_window: int | None = None,
     recovery_fraction: float | None = None,
     working_dir: str | os.PathLike[str] | None = None,
+    params: Mapping[str, ParamValue] | None = None,
 ) -> RunSet: ...
 
 
@@ -90,6 +92,7 @@ def run(
     recovery_window: int | None = None,
     recovery_fraction: float | None = None,
     working_dir: str | os.PathLike[str] | None = None,
+    params: Mapping[str, ParamValue] | None = None,
 ) -> Result | RunSet:
     """Run a scenario in network namespaces and return the result, or a set of results.
 
@@ -143,6 +146,10 @@ def run(
         recovery_window: How many bins in a row have to be back at the level. Default 3.
         recovery_fraction: The share of the baseline that has to be reached again, above 0 and at
             most 1. Default 0.9.
+        params: The values of the parameters of the scenario (``params:`` in the file), by name:
+            ``{"rtt": "40ms", "flows": 4}``; the others keep their defaults. For a
+            :class:`Scenario` this reads it again (:meth:`Scenario.with_params`). The result
+            records the values (``Result.scenario_params``).
         working_dir: The directory the programs of your own (``kind: command``) run in, and that a
             relative ``ready: { file: ... }`` is counted from. Default: the directory of the
             scenario file, or the current directory for a scenario that was not read from a file.
@@ -161,7 +168,10 @@ def run(
         ValueError: An option of the series or the recovery, or the number of repetitions, the
             statistic or the level, makes no sense.
     """
-    loaded = scenario if isinstance(scenario, Scenario) else Scenario.load(scenario)
+    if isinstance(scenario, Scenario):
+        loaded = scenario.with_params(**params) if params else scenario
+    else:
+        loaded = Scenario.load(scenario, params=params)
     try:
         supervisor, agent = _binaries.find()
     except _binaries.ProgramsNotFoundError as error:

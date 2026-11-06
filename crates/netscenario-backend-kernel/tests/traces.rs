@@ -309,10 +309,17 @@ fn a_fast_trace_needs_allow_limited_and_the_result_says_it_was_accepted() {
 
 /// A row without a delivery is a stall, which a shaper cannot hold exactly: refused unless `stalled-link` is accepted, and then
 /// one frame is delivered in the row. Offered 25 mbit against 2 packets per millisecond (24.2 mbit): in 1 s the trace has nine
-/// windows of 200 packets and one of none, which is 1 packet here. Over the whole pass, from the first to the last arrival, 1,801
-/// packets arrive plus or minus the bucket and the edges (8) and the packet at the head of the queue, which keeps the cost it was
-/// given at the rate of the stall and may so leave up to one row late, moving at most one row of packets (200) across the end of
-/// the window. A link that did not follow the trace would be off by far more than that.
+/// windows of 200 packets and one of none, which is 1 packet here. Over the two passes from the first to the last arrival, 3,602
+/// packets arrive plus or minus the bucket and the edges (8).
+///
+/// A stall may last one row longer than the trace says, and that is the restriction: the frame of the stall is delivered at the
+/// start of the row and costs a row at the rate of the stall; a second frame is eligible a row later, and if the step that ends the
+/// stall is applied later than that (a fraction of a millisecond is enough, and under load it is tens), the second frame leaves at
+/// the rate of the stall and its cost, one more row, is still to be paid when the rate has returned (measured under load: the
+/// arrivals of a pass show 11, 1 and 189 packets in the bins around the stall where 11 and 190 are the rule). Each of the two stalls
+/// in the window can lose one row of packets (200) so the deficit is at most 400; a surplus is not possible but by the bucket and
+/// by a step applied late at the start of the stall, which is the lateness of the steps in the result (`slack`) times the rate for
+/// each of the two. A link that did not stall at all would deliver 4,000, 398 above the model and beyond the surplus allowed.
 #[test]
 fn a_row_without_a_delivery_is_a_stall_that_the_scenario_must_accept() {
     if !namespaces_available() || agent_exe().is_none() {
@@ -361,12 +368,16 @@ fn a_row_without_a_delivery_is_a_stall_that_the_scenario_must_accept() {
         .iter()
         .filter(|r| r.receive_ns >= from && r.receive_ns < to)
         .count() as i64;
-    // One row of packets more or less: the packet at the head of the queue keeps the cost it was given at the rate of the stall, so
-    // the row after it may begin up to a row late (measured under load: 195 packets)
-    let room = 8.0 + 200.0 + 2000.0 * slack(&result);
+    let late = 2.0 * 2000.0 * slack(&result);
+    let (upper, lower) = (3602.0 + 8.0 + late, 3602.0 - 8.0 - 400.0 - late);
+    // Canary: the surplus allowed leaves out the 4,000 of a link that does not stall, so the bound can fail
     assert!(
-        ((arrived - 3602) as f64).abs() <= room,
-        "{arrived} packets arrived in two passes, the model says 3602 (room {room})"
+        upper < 4000.0,
+        "the lateness of the steps ({late}) makes the bound useless"
+    );
+    assert!(
+        (lower..=upper).contains(&(arrived as f64)),
+        "{arrived} packets arrived in two passes, the model says 3602 (at most {upper}, at least {lower}); a link that does not stall delivers 4000"
     );
     let _ = std::fs::remove_dir_all(dir);
 }

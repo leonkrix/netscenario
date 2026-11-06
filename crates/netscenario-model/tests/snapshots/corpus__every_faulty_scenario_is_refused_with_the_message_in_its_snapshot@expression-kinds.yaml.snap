@@ -1,0 +1,12 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/expression-kinds.yaml
+---
+error: cannot add a duration and a rate
+  --> expression-kinds.yaml:12:22
+   |
+11 |       between: [a, b]
+12 |       both: { delay: "{rtt + rate}" }
+   |                      ^^^^^^^^^^^^^^
+   = help: both sides of + and - need the same kind of value

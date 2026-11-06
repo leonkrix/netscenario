@@ -349,7 +349,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{REQUIRED, TAGGED};
-    use crate::json_schema;
+    use crate::schema::typed_schema;
 
     fn strings(value: &serde_json::Value) -> BTreeSet<&str> {
         value
@@ -361,7 +361,7 @@ mod tests {
     /// The keys that the schema requires, by the name of the type, must be the keys of the table.
     #[test]
     fn the_table_matches_the_required_keys_of_the_schema() {
-        let schema: serde_json::Value = serde_json::from_str(&json_schema()).unwrap();
+        let schema = typed_schema();
         let required_of = |definition: &str| -> BTreeSet<String> {
             let node = if definition == "Scenario" {
                 &schema

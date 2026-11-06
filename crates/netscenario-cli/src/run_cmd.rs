@@ -26,13 +26,15 @@ Usage: netscenario run <file> [--out <dir>] [--seed <n>] [--settle <duration>] [
                        [--repetitions <n>] [--statistic mean|median] [--confidence <percent>]
                        [--bin <duration>] [--capture all|<link>,...] [--recovery-basis send|arrival]
                        [--recovery-baseline <bins>] [--recovery-window <bins>] [--recovery-fraction <percent>]
-                       [--allow-outside-files]
+                       [--param <name>=<value>]... [--allow-outside-files]
 
 Runs a scenario: builds the network in network namespaces, starts the agents in the nodes, lets the
 workloads run for the duration of the scenario, and writes the result. Nothing outside the namespaces
 that it creates is touched, and everything is removed afterwards, also after an error.
 
   --out <dir>          where to write the result (default: netscenario-results/<name>-<time>)
+  --param <name>=<value>  give a value to a parameter of the scenario (`params:` in the file, as often as there are
+                       parameters); the result says which values the run was made with (docs/SCENARIO-FORMAT.md)
   --seed <n>           use this seed instead of the one in the file (to repeat a run that drew its own)
   --settle <duration>  how long to wait after the last packet for the packets still in the network
                        (for example 2s; default: until the queues of the links are empty, and 0.3 s more)
@@ -87,6 +89,7 @@ pub(crate) const RUN_SPEC: Spec = Spec {
         "repetitions",
         "statistic",
         "confidence",
+        crate::args::PARAM,
     ],
     flags: &["packets", "json", crate::validate::ALLOW_OUTSIDE_FILES],
 };
@@ -282,7 +285,10 @@ impl RunObserver for ProgressLine {
 pub(crate) fn report(error: &Error, loaded: &Loaded, err: &mut impl Write) -> u8 {
     match error {
         Error::Capability(capability) => {
-            let rendered = capability.render(&loaded.name, &loaded.text);
+            let rendered = match &loaded.scenario {
+                Ok(scenario) => capability.render_for(scenario, &loaded.name, &loaded.text),
+                Err(_) => capability.render(&loaded.name, &loaded.text),
+            };
             if rendered.trim().is_empty() {
                 let _ = write!(err, "{capability}");
             } else {
@@ -368,6 +374,15 @@ fn prepared(
     Ok(scenario)
 }
 
+/// The scenario file with the values of its parameters from the command line.
+fn load_of(parsed: &Parsed, path: &str) -> Result<Loaded, String> {
+    load(
+        path,
+        parsed.flag(crate::validate::ALLOW_OUTSIDE_FILES),
+        parsed.all(crate::args::PARAM),
+    )
+}
+
 pub(crate) fn run_command<S: AsRef<str>>(
     args: &[S],
     out: &mut impl Write,
@@ -397,7 +412,7 @@ pub(crate) fn run_command<S: AsRef<str>>(
         Ok(set) => set,
         Err(message) => return crate::usage_error(err, "run", &message, RUN_HELP),
     };
-    let loaded = match load(path, parsed.flag(crate::validate::ALLOW_OUTSIDE_FILES)) {
+    let loaded = match load_of(&parsed, path) {
         Ok(loaded) => loaded,
         Err(message) => {
             let _ = writeln!(err, "netscenario: {message}");

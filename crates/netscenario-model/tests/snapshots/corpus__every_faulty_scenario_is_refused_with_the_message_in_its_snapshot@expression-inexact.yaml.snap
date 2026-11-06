@@ -1,0 +1,12 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/expression-inexact.yaml
+---
+error: the result is not a whole number of nanoseconds (it is 40000000/3)
+  --> expression-inexact.yaml:11:22
+   |
+10 |       between: [a, b]
+11 |       both: { delay: "{rtt / 3}" }
+   |                      ^^^^^^^^^^^
+   = help: the format has whole numbers of the smallest unit only; change the values so that the result is exact

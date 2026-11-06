@@ -18,7 +18,7 @@ The format is YAML 1.2; JSON is accepted because it is a subset. In addition:
 
 - One document per file, UTF-8, at most 4 MiB (the expanded form of a scenario with a trace or a table holds their packets or entries), nesting at most 32 levels deep. An empty file is an error.
 - Keys are unique inside a mapping.
-- **Anchors, aliases, merge keys (`<<`) and tags are refused.** A scenario reads the same from top to bottom. Reuse is designed on purpose in release 0.3 (parameters, includes, templates), and not through YAML features.
+- **Anchors, aliases, merge keys (`<<`) and tags are refused.** A scenario reads the same from top to bottom. Reuse is done on purpose with parameters, templates and includes ([below](#parameters-templates-and-includes)), and not through YAML features.
 - Comments are free.
 
 ## The file at a glance
@@ -74,6 +74,8 @@ workloads:
 | `duration` | yes | A Duration greater than zero. The measured phase runs from the start of the workloads to this time. The setup and the teardown are not part of it. |
 | `backend` | no | `auto` (the default) or `kernel`. `engine` and `proxy` are refused until releases 0.4 and 0.5. |
 | `allow-limited` | no | A list of ids of features: the restrictions of a backend that the scenario accepts, see [Limited features](#limited-features). |
+| `params` | no | The parameters of the scenario with their defaults, see [Parameters, templates and includes](#parameters-templates-and-includes). In the scenario that is read it holds the values the run was made with, as text. |
+| `templates` | no | Named templates of this file, see [Parameters, templates and includes](#parameters-templates-and-includes). |
 | `topology` | yes | See below. |
 | `workloads` | yes | A list with at least one workload. |
 | `timeline` | no | A list of events, see [Timeline](#timeline). |
@@ -573,13 +575,89 @@ A port is read from outside, so the program needs no help and a UDP port (which 
 
 **What the Kernel backend does with it:** [PROGRAMS.md](PROGRAMS.md) says what runs, in which order, as whom, with which variables (`NETSCENARIO_*`), how the output and the metrics (`{"metric": ..., "value": ...}` lines) are read, and what the result has. Running a scenario file that you did not write is running its programs: read the `command` entries first ([SECURITY.md](../SECURITY.md)).
 
+## Parameters, templates and includes
+
+A file that is used again and again with other numbers, or that has the same link twice, does not have to be written out (SCN-05, D-093). Three things, all done when the file is read, before anything is checked; the scenario that results is a plain scenario, and it is the one that is hashed, recorded and replayed.
+
+### Parameters
+
+```yaml
+params:
+  rtt: 40ms          # a default
+  rate: 10mbit
+  share: 0.8
+  flows:             # no default: it has to be given (--param flows=4)
+topology:
+  links:
+    - id: access
+      both: { delay: "{rtt / 2}", rate: "{rate}" }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: "{rate * share}", packet-size: 1200b }
+```
+
+- **Declared once**, in `params:` at the top: a name (lower case letters, digits and `_`, starting with a letter) and its default, or no value for a parameter that must be given. A default may use the parameters above it (`half: "{rtt / 2}"`).
+- **Given** on the command line (`--param rtt=100ms`, as often as there are parameters), in Python (`params={"rtt": "100ms"}` in `Scenario.load`, `Scenario.from_yaml`, `Scenario.with_params` and `run`), or by a template (see below). A name that is not declared is refused with the declared ones; a value has to be of the kind of the default (a duration for a duration, a number for a number, `true` or `false`; a default that is text takes anything). `netscenario show` and `expand` take `--param` too, and print the result.
+- **The result records them.** The scenario that is read has `params:` with the values as text, `result.json` has `scenario.params`, and they are part of the hash: a run with `rtt=100ms` is another scenario than one with `rtt=40ms`, also where a value changes nothing.
+
+### Expressions
+
+A scalar that is `{...}` as a whole (in quotes, because YAML reads an unquoted `{` as a mapping) is replaced by the value of the expression; the reader says so when the quotes are missing. A `{...}` inside a longer text is replaced by the text of its value (`"link-{n}"`, `"--rate={rate}"`).
+
+- **What an expression has:** numbers, quantities with the units of the format (`20ms`, `10mbit`, `1500b`, `2%`), parameter names, `+ - * /`, a minus in front, and parentheses. No functions, no text, no comparisons, no loops: a file never computes more than a conversion of units does.
+- **Exact.** The arithmetic is done with fractions of 128-bit integers; `0.1 + 0.2` is `0.3`. The result of a quantity is written in the largest unit that holds it exactly (`40ms * 3` is `120ms`, `10mbit / 4` is `2500kbit`), and one that is not a whole number of the smallest unit (`40ms / 3` is not a whole number of nanoseconds) is an error that says so, as the same value written out would be. A number without a unit is written with at most 12 digits after the point.
+- **Kinds.** `+` and `-` take two of the same kind; `*` takes a quantity and a number; `/` takes a quantity and a number, or two quantities of the same kind (the result is a number). A duration times a rate has no unit in the format and is refused. A parameter that is text or `true`/`false` can be put in as it is and is refused in arithmetic. `{rate}` alone is the parameter as it was written.
+- **What is not an expression:** `{server.addr}` (a name, a dot, a word: the address of a node in the `run` of a program, see [A program of your own](#a-program-of-your-own)), `{{...}}` (a brace written twice), and anything between braces with characters that an expression has not (`{"a": 1}`) stay as they are. A parameter can be a whole argument of a command (`"{port}"`) or be in one (`"{server.addr}:{port}"`).
+
+### Templates and includes
+
+A template is `params:` and `content:`. A place of use is replaced by the content, with the parameters bound to the values of its `with:`:
+
+```yaml
+templates:
+  access:
+    params: { id: , node: , rate: 10mbit, delay: 5ms }
+    content:
+      id: "{id}"
+      between: ["{node}", hub]
+      both: { delay: "{delay}", rate: "{rate}" }
+topology:
+  links:
+    - use: access                      # a template of this file
+      with: { id: near-access, node: near, delay: "{rtt / 8}" }
+    - include: parts/access.yaml       # a file (the same with `params:` and `content:` at its root)
+      with: { id: far-access, node: far }
+```
+
+- **A place of use** is a mapping with `use: name` (a template under `templates:` of the same file) or `include: path` (a file), and `with:`, and nothing else. It stands where a value, an item of a list, or a whole section can stand. If the content is a list and the place is an item of a list, the items are spliced in (a file of workloads). The arguments of `with:` are expressions in the scope of the place of use; each is a single value.
+- **A template sees its own parameters and nothing else**, so it reads the same wherever it is used. A parameter without a default must be given; one that is not declared, or of another kind than the default, is refused.
+- **An included file** has `params:` and `content:` at its root, and may have `templates:` for its own helpers (they are not seen from outside). It is not a scenario: no `version:`. Its path is relative to the file that includes it, below the directory of the scenario (symbolic links resolved) unless `--allow-outside-files` (D-083); it is read once, at most 4 MiB. Templates and includes may be used inside each other up to 8 levels deep; one that uses itself, directly or through others, is refused with the chain.
+- **Limits:** at most 10,000 places of use and 1,000,000 values in the expanded scenario, and the expanded text may not be longer than a file (4 MiB).
+- **Not here:** a list of values for a parameter, loops and conditions (a sweep is the matrix of release 0.5), a file that changes keys of another (a base scenario), and `expect` (its own).
+
+### Errors
+
+An error is shown where the value was written, and then each place of use that led to it, from the inside out:
+
+```
+error: cannot add a duration and a rate
+  --> parts/access.yaml:10:18
+   |
+ 9 |   between: ["{from}", "{to}"]
+10 |   both: { delay: "{delay + rate}", rate: "{rate}" }
+   |                  ^^^^^^^^^^^^^^^^
+   = used from scenario.yaml:7:7 (file 'parts/access.yaml')
+   = help: both sides of + and - need the same kind of value
+```
+
+A refusal of the backend (a feature the Kernel backend cannot reproduce) is shown the same way on the command line, at the line of the template. In Python, `ScenarioProblem.file` and `.chain` carry the same for the problems of reading the scenario; the refusal of a run is shown at the nearest line of the text the scenario was read from. The JSON Schema (`docs/schema/scenario-v0.json`) describes the file as it is written: where a value goes it also accepts a string with an expression, and where a mapping or a list goes, a place of use; so an editor does not mark such a file. The reader, not the schema, checks the scenario that results.
+
 ## Keys that are reserved
 
 These keys are not part of version 0 in release 0.2. A scenario that uses one is refused with the message "`<key>` is planned for release X (see FEATURES.md)", not with "unknown key".
 
 | Key | Planned in | Meaning |
 | --- | --- | --- |
-| `expect`, `params`, `include` | 0.3 | Assertions in the file, parameters and includes. |
+| `expect` | 0.3 | Assertions in the file. |
 | `matrix` | 0.5 | Sweeps. |
 | `mobility` | 0.6 | Positions over time. |
 | `address` (node, link) | later | Fixed addresses. |

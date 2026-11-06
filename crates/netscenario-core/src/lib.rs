@@ -92,7 +92,7 @@ pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, 
 pub use error::Error;
 pub use export::{write_packets, write_packets_marked, write_packets_refused};
 pub use feature::{FAST_RATE_STEP, FASTEST_RATE_STEP, Feature, Requirement, requirements};
-pub use files::{read_referenced, resolve_files};
+pub use files::{DirectoryFiles, load_scenario, read_referenced, resolve_files};
 pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
 pub use models::expand_models;
 pub use netscenario_model::sha256_hex;

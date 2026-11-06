@@ -10,6 +10,7 @@ use schemars::JsonSchema;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::expand::Origins;
 use crate::generators::{
     Generator, PhaseDistribution, TraceReplay, UdpBursty, UdpOnOff, UdpPoisson,
 };
@@ -143,6 +144,16 @@ pub struct Scenario {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub allow_limited: Vec<Name>,
+    /// The parameters of the scenario with the values it was made with (D-093), as text. The file declares them in `params:` with
+    /// defaults, and a run can give other values; `{name}` in the file is replaced by the value, so what is left here is the record
+    /// and takes no part in the scenario. It is part of the canonical form, so two runs with other values are other scenarios.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
+    /// Where the values of the scenario were written, if the file had parameters, templates or includes. Not part of the
+    /// scenario: it is not written, compared or hashed.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) origins: Origins,
     /// The nodes, the links between them and the routes.
     pub topology: Topology,
     /// What sends traffic. At least one.
@@ -173,6 +184,8 @@ impl Scenario {
             duration,
             backend: Backend::Auto,
             allow_limited: Vec::new(),
+            params: BTreeMap::new(),
+            origins: Origins::default(),
             topology,
             workloads,
             timeline: Vec::new(),

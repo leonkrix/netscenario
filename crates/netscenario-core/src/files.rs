@@ -9,7 +9,9 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use netscenario_model::{Error as ModelError, MAX_REFERENCED_FILE_BYTES, Scenario};
+use netscenario_model::{
+    Error as ModelError, FileSource, LoadOptions, MAX_REFERENCED_FILE_BYTES, Scenario,
+};
 
 /// Reads the files that `scenario` refers to, relative to `base` (the directory of the scenario file), and fills in what is
 /// made of them.
@@ -30,10 +32,60 @@ pub fn resolve_files(
 ) -> Result<(), ModelError> {
     let problems =
         scenario.resolve_files(|reference| read_referenced(base, reference, allow_outside));
-    match ModelError::in_source(source_name, text, problems) {
+    match scenario.problems_in_source(source_name, text, problems) {
         Some(error) => Err(error),
         None => Ok(()),
     }
+}
+
+/// The files that a scenario includes (D-093), read from a directory by the rules of D-083.
+#[derive(Debug, Clone, Copy)]
+pub struct DirectoryFiles<'a> {
+    base: &'a Path,
+    allow_outside: bool,
+}
+
+impl<'a> DirectoryFiles<'a> {
+    /// The files below `base`, the directory of the scenario file; with `allow_outside` also those outside it.
+    #[must_use]
+    pub fn new(base: &'a Path, allow_outside: bool) -> Self {
+        Self {
+            base,
+            allow_outside,
+        }
+    }
+}
+
+impl FileSource for DirectoryFiles<'_> {
+    fn read(&self, path: &str) -> Result<String, String> {
+        let bytes = read_referenced(self.base, path, self.allow_outside)?;
+        String::from_utf8(bytes)
+            .map_err(|_| format!("'{path}' is not text in UTF-8, which a scenario must be"))
+    }
+}
+
+/// Reads a scenario from its text: expands the parameters, templates and includes (D-093) with the values in `params` and the
+/// included files from `base`, and reads the files that the scenario refers to (D-083). This is what the command line and the
+/// Python package do.
+///
+/// # Errors
+///
+/// Every problem of the file, an included file, or a referenced file, as an error that renders with the lines of the files.
+pub fn load_scenario(
+    text: &str,
+    source_name: &str,
+    base: &Path,
+    allow_outside: bool,
+    params: &[(String, String)],
+) -> Result<Scenario, ModelError> {
+    let files = DirectoryFiles::new(base, allow_outside);
+    let mut options = LoadOptions::new().files(&files);
+    for (name, value) in params {
+        options = options.param(name, value);
+    }
+    let mut scenario = Scenario::from_yaml_with(text, source_name, &options)?;
+    resolve_files(&mut scenario, source_name, text, base, allow_outside)?;
+    Ok(scenario)
 }
 
 /// The content of the file that `reference` names, by the rules above.
@@ -226,6 +278,85 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("t.yaml:9:"), "{error}");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    fn including(path: &str) -> String {
+        format!(
+            "version: 0\nname: t\nduration: 5s\ntopology:\n  nodes: [client, server]\n  links:\n    - include: {path}\nworkloads:\n  - {{ id: w, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b }}\n"
+        )
+    }
+
+    const PART: &str = "content: { id: a, between: [client, server] }\n";
+
+    /// An included file follows the rules of the files a scenario refers to (D-083): inside the directory it is read, and a path
+    /// that leads out of it, by `..`, an absolute path or a link, is refused unless the caller says it is wanted.
+    #[test]
+    fn an_included_file_is_read_by_the_rules_of_the_files_a_scenario_refers_to() {
+        let outer = dir("include");
+        let base = outer.join("inner");
+        fs::create_dir_all(base.join("parts")).unwrap();
+        fs::write(base.join("parts/link.yaml"), PART).unwrap();
+        fs::write(outer.join("shared.yaml"), PART).unwrap();
+        symlink(outer.join("shared.yaml"), base.join("leak.yaml")).unwrap();
+        fs::write(base.join("binary.yaml"), [0xff, 0xfe, 0x00]).unwrap();
+        let load = |path: &str, outside: bool| {
+            load_scenario(&including(path), "t.yaml", &base, outside, &[])
+                .map(|s| s.topology.links.len())
+        };
+        assert_eq!(load("parts/link.yaml", false).unwrap(), 1);
+        for refused in ["../shared.yaml", "leak.yaml"] {
+            let error = load(refused, false).unwrap_err().render();
+            assert!(
+                error.contains("is outside the directory of the scenario file"),
+                "{refused}: {error}"
+            );
+            assert!(error.contains("t.yaml:7:"), "{error}");
+            // Canary: the same file is read where the caller allows it
+            assert_eq!(load(refused, true).unwrap(), 1, "{refused}");
+        }
+        let absolute = outer.join("shared.yaml").display().to_string();
+        assert!(
+            load(&absolute, false)
+                .unwrap_err()
+                .render()
+                .contains("it is an absolute path")
+        );
+        assert_eq!(load(&absolute, true).unwrap(), 1);
+        let error = load("binary.yaml", false).unwrap_err().render();
+        assert!(error.contains("is not text in UTF-8"), "{error}");
+        let error = load("nothing.yaml", false).unwrap_err().render();
+        assert!(
+            error.contains("cannot read 'nothing.yaml': no such file"),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(outer);
+    }
+
+    /// A parameter given to the loader is used, and a file that a scenario refers to is read as well.
+    #[test]
+    fn the_loader_gives_parameters_and_reads_the_files_a_scenario_refers_to() {
+        let base = dir("loader");
+        let samples = (0..300).fold(String::new(), |mut text, i| {
+            text.push_str(&(10 + i % 40).to_string());
+            text.push('\n');
+            text
+        });
+        fs::write(base.join("delays.txt"), samples).unwrap();
+        let text = "version: 0\nname: t\nduration: 10s\nparams:\n  base: 100ms\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      forward: { delay: \"{base}\", jitter: { amount: 20ms, distribution: table, table: { file: delays.txt } } }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\n";
+        let given = [("base".to_owned(), "70ms".to_owned())];
+        let scenario = load_scenario(text, "t.yaml", &base, false, &given).unwrap();
+        assert_eq!(scenario.params["base"], "70ms");
+        assert_eq!(scenario.unresolved_files(), Vec::<String>::new());
+        // A fault in the file of samples is shown in the scenario file
+        fs::remove_file(base.join("delays.txt")).unwrap();
+        let error = load_scenario(text, "t.yaml", &base, false, &given)
+            .unwrap_err()
+            .render();
+        assert!(
+            error.contains("cannot read 'delays.txt': no such file"),
+            "{error}"
+        );
         let _ = fs::remove_dir_all(base);
     }
 }

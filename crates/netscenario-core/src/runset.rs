@@ -548,6 +548,7 @@ pub fn run_set(
         scenario: ScenarioInfo {
             name: scenario.name.to_string(),
             hash: hash_without_seed(scenario),
+            params: scenario.params.clone(),
         },
         provenance: first.provenance.clone(),
         seed: SetSeed {

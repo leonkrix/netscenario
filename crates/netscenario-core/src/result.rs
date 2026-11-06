@@ -436,6 +436,23 @@ pub struct ScenarioInfo {
     /// `sha256:` and the SHA-256 of the scenario in its canonical JSON form (the keys in the order of the
     /// format, defaults left out), so a change of the comments or the layout of the file does not change it.
     pub hash: String,
+    /// The parameters of the scenario and the values the run was made with (D-093); empty for a scenario without parameters.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub params: std::collections::BTreeMap<String, String>,
+}
+
+impl ScenarioInfo {
+    /// The parameters as `name=value, name=value` in the order of their names, or `None` for a scenario without parameters.
+    #[must_use]
+    pub fn params_line(&self) -> Option<String> {
+        (!self.params.is_empty()).then(|| {
+            self.params
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+    }
 }
 
 /// The seed of the run (ENV-01).
@@ -916,6 +933,7 @@ pub(crate) mod tests {
             scenario: ScenarioInfo {
                 name: "t".to_owned(),
                 hash: "sha256:00".to_owned(),
+                params: std::collections::BTreeMap::new(),
             },
             provenance: Provenance {
                 netscenario: "0.0.0".to_owned(),
