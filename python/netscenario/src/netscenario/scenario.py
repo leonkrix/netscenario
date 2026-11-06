@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Self
@@ -304,6 +304,7 @@ class ScenarioBuilder:
         both: Impairments | None = None,
         forward: Impairments | None = None,
         reverse: Impairments | None = None,
+        model: Mapping[str, Any] | None = None,
     ) -> Self:
         """Add a link between two nodes.
 
@@ -315,11 +316,16 @@ class ScenarioBuilder:
                 ``reverse``.
             forward: The values for the direction from ``first`` to ``second``.
             reverse: The values for the way back.
+            model: How the link changes over time, written as the ``model`` key of a link is in the
+                file (``{"kind": "periodic", "states": [...]}`` or a ``"markov"`` chain). The values
+                above are what the link has outside the states.
         """
         link: dict[str, Any] = {"id": id, "between": [first, second]}
         for key, impairments in (("both", both), ("forward", forward), ("reverse", reverse)):
             if impairments is not None:
                 link[key] = impairments.to_data()
+        if model is not None:
+            link["model"] = dict(model)
         self._links.append(link)
         return self
 

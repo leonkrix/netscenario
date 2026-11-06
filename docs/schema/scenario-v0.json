@@ -381,11 +381,20 @@
     },
     "Event": {
       "additionalProperties": false,
-      "description": "One event of the timeline: at a moment, one thing happens to a link. It does exactly one of `set`,\n`outage`, `down` and `up`.\n\nA `set`, a `down` and an `up` are applied before the first packet that its workload sends at or after the moment\n(D-038), so the same seed gives the same lost packets; an `outage` is placed by the clock (D-064). Events at the\nsame moment are applied in the order of the file.",
+      "description": "One event of the timeline: at a moment, one thing happens to a link. It does exactly one of `set`,\n`outage`, `down` and `up`.\n\nA `set`, a `down` and an `up` are applied before the first packet that its workload sends at or after the moment\n(D-038), so the same seed gives the same lost packets; an `outage` is placed by the clock (D-064). Events at the\nsame moment are applied in the order of the file.\n\nNew keys are added to this type in later releases: make one with the constructors of the builder or read a file. (It is\n`non_exhaustive` since the keys of a repeating event came, which was a break of its own.)",
       "properties": {
         "at": {
           "$ref": "#/$defs/Duration",
           "description": "The moment, from the start of the measured phase. Before the end of it."
+        },
+        "count": {
+          "description": "How many times the event happens in all. Needs `every`; not with `until`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "direction": {
           "anyOf": [
@@ -408,6 +417,17 @@
             }
           ],
           "description": "The interface of the link goes down: the sender gets errors (D-039)."
+        },
+        "every": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Repeats the event every so often, the first time at `at` (TML-03). Until `until` or for `count` times; with neither, until\nthe end of the measured phase."
         },
         "link": {
           "$ref": "#/$defs/Name",
@@ -434,6 +454,17 @@
             }
           ],
           "description": "Changes values of the link from this moment on. A key that is not written stays as it is, and `null`\ntakes the impairment away (the rule of a JSON merge patch)."
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The moment before which the event repeats. Needs `every`; not with `count`."
         },
         "up": {
           "anyOf": [
@@ -799,6 +830,17 @@
           "$ref": "#/$defs/Name",
           "description": "The name of the link."
         },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkModel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the link changes over time: a periodic pattern or a Markov chain (LMD-05, LMD-04, D-090). The values above are what the\nlink has outside the states."
+        },
         "mtu": {
           "description": "The MTU of the interface at both ends of the link, in bytes (D-081). 1500 by default. A datagram that does not fit\nthe first link of its path is cut into fragments by the sender; later links must carry those whole.",
           "format": "uint32",
@@ -823,6 +865,57 @@
       "required": [
         "id",
         "between"
+      ],
+      "type": "object"
+    },
+    "LinkModel": {
+      "additionalProperties": false,
+      "description": "How a link changes over time: a periodic pattern or a Markov chain of states.\n\nThe keys of one kind are refused in the other, each at its own line. New keys are added to this type in later releases:\nread a file to make one.",
+      "properties": {
+        "begin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the model begins, from the start of the measured phase. Before that the link is what the file says. Default `0s`."
+        },
+        "kind": {
+          "$ref": "#/$defs/ModelKind",
+          "description": "`periodic` or `markov`."
+        },
+        "repeat": {
+          "description": "Periodic only: whether the list of states begins again when it is over (the default), or the link is what the file says\nafter the last state (`false`).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Name"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Markov only: the state the chain begins in. It is written, not drawn."
+        },
+        "states": {
+          "description": "The states. A periodic model goes through them in the order of the file; a Markov model needs at least two.",
+          "items": {
+            "$ref": "#/$defs/ModelState"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "states"
       ],
       "type": "object"
     },
@@ -1022,6 +1115,126 @@
             }
           ],
           "description": "The series of each workload by time bin."
+        }
+      },
+      "type": "object"
+    },
+    "ModelKind": {
+      "description": "What kind of model a link has.",
+      "oneOf": [
+        {
+          "const": "periodic",
+          "description": "A list of states that follow each other, each for a time that the file gives, and then again (LMD-05).",
+          "type": "string"
+        },
+        {
+          "const": "markov",
+          "description": "States with a mean time in each and the chances of the next one, drawn from the seed (LMD-04).",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelState": {
+      "additionalProperties": false,
+      "description": "One state of a model.\n\nIt names what the link has while it lasts: a `set` (the keys of an impairment, as in a step of the timeline, a merge patch on\nthe link as the file writes it), an `outage`, or `down`. A state that writes none of them is the link as the file writes it.",
+      "properties": {
+        "direction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Direction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For an `outage`: the direction it acts on. Both by default."
+        },
+        "distribution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseDistribution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Markov only: whether the stay is exact (`fixed`) or drawn from an exponential distribution with `stay` as the mean\n(the default)."
+        },
+        "down": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/True"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The interface of the link is down while the state lasts (D-039)."
+        },
+        "for": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Periodic only: how long the state lasts."
+        },
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Name"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The name of the state. Required in a Markov model, where the chances refer to it."
+        },
+        "outage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/True"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Nothing is delivered while the state lasts (D-064)."
+        },
+        "set": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Change"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The values of the link while the state lasts."
+        },
+        "stay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Markov only: how long the state lasts, or its mean (see `distribution`)."
+        },
+        "to": {
+          "additionalProperties": false,
+          "description": "Markov only: the chances of the next state. They add up to 100 %, and none leads back to the state itself.",
+          "patternProperties": {
+            "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$": {
+              "$ref": "#/$defs/Probability"
+            }
+          },
+          "type": "object"
         }
       },
       "type": "object"

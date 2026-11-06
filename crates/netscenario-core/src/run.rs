@@ -21,6 +21,7 @@ use netscenario_model::{Generator, Impairments, Scenario, Workload};
 use crate::backend::{
     Backend, Direction, LinkHandle, NodeCounts, NodeHandle, Program, ProgramHandle,
 };
+use crate::capability::check;
 use crate::captures::Captures;
 use crate::error::Error;
 use crate::export::write_packets_refused;
@@ -395,7 +396,7 @@ fn check_files_are_read(scenario: &Scenario) -> Result<(), Error> {
 /// - [`Error::Cancelled`] if `options.cancel` was cancelled; the network is torn down all the same.
 pub fn run(
     backend: &mut dyn Backend,
-    scenario: &Scenario,
+    original: &Scenario,
     options: &RunOptions,
 ) -> Result<RunResult, Error> {
     let started = SystemTime::now();
@@ -408,8 +409,9 @@ pub fn run(
             format!("{}: {error}", options.out_dir.display()),
         )
     })?;
-    check_files_are_read(scenario)?;
-    let provisioned = provision(backend, scenario)?;
+    check_files_are_read(original)?;
+    let (models, provisioned) = start(backend, original)?;
+    let scenario: &Scenario = &models.scenario;
     control.emit(&RunEvent::Provisioned {
         nodes: provisioned.nodes.len(),
         links: provisioned.links.len(),
@@ -423,7 +425,7 @@ pub fn run(
         queue_checks,
         directions,
         queues,
-        events,
+        mut events,
         notes,
         interrupted_ns,
         begin_ns,
@@ -434,6 +436,9 @@ pub fn run(
         reproducibility,
     } = measured?;
     torn_down?;
+    for record in &mut events {
+        record.from_model = record.event >= models.first_generated;
+    }
     tcp_recoveries(scenario, &mut tcp, &events);
 
     let timeline = Timeline {
@@ -447,7 +452,7 @@ pub fn run(
         version: RESULT_VERSION,
         scenario: ScenarioInfo {
             name: scenario.name.to_string(),
-            hash: crate::replay::scenario_hash(scenario),
+            hash: crate::replay::scenario_hash(original),
         },
         provenance: collect(&backend.describe(), started),
         seed: SeedInfo {
@@ -491,9 +496,27 @@ pub fn run(
         tcp,
         reproducibility,
     };
-    write_outputs(scenario, options, &result)?;
+    write_outputs(original, options, &result)?;
     control.emit(&RunEvent::Finished);
     Ok(result)
+}
+
+/// Checks the scenario, makes the events of its models and builds the network.
+fn start<'a>(
+    backend: &mut dyn Backend,
+    original: &'a Scenario,
+) -> Result<(crate::models::Compiled<'a>, Provisioned), Error> {
+    let problems = original.validate();
+    if !problems.is_empty() {
+        return Err(Error::InvalidScenario(problems));
+    }
+    // The backend is asked about the scenario as the file writes it, so that a refusal names the model and not an event that the
+    // model made; the models and the repeating events then become the events of the timeline (D-090)
+    check(original, &backend.capabilities(), false)?;
+    let models = crate::models::compile(original)?;
+    let mut provisioned = provision(backend, &models.scenario)?;
+    provisioned.seed_drawn |= models.seed_drawn;
+    Ok((models, provisioned))
 }
 
 /// Writes the scenario as it ran, and then the result, into the directory of the run.

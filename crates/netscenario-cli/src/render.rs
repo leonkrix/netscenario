@@ -360,7 +360,8 @@ fn events_text(text: &mut String, result: &RunResult) {
         return;
     }
     let _ = writeln!(text, "\ntimeline");
-    for event in &result.events {
+    // A model makes thousands of steps: the summary shows the first ones and the count, result.json has all of them
+    for event in result.events.iter().take(MAX_STEPS_LISTED) {
         // A step at a barrier is done before a packet and says which, and how long that packet waited; a step by the
         // clock says how late it was
         let when = match (event.packet, event.held_ns) {
@@ -375,14 +376,29 @@ fn events_text(text: &mut String, result: &RunResult) {
         };
         let _ = writeln!(
             text,
-            "  at {}  link {} {}  {}  {when}",
+            "  at {}  link {}{} {}  {}  {when}",
             seconds(event.scheduled_ns),
             event.link,
+            if event.from_model { " (model)" } else { "" },
             event.direction.as_deref().unwrap_or("both ways"),
             event.kind,
         );
     }
+    if let Some(more) = result
+        .events
+        .len()
+        .checked_sub(MAX_STEPS_LISTED)
+        .filter(|more| *more > 0)
+    {
+        let _ = writeln!(
+            text,
+            "  and {more} more steps (all of them are in result.json)"
+        );
+    }
 }
+
+/// How many steps of the timeline the summary lists.
+const MAX_STEPS_LISTED: usize = 20;
 
 /// Which packets the kernel refused, for the warning: up to three runs by their numbers, else how many runs.
 fn refused_text(refused: &[[u64; 2]]) -> String {

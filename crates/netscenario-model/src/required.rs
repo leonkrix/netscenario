@@ -25,6 +25,7 @@ pub(crate) const REQUIRED: &[(&str, &str, &[&str])] = &[
     ("topology.routes[]", "Route", &["node", "to", "via"]),
     ("timeline[]", "Event", &["at", "link"]),
     ("topology.links[]", "Link", &["id", "between"]),
+    ("topology.links[].model", "LinkModel", &["kind", "states"]),
     ("topology.links[].forward.jitter", "Jitter", &["amount"]),
     ("topology.links[].reverse.jitter", "Jitter", &["amount"]),
     ("topology.links[].both.jitter", "Jitter", &["amount"]),

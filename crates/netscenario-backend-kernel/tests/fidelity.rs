@@ -1502,6 +1502,129 @@ fn cases() -> Vec<Case> {
                 },
             ],
         },
+        Case {
+            id: "30-queue-fifo",
+            title: "Delay of a tail-drop queue of 100 packets that is overloaded by one fifth",
+            link: "delay: 10ms, rate: 2mbit, queue: { discipline: fifo, limit: 100p }",
+            network: "",
+            offered: "2.4mbit",
+            size: 1200,
+            seconds: 12,
+            settle_seconds: 2,
+            udp_checksum: true,
+            bounds: vec![
+                Bound {
+                    metric: Metric::MinDelayMs,
+                    expected: 10.0,
+                    lo: 10.0,
+                    hi: 10.5,
+                    reason: "PHYSICS: no packet is faster than the delay of the link; the first packet meets an empty queue and the rate stage lets it through, so it is 0.03 ms above (the cases of the rate and the delay)",
+                },
+                Bound {
+                    metric: Metric::MedianDelayMs,
+                    expected: 506.8,
+                    lo: 490.0,
+                    hi: 512.0,
+                    reason: "MODEL: the offer is one fifth above the carrying capacity (2.4 mbit of payload against 1.932), so the queue of 100 packets is full from the third second on and a packet waits for the 100 frames in front of it, 100 x 1,242 bytes x 8 / 2 mbit = 496.8 ms, plus the delay of 10 ms: 506.8 ms. The bounds are 3 frames below (a queue that is cut a little by the packet in service) and 1 frame above (the limit and the frame in service)",
+                },
+                Bound {
+                    metric: Metric::P99DelayMs,
+                    expected: 506.8,
+                    lo: 490.0,
+                    hi: 512.0,
+                    reason: "MODEL: the queue is full for four fifths of the packets, so the 99th percentile is the full queue too",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.162,
+                    lo: 0.152,
+                    hi: 0.172,
+                    reason: "MODEL: of 3,000 packets sent the link carries 12 s x 201.3 per second = 2,415 and the queue holds 100 more when the sending ends: 1 - 2,515/3,000 = 16.2 %; one point for the packet at each edge and the moment the queue fills",
+                },
+            ],
+        },
+        Case {
+            id: "31-queue-codel",
+            title: "Delay of CoDel with a queue of 100 packets that is overloaded by one fifth",
+            link: "delay: 10ms, rate: 2mbit, queue: { discipline: codel, limit: 100p }",
+            network: "",
+            offered: "2.4mbit",
+            size: 1200,
+            seconds: 12,
+            settle_seconds: 2,
+            udp_checksum: true,
+            bounds: vec![
+                Bound {
+                    metric: Metric::MinDelayMs,
+                    expected: 10.0,
+                    lo: 10.0,
+                    hi: 10.5,
+                    reason: "PHYSICS: no packet is faster than the delay of the link; the first packet meets an empty queue and the rate stage lets it through, so it is 0.03 ms above (the cases of the rate and the delay)",
+                },
+                Bound {
+                    metric: Metric::MedianDelayMs,
+                    expected: 32.0,
+                    lo: 15.0,
+                    hi: 44.2,
+                    reason: "MODEL: CoDel leaves the dropping state when a packet has waited less than the target (5 ms) and enters it again only when the delay has been above the target for an interval (100 ms); an offer that is 24.2 % above the capacity (2.4 against 1.932) adds 0.242 s of delay for each second, so the delay of the queue goes up by 24 ms in the interval: it moves between 5 ms and 29 ms, 17 ms on average. With the delay of 10 ms and the frame in service (5 ms) that is a mean of 32 ms and at most 44 ms; below 15 ms (delay, frame, target) CoDel would have dropped more than it needs. A FIFO of the same length holds 507 ms",
+                },
+                Bound {
+                    metric: Metric::P99DelayMs,
+                    expected: 100.0,
+                    lo: 15.0,
+                    hi: 200.0,
+                    reason: "MODEL and FIDELITY: the first interval and the ramp of the drops before the control holds are the 1 % at the top, about 100 ms in the measurement (the first 30 packets). The bound is 200 ms, 40 % of the 507 ms that a full queue of 100 packets holds, which is what separates CoDel from a FIFO",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.194,
+                    lo: 0.162,
+                    hi: 0.219,
+                    reason: "MODEL: the link carries 201.3 packets a second and CoDel drops what does not fit, so 1 - 2,415/3,000 = 19.5 %; no queue can deliver more than a full FIFO does (16.2 % lost, the lower end), and a CoDel that kept the link busy for less than 97 % of the time would lose more than 21.9 %",
+                },
+            ],
+        },
+        Case {
+            id: "32-queue-fq-codel",
+            title: "Delay of FQ-CoDel with a queue of 100 packets that is overloaded by one fifth",
+            link: "delay: 10ms, rate: 2mbit, queue: { discipline: fq-codel, limit: 100p }",
+            network: "",
+            offered: "2.4mbit",
+            size: 1200,
+            seconds: 12,
+            settle_seconds: 2,
+            udp_checksum: true,
+            bounds: vec![
+                Bound {
+                    metric: Metric::MinDelayMs,
+                    expected: 10.0,
+                    lo: 10.0,
+                    hi: 10.5,
+                    reason: "PHYSICS: no packet is faster than the delay of the link; the first packet meets an empty queue and the rate stage lets it through, so it is 0.03 ms above (the cases of the rate and the delay)",
+                },
+                Bound {
+                    metric: Metric::MedianDelayMs,
+                    expected: 32.0,
+                    lo: 15.0,
+                    hi: 44.2,
+                    reason: "MODEL: CoDel leaves the dropping state when a packet has waited less than the target (5 ms) and enters it again only when the delay has been above the target for an interval (100 ms); an offer that is 24.2 % above the capacity (2.4 against 1.932) adds 0.242 s of delay for each second, so the delay of the queue goes up by 24 ms in the interval: it moves between 5 ms and 29 ms, 17 ms on average. With the delay of 10 ms and the frame in service (5 ms) that is a mean of 32 ms and at most 44 ms; below 15 ms (delay, frame, target) CoDel would have dropped more than it needs. A FIFO of the same length holds 507 ms",
+                },
+                Bound {
+                    metric: Metric::P99DelayMs,
+                    expected: 100.0,
+                    lo: 15.0,
+                    hi: 200.0,
+                    reason: "MODEL and FIDELITY: the first interval and the ramp of the drops before the control holds are the 1 % at the top, about 100 ms in the measurement (the first 30 packets). The bound is 200 ms, 40 % of the 507 ms that a full queue of 100 packets holds, which is what separates CoDel from a FIFO",
+                },
+                Bound {
+                    metric: Metric::LossRatio,
+                    expected: 0.194,
+                    lo: 0.162,
+                    hi: 0.219,
+                    reason: "MODEL: the link carries 201.3 packets a second and CoDel drops what does not fit, so 1 - 2,415/3,000 = 19.5 %; no queue can deliver more than a full FIFO does (16.2 % lost, the lower end), and a CoDel that kept the link busy for less than 97 % of the time would lose more than 21.9 %",
+                },
+            ],
+        },
     ]
 }
 
@@ -1962,6 +2085,21 @@ fn a_reordering_does_not_get_past_the_rate_limit() {
     run_and_judge("14-reorder-with-rate");
 }
 
+#[test]
+fn a_tail_drop_queue_that_is_overloaded_keeps_its_whole_length_of_delay() {
+    run_and_judge("30-queue-fifo");
+}
+
+#[test]
+fn codel_keeps_the_delay_of_an_overloaded_queue_near_its_target() {
+    run_and_judge("31-queue-codel");
+}
+
+#[test]
+fn fq_codel_keeps_the_delay_of_an_overloaded_queue_near_its_target() {
+    run_and_judge("32-queue-fq-codel");
+}
+
 // ---- the model behind the case of a jitter with a rate limit ----
 
 /// What a model of a direction with a delay, a normal jitter and a rate limit gives for a stream.
@@ -2292,6 +2430,29 @@ fn wrong_on_purpose(
         .filter(|v| !v.passed())
         .map(|v| v.bound.metric)
         .collect()
+}
+
+/// A queue that is the wrong discipline: a FIFO where `CoDel` and `FQ-CoDel` were asked for holds the whole length of its queue, and a
+/// `CoDel` where a FIFO was asked for does not.
+#[test]
+fn canary_a_fifo_fails_the_cases_of_codel_and_a_codel_fails_the_case_of_the_fifo() {
+    if !namespaces_available() || agent_exe().is_none() {
+        return;
+    }
+    let fifo = "delay: 10ms, rate: 2mbit, queue: { discipline: fifo, limit: 100p }";
+    for id in ["31-queue-codel", "32-queue-fq-codel"] {
+        let failed = wrong_on_purpose(id, fifo, 12, 2);
+        assert!(
+            failed.contains(&Metric::MedianDelayMs) && failed.contains(&Metric::P99DelayMs),
+            "{id}: {failed:?}"
+        );
+    }
+    let codel = "delay: 10ms, rate: 2mbit, queue: { discipline: codel, limit: 100p }";
+    let failed = wrong_on_purpose("30-queue-fifo", codel, 12, 2);
+    assert!(
+        failed.contains(&Metric::MedianDelayMs) && failed.contains(&Metric::LossRatio),
+        "{failed:?}"
+    );
 }
 
 /// A rate that is not applied: the link carries all of the offered 3 mbit, and the case for 2 mbit says so.

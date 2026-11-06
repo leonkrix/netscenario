@@ -84,8 +84,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | LMD-01 | Static model | M | 0.1 | done (a link keeps its values for the whole run; changes over time are TML-01, 0.2) |
 | LMD-02 | Scheduled steps | M | 0.2 | done (format with D-050; the Kernel backend applies the steps by the clock or at a barrier of the workload, D-060, D-062, D-064) |
 | LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces) | M | 0.3 | planned |
-| LMD-04 | Markov models with states and transitions | S | 0.3 | planned |
-| LMD-05 | Periodic patterns (a satellite pass, a duty cycle) | S | 0.3 | planned |
+| LMD-04 | Markov models with states and transitions | S | 0.3 | done (D-090; `tests/models.rs` of the model and of the Kernel backend: the share of time against the stationary distribution, the same seed gives the same states and lost packets) |
+| LMD-05 | Periodic patterns (a satellite pass, a duty cycle) | S | 0.3 | done (D-090; the period is exact, and the run does what the same events written by hand do) |
 | LMD-06 | Geometry-based: distance to loss, delay and rate (free space, log-distance) | M | 0.6 | planned |
 | LMD-07 | Plug-in interface for your own model | S | 0.7 | planned |
 
@@ -95,7 +95,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ------ | ---------------------------------------------------------- | ---- | ------- | ------- |
 | TML-01 | Events at times: change parameters                         | M    | 0.2     | done (format with D-050; the queues and the whole-state change, D-059; every step is recorded in `events`, D-060, and done at a barrier of the workload so that the same seed gives the same lost packets, D-062, by a `tc` that lives for the run, D-063; `outage`, `down` and `up` are steps too, D-064) |
 | TML-02 | Link down and up                                           | M    | 0.2     | done (format with D-050; the Kernel backend since D-064; `tests/timeline.rs`: the sender is refused for exactly the packets of the window, the statistics leave the refused packets out) |
-| TML-03 | Repeating events                                           | S    | 0.3     | planned |
+| TML-03 | Repeating events                                           | S    | 0.3     | done (`every`, `until`, `count`; D-090) |
 | TML-04 | Events tied to a milestone of a workload (after N packets) | C    | 0.7     | idea    |
 | TML-05 | Change a link from test code while the run is going        | S    | 0.3     | planned |
 

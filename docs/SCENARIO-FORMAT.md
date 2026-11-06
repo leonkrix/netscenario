@@ -273,6 +273,11 @@ timeline:
 | `direction` | `forward`, `reverse` or `both` (the default) | For an `outage` only. |
 | `down` | `true` | The interface of the link goes down at both ends: a sender gets errors, the agent counts them as `send_errors` and lists the packets as `refused`, and the packets in the queues are dropped (D-039, D-064). A packet that is refused is not sent and not lost. |
 | `up` | `true` | The interface comes up again. |
+| `every` | Duration | The event repeats every so often, the first time at `at` (TML-03). Until `until`, or `count` times, or with neither until the end of the measured phase. |
+| `until` | Duration | The moment before which the event repeats. Needs `every`; not with `count`. |
+| `count` | whole number | How many times the event happens in all, the first included. Needs `every`; not with `until`. |
+
+**An event that repeats** is its copies, one for each moment, and each copy is checked as an event of its own: `outage: 4s, every: 3s` is refused because the outages overlap, and an event that would repeat more than 10,000 times is refused with the bound. `netscenario expand --seed n` writes the copies.
 
 **`set` is a merge patch** (the rule of RFC 7386): a key that is not written stays as it is, a value replaces the old one as a whole (a `loss` replaces the loss, it does not merge into it), and `null` takes the impairment away. `both` changes the two directions. After every step the direction must be a valid set of impairments, and the reader checks it: `delay: null` while a `jitter` is set is refused, and the message says that it is this step.
 
@@ -281,6 +286,48 @@ timeline:
 **What the Kernel backend cannot follow.** The jitter of a direction keeps one distribution for the whole run: `netem` cannot go back from one table (or from none) to another without building the queue again (D-059). The amount can change.
 
 **When it happens.** An event is applied **before the first packet that its workload sends at or after its moment** (D-038, D-062): the sender of the workload that sends into the direction of the step knows its packet clock, asks the run right after the packet before, and holds the packet at its slot until the run has done the step. For that workload this is the same as a step at the exact moment, whatever the machine does, so the same seed gives the same lost packets; the packet that waits leaves late by the time of the change (`max_lateness_ns` shows it) and the ones after it catch up in order. The result records, for each step, the number of the first packet that met it and how long that packet waited (`events`, [RESULTS.md](RESULTS.md)). A step that no workload can wait for is done by the clock at its moment: no workload sends into its direction, or the moment lies after the last packet. A timeline that changes the loss, the duplication, the corruption or the reordering of a direction that no workload sends into makes the result say that the lost packets are not promised to repeat, with the reason. So does a direction whose queue draws random numbers and that two workloads send into, with or without a timeline: the order of their packets at the queue is not fixed (D-065). A timeline that changes only a rate or a delay is not affected. A `down` and an `up` are bound to a workload on the link in the same way. An `outage` is the exception: it is a window in the time of the receiver, so it is always done by the clock, and the packet at each of its edges can be lost in one run and delivered in another; the result says so with a reason ([COVERAGE.md](COVERAGE.md)).
+
+## Models over time
+
+```yaml
+links:
+  - id: hop
+    between: [terminal, gateway]
+    both: { delay: 35ms, rate: 20mbit }          # what the link is outside the states
+    model:
+      kind: periodic
+      states:
+        - { id: in-view, for: 40s }                # a state that writes nothing is the link as it is written
+        - { id: handover, for: 6s, outage: true }
+        - { id: weak, for: 14s, set: { both: { rate: 4mbit, loss: { model: random, p: 1% } } } }
+```
+
+A **model** (LMD-04, LMD-05, D-090) makes a link change over time without a `timeline` of the file. When a run begins the model is replaced by the events it makes (`set`, `outage`, `down`, `up`), drawn from the seed of the run, and everything after that is a run with a timeline: the steps are done before the first packet that a workload sends at or after their moment (D-038), the same seed gives the same lost packets, and `events` of the result lists the steps with `from_model: true`. `netscenario expand file --seed n` writes the events that a seed makes. A backend that can follow the steps of a timeline follows a model, and is asked for the features of the states (`rate-limit`, `outages` and so on) with the path of the state.
+
+A **state** is a complete overlay on the link as the file writes it: `set` names the keys that the link has while the state lasts (a merge patch on `forward`, `reverse` or `both`, as in a step of the timeline), `outage: true` loses everything that leaves the link while it lasts (D-064, `direction` limits it), and `down: true` takes the interface down for the stay (D-039). Every other key is what the link says. So a state means the same whatever came before it, and the step into it sets the keys that differ from the state before. Each state is checked once when the file is read, as a link with its overlay: a `delay: null` while the link has a `jitter` is refused, and the message says which state.
+
+| Key of the model | Kind | Meaning |
+| --- | --- | --- |
+| `kind` | both | `periodic` or `markov`. Required. |
+| `states` | both | The states. A Markov chain needs at least two. Required. |
+| `begin` | both | When the model begins, from the start of the measured phase; before that the link is what the file says. Default `0s`. |
+| `repeat` | periodic | `true` (the default): the list begins again when it is over. `false`: the link is what the file says after the last state. |
+| `start` | markov | The state the chain begins in. Required; it is written and not drawn. |
+
+| Key of a state | Kind | Meaning |
+| --- | --- | --- |
+| `id` | both | The name of the state. Required in a Markov chain. |
+| `for` | periodic | How long the state lasts. Required. |
+| `stay` | markov | How long the state lasts, or the mean. Required. |
+| `distribution` | markov | `exponential` (the default: a Markov chain) or `fixed`. |
+| `to` | markov | The chances of the next state, `{ name: 30%, other: 70% }`. They add up to 100 %; none leads to the state itself. Required. |
+| `set`, `outage`, `direction`, `down` | both | What the link does in the state. |
+
+**Periodic** is exact: no number is drawn, the moments are sums of the lengths. **Markov** is a chain whose stays are drawn (a semi-Markov chain when they are fixed): the share of time in a state is `pi_i * m_i / sum(pi_j * m_j)`, with `pi` the stationary distribution of the rows `to` and `m` the mean stays. The numbers come from a generator of their own for each link, from the seed and the **name** of the link, so a model on another link, or a link before it, does not change the states of this one. A model that does not name a seed makes the run draw one, and the result says so.
+
+**What the reader refuses besides the types:** the keys of one kind in the other (`stay` in a periodic model), a state of no length, a chain with chances that do not add up, lead to the state itself or to a state that does not exist (with a hint), a start that does not exist, a state that is an `outage` and `down`, a `jitter` or `reorder` that the state leaves without a `delay`, and a model that would make more than 10,000 events (50,000 in all models and repeating events together; a Markov model is checked when the run begins, because its stays are drawn). **On a link with a model** the `timeline` of the file may not `set` a key that a state writes (a delay, a jitter and a reorder count as one), nor `outage` where the states have outages, nor `down` and `up` where they have `down`: the model would take it back at its next step, and the file would not say what happens. A model goes with a link that is written out in `links`; the links that a shortcut makes take their changes from the `timeline`.
+
+Examples: [leo-pass.yaml](../scenarios/leo-pass.yaml) (a periodic pattern with a handover), [signal-states.yaml](../scenarios/signal-states.yaml) (a chain of three signal states), [flapping-link.yaml](../scenarios/flapping-link.yaml) (events that repeat).
 
 ## Workloads
 
@@ -479,7 +526,7 @@ These keys are not part of version 0 in release 0.2. A scenario that uses one is
 | `allow-limited`, `expect`, `params`, `include` | 0.3 | Accepted restrictions, assertions in the file, parameters and includes. |
 | `matrix` | 0.5 | Sweeps. |
 | `mobility` | 0.6 | Positions over time. |
-| `model` (in a link) | 0.3 | Link models: trace, Markov, periodic (the steps over time are the `timeline`, 0.2). |
+| `kind: trace` (in the `model` of a link) | 0.3 | A link model from a recorded trace (LMD-03). |
 | `address` (node, link) | later | Fixed addresses. |
 | `kind` other than `udp-cbr`, `udp-poisson`, `udp-onoff`, `udp-bursty`, `trace-replay`, `tcp-bulk`, `request-response` and `command` | 0.5 and later | `container` and more. |
 

@@ -234,6 +234,11 @@ def test_the_steps_of_the_timeline_are_read_in_seconds_and_none_means_no_timelin
     assert (third.packet, third.at_barrier) == (2250, True)
     assert third.held == pytest.approx(0.0015)
     assert third.lateness == 0.0
+    # A step of the file is not a step of a model, unless the result says so
+    assert (first.from_model, second.from_model, third.from_model) == (False, False, False)
+    data["events"][0]["from_model"] = True
+    modelled = ns.Result.from_json(json.dumps(data), Path("/out")).steps
+    assert [step.from_model for step in modelled] == [True, False, False]
 
 
 def test_the_packets_the_kernel_refused_are_read_as_runs() -> None:

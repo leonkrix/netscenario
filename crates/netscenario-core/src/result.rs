@@ -383,6 +383,7 @@ impl EventRecord {
             applied_ns,
             packet: None,
             held_ns: None,
+            from_model: false,
         }
     }
 }
@@ -393,7 +394,8 @@ impl EventRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct EventRecord {
-    /// The place of the event in `timeline` of the scenario.
+    /// The place of the event in `timeline` of the scenario, as the run made it: an event that repeats is its copies one after the
+    /// other, and the events of the models come last (D-090).
     pub event: usize,
     /// What the step was: `set`, `outage-start`, `outage-end`, `down` or `up`.
     pub kind: String,
@@ -419,6 +421,10 @@ pub struct EventRecord {
     /// in nanoseconds; 0 if the change was done by then. The packet left that much late.
     #[serde(default)]
     pub held_ns: Option<u64>,
+    /// Whether a model of the link made the event (D-090) and not the file: `event` is then its place in the timeline that the
+    /// run made from the models, after the events of the file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_model: bool,
 }
 
 /// Which scenario a result belongs to.

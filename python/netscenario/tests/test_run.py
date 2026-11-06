@@ -233,6 +233,37 @@ def test_a_step_of_the_timeline_is_in_the_result_and_the_observer_hears_it(tmp_p
     assert media.delay.max >= 0.030
 
 
+def test_a_model_of_a_link_makes_the_steps_and_the_result_says_so(tmp_path: Path) -> None:
+    built = (
+        ns.Scenario.builder("py-model", duration="3s", seed=1)
+        .nodes("client", "server")
+        .link(
+            "access",
+            "client",
+            "server",
+            both=ns.Impairments(delay="10ms"),
+            model={
+                "kind": "periodic",
+                "states": [
+                    {"for": "1s"},
+                    {"for": "500ms", "set": {"both": {"delay": "30ms"}}},
+                ],
+            },
+        )
+        .udp_cbr("media", "client", "server", rate="1mbit", packet_size="1000b")
+        .build()
+    )
+    run = ns.run(built, out=tmp_path / "out", settle=0.3)
+    # The delay goes to 30 ms at 1 s, back at 1.5 s, and again at 2.5 s (a step for each direction)
+    forward = [s for s in run.steps if s.direction == "forward"]
+    assert [round(s.scheduled, 1) for s in forward] == [1.0, 1.5, 2.5]
+    assert all(s.from_model for s in run.steps)
+    assert run["media"].delay is not None
+    assert run["media"].delay.max >= 0.030
+    # The model is in the scenario the run recorded, and the events are not
+    assert '"model"' in (tmp_path / "out" / "scenario.json").read_text(encoding="utf-8")
+
+
 def test_the_same_seed_loses_the_same_packets(tmp_path: Path) -> None:
     lossy = scenario(link=ns.Impairments(loss="20%"), seed=42)
 

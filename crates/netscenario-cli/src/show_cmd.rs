@@ -14,13 +14,15 @@ use crate::exit;
 use crate::validate::{ALLOW_OUTSIDE_FILES, load};
 
 pub(crate) const EXPAND_HELP: &str = "\
-Usage: netscenario expand <file> [--json] [--allow-outside-files]
+Usage: netscenario expand <file> [--seed <n>] [--json] [--allow-outside-files]
 
 Prints a scenario in its long form: a shortcut of the topology (chain, star, dumbbell, multipath) becomes the nodes
 and links it makes, with their names. Comments of the file are not kept. The long form has the same canonical text and
 the same hash as the shortcut, so the run is the same. Use it to learn the names of what a shortcut made (for a route or
 an event of the timeline) and to start from a shortcut and change one link.
 
+  --seed <n>  also write the models of the links and the events that repeat as the events they make with this seed, which is
+              what a run with that seed does (the seed of the file if the option is left out and the file has one)
   --json    print the canonical JSON that the hash of the scenario is made of (a table made from a file of samples is in it)
   --allow-outside-files  let the scenario read files from outside the directory of the scenario file
 
@@ -43,7 +45,7 @@ Exit codes: 0 done, 2 the scenario is not valid or the file cannot be read.
 ";
 
 const EXPAND_SPEC: Spec = Spec {
-    values: &[],
+    values: &["seed"],
     flags: &["json", ALLOW_OUTSIDE_FILES],
 };
 const SHOW_SPEC: Spec = Spec {
@@ -87,6 +89,29 @@ pub(crate) fn expand<S: AsRef<str>>(args: &[S], out: &mut impl Write, err: &mut 
     let scenario = match scenario_of(&parsed, "expand", EXPAND_HELP, err) {
         Ok(scenario) => scenario,
         Err(code) => return code,
+    };
+    let scenario = match parsed.value("seed") {
+        None => scenario,
+        Some(text) => {
+            let Ok(seed) = text.parse::<u64>() else {
+                return crate::usage_error(
+                    err,
+                    "expand",
+                    &format!("--seed needs a whole number, found '{text}'"),
+                    EXPAND_HELP,
+                );
+            };
+            match netscenario_core::expand_models(&scenario, seed) {
+                Ok(mut expanded) => {
+                    expanded.seed = Some(seed);
+                    expanded
+                }
+                Err(error) => {
+                    let _ = writeln!(err, "netscenario expand: {error}");
+                    return exit::USAGE;
+                }
+            }
+        }
     };
     if parsed.flag("json") {
         return match serde_json::to_string_pretty(&scenario) {

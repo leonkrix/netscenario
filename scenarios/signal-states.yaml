@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A mobile link as a Markov chain (LMD-04): three signal states with a mean time in each (drawn from the exponential distribution)
+# and the chances of the next one. The chain begins in `good`, which is written and not drawn. The seed decides the states, so
+# the same seed gives the same sequence and the same lost packets; the share of time in each state follows the chain
+# (here 45 %, 48 % and 7 % of the time). `netscenario expand --seed 7` writes the events.
+version: 0
+name: signal-states
+seed: 7
+duration: 120s
+topology:
+  nodes: [phone, server]
+  links:
+    - id: radio
+      between: [phone, server]
+      both: { delay: 30ms, rate: 20mbit }
+      model:
+        kind: markov
+        start: good
+        states:
+          - { id: good, stay: 11s, to: { fair: 80%, poor: 20% } }
+          - { id: fair, stay: 7s, to: { good: 60%, poor: 40% }, set: { both: { delay: 60ms, rate: 8mbit, loss: { model: random, p: 0.5% } } } }
+          - { id: poor, stay: 2s, to: { fair: 100% }, set: { both: { delay: 150ms, rate: 1mbit, loss: { model: random, p: 8% } } } }
+workloads:
+  - { id: call, kind: udp-cbr, from: phone, to: server, rate: 500kbit, packet-size: 600b }
+measure:
+  series: { bin: 1s }

@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# An event that repeats (TML-03): the link loses everything for 400 ms every 10 s, starting at 5 s, until 55 s (five outages), and its
+# rate halves every 20 s for 5 s. `every` takes `until` (the moment before which the event repeats) or `count` (how many times in
+# all); with neither, the event repeats until the end of the measured phase.
+version: 0
+name: flapping-link
+seed: 2
+duration: 60s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      both: { delay: 20ms, rate: 10mbit }
+workloads:
+  - { id: stream, kind: udp-cbr, from: client, to: server, rate: 4mbit, packet-size: 1200b }
+timeline:
+  - { at: 5s, link: access, outage: 400ms, every: 10s, until: 55s }
+  - { at: 10s, link: access, set: { both: { rate: 5mbit } }, every: 20s, count: 2 }
+  - { at: 15s, link: access, set: { both: { rate: 10mbit } }, every: 20s, count: 2 }
+measure:
+  series: { bin: 1s }

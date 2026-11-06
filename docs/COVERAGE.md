@@ -103,9 +103,11 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Scheduled steps                | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/timeline.rs): a rate that drops in the course of the run is in the throughput, the same seed gives the same lost packets whatever the change takes) | ✔ 0.4  | ✔ 0.5 |
 | Link down and up               | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/timeline.rs): the sender is refused for exactly the packets of the window and the statistics leave them out) | ✔ 0.4  | ?     |
 | Trace-driven rate, delay, loss | ~ 0.3  | ✔ 0.4  | ✔ 0.5 |
-| Markov models                  | ~ 0.3  | ✔ 0.4  | ✔ 0.5 |
-| Periodic patterns              | ✔ 0.3  | ✔ 0.4  | ✔ 0.5 |
+| Markov models                  | ✔ 0.3 ([test](../crates/netscenario-model/tests/models.rs): the share of time in each state follows the stationary distribution of the chain; [test](../crates/netscenario-backend-kernel/tests/models.rs): the same seed gives the same states and the same lost packets) | ✔ 0.4  | ✔ 0.5 |
+| Periodic patterns              | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/models.rs): the run does what the same events written by hand do, nothing arrives in the outage states; the period is exact, [test](../crates/netscenario-model/tests/models.rs)) | ✔ 0.4  | ✔ 0.5 |
 | Geometry-based links           | ~ 0.6  | ✔ 0.6  | ~ 0.6 |
+
+**Models over time** (D-090) are the events of the timeline that a run makes from them, so the Kernel backend follows them as it follows a timeline: before the first packet that the workload sends at or after the moment of a step. A state shorter than the gap between two packets of the workload that sends into the link is not met by any packet; the steps into and out of it are still done, in order. The distribution of a jitter cannot differ between the states (the backend refuses it, D-059).
 
 **Restriction "trace-driven" for the Kernel**: `netem` has no clock of its own, so the tool changes its parameters at the steps of the trace. The resolution is limited by how fast the kernel accepts changes (to be measured by the experiment S5), and the delivery is not per packet.
 

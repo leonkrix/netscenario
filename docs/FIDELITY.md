@@ -26,6 +26,10 @@ Three cases run a client, two routers and a server in a row (D-078): **the delay
 
 Three cases check the tables of the jitter against the table itself (D-084): `pareto` and `paretonormal` of iproute2, and a table made from a file of samples with a long tail (an exponential shape that reaches 8 deviations, so its entries are scaled by 2.024 to fit 16 bits). Each compares the mean, the median, the standard deviation, the smallest and the largest delay with what the 4,096 entries give: the first three within four standard deviations of the estimate from 8,000 delays, the last two as exact physical bounds (no delay is outside the table) with the quantile at which the smallest or the largest of 8,000 delays lies with a chance of 1 - 1e-9. A canary shows that a jitter of the same mean and deviation with another shape fails the case of the table. The measured tables of these cases come with the next `just fidelity` run on a machine with `netem`.
 
+## Queue disciplines
+
+Three cases overload a link of 2 mbit with a queue of 100 packets by one fifth (2.4 mbit of payload against the 1.932 that it carries) and look at the delay (LNK-09, D-082). **A tail-drop queue** holds its whole length: a packet waits for the 100 frames in front of it, 496.8 ms, plus the delay of 10 ms, and the loss is what the queue and the link cannot carry (16.2 %). **CoDel** and **FQ-CoDel** (one flow, so they behave alike) keep the queue near the target: they leave the dropping state when a packet has waited less than 5 ms and enter it again only after a delay above the target for an interval of 100 ms, in which an offer 24 % above the capacity adds 24 ms of delay, so the delay moves between 5 and 29 ms and the median of the packets is about 32 ms with the delay of the link and the frame in service. The bounds are the model's and the canary swaps the disciplines: a FIFO fails the cases of CoDel and FQ-CoDel on the median and the 99th percentile, and a CoDel fails the case of the FIFO. The acceptance of TCP measures the same queues with senders that react (`python/netscenario/tests/test_acceptance_tcp_models.py`), where the delay falls to the target.
+
 ## Three canaries
 
 A test that judges must be able to fail. Three tests run a scenario that is wrong on purpose and judge it with the bounds of the real case: **a rate that is not applied** (the link carries all of the offered 3 mbit, and the case for 2 mbit fails), **a delay that is not applied**, and **a loss that is not applied or is applied at the wrong ratio**. A fourth test judges made-up numbers and checks that each wrong number is named. If a bound were too wide to catch these, the canary would pass the wrong network, and the test would fail.
@@ -43,8 +47,8 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| smallest delay | 20.000 ms | 20.009 ms ✔ | +0.009 ms | 20.000 ms to 20.500 ms | no packet can be faster than the link; the path adds 0.016 ms (spike S4) |
-| median delay | 20.000 ms | 20.018 ms ✔ | +0.018 ms | 20.000 ms to 20.500 ms | `netem` is exact to the microsecond; 0.5 ms leave room for a busy shared runner |
+| smallest delay | 20.000 ms | 20.010 ms ✔ | +0.010 ms | 20.000 ms to 20.500 ms | no packet can be faster than the link; the path adds 0.016 ms (spike S4) |
+| median delay | 20.000 ms | 20.017 ms ✔ | +0.017 ms | 20.000 ms to 20.500 ms | `netem` is exact to the microsecond; 0.5 ms leave room for a busy shared runner |
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a link without loss loses nothing |
 | reordered packets | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a fixed delay keeps the order |
 
@@ -74,14 +78,14 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| smallest delay | 15.000 ms | 15.013 ms ✔ | +0.013 ms | 15.000 ms to 15.500 ms | uniform jitter reaches down to the delay minus the amount and no further |
-| 99th percentile of the delay | 24.900 ms | 24.945 ms ✔ | +0.045 ms | 24.500 ms to 25.500 ms | the upper end of a uniform spread, 15 + 0.99 * 10 ms. The largest delay is not used: one packet disturbed by the machine would fail it, 60 are needed to fail the 99th percentile |
-| mean delay | 20.000 ms | 20.018 ms ✔ | +0.018 ms | 19.850 ms to 20.500 ms | the mean of 6,000 uniform delays has a standard deviation of 0.04 ms; four of them below, noise above |
-| standard deviation of the delay | 2.887 ms | 2.905 ms ✔ | +0.018 ms | 2.740 ms to 3.040 ms | 5 / sqrt(3) for a uniform distribution of width 10 ms; the estimate has a standard deviation of 0.02 ms, the bound is wider because the measurement adds noise |
-| reordered packets | 58.00 % | 58.62 % ✔ | +0.62 pp | 30.00 % to 80.00 % | KNOWN: jitter larger than the gap between packets (1 ms here) reorders them, because `netem` sends each packet at its own time; 58 % were seen |
-| interarrival jitter (mean of RFC 3550) | 3.543 ms | 3.550 ms ✔ | +0.007 ms | 3.390 ms to 3.690 ms | MODEL (RFC 3550, appendix A.8): the delays are independent and uniform over 10 ms, a packet every millisecond, and the estimate pairs packets in the order of arrival, so the pair is not independent of its delays (the mean of |D| for neighbours in sequence would be 10 / 3 = 3.33 ms); a simulation of 120 runs of 6,000 packets, written apart from the code under test, gave 3.543 ms with a standard deviation of 0.032 ms between runs; four of them on each side, and 0.02 ms for the machine |
-| mean extent of the reordered packets | 3.70 packets | 3.77 packets ✔ | +0.07 packets | 3.57 packets to 3.83 packets | MODEL (RFC 4737, section 4.2): the same simulation, the mean over the reordered packets of the number of arrivals since the first packet that overtook them: 3.70 with a standard deviation of 0.032 between runs, four of them on each side |
-| mean late time of the reordered packets | 3.185 ms | 3.213 ms ✔ | +0.028 ms | 3.050 ms to 3.320 ms | MODEL (RFC 4737, section 4.3): the same simulation, the mean time between a reordered packet and the first packet that overtook it: 3.185 ms with a standard deviation of 0.032 ms between runs, four of them on each side, and 0.01 ms for the machine |
+| smallest delay | 15.000 ms | 15.015 ms ✔ | +0.015 ms | 15.000 ms to 15.500 ms | uniform jitter reaches down to the delay minus the amount and no further |
+| 99th percentile of the delay | 24.900 ms | 24.901 ms ✔ | +0.001 ms | 24.500 ms to 25.500 ms | the upper end of a uniform spread, 15 + 0.99 * 10 ms. The largest delay is not used: one packet disturbed by the machine would fail it, 60 are needed to fail the 99th percentile |
+| mean delay | 20.000 ms | 20.034 ms ✔ | +0.034 ms | 19.850 ms to 20.500 ms | the mean of 6,000 uniform delays has a standard deviation of 0.04 ms; four of them below, noise above |
+| standard deviation of the delay | 2.887 ms | 2.893 ms ✔ | +0.006 ms | 2.740 ms to 3.040 ms | 5 / sqrt(3) for a uniform distribution of width 10 ms; the estimate has a standard deviation of 0.02 ms, the bound is wider because the measurement adds noise |
+| reordered packets | 58.00 % | 58.87 % ✔ | +0.87 pp | 30.00 % to 80.00 % | KNOWN: jitter larger than the gap between packets (1 ms here) reorders them, because `netem` sends each packet at its own time; 58 % were seen |
+| interarrival jitter (mean of RFC 3550) | 3.543 ms | 3.497 ms ✔ | -0.046 ms | 3.390 ms to 3.690 ms | MODEL (RFC 3550, appendix A.8): the delays are independent and uniform over 10 ms, a packet every millisecond, and the estimate pairs packets in the order of arrival, so the pair is not independent of its delays (the mean of |D| for neighbours in sequence would be 10 / 3 = 3.33 ms); a simulation of 120 runs of 6,000 packets, written apart from the code under test, gave 3.543 ms with a standard deviation of 0.032 ms between runs; four of them on each side, and 0.02 ms for the machine |
+| mean extent of the reordered packets | 3.70 packets | 3.70 packets ✔ | +0.00 packets | 3.57 packets to 3.83 packets | MODEL (RFC 4737, section 4.2): the same simulation, the mean over the reordered packets of the number of arrivals since the first packet that overtook them: 3.70 with a standard deviation of 0.032 between runs, four of them on each side |
+| mean late time of the reordered packets | 3.185 ms | 3.188 ms ✔ | +0.003 ms | 3.050 ms to 3.320 ms | MODEL (RFC 4737, section 4.3): the same simulation, the mean time between a reordered packet and the first packet that overtook it: 3.185 ms with a standard deviation of 0.032 ms between runs, four of them on each side, and 0.01 ms for the machine |
 
 #### A delay of 20 ms with a normal jitter of 5 ms
 
@@ -89,10 +93,10 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| mean delay | 20.000 ms | 19.988 ms ✔ | -0.012 ms | 19.700 ms to 20.500 ms | the mean of 6,000 normal delays has a standard deviation of 0.07 ms; four of them below, noise above |
-| standard deviation of the delay | 5.000 ms | 5.021 ms ✔ | +0.021 ms | 4.700 ms to 5.300 ms | the amount is the standard deviation (spike S4 measured 5.03); the table of `netem` is cut off at four standard deviations |
-| 99th percentile of the delay | 31.600 ms | 31.840 ms ✔ | +0.240 ms | 30.400 ms to 32.600 ms | the mean plus 2.326 standard deviations; the estimate has a standard deviation of 0.24 ms, four of them on each side, with noise on the upper side |
-| reordered packets | 72.00 % | 71.47 % ✔ | -0.53 pp | 40.00 % to 90.00 % | KNOWN: as with the uniform jitter; 72 % were seen |
+| mean delay | 20.000 ms | 20.042 ms ✔ | +0.042 ms | 19.700 ms to 20.500 ms | the mean of 6,000 normal delays has a standard deviation of 0.07 ms; four of them below, noise above |
+| standard deviation of the delay | 5.000 ms | 5.014 ms ✔ | +0.014 ms | 4.700 ms to 5.300 ms | the amount is the standard deviation (spike S4 measured 5.03); the table of `netem` is cut off at four standard deviations |
+| 99th percentile of the delay | 31.600 ms | 31.787 ms ✔ | +0.187 ms | 30.400 ms to 32.600 ms | the mean plus 2.326 standard deviations; the estimate has a standard deviation of 0.24 ms, four of them on each side, with noise on the upper side |
+| reordered packets | 72.00 % | 72.03 % ✔ | +0.03 pp | 40.00 % to 90.00 % | KNOWN: as with the uniform jitter; 72 % were seen |
 
 #### A delay of 40 ms with a normal jitter of 5 ms and a rate limit of 10 mbit
 
@@ -100,9 +104,9 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| mean delay | 41.000 ms | 41.243 ms ✔ | +0.243 ms | 40.500 ms to 41.800 ms | 40 ms plus the 0.994 ms that a frame needs at 10 mbit. The mean of 1,667 delays has a standard deviation of 0.12 ms. One qdisc for both gave 42.6 ms, because its rate stage cuts the jitter off (D-030) |
-| standard deviation of the delay | 5.000 ms | 5.063 ms ✔ | +0.063 ms | 4.650 ms to 5.350 ms | the amount is the standard deviation; the estimate over 1,667 delays has a standard deviation of 0.09 ms. One qdisc for both gave 4.1 ms |
-| reordered packets | 29.00 % | 29.75 % ✔ | +0.75 pp | 15.00 % to 40.00 % | as for any jitter, packets overtake each other when the jitter is larger than the gap (4.8 ms here): the model of the series of the two stages gives 29 % |
+| mean delay | 41.000 ms | 41.150 ms ✔ | +0.150 ms | 40.500 ms to 41.800 ms | 40 ms plus the 0.994 ms that a frame needs at 10 mbit. The mean of 1,667 delays has a standard deviation of 0.12 ms. One qdisc for both gave 42.6 ms, because its rate stage cuts the jitter off (D-030) |
+| standard deviation of the delay | 5.000 ms | 4.924 ms ✔ | -0.076 ms | 4.650 ms to 5.350 ms | the amount is the standard deviation; the estimate over 1,667 delays has a standard deviation of 0.09 ms. One qdisc for both gave 4.1 ms |
+| reordered packets | 29.00 % | 27.95 % ✔ | -1.05 pp | 15.00 % to 40.00 % | as for any jitter, packets overtake each other when the jitter is larger than the gap (4.8 ms here): the model of the series of the two stages gives 29 % |
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | the offered 2 mbit is far below the 10 mbit of the link |
 
 #### Loss in bursts: Gilbert-Elliott, 1 % to the bad state, 20 % back, all lost there
@@ -132,7 +136,7 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 | --- | --- | --- | --- | --- | --- |
 | packets sent on at once | 25.00 % | 24.38 % ✔ | -0.62 pp | 22.80 % to 27.20 % | `reorder P` sends the share P on at once and holds the rest for the delay (D-048, S12: 25.10 %); binomial, 6,000 packets, a standard deviation of 0.56 percentage points, four of them on each side |
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | reordering loses nothing |
-| reordered packets | 70.00 % | 69.97 % ✔ | -0.03 pp | 55.00 % to 85.00 % | KNOWN: the packets that are held arrive after later ones that went on at once; about 0.75 x (1 - 0.75^10) of the packets when 10 packets are sent within the delay (S12 saw 74.9 % at another rate) |
+| reordered packets | 70.00 % | 69.90 % ✔ | -0.10 pp | 55.00 % to 85.00 % | KNOWN: the packets that are held arrive after later ones that went on at once; about 0.75 x (1 - 0.75^10) of the packets when 10 packets are sent within the delay (S12 saw 74.9 % at another rate) |
 
 #### Reordering with a gap: 25 % sent on at once, but never two within 5 packets
 
@@ -167,7 +171,7 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
 | packets that arrived twice | 20.00 % | 19.60 % ✔ | -0.40 pp | 17.90 % to 22.10 % | the copy is made in the first queue, where the loss and the rate are, and the tree of two `netem` is accepted by the kernel (S15, D-052); binomial, 6,000 packets, four standard deviations |
-| smallest delay | 15.000 ms | 15.444 ms ✔ | +0.444 ms | 15.000 ms to 15.600 ms | the second queue still holds the delay and its jitter: uniform jitter reaches down to the delay minus the amount; the rate adds the time of one frame (0.4 ms) |
+| smallest delay | 15.000 ms | 15.445 ms ✔ | +0.445 ms | 15.000 ms to 15.600 ms | the second queue still holds the delay and its jitter: uniform jitter reaches down to the delay minus the amount; the rate adds the time of one frame (0.4 ms) |
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | the offered 4 mbit and its copies are far below the 10 mbit of the link |
 
 #### Reordering with a rate limit of 2 mbit, offered 3 mbit: the rate holds
@@ -185,11 +189,11 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| frames dropped by the node as damaged | 9.43 % | 9.36 % ✔ | -0.07 pp | 8.61 % to 10.26 % | KNOWN (D-040, S13b): `netem` flips a bit in a random byte of the whole frame (106 bytes with the Ethernet header), and the node drops the frame unless the bit is in the source address of the Ethernet header (6 bytes), so 10 % x 100 / 106 = 9.43 %, not 10 %; binomial, about 20,000 frames, four standard deviations on each side |
+| frames dropped by the node as damaged | 9.43 % | 9.34 % ✔ | -0.09 pp | 8.61 % to 10.26 % | KNOWN (D-040, S13b): `netem` flips a bit in a random byte of the whole frame (106 bytes with the Ethernet header), and the node drops the frame unless the bit is in the source address of the Ethernet header (6 bytes), so 10 % x 100 / 106 = 9.43 %, not 10 %; binomial, about 20,000 frames, four standard deviations on each side |
 | packets lost in the queue | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a corrupted packet arrives at the node, so the queue loses nothing: this is the difference between a corrupted and a lost packet |
 | packets not accounted for | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | every packet is lost in the queue, dropped by the node or delivered, to the packet |
-| loss | 9.43 % | 9.36 % ✔ | -0.07 pp | 8.61 % to 10.26 % | with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped |
-| dropped packets named by sequence number | 82.18 % | 82.16 % ✔ | -0.02 pp | 78.65 % to 85.71 % | KNOWN (D-040): of the 100 bytes of a 106 byte frame whose flipped bit gets it dropped, the tap can read the frame unless the bit is in the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, the magic, version, flags and sequence number of the agent): (100 - 18) / 100, and the few sequence numbers that a flipped bit turns into another number that was not delivered; binomial, about 1886 dropped frames, four standard deviations on each side |
+| loss | 9.43 % | 9.34 % ✔ | -0.09 pp | 8.61 % to 10.26 % | with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped |
+| dropped packets named by sequence number | 82.18 % | 80.73 % ✔ | -1.45 pp | 78.65 % to 85.71 % | KNOWN (D-040): of the 100 bytes of a 106 byte frame whose flipped bit gets it dropped, the tap can read the frame unless the bit is in the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, the magic, version, flags and sequence number of the agent): (100 - 18) / 100, and the few sequence numbers that a flipped bit turns into another number that was not delivered; binomial, about 1886 dropped frames, four standard deviations on each side |
 | names without a dropped frame | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | on a link that only corrupts every name stands for a frame that the node dropped, so there are not more names than dropped frames |
 
 #### A corruption of 10 % with a payload of 200 bytes
@@ -198,11 +202,11 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| frames dropped by the node as damaged | 9.75 % | 9.71 % ✔ | -0.05 pp | 8.91 % to 10.59 % | KNOWN (D-040, S13b): `netem` flips a bit in a random byte of the whole frame (242 bytes with the Ethernet header), and the node drops the frame unless the bit is in the source address of the Ethernet header (6 bytes), so 10 % x 236 / 242 = 9.75 %, not 10 %; binomial, about 20,000 frames, four standard deviations on each side |
+| frames dropped by the node as damaged | 9.75 % | 9.65 % ✔ | -0.10 pp | 8.91 % to 10.59 % | KNOWN (D-040, S13b): `netem` flips a bit in a random byte of the whole frame (242 bytes with the Ethernet header), and the node drops the frame unless the bit is in the source address of the Ethernet header (6 bytes), so 10 % x 236 / 242 = 9.75 %, not 10 %; binomial, about 20,000 frames, four standard deviations on each side |
 | packets lost in the queue | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a corrupted packet arrives at the node, so the queue loses nothing: this is the difference between a corrupted and a lost packet |
 | packets not accounted for | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | every packet is lost in the queue, dropped by the node or delivered, to the packet |
-| loss | 9.75 % | 9.71 % ✔ | -0.05 pp | 8.91 % to 10.59 % | with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped |
-| dropped packets named by sequence number | 92.45 % | 91.65 % ✔ | -0.80 pp | 90.05 % to 94.85 % | KNOWN (D-040): of the 236 bytes of a 242 byte frame whose flipped bit gets it dropped, the tap can read the frame unless the bit is in the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, the magic, version, flags and sequence number of the agent): (236 - 18) / 236, and the few sequence numbers that a flipped bit turns into another number that was not delivered; binomial, about 1950 dropped frames, four standard deviations on each side |
+| loss | 9.75 % | 9.65 % ✔ | -0.10 pp | 8.91 % to 10.59 % | with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped |
+| dropped packets named by sequence number | 92.45 % | 92.59 % ✔ | +0.14 pp | 90.05 % to 94.85 % | KNOWN (D-040): of the 236 bytes of a 242 byte frame whose flipped bit gets it dropped, the tap can read the frame unless the bit is in the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, the magic, version, flags and sequence number of the agent): (236 - 18) / 236, and the few sequence numbers that a flipped bit turns into another number that was not delivered; binomial, about 1950 dropped frames, four standard deviations on each side |
 | names without a dropped frame | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | on a link that only corrupts every name stands for a frame that the node dropped, so there are not more names than dropped frames |
 
 #### A corruption of 10 % with a payload of 1,200 bytes
@@ -211,11 +215,11 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| frames dropped by the node as damaged | 9.95 % | 9.88 % ✔ | -0.08 pp | 9.10 % to 10.80 % | KNOWN (D-040, S13b): `netem` flips a bit in a random byte of the whole frame (1242 bytes with the Ethernet header), and the node drops the frame unless the bit is in the source address of the Ethernet header (6 bytes), so 10 % x 1236 / 1242 = 9.95 %, not 10 %; binomial, about 20,000 frames, four standard deviations on each side |
+| frames dropped by the node as damaged | 9.95 % | 9.88 % ✔ | -0.07 pp | 9.10 % to 10.80 % | KNOWN (D-040, S13b): `netem` flips a bit in a random byte of the whole frame (1242 bytes with the Ethernet header), and the node drops the frame unless the bit is in the source address of the Ethernet header (6 bytes), so 10 % x 1236 / 1242 = 9.95 %, not 10 %; binomial, about 20,000 frames, four standard deviations on each side |
 | packets lost in the queue | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a corrupted packet arrives at the node, so the queue loses nothing: this is the difference between a corrupted and a lost packet |
 | packets not accounted for | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | every packet is lost in the queue, dropped by the node or delivered, to the packet |
-| loss | 9.95 % | 9.88 % ✔ | -0.08 pp | 9.10 % to 10.80 % | with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped |
-| dropped packets named by sequence number | 98.56 % | 98.43 % ✔ | -0.13 pp | 97.48 % to 99.63 % | KNOWN (D-040): of the 1236 bytes of a 1242 byte frame whose flipped bit gets it dropped, the tap can read the frame unless the bit is in the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, the magic, version, flags and sequence number of the agent): (1236 - 18) / 1236, and the few sequence numbers that a flipped bit turns into another number that was not delivered; binomial, about 1990 dropped frames, four standard deviations on each side |
+| loss | 9.95 % | 9.88 % ✔ | -0.07 pp | 9.10 % to 10.80 % | with the UDP checksum on, a damaged packet is lost to the program, so the loss the program sees is the share that the node dropped |
+| dropped packets named by sequence number | 98.56 % | 98.63 % ✔ | +0.07 pp | 97.48 % to 99.63 % | KNOWN (D-040): of the 1236 bytes of a 1242 byte frame whose flipped bit gets it dropped, the tap can read the frame unless the bit is in the 18 bytes that say whose it is (the type of Ethernet, the version, header length and protocol of IP, its destination address, the destination port of UDP, the magic, version, flags and sequence number of the agent): (1236 - 18) / 1236, and the few sequence numbers that a flipped bit turns into another number that was not delivered; binomial, about 1990 dropped frames, four standard deviations on each side |
 | names without a dropped frame | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | on a link that only corrupts every name stands for a frame that the node dropped, so there are not more names than dropped frames |
 
 #### A corruption of 10 % with a loss of 10 %: the result tells the two apart
@@ -225,9 +229,9 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
 | packets lost in the queue | 10.00 % | 9.98 % ✔ | -0.03 pp | 9.15 % to 10.85 % | the loss comes first and drops 10 % of the packets in the queue; binomial, 20,000 packets, four standard deviations on each side |
-| frames dropped by the node as damaged | 9.75 % | 9.86 % ✔ | +0.11 pp | 8.87 % to 10.64 % | the corruption works on the 90 % that the loss let through: 10 % x 236 / 242 = 9.75 % of them are dropped by the node; binomial, about 18,000 frames, four standard deviations on each side |
+| frames dropped by the node as damaged | 9.75 % | 9.84 % ✔ | +0.09 pp | 8.87 % to 10.64 % | the corruption works on the 90 % that the loss let through: 10 % x 236 / 242 = 9.75 % of them are dropped by the node; binomial, about 18,000 frames, four standard deviations on each side |
 | packets not accounted for | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | every packet is lost in the queue, dropped by the node or delivered, to the packet |
-| loss | 18.78 % | 18.85 % ✔ | +0.07 pp | 17.67 % to 19.88 % | the program sees both as loss: 0.1 + 0.9 x 0.0975 = 18.78 %; the account of the direction is what tells the two causes apart |
+| loss | 18.78 % | 18.83 % ✔ | +0.05 pp | 17.67 % to 19.88 % | the program sees both as loss: 0.1 + 0.9 x 0.0975 = 18.78 %; the account of the direction is what tells the two causes apart |
 
 #### A corruption of 10 % in a stream without the checksum of UDP, payload of 64 bytes: the damaged packet arrives
 
@@ -235,11 +239,11 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| packets that arrived damaged | 6.06 % | 6.07 % ✔ | +0.01 pp | 5.38 % to 6.74 % | KNOWN (D-040, S12): with the checksum off the kernel does not drop a flipped bit of the payload, so it arrives and the CRC-32 finds it; `netem` flips a bit in a random byte of the whole frame (106 bytes with the Ethernet header), 64 of which are payload, and the two bytes of the length field of UDP count 2/8 of a byte, because only a bit that is set there makes the datagram shorter, and a shorter datagram fails the CRC; 10 % x (64 + 2/8) / 106 = 6.06 %; binomial, 20,000 packets, four standard deviations on each side |
-| frames dropped by the node as damaged | 3.18 % | 3.12 % ✔ | -0.06 pp | 2.68 % to 3.69 % | the node still drops what is damaged in the headers of Ethernet, IP and UDP (destination address, type, the checksum of IP, the destination port, the checksum field that is no longer 0, a longer length): 10 % x (34 - 2/8) / 106 = 3.18 %; binomial, 20,000 frames, four standard deviations on each side |
+| packets that arrived damaged | 6.06 % | 6.22 % ✔ | +0.16 pp | 5.38 % to 6.74 % | KNOWN (D-040, S12): with the checksum off the kernel does not drop a flipped bit of the payload, so it arrives and the CRC-32 finds it; `netem` flips a bit in a random byte of the whole frame (106 bytes with the Ethernet header), 64 of which are payload, and the two bytes of the length field of UDP count 2/8 of a byte, because only a bit that is set there makes the datagram shorter, and a shorter datagram fails the CRC; 10 % x (64 + 2/8) / 106 = 6.06 %; binomial, 20,000 packets, four standard deviations on each side |
+| frames dropped by the node as damaged | 3.18 % | 2.93 % ✔ | -0.25 pp | 2.68 % to 3.69 % | the node still drops what is damaged in the headers of Ethernet, IP and UDP (destination address, type, the checksum of IP, the destination port, the checksum field that is no longer 0, a longer length): 10 % x (34 - 2/8) / 106 = 3.18 %; binomial, 20,000 frames, four standard deviations on each side |
 | packets lost in the queue | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a corrupted packet arrives at the node, so the queue loses nothing |
 | packets not accounted for | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | every packet is lost in the queue, dropped by the node or delivered, a damaged one included, to the packet |
-| loss | 9.25 % | 9.20 % ✔ | -0.05 pp | 8.42 % to 10.07 % | a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (106 - 8) / 106 = 9.25 %; binomial, 20,000 packets, four standard deviations on each side |
+| loss | 9.25 % | 9.15 % ✔ | -0.10 pp | 8.42 % to 10.07 % | a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (106 - 8) / 106 = 9.25 %; binomial, 20,000 packets, four standard deviations on each side |
 
 #### The same with a payload of 200 bytes
 
@@ -247,11 +251,11 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| packets that arrived damaged | 8.28 % | 8.30 % ✔ | +0.03 pp | 7.50 % to 9.06 % | KNOWN (D-040, S12): with the checksum off the kernel does not drop a flipped bit of the payload, so it arrives and the CRC-32 finds it; `netem` flips a bit in a random byte of the whole frame (242 bytes with the Ethernet header), 200 of which are payload, and the two bytes of the length field of UDP count 3/8 of a byte, because only a bit that is set there makes the datagram shorter, and a shorter datagram fails the CRC; 10 % x (200 + 3/8) / 242 = 8.28 %; binomial, 20,000 packets, four standard deviations on each side |
-| frames dropped by the node as damaged | 1.39 % | 1.34 % ✔ | -0.05 pp | 1.05 % to 1.73 % | the node still drops what is damaged in the headers of Ethernet, IP and UDP (destination address, type, the checksum of IP, the destination port, the checksum field that is no longer 0, a longer length): 10 % x (34 - 3/8) / 242 = 1.39 %; binomial, 20,000 frames, four standard deviations on each side |
+| packets that arrived damaged | 8.28 % | 8.20 % ✔ | -0.09 pp | 7.50 % to 9.06 % | KNOWN (D-040, S12): with the checksum off the kernel does not drop a flipped bit of the payload, so it arrives and the CRC-32 finds it; `netem` flips a bit in a random byte of the whole frame (242 bytes with the Ethernet header), 200 of which are payload, and the two bytes of the length field of UDP count 3/8 of a byte, because only a bit that is set there makes the datagram shorter, and a shorter datagram fails the CRC; 10 % x (200 + 3/8) / 242 = 8.28 %; binomial, 20,000 packets, four standard deviations on each side |
+| frames dropped by the node as damaged | 1.39 % | 1.41 % ✔ | +0.02 pp | 1.05 % to 1.73 % | the node still drops what is damaged in the headers of Ethernet, IP and UDP (destination address, type, the checksum of IP, the destination port, the checksum field that is no longer 0, a longer length): 10 % x (34 - 3/8) / 242 = 1.39 %; binomial, 20,000 frames, four standard deviations on each side |
 | packets lost in the queue | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a corrupted packet arrives at the node, so the queue loses nothing |
 | packets not accounted for | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | every packet is lost in the queue, dropped by the node or delivered, a damaged one included, to the packet |
-| loss | 9.67 % | 9.64 % ✔ | -0.03 pp | 8.83 % to 10.51 % | a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (242 - 8) / 242 = 9.67 %; binomial, 20,000 packets, four standard deviations on each side |
+| loss | 9.67 % | 9.60 % ✔ | -0.07 pp | 8.83 % to 10.51 % | a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (242 - 8) / 242 = 9.67 %; binomial, 20,000 packets, four standard deviations on each side |
 
 #### The same with a payload of 1,200 bytes
 
@@ -259,11 +263,11 @@ Measured on kernel 6.12.115+deb13.1-amd64, iproute2 `tc`: iproute2 6.15.0.
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| packets that arrived damaged | 9.67 % | 9.56 % ✔ | -0.11 pp | 8.83 % to 10.51 % | KNOWN (D-040, S12): with the checksum off the kernel does not drop a flipped bit of the payload, so it arrives and the CRC-32 finds it; `netem` flips a bit in a random byte of the whole frame (1242 bytes with the Ethernet header), 1200 of which are payload, and the two bytes of the length field of UDP count 5/8 of a byte, because only a bit that is set there makes the datagram shorter, and a shorter datagram fails the CRC; 10 % x (1200 + 5/8) / 1242 = 9.67 %; binomial, 20,000 packets, four standard deviations on each side |
-| frames dropped by the node as damaged | 0.27 % | 0.29 % ✔ | +0.02 pp | 0.12 % to 0.42 % | the node still drops what is damaged in the headers of Ethernet, IP and UDP (destination address, type, the checksum of IP, the destination port, the checksum field that is no longer 0, a longer length): 10 % x (34 - 5/8) / 1242 = 0.27 %; binomial, 20,000 frames, four standard deviations on each side |
+| packets that arrived damaged | 9.67 % | 9.59 % ✔ | -0.08 pp | 8.83 % to 10.51 % | KNOWN (D-040, S12): with the checksum off the kernel does not drop a flipped bit of the payload, so it arrives and the CRC-32 finds it; `netem` flips a bit in a random byte of the whole frame (1242 bytes with the Ethernet header), 1200 of which are payload, and the two bytes of the length field of UDP count 5/8 of a byte, because only a bit that is set there makes the datagram shorter, and a shorter datagram fails the CRC; 10 % x (1200 + 5/8) / 1242 = 9.67 %; binomial, 20,000 packets, four standard deviations on each side |
+| frames dropped by the node as damaged | 0.27 % | 0.29 % ✔ | +0.01 pp | 0.12 % to 0.42 % | the node still drops what is damaged in the headers of Ethernet, IP and UDP (destination address, type, the checksum of IP, the destination port, the checksum field that is no longer 0, a longer length): 10 % x (34 - 5/8) / 1242 = 0.27 %; binomial, 20,000 frames, four standard deviations on each side |
 | packets lost in the queue | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | a corrupted packet arrives at the node, so the queue loses nothing |
 | packets not accounted for | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | every packet is lost in the queue, dropped by the node or delivered, a damaged one included, to the packet |
-| loss | 9.94 % | 9.86 % ✔ | -0.09 pp | 9.08 % to 10.79 % | a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (1242 - 8) / 1242 = 9.94 %; binomial, 20,000 packets, four standard deviations on each side |
+| loss | 9.94 % | 9.88 % ✔ | -0.06 pp | 9.08 % to 10.79 % | a damaged packet is not an intact one, so it is lost to the stream as it is to the program; what is harmless is the bit in the source address of Ethernet (6 bytes) and in the source port of UDP (2 bytes), which the CRC-32 over the payload does not cover: 10 % x (1242 - 8) / 1242 = 9.94 %; binomial, 20,000 packets, four standard deviations on each side |
 
 #### Three links in a row with delays of 10, 15 and 5 ms: the delays add up
 
@@ -272,7 +276,7 @@ a client, two routers and a server in a row: `l1: delay 10ms; l2: delay 15ms; l3
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
 | smallest delay | 30.000 ms | 30.017 ms ✔ | +0.017 ms | 30.000 ms to 30.500 ms | no packet can be faster than the three links together: 10 + 15 + 5 ms; the path and the two routers add well under 0.5 ms (0.016 ms for a link in the single-link case) |
-| median delay | 30.000 ms | 30.028 ms ✔ | +0.028 ms | 30.000 ms to 31.000 ms | `netem` is exact to the microsecond on each link; 1 ms leaves room for the three hops and a busy shared runner (0.5 ms for one hop in the single-link case) |
+| median delay | 30.000 ms | 30.026 ms ✔ | +0.026 ms | 30.000 ms to 31.000 ms | `netem` is exact to the microsecond on each link; 1 ms leaves room for the three hops and a busy shared runner (0.5 ms for one hop in the single-link case) |
 | loss | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | links without loss lose nothing, and a router that forwards drops nothing |
 | reordered packets | 0.00 % | 0.00 % ✔ | +0.00 pp | 0.00 % to 0.00 % | fixed delays keep the order, also over three hops |
 | packets not accounted for | 0 packets | 0 packets ✔ | +0.00 packets | 0 packets to 0 packets | every packet is accounted for link by link: what entered the first link is lost in a queue, dropped by a node or delivered at the end |
@@ -324,11 +328,11 @@ a client, two routers and a server in a row: `ip: v6; forward: rate 2mbit`, offe
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| mean delay | 39.665 ms | 39.618 ms ✔ | -0.047 ms | 39.300 ms to 40.530 ms | MODEL: the 4,096 entries of `pareto.dist` (mean -0.034 amounts, deviation 0.820) at 40 ms + 10 ms x entry / 8192; the mean of 8,000 delays has a standard deviation of 0.092 ms, four of them on each side, and 0.5 ms of noise above |
-| median delay | 36.796 ms | 36.847 ms ✔ | +0.051 ms | 36.545 ms to 37.550 ms | MODEL: the median of the table, -0.320 amounts; the median of 8,000 delays has a standard deviation of 0.063 ms, four of them on each side, and 0.5 ms of noise above |
-| standard deviation of the delay | 8.197 ms | 8.053 ms ✔ | -0.144 ms | 7.607 ms to 8.990 ms | MODEL: the deviation of the table, 0.820 amounts; the estimate from 8,000 delays of this heavy-tailed shape (kurtosis 6.1) has a standard deviation of 0.148 ms, four of them on each side, and 0.2 ms above for noise |
-| smallest delay | 33.334 ms | 33.343 ms ✔ | +0.009 ms | 33.329 ms to 33.850 ms | PHYSICS: the smallest entry is -5461, so no delay is below 40 ms - 10 ms x 0.667 = 33.334 ms (5 us for the rounding); the smallest of 8,000 delays is above the 0.26 % quantile (33.345 ms) with a chance of 1 - 1e-9, and 0.5 ms of noise above |
-| largest delay | 79.999 ms | 80.022 ms ✔ | +0.023 ms | at least 79.999 ms | PHYSICS and MODEL: the largest entry is 32767, 4 amounts; 1.07 % of the entries are that large, so among 8,000 delays there is one at the top with a chance of 1 - 1e-37 and none is below 80.0 ms. There is no upper bound: one late packet is routine on a shared machine, the cap is judged on the 99.9th percentile |
+| mean delay | 39.665 ms | 39.721 ms ✔ | +0.056 ms | 39.300 ms to 40.530 ms | MODEL: the 4,096 entries of `pareto.dist` (mean -0.034 amounts, deviation 0.820) at 40 ms + 10 ms x entry / 8192; the mean of 8,000 delays has a standard deviation of 0.092 ms, four of them on each side, and 0.5 ms of noise above |
+| median delay | 36.796 ms | 36.844 ms ✔ | +0.048 ms | 36.545 ms to 37.550 ms | MODEL: the median of the table, -0.320 amounts; the median of 8,000 delays has a standard deviation of 0.063 ms, four of them on each side, and 0.5 ms of noise above |
+| standard deviation of the delay | 8.197 ms | 8.105 ms ✔ | -0.092 ms | 7.607 ms to 8.990 ms | MODEL: the deviation of the table, 0.820 amounts; the estimate from 8,000 delays of this heavy-tailed shape (kurtosis 6.1) has a standard deviation of 0.148 ms, four of them on each side, and 0.2 ms above for noise |
+| smallest delay | 33.334 ms | 33.342 ms ✔ | +0.008 ms | 33.329 ms to 33.850 ms | PHYSICS: the smallest entry is -5461, so no delay is below 40 ms - 10 ms x 0.667 = 33.334 ms (5 us for the rounding); the smallest of 8,000 delays is above the 0.26 % quantile (33.345 ms) with a chance of 1 - 1e-9, and 0.5 ms of noise above |
+| largest delay | 79.999 ms | 80.023 ms ✔ | +0.024 ms | at least 79.999 ms | PHYSICS and MODEL: the largest entry is 32767, 4 amounts; 1.07 % of the entries are that large, so among 8,000 delays there is one at the top with a chance of 1 - 1e-37 and none is below 80.0 ms. There is no upper bound: one late packet is routine on a shared machine, the cap is judged on the 99.9th percentile |
 | 99.9th percentile of the delay | 79.999 ms | 80.016 ms ✔ | +0.017 ms | 79.999 ms to 80.500 ms | PHYSICS and MODEL: no delay is above the largest entry, 80.0 ms, and 1.07 % of the entries are that large, so the ninth largest of 8,000 delays is at the cap with a chance of 1 - 1e-25; 0.5 ms of noise above, and nine packets would have to be late at once |
 
 #### A delay of 40 ms with a paretonormal jitter of 10 ms
@@ -337,12 +341,12 @@ a client, two routers and a server in a row: `ip: v6; forward: rate 2mbit`, offe
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| mean delay | 39.747 ms | 39.738 ms ✔ | -0.009 ms | 39.374 ms to 40.620 ms | MODEL: the entries of `paretonormal.dist` (mean -0.025 amounts, deviation 0.834); the mean of 8,000 delays has a standard deviation of 0.093 ms, four of them on each side, and 0.5 ms of noise above |
-| median delay | 37.595 ms | 37.578 ms ✔ | -0.017 ms | 37.267 ms to 38.420 ms | MODEL: the median of the table, -0.240 amounts; the median of 8,000 delays has a standard deviation of 0.082 ms, four of them on each side, and 0.5 ms of noise above |
-| standard deviation of the delay | 8.339 ms | 8.387 ms ✔ | +0.048 ms | 7.851 ms to 9.030 ms | MODEL: the deviation of the table, 0.834 amounts; the estimate from 8,000 delays has a standard deviation of 0.122 ms, four of them on each side, and 0.2 ms above for noise |
-| smallest delay | 24.979 ms | 24.993 ms ✔ | +0.014 ms | 24.974 ms to 28.480 ms | PHYSICS: the smallest entry is -12305, so no delay is below 40 ms - 10 ms x 1.502 = 24.979 ms (5 us for the rounding); the smallest of 8,000 delays is above the 0.26 % quantile (27.98 ms) with a chance of 1 - 1e-9, and 0.5 ms of noise above |
-| largest delay | 78.805 ms | 78.819 ms ✔ | +0.014 ms | at least 76.968 ms | MODEL: the largest of 8,000 delays is above the 99.74 % quantile (76.97 ms) with a chance of 1 - 1e-9. There is no upper bound: one late packet is routine on a shared machine (2.3 ms above the cap on a runner), the cap is judged on the 99.9th percentile |
-| 99.9th percentile of the delay | 77.594 ms | 77.605 ms ✔ | +0.011 ms | 76.422 ms to 79.305 ms | PHYSICS and MODEL: no delay is above the largest entry, 31789, 78.805 ms (0.5 ms of noise above, and nine packets would have to be late at once); the ninth largest of 8,000 delays is the 99.9 % quantile of the table, 77.594 ms, and is above its 99.5 % quantile (76.422 ms, 0.51 % of the entries) with a chance of 1 - 1e-9 |
+| mean delay | 39.747 ms | 39.718 ms ✔ | -0.029 ms | 39.374 ms to 40.620 ms | MODEL: the entries of `paretonormal.dist` (mean -0.025 amounts, deviation 0.834); the mean of 8,000 delays has a standard deviation of 0.093 ms, four of them on each side, and 0.5 ms of noise above |
+| median delay | 37.595 ms | 37.613 ms ✔ | +0.018 ms | 37.267 ms to 38.420 ms | MODEL: the median of the table, -0.240 amounts; the median of 8,000 delays has a standard deviation of 0.082 ms, four of them on each side, and 0.5 ms of noise above |
+| standard deviation of the delay | 8.339 ms | 8.235 ms ✔ | -0.104 ms | 7.851 ms to 9.030 ms | MODEL: the deviation of the table, 0.834 amounts; the estimate from 8,000 delays has a standard deviation of 0.122 ms, four of them on each side, and 0.2 ms above for noise |
+| smallest delay | 24.979 ms | 24.987 ms ✔ | +0.008 ms | 24.974 ms to 28.480 ms | PHYSICS: the smallest entry is -12305, so no delay is below 40 ms - 10 ms x 1.502 = 24.979 ms (5 us for the rounding); the smallest of 8,000 delays is above the 0.26 % quantile (27.98 ms) with a chance of 1 - 1e-9, and 0.5 ms of noise above |
+| largest delay | 78.805 ms | 78.301 ms ✔ | -0.504 ms | at least 76.968 ms | MODEL: the largest of 8,000 delays is above the 99.74 % quantile (76.97 ms) with a chance of 1 - 1e-9. There is no upper bound: one late packet is routine on a shared machine (2.3 ms above the cap on a runner), the cap is judged on the 99.9th percentile |
+| 99.9th percentile of the delay | 77.594 ms | 77.345 ms ✔ | -0.249 ms | 76.422 ms to 79.305 ms | PHYSICS and MODEL: no delay is above the largest entry, 31789, 78.805 ms (0.5 ms of noise above, and nine packets would have to be late at once); the ninth largest of 8,000 delays is the 99.9 % quantile of the table, 77.594 ms, and is above its 99.5 % quantile (76.422 ms, 0.51 % of the entries) with a chance of 1 - 1e-9 |
 
 #### A delay of 100 ms with a jitter of 8 ms in the shape of a file of samples with a long tail
 
@@ -350,12 +354,45 @@ a client, two routers and a server in a row: `ip: v6; forward: rate 2mbit`, offe
 
 | Quantity | Expected | Measured | Deviation | Allowed | Why |
 | --- | --- | --- | --- | --- | --- |
-| mean delay | 100.000 ms | 100.027 ms ✔ | +0.027 ms | 99.640 ms to 100.860 ms | MODEL: the table has the mean 0 and the deviation 1 by construction, so the delay has the mean of the `delay`; the mean of 8,000 delays has a standard deviation of 0.089 ms, four of them on each side, and 0.5 ms of noise above |
-| median delay | 97.543 ms | 97.486 ms ✔ | -0.057 ms | 97.185 ms to 98.400 ms | MODEL: the samples are exponential (20 ms + 8 ms x Exp(1)), whose median is 0.307 deviations below the mean: 100 ms + 8 ms x (ln 2 - 1) = 97.545 ms; the median of 8,000 delays has a standard deviation of 0.089 ms, four of them on each side, and 0.5 ms of noise above |
-| standard deviation of the delay | 8.000 ms | 7.998 ms ✔ | -0.002 ms | 7.500 ms to 8.700 ms | MODEL: the amount is the standard deviation of the shape, also where the entries had to be scaled down to fit 16 bits (the tail reaches 8 deviations, scale 2.024 and the amount goes to `netem` as 16.192 ms); the estimate from 8,000 delays of an exponential shape (kurtosis 9) has a standard deviation of 0.125 ms, four of them on each side, and 0.2 ms above for noise |
-| smallest delay | 91.997 ms | 92.009 ms ✔ | +0.012 ms | 91.992 ms to 92.520 ms | PHYSICS: the smallest entry of the table is the first quantile of the samples, 0.0001 deviations above their minimum: 100 ms - 8 ms x 1.0003 = 91.997 ms (5 us for the rounding); 0.5 ms of noise above |
-| largest delay | 164.750 ms | 164.764 ms ✔ | +0.014 ms | at least 139.760 ms | MODEL: the largest of 8,000 delays is above the 99.74 % quantile (139.76 ms) with a chance of 1 - 1e-9. A table that was not scaled would stop at 4 deviations (132 ms) and a `normal` one at 3.5. There is no upper bound: one late packet is routine on a shared machine, the cap is judged on the 99.9th percentile |
-| 99.9th percentile of the delay | 147.260 ms | 144.957 ms ✔ | -2.303 ms | 134.000 ms to 165.250 ms | PHYSICS and MODEL: the largest entry is 32759 at scale 2.024, 8.09 deviations: no delay is above 164.75 ms (0.5 ms of noise above, and eight packets would have to be late at once); the eighth largest of 8,000 delays is the 99.9 % quantile of the exponential, 100 ms + 8 ms x (ln 1000 - 1) = 147.26 ms, and is above 134.0 ms (the 99.475 % quantile, 0.525 % of the delays) with a chance of 1 - 1e-10 |
+| mean delay | 100.000 ms | 100.086 ms ✔ | +0.086 ms | 99.640 ms to 100.860 ms | MODEL: the table has the mean 0 and the deviation 1 by construction, so the delay has the mean of the `delay`; the mean of 8,000 delays has a standard deviation of 0.089 ms, four of them on each side, and 0.5 ms of noise above |
+| median delay | 97.543 ms | 97.700 ms ✔ | +0.157 ms | 97.185 ms to 98.400 ms | MODEL: the samples are exponential (20 ms + 8 ms x Exp(1)), whose median is 0.307 deviations below the mean: 100 ms + 8 ms x (ln 2 - 1) = 97.545 ms; the median of 8,000 delays has a standard deviation of 0.089 ms, four of them on each side, and 0.5 ms of noise above |
+| standard deviation of the delay | 8.000 ms | 7.897 ms ✔ | -0.103 ms | 7.500 ms to 8.700 ms | MODEL: the amount is the standard deviation of the shape, also where the entries had to be scaled down to fit 16 bits (the tail reaches 8 deviations, scale 2.024 and the amount goes to `netem` as 16.192 ms); the estimate from 8,000 delays of an exponential shape (kurtosis 9) has a standard deviation of 0.125 ms, four of them on each side, and 0.2 ms above for noise |
+| smallest delay | 91.997 ms | 92.008 ms ✔ | +0.011 ms | 91.992 ms to 92.520 ms | PHYSICS: the smallest entry of the table is the first quantile of the samples, 0.0001 deviations above their minimum: 100 ms - 8 ms x 1.0003 = 91.997 ms (5 us for the rounding); 0.5 ms of noise above |
+| largest delay | 164.750 ms | 164.762 ms ✔ | +0.012 ms | at least 139.760 ms | MODEL: the largest of 8,000 delays is above the 99.74 % quantile (139.76 ms) with a chance of 1 - 1e-9. A table that was not scaled would stop at 4 deviations (132 ms) and a `normal` one at 3.5. There is no upper bound: one late packet is routine on a shared machine, the cap is judged on the 99.9th percentile |
+| 99.9th percentile of the delay | 147.260 ms | 143.619 ms ✔ | -3.641 ms | 134.000 ms to 165.250 ms | PHYSICS and MODEL: the largest entry is 32759 at scale 2.024, 8.09 deviations: no delay is above 164.75 ms (0.5 ms of noise above, and nine packets would have to be late at once); the ninth largest of 8,000 delays is the 99.9 % quantile of the exponential, 100 ms + 8 ms x (ln 1000 - 1) = 147.26 ms, and is above 134.0 ms (the 99.475 % quantile, 0.525 % of the delays) with a chance of 1 - 1e-9 |
+
+#### Delay of a tail-drop queue of 100 packets that is overloaded by one fifth
+
+`forward: { delay: 10ms, rate: 2mbit, queue: { discipline: fifo, limit: 100p } }`, offered 2.4mbit with payloads of 1200 bytes for 12 s (3000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| smallest delay | 10.000 ms | 10.018 ms ✔ | +0.018 ms | 10.000 ms to 10.500 ms | PHYSICS: no packet is faster than the delay of the link; the first packet meets an empty queue and the rate stage lets it through, so it is 0.03 ms above (the cases of the rate and the delay) |
+| median delay | 506.800 ms | 504.313 ms ✔ | -2.487 ms | 490.000 ms to 512.000 ms | MODEL: the offer is one fifth above the carrying capacity (2.4 mbit of payload against 1.932), so the queue of 100 packets is full from the third second on and a packet waits for the 100 frames in front of it, 100 x 1,242 bytes x 8 / 2 mbit = 496.8 ms, plus the delay of 10 ms: 506.8 ms. The bounds are 3 frames below (a queue that is cut a little by the packet in service) and 1 frame above (the limit and the frame in service) |
+| 99th percentile of the delay | 506.800 ms | 506.775 ms ✔ | -0.025 ms | 490.000 ms to 512.000 ms | MODEL: the queue is full for four fifths of the packets, so the 99th percentile is the full queue too |
+| loss | 16.20 % | 16.13 % ✔ | -0.07 pp | 15.20 % to 17.20 % | MODEL: of 3,000 packets sent the link carries 12 s x 201.3 per second = 2,415 and the queue holds 100 more when the sending ends: 1 - 2,515/3,000 = 16.2 %; one point for the packet at each edge and the moment the queue fills |
+
+#### Delay of CoDel with a queue of 100 packets that is overloaded by one fifth
+
+`forward: { delay: 10ms, rate: 2mbit, queue: { discipline: codel, limit: 100p } }`, offered 2.4mbit with payloads of 1200 bytes for 12 s (3000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| smallest delay | 10.000 ms | 10.026 ms ✔ | +0.026 ms | 10.000 ms to 10.500 ms | PHYSICS: no packet is faster than the delay of the link; the first packet meets an empty queue and the rate stage lets it through, so it is 0.03 ms above (the cases of the rate and the delay) |
+| median delay | 32.000 ms | 34.045 ms ✔ | +2.045 ms | 15.000 ms to 44.200 ms | MODEL: CoDel leaves the dropping state when a packet has waited less than the target (5 ms) and enters it again only when the delay has been above the target for an interval (100 ms); an offer that is 24.2 % above the capacity (2.4 against 1.932) adds 0.242 s of delay for each second, so the delay of the queue goes up by 24 ms in the interval: it moves between 5 ms and 29 ms, 17 ms on average. With the delay of 10 ms and the frame in service (5 ms) that is a mean of 32 ms and at most 44 ms; below 15 ms (delay, frame, target) CoDel would have dropped more than it needs. A FIFO of the same length holds 507 ms |
+| 99th percentile of the delay | 100.000 ms | 99.587 ms ✔ | -0.413 ms | 15.000 ms to 200.000 ms | MODEL and FIDELITY: the first interval and the ramp of the drops before the control holds are the 1 % at the top, about 100 ms in the measurement (the first 30 packets). The bound is 200 ms, 40 % of the 507 ms that a full queue of 100 packets holds, which is what separates CoDel from a FIFO |
+| loss | 19.40 % | 19.33 % ✔ | -0.07 pp | 16.20 % to 21.90 % | MODEL: the link carries 201.3 packets a second and CoDel drops what does not fit, so 1 - 2,415/3,000 = 19.5 %; no queue can deliver more than a full FIFO does (16.2 % lost, the lower end), and a CoDel that kept the link busy for less than 97 % of the time would lose more than 21.9 % |
+
+#### Delay of FQ-CoDel with a queue of 100 packets that is overloaded by one fifth
+
+`forward: { delay: 10ms, rate: 2mbit, queue: { discipline: fq-codel, limit: 100p } }`, offered 2.4mbit with payloads of 1200 bytes for 12 s (3000 packets)
+
+| Quantity | Expected | Measured | Deviation | Allowed | Why |
+| --- | --- | --- | --- | --- | --- |
+| smallest delay | 10.000 ms | 10.024 ms ✔ | +0.024 ms | 10.000 ms to 10.500 ms | PHYSICS: no packet is faster than the delay of the link; the first packet meets an empty queue and the rate stage lets it through, so it is 0.03 ms above (the cases of the rate and the delay) |
+| median delay | 32.000 ms | 34.053 ms ✔ | +2.053 ms | 15.000 ms to 44.200 ms | MODEL: CoDel leaves the dropping state when a packet has waited less than the target (5 ms) and enters it again only when the delay has been above the target for an interval (100 ms); an offer that is 24.2 % above the capacity (2.4 against 1.932) adds 0.242 s of delay for each second, so the delay of the queue goes up by 24 ms in the interval: it moves between 5 ms and 29 ms, 17 ms on average. With the delay of 10 ms and the frame in service (5 ms) that is a mean of 32 ms and at most 44 ms; below 15 ms (delay, frame, target) CoDel would have dropped more than it needs. A FIFO of the same length holds 507 ms |
+| 99th percentile of the delay | 100.000 ms | 99.552 ms ✔ | -0.448 ms | 15.000 ms to 200.000 ms | MODEL and FIDELITY: the first interval and the ramp of the drops before the control holds are the 1 % at the top, about 100 ms in the measurement (the first 30 packets). The bound is 200 ms, 40 % of the 507 ms that a full queue of 100 packets holds, which is what separates CoDel from a FIFO |
+| loss | 19.40 % | 19.33 % ✔ | -0.07 pp | 16.20 % to 21.90 % | MODEL: the link carries 201.3 packets a second and CoDel drops what does not fit, so 1 - 2,415/3,000 = 19.5 %; no queue can deliver more than a full FIFO does (16.2 % lost, the lower end), and a CoDel that kept the link busy for less than 97 % of the time would lose more than 21.9 % |
 
 <!-- fidelity:end -->
 
