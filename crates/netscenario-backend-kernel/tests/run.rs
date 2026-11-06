@@ -187,7 +187,9 @@ fn the_same_seed_gives_the_same_lost_packets() {
 }
 
 /// The delay of the link in the test of the seed for the reordering: a packet that `netem` holds arrives no earlier.
-const HELD_FOR_AT_LEAST_NS: u64 = 10_000_000;
+/// It is long so that the stall of a busy machine cannot carry a packet that was sent on at once over the line: with a
+/// delay of 10 ms one such packet arrived after 15.8 ms in a full parallel run.
+const HELD_FOR_AT_LEAST_NS: u64 = 200_000_000;
 
 /// What a run of the test of the seed drew: the sequence numbers of the packets lost, arrived twice and sent on at
 /// once, and the delay in nanoseconds of the first arrival of each packet (for the message of a failure).
@@ -217,7 +219,7 @@ fn drawn_by(dir: &Path, workload: &str) -> Drawn {
     Drawn {
         lost: sequences(&|v| v["lost"] == true),
         doubled: sequences(&|v| v["duplicate"] == true),
-        // A packet that `netem` holds waits the whole delay of 10 ms behind the rate, so it arrives after 10 ms or
+        // A packet that `netem` holds waits the whole delay of 200 ms behind the rate, so it arrives after 200 ms or
         // later and never before: the lower bound is physics. A packet that is sent on at once needs only the rate
         // (a millisecond or two), and a busy machine makes it later, as late as 7 ms in a run under load. The line
         // between the two is therefore the delay itself, as far from the noise as it can be; at half the delay a
@@ -243,7 +245,7 @@ fn the_same_seed_repeats_burst_loss_duplication_and_reordering() {
     if !namespaces_available() || agent_exe().is_none() {
         return;
     }
-    let link = "      forward: { delay: 10ms, loss: { model: gilbert-elliott, p: 10%, r: 30%, loss-bad: 100%, loss-good: 0% }, duplicate: 20%, reorder: { share: 50% }, rate: 10mbit }\n";
+    let link = "      forward: { delay: 200ms, loss: { model: gilbert-elliott, p: 10%, r: 30%, loss-bad: 100%, loss-good: 0% }, duplicate: 20%, reorder: { share: 50% }, rate: 10mbit }\n";
     let drawn = |seed: u32, label: &str| {
         let dir = work_dir(label);
         let mut backend = backend(|_| {});
