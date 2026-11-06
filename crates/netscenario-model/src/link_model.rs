@@ -1,5 +1,5 @@
-//! Models of a link over time: periodic patterns and Markov chains (LMD-05, LMD-04), and the repeating events of the
-//! timeline (TML-03). D-090.
+//! Models of a link over time: periodic patterns, Markov chains and traces from a file (LMD-05, LMD-04, LMD-03), and the
+//! repeating events of the timeline (TML-03). D-090, D-091.
 //!
 //! A model is not a new thing that a backend does. When a run begins, the models and the repeating events are replaced by
 //! ordinary events of the timeline ([`Scenario::compile`]), and the steps are made from those, with everything that a step has
@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Problem;
 use crate::generators::PhaseDistribution;
+use crate::link_trace::{DirectionTrace, TracePoints, trace_events};
 use crate::scenario::{
     Change, Direction, Edit, Event, Impairments, ImpairmentsChange, Link, Scenario, True,
 };
@@ -36,6 +37,9 @@ pub enum ModelKind {
     Periodic,
     /// States with a mean time in each and the chances of the next one, drawn from the seed (LMD-04).
     Markov,
+    /// The rate, the delay and the loss over time from a file, for each direction (LMD-03, D-091). Last in the list because it was
+    /// added last.
+    Trace,
 }
 
 impl ModelKind {
@@ -45,11 +49,12 @@ impl ModelKind {
         match self {
             Self::Periodic => "periodic",
             Self::Markov => "markov",
+            Self::Trace => "trace",
         }
     }
 }
 
-/// How a link changes over time: a periodic pattern or a Markov chain of states.
+/// How a link changes over time: a periodic pattern, a Markov chain of states, or a trace from a file.
 ///
 /// The keys of one kind are refused in the other, each at its own line. New keys are added to this type in later releases:
 /// read a file to make one.
@@ -62,15 +67,26 @@ pub struct LinkModel {
     /// When the model begins, from the start of the measured phase. Before that the link is what the file says. Default `0s`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub begin: Option<Duration>,
-    /// Periodic only: whether the list of states begins again when it is over (the default), or the link is what the file says
-    /// after the last state (`false`).
+    /// Periodic and trace: whether the list of states, or the trace, begins again when it is over (the default), or the link is what
+    /// the file says after the last state (`false`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeat: Option<bool>,
     /// Markov only: the state the chain begins in. It is written, not drawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<Name>,
-    /// The states. A periodic model goes through them in the order of the file; a Markov model needs at least two.
+    /// The states. A periodic model goes through them in the order of the file; a Markov model needs at least two. A trace has
+    /// none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub states: Vec<ModelState>,
+    /// Trace only: the trace of the direction from the first node to the second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forward: Option<DirectionTrace>,
+    /// Trace only: the trace of the direction from the second node to the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverse: Option<DirectionTrace>,
+    /// Trace only: one trace for both directions. Not together with `forward` or `reverse`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub both: Option<DirectionTrace>,
 }
 
 /// One state of a model.
@@ -130,10 +146,41 @@ impl LinkModel {
             repeat: None,
             start: None,
             states,
+            forward: None,
+            reverse: None,
+            both: None,
         }
     }
 
-    /// Whether the list of a periodic model begins again when it is over.
+    /// A trace model with the traces of the directions.
+    #[must_use]
+    pub fn trace(
+        forward: Option<DirectionTrace>,
+        reverse: Option<DirectionTrace>,
+        both: Option<DirectionTrace>,
+    ) -> Self {
+        Self {
+            forward,
+            reverse,
+            both,
+            ..Self::new(ModelKind::Trace, Vec::new())
+        }
+    }
+
+    /// The traces of a trace model with the direction each one is for, in the order forward, reverse, both.
+    #[must_use]
+    pub fn traces(&self) -> Vec<(Direction, &DirectionTrace)> {
+        [
+            (Direction::Forward, &self.forward),
+            (Direction::Reverse, &self.reverse),
+            (Direction::Both, &self.both),
+        ]
+        .into_iter()
+        .filter_map(|(direction, trace)| trace.as_ref().map(|trace| (direction, trace)))
+        .collect()
+    }
+
+    /// Whether the list of a periodic model, or a trace, begins again when it is over.
     #[must_use]
     pub fn repeats(&self) -> bool {
         self.repeat.unwrap_or(true)
@@ -150,6 +197,20 @@ impl LinkModel {
     #[must_use]
     pub fn keys_written(&self) -> Vec<&'static str> {
         let mut keys: Vec<&'static str> = Vec::new();
+        for (_, trace) in self.traces() {
+            let Some(points) = &trace.points else {
+                continue;
+            };
+            for (name, written) in [
+                ("rate", points.writes_rate()),
+                ("delay", points.writes_delay()),
+                ("loss", points.writes_loss()),
+            ] {
+                if written && !keys.contains(&name) {
+                    keys.push(name);
+                }
+            }
+        }
         for state in &self.states {
             let Some(change) = &state.set else { continue };
             for part in [&change.forward, &change.reverse, &change.both]
@@ -182,6 +243,37 @@ impl LinkModel {
             }
         }
         keys
+    }
+
+    /// Whether the model may give the part of the link written as `side` (`forward`, `reverse` or `both`) a rate: a state sets
+    /// one for it, or a trace writes one (a trace that is not read yet may). A `queue` waits for a rate, and the rate may come from
+    /// the model and not from the link.
+    #[must_use]
+    pub fn may_write_rate(&self, side: &str) -> bool {
+        let sets_rate = |part: &Option<ImpairmentsChange>| {
+            part.as_ref().is_some_and(|part| !part.rate.is_keep())
+        };
+        let from_states = self.states.iter().any(|state| {
+            state.set.as_ref().is_some_and(|change| match side {
+                "forward" => sets_rate(&change.forward) || sets_rate(&change.both),
+                "reverse" => sets_rate(&change.reverse) || sets_rate(&change.both),
+                _ => {
+                    sets_rate(&change.both)
+                        || (sets_rate(&change.forward) && sets_rate(&change.reverse))
+                }
+            })
+        });
+        let writes = |trace: &Option<DirectionTrace>| {
+            trace
+                .as_ref()
+                .is_some_and(|trace| trace.points.as_ref().is_none_or(TracePoints::writes_rate))
+        };
+        let from_traces = match side {
+            "forward" => writes(&self.forward) || writes(&self.both),
+            "reverse" => writes(&self.reverse) || writes(&self.both),
+            _ => writes(&self.both) || (writes(&self.forward) && writes(&self.reverse)),
+        };
+        from_states || from_traces
     }
 
     /// Whether some state is an outage.
@@ -269,6 +361,9 @@ impl ModelState {
 
 /// A source of numbers in `(0, 1]`, one for each link that has a Markov model (D-090).
 pub type Uniform = Box<dyn FnMut() -> f64>;
+
+/// What to do about a model of states that makes too many events.
+const STATES_HELP: &str = "make the states longer (or the mean stay, for a Markov model), or the measured phase shorter: every event is a change of the link, which takes a few milliseconds";
 
 /// The two directions of a link as the file writes them: forward and reverse.
 pub(crate) fn base_of(link: &Link) -> [Impairments; 2] {
@@ -361,17 +456,19 @@ fn plain(at: Duration, link: &Name) -> Event {
 }
 
 /// The events of one link, with the state it is in.
-struct Writer<'a> {
+pub(crate) struct Writer<'a> {
     link: &'a Link,
     base: [Impairments; 2],
     now: [Impairments; 2],
     is_down: bool,
     end: Duration,
-    events: Vec<Event>,
+    /// What to do about a model that makes too many events.
+    help: &'static str,
+    pub(crate) events: Vec<Event>,
 }
 
 impl<'a> Writer<'a> {
-    fn new(link: &'a Link, end: Duration) -> Self {
+    pub(crate) fn new(link: &'a Link, end: Duration, help: &'static str) -> Self {
         let base = base_of(link);
         Self {
             link,
@@ -379,22 +476,58 @@ impl<'a> Writer<'a> {
             base,
             is_down: false,
             end,
+            help,
             events: Vec::new(),
         }
     }
 
+    /// The error of a model that would make more events than a link may have.
+    pub(crate) fn too_many(&self) -> Problem {
+        Problem::new(format!(
+            "the model of the link '{}' makes more than {MAX_EVENTS_PER_LINK} events in the measured phase",
+            self.link.id
+        ))
+        .at_path("topology.links")
+        .with_help(self.help)
+    }
+
     fn push(&mut self, event: Event) -> Result<(), Problem> {
         if self.events.len() >= MAX_EVENTS_PER_LINK {
-            return Err(Problem::new(format!(
-                "the model of the link '{}' makes more than {MAX_EVENTS_PER_LINK} events in the measured phase",
-                self.link.id
-            ))
-            .at_path("topology.links")
-            .with_help(
-                "make the states longer (or the mean stay, for a Markov model), or the measured phase shorter: every event is a change of the link, which takes a few milliseconds",
-            ));
+            return Err(self.too_many());
         }
         self.events.push(event);
+        Ok(())
+    }
+
+    /// Moves the direction `side` of the link to the link as the file writes it with `edit` applied (or, with `None`, to the link
+    /// as the file writes it), at `at`; the other direction stays as it is. The step sets the keys that differ from the state
+    /// before.
+    pub(crate) fn move_side(
+        &mut self,
+        at: Duration,
+        side: Direction,
+        edit: Option<&ImpairmentsChange>,
+    ) -> Result<(), Problem> {
+        if at >= self.end {
+            return Ok(());
+        }
+        let mut target = self.now.clone();
+        for (index, own) in [(0, Direction::Forward), (1, Direction::Reverse)] {
+            if side == own || side == Direction::Both {
+                target[index] = edit.map_or_else(
+                    || self.base[index].clone(),
+                    |edit| edit.applied_to(&self.base[index]),
+                );
+            }
+        }
+        if let Some(change) = step_between(&self.now, &target) {
+            let set = Event {
+                set: Some(change),
+                ..plain(at, &self.link.id)
+            };
+            self.push(set)?;
+        }
+        self.now = target;
         Ok(())
     }
 
@@ -467,7 +600,7 @@ pub(crate) fn periodic_events(
 
 /// The events of a periodic model.
 fn periodic(link: &Link, model: &LinkModel, end: Duration) -> Result<Vec<Event>, Problem> {
-    let mut writer = Writer::new(link, end);
+    let mut writer = Writer::new(link, end, STATES_HELP);
     let mut at = model.begin.unwrap_or(Duration::from_nanos(0));
     let lengths: Vec<Duration> = model
         .states
@@ -507,7 +640,7 @@ fn markov(
     end: Duration,
     uniform: &mut dyn FnMut() -> f64,
 ) -> Result<Vec<Event>, Problem> {
-    let mut writer = Writer::new(link, end);
+    let mut writer = Writer::new(link, end, STATES_HELP);
     let Some(start) = &model.start else {
         return Ok(Vec::new());
     };
@@ -647,6 +780,7 @@ impl Scenario {
                     let mut numbers = uniform(&link.id);
                     markov(link, &model, self.duration, &mut numbers)?
                 }
+                ModelKind::Trace => trace_events(link, &model, self.duration)?,
             };
             generated += events.len();
             if generated + timeline.len() > MAX_EVENTS {

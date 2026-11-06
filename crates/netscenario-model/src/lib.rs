@@ -34,9 +34,11 @@ mod graph;
 mod hash;
 mod ip;
 mod link_model;
+mod link_trace;
 mod measure;
 mod mtu;
 mod queue;
+mod rate_changes;
 mod read;
 mod required;
 mod reserved;
@@ -66,6 +68,10 @@ pub use ip::{IpFamily, IpMode};
 pub use link_model::{
     Compiled, LinkModel, MAX_EVENTS, MAX_EVENTS_PER_LINK, ModelKind, ModelState, Uniform,
 };
+pub use link_trace::{
+    DEFAULT_WINDOW, DirectionTrace, LinkTraceFormat, MAX_TRACE_ROWS, OPPORTUNITY_BYTES,
+    TracePoints, read_csv as read_link_trace_csv, read_mahimahi as read_link_trace_mahimahi,
+};
 pub use measure::{
     MAX_BINS, MIN_BIN, Measure, MeasureOverrides, RecoveryBasis, RecoverySettings, SeriesSettings,
 };
@@ -74,6 +80,7 @@ pub use mtu::{
     MIN_MTU_V6, frames_per_packet, mtus_of, mtus_of_topology, path_problem,
 };
 pub use queue::{Discipline, Queue, QueueLimit};
+pub use rate_changes::RateChange;
 pub use read::MAX_FILE_BYTES;
 pub use scenario::{
     Backend, Change, Command, Direction, Edit, Event, FormatVersion, Impairments,
@@ -84,6 +91,7 @@ pub use schema::json_schema;
 pub use shortcut::{
     BOTTLENECK, Chain, Dumbbell, LinkSpec, Multipath, PathSpec, ROUTER_LEFT, ROUTER_RIGHT, Star,
 };
+pub use suggest::closest;
 pub use table::{
     DelayTable, MAX_REFERENCED_FILE_BYTES, MAX_SAMPLES, MIN_SAMPLES, TABLE_ENTRIES, TABLE_SCALE,
     TableValues, parse_samples,

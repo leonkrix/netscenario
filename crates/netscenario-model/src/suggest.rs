@@ -29,7 +29,8 @@ fn distance(a: &str, b: &str) -> usize {
 ///
 /// A name is close when it differs by at most one edit for short names and by a third of the length for
 /// longer ones. If two names are equally close, nothing is suggested: a wrong hint is worse than none.
-pub(crate) fn closest<'a>(written: &str, known: &[&'a str]) -> Option<&'a str> {
+#[must_use]
+pub fn closest<'a>(written: &str, known: &[&'a str]) -> Option<&'a str> {
     let allowed = (written.chars().count() / 3).max(1);
     let mut best: Option<(usize, &'a str)> = None;
     let mut tie = false;

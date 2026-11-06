@@ -25,8 +25,9 @@ pub(crate) const LEAF_HANDLE: &str = "3:";
 pub(crate) struct QueueTree {
     /// For the interface of the sender in its node: the `netem`, the `htb`, its class and the leaf, in this order.
     pub(crate) node: Vec<String>,
-    /// For the port of the fabric towards the receiver: the delay, the jitter and the reordering, if the direction has any.
-    pub(crate) fabric: Option<String>,
+    /// For the port of the fabric towards the receiver, the root first: the delay, the jitter and the reordering if the direction
+    /// has any, and the blackout of an outage behind them.
+    pub(crate) fabric: Vec<String>,
 }
 
 /// A time as `tc` takes it, in whole microseconds.
@@ -107,90 +108,269 @@ fn leaf(queue: &Queue) -> Result<(&'static str, Vec<String>), String> {
     Ok((kind, arguments))
 }
 
-/// The lines for `tc` that build a direction with a `queue`: `interface` is the interface of the sender in its node, and
-/// `port` the port of the fabric that the packets leave the fabric by.
+/// The rate of a direction whose rate is not set (yet or any more): a shaper that does not hold anything back.
+const UNLIMITED_BITS: u64 = 100_000_000_000;
+
+/// The qdisc of the fabric port that holds the blackout of an outage, as the child of the delaying `netem`.
+const PORT_BLACKOUT: &str = "parent 1:1 handle 2:";
+
+/// What the tree of a direction has to be able to do, from every state it goes through: the stages that exist from the start
+/// to the end of the run, because a stage that is not there cannot be added without building the queue again, which drops the
+/// packets in it and starts its random numbers over (D-059). The plan of a direction that never changes is made from its one
+/// state.
+// The flags are independent facts about the stages of the tree, not the states of one thing
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QueuePlan {
+    /// Whether some state has a loss, a duplication or a corruption: the `netem` of the node is seeded when it is built, because a
+    /// change keeps its generator.
+    seeded_node: bool,
+    /// Whether the fabric holds a `netem` for the delay, the jitter and the reordering: some state has one of them, or the
+    /// direction has an outage.
+    delaying: bool,
+    /// Whether some state has a jitter or a reordering: the `netem` of the fabric draws numbers.
+    seeded_fabric: bool,
+    /// The longest queue that any state needs in the fabric, so that a change never makes it shorter than what it holds.
+    fabric_limit: u64,
+    /// Whether the port has a blackout behind the delay, for an outage (D-064).
+    blackout: bool,
+    /// Whether some state has a rate: without one a direction with a queue has nothing to wait for.
+    any_rate: bool,
+}
+
+/// The lines for `tc` that change a built tree from one state to another: for the node, and for the port of the fabric.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TreeStep {
+    /// For the interface of the sender in its node.
+    pub(crate) node: Vec<String>,
+    /// For the port of the fabric towards the receiver.
+    pub(crate) fabric: Vec<String>,
+}
+
+impl QueuePlan {
+    /// The plan for the states of a direction.
+    ///
+    /// # Errors
+    ///
+    /// Text if the states cannot be had in one tree: a jitter with a normal distribution in one and a uniform one in another.
+    pub(crate) fn of(states: &[Impairments]) -> Result<Self, String> {
+        netem::Layout::of(states, false)?;
+        let delay_limit = |state: &Impairments| {
+            netem::queue_limit(
+                state.delay,
+                state.jitter.as_ref().map(|jitter| jitter.amount),
+            )
+        };
+        Ok(Self {
+            seeded_node: states.iter().any(|state| {
+                state.loss.is_some() || state.duplicate.is_some() || state.corrupt.is_some()
+            }),
+            delaying: states
+                .iter()
+                .any(|state| state.delay.is_some() || state.reorder.is_some()),
+            seeded_fabric: states
+                .iter()
+                .any(|state| state.jitter.is_some() || state.reorder.is_some()),
+            fabric_limit: states.iter().map(delay_limit).max().unwrap_or(0),
+            blackout: false,
+            any_rate: states.iter().any(|state| state.rate.is_some()),
+        })
+    }
+
+    /// This plan with a blackout behind the delay, for an outage.
+    pub(crate) fn with_blackout(mut self) -> Self {
+        self.blackout = true;
+        self.delaying = true;
+        self
+    }
+
+    /// Whether a state fits the tree: a delay or a reordering needs the `netem` of the fabric, which is there only if the plan
+    /// had a state with one.
+    pub(crate) fn fits(&self, state: &Impairments) -> bool {
+        (state.delay.is_none() && state.reorder.is_none()) || self.delaying
+    }
+
+    /// The first `netem` of the node: the stages before the rate. `whole` writes what a change keeps across it as zeros (D-048).
+    fn node_netem(&self, state: &Impairments, seed: Option<u64>, whole: bool) -> Vec<String> {
+        let mut words = vec![
+            "limit".to_owned(),
+            NODE_NETEM_LIMIT.to_string(),
+            "delay".to_owned(),
+            "1us".to_owned(),
+        ];
+        words.extend(netem::loss_arguments(state));
+        words.extend(netem::duplicate_arguments(state));
+        let corrupt = netem::corrupt_arguments(state);
+        if corrupt.is_empty() && whole {
+            words.extend(["corrupt".to_owned(), "0%".to_owned()]);
+        } else {
+            words.extend(corrupt);
+        }
+        if self.seeded_node {
+            words.extend(netem::seed_arguments(seed));
+        }
+        words
+    }
+
+    /// The `netem` of the fabric port: the delay with its jitter and the reordering.
+    fn port_netem(
+        &self,
+        state: &Impairments,
+        seed: Option<u64>,
+        whole: bool,
+    ) -> Result<Vec<String>, String> {
+        let mut words = vec!["limit".to_owned(), self.fabric_limit.to_string()];
+        words.extend(netem::delay_arguments(state)?);
+        let reorder = netem::reorder_arguments(state);
+        if reorder.is_empty() && whole {
+            words.extend(["reorder".to_owned(), "0%".to_owned()]);
+        } else {
+            words.extend(reorder);
+        }
+        if self.seeded_fabric {
+            words.extend(netem::seed_arguments(
+                seed.map(|seed| derive_stage_seed(seed, 1)),
+            ));
+        }
+        Ok(words)
+    }
+
+    /// The class of the shaper at the rate of `state`.
+    fn class_line(interface: &str, verb: &str, state: &Impairments) -> String {
+        let rate = state
+            .rate
+            .map_or(UNLIMITED_BITS, netscenario_model::Rate::bits_per_second);
+        // An `htb` class with the same `rate` and `ceil` is a shaper that keeps its tokens when the rate is changed (S19); the
+        // burst is small so that the rate holds at the scale of a few packets, and the quantum is a frame
+        format!(
+            "class {verb} dev {interface} parent 2: classid 2:1 htb rate {rate}bit ceil {rate}bit burst 1600 cburst 1600 quantum 1514"
+        )
+    }
+
+    /// The lines that build the tree of a direction in `state`: `interface` is the interface of the sender in its node, and `port`
+    /// the port of the fabric that the packets leave the fabric by.
+    ///
+    /// # Errors
+    ///
+    /// Text if a value cannot be applied exactly (a time that is not a whole number of microseconds), or no state has a rate.
+    pub(crate) fn build(
+        &self,
+        interface: &str,
+        port: &str,
+        state: &Impairments,
+        seed: Option<u64>,
+    ) -> Result<QueueTree, String> {
+        if !self.any_rate {
+            return Err("a queue needs a rate to wait for".to_owned());
+        }
+        let default = Queue::default();
+        let (kind, arguments) = leaf(state.queue.as_ref().unwrap_or(&default))?;
+        let mut node = vec![
+            format!(
+                "qdisc replace dev {interface} root handle 1: netem {}",
+                self.node_netem(state, seed, false).join(" ")
+            ),
+            format!("qdisc replace dev {interface} parent 1:1 handle 2: htb default 1 r2q 10"),
+            Self::class_line(interface, "replace", state),
+        ];
+        let mut leaf_line =
+            format!("qdisc replace dev {interface} parent 2:1 handle {LEAF_HANDLE} {kind}");
+        for argument in arguments {
+            leaf_line.push(' ');
+            leaf_line.push_str(&argument);
+        }
+        node.push(leaf_line);
+        // The delay with its jitter and the reordering come after the queue, in the fabric (D-079), with the blackout of an
+        // outage behind them
+        let mut fabric = Vec::new();
+        if self.delaying {
+            let root = if self.blackout {
+                "root handle 1:"
+            } else {
+                "root"
+            };
+            fabric.push(format!(
+                "qdisc replace dev {port} {root} netem {}",
+                self.port_netem(state, seed, false)?.join(" ")
+            ));
+            if self.blackout {
+                fabric.push(Self::blackout(port, "replace", false));
+            }
+        }
+        Ok(QueueTree { node, fabric })
+    }
+
+    /// The lines that change the tree from `from` to `to`: only the parts whose values differ, each written whole (D-048), and
+    /// no seed, because a change keeps the generator. The leaf is not touched: the queue and what it holds stay.
+    ///
+    /// # Errors
+    ///
+    /// Text if a value cannot be applied exactly.
+    pub(crate) fn step(
+        &self,
+        interface: &str,
+        port: &str,
+        from: &Impairments,
+        to: &Impairments,
+    ) -> Result<TreeStep, String> {
+        let mut step = TreeStep::default();
+        if (&from.loss, &from.duplicate, &from.corrupt) != (&to.loss, &to.duplicate, &to.corrupt) {
+            step.node.push(format!(
+                "qdisc change dev {interface} root handle 1: netem {}",
+                self.node_netem(to, None, true).join(" ")
+            ));
+        }
+        if from.rate != to.rate {
+            step.node.push(Self::class_line(interface, "change", to));
+        }
+        if self.delaying
+            && (&from.delay, &from.jitter, &from.reorder) != (&to.delay, &to.jitter, &to.reorder)
+        {
+            let root = if self.blackout {
+                "root handle 1:"
+            } else {
+                "root"
+            };
+            step.fabric.push(format!(
+                "qdisc change dev {port} {root} netem {}",
+                self.port_netem(to, None, true)?.join(" ")
+            ));
+        }
+        Ok(step)
+    }
+
+    /// The line that begins (`on`) or ends an outage on `port`: the blackout is a `netem` behind the delay that loses everything
+    /// while it is on.
+    pub(crate) fn blackout_line(&self, port: &str, on: bool) -> Option<String> {
+        self.blackout.then(|| Self::blackout(port, "change", on))
+    }
+
+    fn blackout(port: &str, verb: &str, on: bool) -> String {
+        let loss = if on { "100.000000%" } else { "0.000000%" };
+        format!(
+            "qdisc {verb} dev {port} {PORT_BLACKOUT} netem limit {NODE_NETEM_LIMIT} loss random {loss}"
+        )
+    }
+}
+
+/// The lines for `tc` that build a direction with a `queue` that does not change: `interface` is the interface of the sender in
+/// its node, and `port` the port of the fabric that the packets leave the fabric by.
 ///
 /// # Errors
 ///
 /// Text if a value cannot be applied exactly (a time that is not a whole number of microseconds), or the direction has a
 /// `queue` without a `rate`.
+#[cfg(test)]
 pub(crate) fn queue_tree(
     interface: &str,
     port: &str,
     impairments: &Impairments,
     seed: Option<u64>,
 ) -> Result<QueueTree, String> {
-    let queue = impairments
-        .queue
-        .as_ref()
-        .ok_or_else(|| "the direction has no queue".to_owned())?;
-    let rate = impairments
-        .rate
-        .ok_or_else(|| "a queue needs a rate to wait for".to_owned())?
-        .bits_per_second();
-    // The first `netem`: the stages that come before the rate. It draws numbers for the loss, the duplication and the
-    // corruption, so it gets the seed where the direction has one of them.
-    let mut first = vec![
-        "limit".to_owned(),
-        NODE_NETEM_LIMIT.to_string(),
-        "delay".to_owned(),
-        "1us".to_owned(),
-    ];
-    first.extend(netem::loss_arguments(impairments));
-    first.extend(netem::duplicate_arguments(impairments));
-    first.extend(netem::corrupt_arguments(impairments));
-    if impairments.loss.is_some()
-        || impairments.duplicate.is_some()
-        || impairments.corrupt.is_some()
-    {
-        first.extend(netem::seed_arguments(seed));
+    if impairments.queue.is_none() {
+        return Err("the direction has no queue".to_owned());
     }
-    let (kind, arguments) = leaf(queue)?;
-    let mut node = vec![
-        format!(
-            "qdisc replace dev {interface} root handle 1: netem {}",
-            first.join(" ")
-        ),
-        format!("qdisc replace dev {interface} parent 1:1 handle 2: htb default 1 r2q 10"),
-        // An `htb` class with the same `rate` and `ceil` is a shaper that keeps its tokens when the rate is changed (S19); the
-        // burst is small so that the rate holds at the scale of a few packets, and the quantum is a frame
-        format!(
-            "class replace dev {interface} parent 2: classid 2:1 htb rate {rate}bit ceil {rate}bit burst 1600 cburst 1600 quantum 1514"
-        ),
-    ];
-    let mut leaf_line =
-        format!("qdisc replace dev {interface} parent 2:1 handle {LEAF_HANDLE} {kind}");
-    for argument in arguments {
-        leaf_line.push(' ');
-        leaf_line.push_str(&argument);
-    }
-    node.push(leaf_line);
-    // The delay with its jitter and the reordering come after the queue, in the fabric (D-079)
-    let delays = impairments.delay.is_some() || impairments.reorder.is_some();
-    let fabric = if delays {
-        let mut words = vec![
-            "limit".to_owned(),
-            netem::queue_limit(
-                impairments.delay,
-                impairments.jitter.as_ref().map(|jitter| jitter.amount),
-            )
-            .to_string(),
-        ];
-        words.extend(netem::delay_arguments(impairments)?);
-        words.extend(netem::reorder_arguments(impairments));
-        if impairments.jitter.is_some() || impairments.reorder.is_some() {
-            words.extend(netem::seed_arguments(
-                seed.map(|seed| derive_stage_seed(seed, 1)),
-            ));
-        }
-        Some(format!(
-            "qdisc replace dev {port} root netem {}",
-            words.join(" ")
-        ))
-    } else {
-        None
-    };
-    Ok(QueueTree { node, fabric })
+    QueuePlan::of(std::slice::from_ref(impairments))?.build(interface, port, impairments, seed)
 }
 
 #[cfg(test)]
@@ -224,7 +404,7 @@ mod tests {
                 "qdisc replace dev l0 parent 2:1 handle 3: pfifo limit 1000"
             ]
         );
-        assert_eq!(found.fabric, None, "nothing comes after the queue");
+        assert!(found.fabric.is_empty(), "nothing comes after the queue");
     }
 
     #[test]
@@ -314,7 +494,7 @@ mod tests {
             found.node[0],
             "qdisc replace dev l0 root handle 1: netem limit 1000 delay 1us loss random 1.000000% seed 7"
         );
-        let fabric = found.fabric.unwrap();
+        let fabric = found.fabric[0].clone();
         assert!(
             fabric.starts_with("qdisc replace dev nsf0b root netem limit ")
                 && fabric.contains(
@@ -344,5 +524,117 @@ mod tests {
             ..Impairments::default()
         };
         assert!(queue_tree("l0", "p", &no_rate, None).is_err());
+    }
+
+    fn plan_of(states: &[Impairments]) -> QueuePlan {
+        QueuePlan::of(states).unwrap()
+    }
+
+    fn at_rate(bits: u64) -> Impairments {
+        Impairments {
+            rate: Rate::from_bits_per_second(bits),
+            ..Impairments::default()
+        }
+    }
+
+    /// A rate that changes is a tree whose class is changed and nothing else: the `netem` of the node keeps its generator, the
+    /// leaf keeps its packets (D-091).
+    #[test]
+    fn a_step_of_the_rate_changes_the_class_and_nothing_else() {
+        let (low, high) = (at_rate(2_000_000), at_rate(8_000_000));
+        let plan = plan_of(&[low.clone(), high.clone()]);
+        let step = plan.step("l0", "p", &low, &high).unwrap();
+        assert_eq!(
+            step.node,
+            [
+                "class change dev l0 parent 2: classid 2:1 htb rate 8000000bit ceil 8000000bit burst 1600 cburst 1600 quantum 1514"
+            ]
+        );
+        assert_eq!(step.fabric, Vec::<String>::new());
+        // Canary: the same state again changes nothing
+        assert_eq!(
+            plan.step("l0", "p", &high, &high).unwrap(),
+            TreeStep::default()
+        );
+    }
+
+    /// The parts that differ are written whole, with what a change keeps across it as zeros (D-048).
+    #[test]
+    fn a_step_writes_the_whole_part_with_zeros_for_what_a_change_keeps() {
+        let first = Impairments {
+            corrupt: Some("1%".parse().unwrap()),
+            reorder: Some(Reorder {
+                share: "10%".parse().unwrap(),
+                gap: None,
+            }),
+            delay: Some("20ms".parse().unwrap()),
+            ..at_rate(2_000_000)
+        };
+        let second = Impairments {
+            delay: Some("30ms".parse().unwrap()),
+            ..at_rate(2_000_000)
+        };
+        let plan = plan_of(&[first.clone(), second.clone()]);
+        let step = plan.step("l0", "p", &first, &second).unwrap();
+        assert_eq!(
+            step.node,
+            ["qdisc change dev l0 root handle 1: netem limit 1000 delay 1us corrupt 0%"]
+        );
+        assert_eq!(step.fabric.len(), 1);
+        assert!(
+            step.fabric[0].starts_with("qdisc change dev p root netem limit ")
+                && step.fabric[0].contains(" delay 30000us ")
+                && step.fabric[0].ends_with(" reorder 0%"),
+            "{:?}",
+            step.fabric
+        );
+        // No seed in a change: the generator goes on
+        assert!(!step.fabric[0].contains("seed"));
+    }
+
+    /// The stages that a later state needs exist from the start: the node is seeded when only a later state has a loss, and a
+    /// direction that gets a delay later has the delaying `netem` in the fabric from the start.
+    #[test]
+    fn the_stages_of_every_state_are_built_at_the_start() {
+        let lossy = Impairments {
+            loss: Some(Loss::Random {
+                p: "1%".parse().unwrap(),
+            }),
+            delay: Some("10ms".parse().unwrap()),
+            ..at_rate(2_000_000)
+        };
+        let plan = plan_of(&[at_rate(2_000_000), lossy]);
+        let built = plan.build("l0", "p", &at_rate(2_000_000), Some(7)).unwrap();
+        assert!(built.node[0].ends_with("seed 7"), "{:?}", built.node);
+        assert_eq!(built.fabric.len(), 1, "the delaying netem is there");
+        let without = plan_of(&[at_rate(1_000_000), at_rate(2_000_000)]);
+        assert!(!without.fits(&Impairments {
+            delay: Some("1ms".parse().unwrap()),
+            ..at_rate(1_000_000)
+        }));
+    }
+
+    /// A state with no rate is a class that holds nothing back, and an outage is a blackout behind the delay on the port.
+    #[test]
+    fn no_rate_is_an_open_class_and_an_outage_is_a_blackout_on_the_port() {
+        let plan = plan_of(&[at_rate(2_000_000), Impairments::default()]).with_blackout();
+        let step = plan
+            .step("l0", "p", &at_rate(2_000_000), &Impairments::default())
+            .unwrap();
+        assert!(step.node[0].contains("htb rate 100000000000bit ceil 100000000000bit"));
+        let built = plan.build("l0", "p", &at_rate(2_000_000), None).unwrap();
+        assert_eq!(
+            built.fabric,
+            [
+                "qdisc replace dev p root handle 1: netem limit 1000",
+                "qdisc replace dev p parent 1:1 handle 2: netem limit 1000 loss random 0.000000%"
+            ]
+        );
+        assert_eq!(
+            plan.blackout_line("p", true).unwrap(),
+            "qdisc change dev p parent 1:1 handle 2: netem limit 1000 loss random 100.000000%"
+        );
+        // Canary: a plan without an outage has no blackout line
+        assert_eq!(plan_of(&[at_rate(1)]).blackout_line("p", true), None);
     }
 }

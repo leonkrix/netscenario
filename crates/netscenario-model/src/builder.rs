@@ -23,8 +23,8 @@ use crate::error::Problem;
 use crate::generators::{PhaseDistribution, UdpBursty, UdpOnOff, UdpPoisson};
 use crate::measure::Measure;
 use crate::scenario::{
-    Backend, Change, Command, Direction, Event, FormatVersion, Impairments, Jitter,
-    JitterDistribution, Link, Loss, Reorder, Scenario, True, UdpCbr, UdpChecksum, Workload,
+    Backend, Change, Command, Direction, Event, Impairments, Jitter, JitterDistribution, Link,
+    Loss, Reorder, Scenario, True, UdpCbr, UdpChecksum, Workload,
 };
 use crate::tcp::{RequestResponse, TcpBulk};
 use crate::topology::{Node, Role, Route, Routing, Topology};
@@ -227,6 +227,7 @@ pub struct ScenarioBuilder {
     seed: Option<u64>,
     duration: Option<Duration>,
     backend: Backend,
+    allow_limited: Vec<Name>,
     nodes: Vec<Node>,
     routing: Routing,
     ecmp: bool,
@@ -248,6 +249,7 @@ impl Scenario {
             seed: None,
             duration: None,
             backend: Backend::Auto,
+            allow_limited: Vec::new(),
             nodes: Vec::new(),
             routing: Routing::Auto,
             ecmp: false,
@@ -287,6 +289,22 @@ impl ScenarioBuilder {
     #[must_use]
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
+        self
+    }
+
+    /// Accepts the restriction of a backend that reproduces `feature` only in part (D-092): the id of a feature, such as
+    /// `fast-rate-steps`.
+    #[must_use]
+    pub fn allow_limited(mut self, feature: &str) -> Self {
+        match Name::new(feature) {
+            Ok(name) => self.allow_limited.push(name),
+            Err(error) => self.problems.push(
+                Problem::new(format!(
+                    "'{feature}' cannot be the id of a feature: {error}"
+                ))
+                .at_path("allow-limited"),
+            ),
+        }
         self
     }
 
@@ -806,24 +824,17 @@ impl ScenarioBuilder {
         if !self.problems.is_empty() {
             return Err(self.problems);
         }
-        let scenario = Scenario {
-            version: FormatVersion,
-            name,
-            seed: self.seed,
-            duration,
-            backend: self.backend,
-            topology: {
-                let mut topology = Topology::new(self.nodes, self.links);
-                topology.routing = self.routing;
-                topology.ecmp = self.ecmp;
-                topology.ip = self.ip;
-                topology.routes = self.routes;
-                topology
-            },
-            workloads: self.workloads,
-            timeline: self.timeline,
-            measure: self.measure,
-        };
+        let mut topology = Topology::new(self.nodes, self.links);
+        topology.routing = self.routing;
+        topology.ecmp = self.ecmp;
+        topology.ip = self.ip;
+        topology.routes = self.routes;
+        let mut scenario = Scenario::new(name, duration, topology, self.workloads);
+        scenario.seed = self.seed;
+        scenario.backend = self.backend;
+        scenario.allow_limited = self.allow_limited;
+        scenario.timeline = self.timeline;
+        scenario.measure = self.measure;
         let problems = scenario.validate();
         if problems.is_empty() {
             Ok(scenario)

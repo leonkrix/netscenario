@@ -436,3 +436,65 @@ def test_canary_a_tcp_workload_with_no_connections_is_refused_with_the_path() ->
             .tcp_bulk("down", "b", "a", connections=0)
             .build()
         )
+
+
+TRACED = """\
+version: 0
+name: traced
+duration: 4s
+allow-limited: [fast-rate-steps]
+topology:
+  nodes: [a, b]
+  links:
+    - id: l
+      between: [a, b]
+      both: { delay: 10ms }
+      model:
+        kind: trace
+        reverse: { file: down.up, format: mahimahi, window: 50ms }
+workloads:
+  - { id: w, kind: udp-cbr, from: b, to: a, rate: 8mbit, packet-size: 1200b }
+"""
+
+
+def test_a_trace_of_a_link_becomes_its_points_and_asks_for_what_it_needs(tmp_path: Path) -> None:
+    (tmp_path / "down.up").write_text("".join(f"{ms}\n" for ms in range(1, 401)), encoding="utf-8")
+    file = tmp_path / "traced.yaml"
+    file.write_text(TRACED, encoding="utf-8")
+    scenario = ns.Scenario.load(file)
+    trace = scenario.data["topology"]["links"][0]["model"]["reverse"]
+    assert trace["file"] == "down.up"
+    assert len(trace["sha256"]) == 64
+    assert trace["points"]
+    needs = scenario.needs()
+    assert "link-traces" in needs
+    assert "rate-steps" in needs
+    assert scenario.data["allow-limited"] == ["fast-rate-steps"]
+    # The scenario holds the points, so a copy needs no file
+    again = ns.Scenario.from_yaml(scenario.to_json())
+    assert again.data["topology"]["links"][0]["model"]["reverse"]["points"] == trace["points"]
+    # A file that is no trace is a problem at the file, with the line
+    (tmp_path / "down.up").write_text("5\n3\n", encoding="utf-8")
+    with pytest.raises(ns.ScenarioError) as raised:
+        ns.Scenario.load(file)
+    assert "line 2: 3 comes after 5" in str(raised.value)
+    assert raised.value.problems[0].path == "topology.links[0].model.reverse.file"
+
+
+def test_the_restrictions_a_scenario_accepts_are_built_from_the_argument() -> None:
+    built = (
+        ns.Scenario.builder("limited", duration="1s", allow_limited=["fast-rate-steps"])
+        .nodes("a", "b")
+        .link("l", "a", "b")
+        .udp_cbr("w", "a", "b", rate="1mbit", packet_size="1000b")
+        .build()
+    )
+    assert built.data["allow-limited"] == ["fast-rate-steps"]
+    plain = (
+        ns.Scenario.builder("plain", duration="1s")
+        .nodes("a", "b")
+        .link("l", "a", "b")
+        .udp_cbr("w", "a", "b", rate="1mbit", packet_size="1000b")
+        .build()
+    )
+    assert "allow-limited" not in plain.data

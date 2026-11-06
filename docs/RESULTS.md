@@ -153,7 +153,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `scenario.hash` | `sha256:` and the SHA-256 of the scenario in canonical JSON (the keys in the order of the format, keys with default values left out). A change of comments or of the layout of the file does not change it; a change of any value does. Two results with the same hash come from the same scenario. |
 | `provenance` | Where, when and with what the result was made (ENV-02), below. |
 | `seed` | The seed, below. |
-| `accepted_restrictions` | The limits of the backend that the scenario accepted with `allow-limited` (release 0.3): `feature` and `restriction`. Empty in release 0.1, where a limit is refused. |
+| `accepted_restrictions` | The limits of the backend that the scenario accepted with `allow-limited` (D-092): `feature` (the id) and `restriction` (the sentence of the backend, with the numbers that were measured). Only the restrictions that apply to this run are listed; empty when the run needed none. The summary and the reports print them. |
 | `addresses` | The address of each end of each link, of each family the network has (`ip`, D-081): `node`, `link`, `address`. They are assigned by the backend (`10.100.n.1` and `.2` for link `n` in the Kernel backend) and are not part of the scenario. |
 | `nodes` | The nodes of the network: `node`, `role` (`host` or `router`) and `address`, the address on the loopback of the node that the workloads and the placeholders (`{server.addr}`) use (D-078). Empty in a result from before release 0.3. |
 | `nodes[].address_v6` | The IPv6 address of a node on its loopback, when the network has both families (D-081); `address` is then the IPv4 one, and in a network with IPv6 only it is the IPv6 one. |

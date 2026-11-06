@@ -75,6 +75,13 @@ fn markdown_run(result: &RunResult) -> String {
             "\n> **Warning:** the loss of this run does not repeat from its seed: {reason}"
         );
     }
+    for accepted in &result.accepted_restrictions {
+        let _ = writeln!(
+            text,
+            "\n> **Accepted restriction** ({}): {}",
+            accepted.feature, accepted.restriction
+        );
+    }
     markdown_workloads(&mut text, result);
     markdown_tcp(&mut text, result);
     markdown_timeline(&mut text, result);

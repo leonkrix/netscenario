@@ -5,11 +5,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use netscenario_model::{
-    Backend, Change, Command, Direction, Duration, Edit, Event, FormatVersion, Impairments,
-    ImpairmentsChange, Jitter, JitterDistribution, Link, Loss, MAX_PACKET_SIZE,
-    MAX_PACKETS_PER_SECOND, MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM, Measure, Name, Node,
-    OnExit, Probability, Rate, Ready, RecoveryBasis, RecoverySettings, Reorder, Scenario,
-    SeriesSettings, Shutdown, Signal, Size, Topology, UdpCbr, UdpChecksum, Workload,
+    Backend, Change, Command, Direction, Duration, Edit, Event, Impairments, ImpairmentsChange,
+    Jitter, JitterDistribution, Link, Loss, MAX_PACKET_SIZE, MAX_PACKETS_PER_SECOND,
+    MIN_PACKET_SIZE, MIN_PACKET_SIZE_WITHOUT_CHECKSUM, Measure, Name, Node, OnExit, Probability,
+    Rate, Ready, RecoveryBasis, RecoverySettings, Reorder, Scenario, SeriesSettings, Shutdown,
+    Signal, Size, Topology, UdpCbr, UdpChecksum, Workload,
 };
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -287,36 +287,35 @@ fn valid_scenario() -> impl Strategy<Value = Scenario> {
                     1 => (None, None, Some(forward)),
                     _ => (Some(forward), None, None),
                 };
-                Scenario {
-                    version: FormatVersion,
-                    name: Name::new("generated").unwrap(),
-                    seed,
-                    duration: Duration::from_nanos(duration),
-                    backend: if kernel {
-                        Backend::Kernel
-                    } else {
-                        Backend::Auto
-                    },
-                    topology: {
-                        let mut link = Link::new(
-                            Name::new("link").unwrap(),
-                            [Name::new("a").unwrap(), Name::new("b").unwrap()],
-                        );
-                        link.forward = forward;
-                        link.reverse = reverse;
-                        link.both = both;
-                        Topology::new(
-                            vec![
-                                Node::host(Name::new("a").unwrap()),
-                                Node::host(Name::new("b").unwrap()),
-                            ],
-                            vec![link],
-                        )
-                    },
+                let mut link = Link::new(
+                    Name::new("link").unwrap(),
+                    [Name::new("a").unwrap(), Name::new("b").unwrap()],
+                );
+                link.forward = forward;
+                link.reverse = reverse;
+                link.both = both;
+                let topology = Topology::new(
+                    vec![
+                        Node::host(Name::new("a").unwrap()),
+                        Node::host(Name::new("b").unwrap()),
+                    ],
+                    vec![link],
+                );
+                let mut scenario = Scenario::new(
+                    Name::new("generated").unwrap(),
+                    Duration::from_nanos(duration),
+                    topology,
                     workloads,
-                    timeline: timeline(duration, &steps),
-                    measure: measure(duration, seed),
-                }
+                );
+                scenario.seed = seed;
+                scenario.backend = if kernel {
+                    Backend::Kernel
+                } else {
+                    Backend::Auto
+                };
+                scenario.timeline = timeline(duration, &steps);
+                scenario.measure = measure(duration, seed);
+                scenario
             },
         )
 }

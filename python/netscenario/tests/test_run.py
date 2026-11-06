@@ -264,6 +264,40 @@ def test_a_model_of_a_link_makes_the_steps_and_the_result_says_so(tmp_path: Path
     assert '"model"' in (tmp_path / "out" / "scenario.json").read_text(encoding="utf-8")
 
 
+def test_a_trace_that_is_followed_only_in_part_runs_when_the_scenario_accepts_it(
+    tmp_path: Path,
+) -> None:
+    # One opportunity in each millisecond, and two in every other window of 50 ms: steps of 50 ms
+    lines: list[str] = []
+    for ms in range(1, 1001):
+        lines.append(str(ms))
+        if ((ms - 1) // 50) % 2:
+            lines.append(str(ms))
+    (tmp_path / "down.up").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    text = (
+        "version: 0\nname: py-trace\nduration: 2s\n@ALLOW@topology:\n  nodes: [a, b]\n  links:\n"
+        "    - id: l\n      between: [a, b]\n      model:\n        kind: trace\n"
+        "        reverse: { file: down.up, format: mahimahi, window: 50ms }\n"
+        "workloads:\n"
+        "  - { id: w, kind: udp-cbr, from: b, to: a, rate: 25mbit, packet-size: 1472b }\n"
+    )
+    refused = tmp_path / "refused.yaml"
+    refused.write_text(text.replace("@ALLOW@", ""), encoding="utf-8")
+    with pytest.raises(ns.CapabilityError, match="allow-limited: \\[fast-rate-steps\\]"):
+        ns.run(ns.Scenario.load(refused), out=tmp_path / "refused-out", settle=0.3)
+    accepted = tmp_path / "accepted.yaml"
+    accepted.write_text(
+        text.replace("@ALLOW@", "allow-limited: [fast-rate-steps]\n"), encoding="utf-8"
+    )
+    run = ns.run(ns.Scenario.load(accepted), out=tmp_path / "out", settle=0.3)
+    assert [r.feature for r in run.accepted_restrictions] == ["fast-rate-steps"]
+    assert "2 % fewer" in run.accepted_restrictions[0].restriction
+    # 1.5 opportunities in a millisecond on average: the link carries about 3000 frames in two
+    # seconds (a few hundred more leave the queue while the run settles), where 4200 are offered
+    assert run["w"].lost > 0
+    assert 2800 < run["w"].received < run["w"].sent
+
+
 def test_the_same_seed_loses_the_same_packets(tmp_path: Path) -> None:
     lossy = scenario(link=ns.Impairments(loss="20%"), seed=42)
 

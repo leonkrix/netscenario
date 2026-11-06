@@ -180,6 +180,14 @@ fn summary(out: &mut String, result: &RunResult) {
             escape(reason)
         );
     }
+    for accepted in &result.accepted_restrictions {
+        let _ = write!(
+            out,
+            "<p class=\"warn\"><strong>Accepted restriction</strong> ({}): {}</p>",
+            escape(&accepted.feature),
+            escape(&accepted.restriction)
+        );
+    }
 }
 
 /// The marks of the events of the timeline: a dashed line at the moment the file gives, labelled with the number of the event.

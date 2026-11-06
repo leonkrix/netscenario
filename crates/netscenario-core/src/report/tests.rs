@@ -220,6 +220,35 @@ fn markdown_warns_where_a_run_was_cut_short_or_cannot_repeat() {
     );
 }
 
+/// A restriction that the scenario accepted is said in the text and in the page, next to the numbers it limits, and only when there
+/// is one (D-092).
+#[test]
+fn the_restrictions_a_scenario_accepted_are_said_in_both_reports() {
+    let Report::Run(mut run) = load("md-limited", true) else {
+        panic!("a run")
+    };
+    assert!(!markdown(&Report::Run(run.clone())).contains("Accepted restriction"));
+    assert!(
+        !html(&Report::Run(run.clone()))
+            .unwrap()
+            .contains("Accepted restriction")
+    );
+    run.result.accepted_restrictions = vec![crate::result::AcceptedRestriction::new(
+        "fast-rate-steps",
+        "up to 2 % fewer bytes <at> steps of 20 ms",
+    )];
+    let text = markdown(&Report::Run(run.clone()));
+    assert!(
+        text.contains("> **Accepted restriction** (fast-rate-steps): up to 2 % fewer bytes <at> steps of 20 ms"),
+        "{text}"
+    );
+    let page = html(&Report::Run(run)).unwrap();
+    assert!(
+        page.contains("<strong>Accepted restriction</strong> (fast-rate-steps): up to 2 % fewer bytes &lt;at&gt; steps of 20 ms"),
+        "{page}"
+    );
+}
+
 /// A TCP workload with two connections of which one failed, a goodput by bin and a recovery.
 fn a_tcp() -> crate::result::TcpResult {
     crate::result::TcpResult {

@@ -239,6 +239,71 @@
         }
       ]
     },
+    "DirectionTrace": {
+      "additionalProperties": false,
+      "description": "The trace of one direction of a link: the file it comes from and, once the file is read, the points.\n\nIn a scenario file `file` is written, with `format` unless the name ends in `.csv`, `window` for a Mahimahi trace and\n`period` for a CSV file. The loader fills in the rest. `sha256` may be written as well: then the file must have exactly that\ncontent.",
+      "properties": {
+        "file": {
+          "description": "The file, a path relative to the directory of the scenario file. Read when the scenario is loaded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkTraceFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`csv` or `mahimahi`. Left out, a name that ends in `.csv` is a CSV file."
+        },
+        "period": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "CSV only: how long one pass of the trace is, from its start to where it begins again. Default: the last row lasts as long\nas the row before it."
+        },
+        "points": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TracePoints"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The points. Written by the loader; a scenario with them needs no file."
+        },
+        "sha256": {
+          "description": "The SHA-256 of the file. Written by the loader; if it is in the file, the content must match it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Mahimahi only: how many milliseconds of the trace make one rate. The opportunities of a window are counted and give its\nrate; a whole number of milliseconds. Default `100ms`."
+        }
+      },
+      "type": "object"
+    },
     "Discipline": {
       "description": "How the packets that wait for the rate are kept and dropped.",
       "oneOf": [
@@ -870,7 +935,7 @@
     },
     "LinkModel": {
       "additionalProperties": false,
-      "description": "How a link changes over time: a periodic pattern or a Markov chain of states.\n\nThe keys of one kind are refused in the other, each at its own line. New keys are added to this type in later releases:\nread a file to make one.",
+      "description": "How a link changes over time: a periodic pattern, a Markov chain of states, or a trace from a file.\n\nThe keys of one kind are refused in the other, each at its own line. New keys are added to this type in later releases:\nread a file to make one.",
       "properties": {
         "begin": {
           "anyOf": [
@@ -883,16 +948,49 @@
           ],
           "description": "When the model begins, from the start of the measured phase. Before that the link is what the file says. Default `0s`."
         },
+        "both": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectionTrace"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Trace only: one trace for both directions. Not together with `forward` or `reverse`."
+        },
+        "forward": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectionTrace"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Trace only: the trace of the direction from the first node to the second."
+        },
         "kind": {
           "$ref": "#/$defs/ModelKind",
           "description": "`periodic` or `markov`."
         },
         "repeat": {
-          "description": "Periodic only: whether the list of states begins again when it is over (the default), or the link is what the file says\nafter the last state (`false`).",
+          "description": "Periodic and trace: whether the list of states, or the trace, begins again when it is over (the default), or the link is what\nthe file says after the last state (`false`).",
           "type": [
             "boolean",
             "null"
           ]
+        },
+        "reverse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectionTrace"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Trace only: the trace of the direction from the second node to the first."
         },
         "start": {
           "anyOf": [
@@ -906,7 +1004,7 @@
           "description": "Markov only: the state the chain begins in. It is written, not drawn."
         },
         "states": {
-          "description": "The states. A periodic model goes through them in the order of the file; a Markov model needs at least two.",
+          "description": "The states. A periodic model goes through them in the order of the file; a Markov model needs at least two. A trace has\nnone.",
           "items": {
             "$ref": "#/$defs/ModelState"
           },
@@ -914,8 +1012,7 @@
         }
       },
       "required": [
-        "kind",
-        "states"
+        "kind"
       ],
       "type": "object"
     },
@@ -981,6 +1078,21 @@
         }
       },
       "type": "object"
+    },
+    "LinkTraceFormat": {
+      "description": "The format of the file of a trace of a link.",
+      "oneOf": [
+        {
+          "const": "csv",
+          "description": "A header and a row for each change, `time,rate,delay,loss`, every value with its unit.",
+          "type": "string"
+        },
+        {
+          "const": "mahimahi",
+          "description": "One line for each opportunity to deliver a packet, the time in whole milliseconds (the format of Mahimahi).",
+          "type": "string"
+        }
+      ]
     },
     "Loss": {
       "description": "Packet loss. The model is chosen by `model`, and the parameters are those of `netem`, without aliases\n(D-048).\n\nIt is read by hand (see `LossFields`), not by a derived reader for a tagged enum: that one collects the\nmapping first, and an error in a value is then reported at the start of the mapping and not at the value.",
@@ -1130,6 +1242,11 @@
         {
           "const": "markov",
           "description": "States with a mean time in each and the chances of the next one, drawn from the seed (LMD-04).",
+          "type": "string"
+        },
+        {
+          "const": "trace",
+          "description": "The rate, the delay and the loss over time from a file, for each direction (LMD-03, D-091). Last in the list because it was\nadded last.",
           "type": "string"
         }
       ]
@@ -2232,6 +2349,66 @@
         }
       ]
     },
+    "TracePoints": {
+      "additionalProperties": false,
+      "description": "The rows of a trace: from the moment of a row on, until the next row, the link has the rate, the delay and the loss of the\nrow. A column that the file does not have is not written by the trace, and the link keeps what the file says for it.",
+      "properties": {
+        "at-ns": {
+          "default": [],
+          "description": "The moment each row begins, in nanoseconds from the start of the trace. Rising; the first row need not begin at 0.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "delay-ns": {
+          "description": "The delay of each row in nanoseconds.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "loss-micro-percent": {
+          "description": "The loss of each row in millionths of a percent.",
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "period-ns": {
+          "default": 0,
+          "description": "Where one pass of the trace ends, in nanoseconds from its start: after the last row.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rate-bps": {
+          "description": "The rate of each row in bits per second. `0` is a row in which nothing is delivered.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "TraceReplay": {
       "additionalProperties": false,
       "properties": {
@@ -2734,6 +2911,13 @@
   "additionalProperties": false,
   "description": "A scenario: a network, what runs in it, and for how long.",
   "properties": {
+    "allow-limited": {
+      "description": "The restrictions of a backend that the scenario accepts (D-092): the ids of the features that the backend may reproduce only\nin part. A feature that is not listed here is refused when the backend reproduces it only in part, and the result lists\nthe restrictions that were accepted.",
+      "items": {
+        "$ref": "#/$defs/Name"
+      },
+      "type": "array"
+    },
     "backend": {
       "$ref": "#/$defs/Backend",
       "description": "The backend. `auto` (the default) or `kernel`."

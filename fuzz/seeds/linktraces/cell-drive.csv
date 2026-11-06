@@ -1,0 +1,14 @@
+# A drive through a cell: the rate, the delay and the loss every 5 s (invented numbers, not a measurement)
+time,rate,delay,loss
+0s,18mbit,38ms,0%
+5s,14mbit,40ms,0%
+10s,9mbit,46ms,0.1%
+15s,5mbit,55ms,0.3%
+20s,3mbit,70ms,1%
+25s,2mbit,95ms,2.5%
+30s,4mbit,80ms,1.2%
+35s,8mbit,60ms,0.4%
+40s,12mbit,48ms,0.1%
+45s,16mbit,42ms,0%
+50s,19mbit,38ms,0%
+55s,15mbit,40ms,0%

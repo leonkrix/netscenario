@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 
 use crate::error::Problem;
 use crate::link_model::{LinkModel, ModelKind, ModelState, applied_states, periodic_events};
+use crate::link_trace::{DirectionTrace, LinkTraceFormat, trace_events};
 use crate::scenario::{Event, Link, Scenario};
 use crate::suggest::closest;
 use crate::units::{Duration, Name, Probability};
@@ -24,11 +25,15 @@ impl Scenario {
             self.check_model(link, model, &base, problems);
             // The events of a periodic model are made from the file alone, so a bound that they break is known now. A Markov
             // model draws its stays, and the bound is checked when the run begins.
-            if problems.len() == before
-                && model.kind == ModelKind::Periodic
-                && let Err(problem) = periodic_events(link, model, self.duration)
-            {
-                problems.push(problem.at_path(base.clone()));
+            if problems.len() == before {
+                let made = match model.kind {
+                    ModelKind::Periodic => periodic_events(link, model, self.duration),
+                    ModelKind::Trace => trace_events(link, model, self.duration),
+                    ModelKind::Markov => Ok(Vec::new()),
+                };
+                if let Err(problem) = made {
+                    problems.push(problem.at_path(base.clone()));
+                }
             }
             self.check_model_and_timeline(link, model, &base, problems);
         }
@@ -47,13 +52,13 @@ impl Scenario {
                 .at_path(format!("{base}.begin")),
             );
         }
-        if kind != ModelKind::Periodic && model.repeat.is_some() {
-            problems.push(belongs_to(
-                "repeat",
-                ModelKind::Periodic,
-                kind,
-                format!("{base}.repeat"),
-            ));
+        if kind == ModelKind::Markov && model.repeat.is_some() {
+            problems.push(
+                Problem::new(
+                    "`repeat` belongs to a periodic model or a trace, and this one is markov",
+                )
+                .at_path(format!("{base}.repeat")),
+            );
         }
         if kind != ModelKind::Markov && model.start.is_some() {
             problems.push(belongs_to(
@@ -62,6 +67,24 @@ impl Scenario {
                 kind,
                 format!("{base}.start"),
             ));
+        }
+        if kind == ModelKind::Trace {
+            Self::check_trace(link, model, base, problems);
+            return;
+        }
+        for (key, present) in [
+            ("forward", model.forward.is_some()),
+            ("reverse", model.reverse.is_some()),
+            ("both", model.both.is_some()),
+        ] {
+            if present {
+                problems.push(belongs_to(
+                    key,
+                    ModelKind::Trace,
+                    kind,
+                    format!("{base}.{key}"),
+                ));
+            }
         }
         let minimum = if kind == ModelKind::Markov { 2 } else { 1 };
         if model.states.len() < minimum {
@@ -92,6 +115,91 @@ impl Scenario {
         if kind == ModelKind::Markov {
             check_chain(model, base, &ids, problems);
         }
+    }
+
+    /// The rules of a trace: its sources, and, once the files are read, the link with each row of it.
+    fn check_trace(link: &Link, model: &LinkModel, base: &str, problems: &mut Vec<Problem>) {
+        if !model.states.is_empty() {
+            problems.push(
+                Problem::new(
+                    "`states` belong to a periodic or a Markov model, and this one is a trace",
+                )
+                .at_path(format!("{base}.states")),
+            );
+        }
+        if model.start.is_some() {
+            problems.push(belongs_to(
+                "start",
+                ModelKind::Markov,
+                ModelKind::Trace,
+                format!("{base}.start"),
+            ));
+        }
+        let traces = model.traces();
+        if traces.is_empty() {
+            problems.push(
+                Problem::new(
+                    "a trace needs a file for a direction: `forward`, `reverse` or `both`",
+                )
+                .at_path(base.to_owned())
+                .with_help("for example `forward: { file: uplink.csv }`"),
+            );
+        }
+        if model.both.is_some() && (model.forward.is_some() || model.reverse.is_some()) {
+            problems.push(
+                Problem::new("`both` is the trace of both directions and cannot be combined with `forward` or `reverse`")
+                    .at_path(format!("{base}.both")),
+            );
+        }
+        for (direction, trace) in traces {
+            let name = match direction {
+                crate::scenario::Direction::Forward => "forward",
+                crate::scenario::Direction::Reverse => "reverse",
+                crate::scenario::Direction::Both => "both",
+            };
+            check_direction_trace(trace, &format!("{base}.{name}"), problems);
+        }
+        // The link with each row of each trace, once the files are read
+        let mut found = Vec::new();
+        for (direction, trace) in model.traces() {
+            let Some(points) = &trace.points else {
+                continue;
+            };
+            let own = {
+                let mut own = Vec::new();
+                for side in &crate::link_model::base_of(link) {
+                    check_impairments(side, base, &mut own);
+                }
+                own
+            };
+            for row in 0..points.len() {
+                let edit = points.row_edit(row);
+                let mut now = Vec::new();
+                for (index, side) in [
+                    (0, crate::scenario::Direction::Forward),
+                    (1, crate::scenario::Direction::Reverse),
+                ] {
+                    if direction == side || direction == crate::scenario::Direction::Both {
+                        check_impairments(
+                            &edit.applied_to(&crate::link_model::base_of(link)[index]),
+                            base,
+                            &mut now,
+                        );
+                    }
+                }
+                for problem in now {
+                    if !own.iter().any(|o| o.message == problem.message)
+                        && !found.iter().any(|f: &Problem| f.message == problem.message)
+                    {
+                        found.push(Problem {
+                            message: format!("{} in a row of the trace", problem.message),
+                            ..problem
+                        });
+                    }
+                }
+            }
+        }
+        problems.extend(found);
     }
 
     fn check_state(
@@ -129,6 +237,8 @@ impl Scenario {
                     Some(_) => {}
                 }
             }
+            // A trace has no states: the reader has said so
+            ModelKind::Trace => {}
             ModelKind::Markov => {
                 if state.length.is_some() {
                     problems.push(belongs_to(
@@ -295,6 +405,64 @@ impl Scenario {
                 }
             }
         }
+    }
+}
+
+/// The rules of the trace of one direction: where it comes from, and the keys of the format it is in.
+fn check_direction_trace(trace: &DirectionTrace, at: &str, problems: &mut Vec<Problem>) {
+    if trace.file.is_none() && trace.points.is_none() {
+        problems.push(
+            Problem::new("a trace needs a `file`")
+                .at_path(at.to_owned())
+                .with_help("a path relative to the directory of the scenario file"),
+        );
+        return;
+    }
+    if let Some(points) = &trace.points
+        && let Err(why) = points.check()
+    {
+        problems.push(Problem::new(why).at_path(format!("{at}.points")));
+    }
+    let Some(file) = &trace.file else { return };
+    let Some(format) = trace.format_of_file() else {
+        problems.push(
+            Problem::new(format!("cannot tell the format of '{file}' from its name"))
+                .at_path(format!("{at}.file"))
+                .with_help("write `format: csv` or `format: mahimahi` (only a name that ends in .csv is known)"),
+        );
+        return;
+    };
+    for (key, present, wanted) in [
+        ("window", trace.window.is_some(), LinkTraceFormat::Mahimahi),
+        ("period", trace.period.is_some(), LinkTraceFormat::Csv),
+    ] {
+        if present && format != wanted {
+            problems.push(
+                Problem::new(format!(
+                    "`{key}` belongs to a {} trace, and this one is {}",
+                    wanted.word(),
+                    format.word()
+                ))
+                .at_path(format!("{at}.{key}")),
+            );
+        }
+    }
+    if trace.window.is_some_and(Duration::is_zero) {
+        problems.push(
+            Problem::new("the window must be longer than zero").at_path(format!("{at}.window")),
+        );
+    }
+    if trace.period.is_some_and(Duration::is_zero) {
+        problems.push(
+            Problem::new("the period must be longer than zero").at_path(format!("{at}.period")),
+        );
+    }
+    if let Some(hash) = &trace.sha256
+        && (hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        problems.push(
+            Problem::new("a SHA-256 is 64 hexadecimal digits").at_path(format!("{at}.sha256")),
+        );
     }
 }
 

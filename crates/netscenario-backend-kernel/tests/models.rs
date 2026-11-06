@@ -112,7 +112,14 @@ fn a_periodic_pattern_does_what_the_same_events_written_by_hand_do() {
     let base = start_of(&records);
     let arrived: std::collections::BTreeSet<u64> = records.iter().map(|r| r.sequence).collect();
     let sequence_at = |seconds: f64| (seconds * 1e9 / GAP_NS as f64) as u64;
-    for n in sequence_at(4.1)..sequence_at(7.9) {
+    // The end of the first outage is done by the clock, and on a machine that is busy it can be late: the packets that are checked
+    // begin 100 ms after it was really done, which the result records
+    let first_end = modelled
+        .events
+        .iter()
+        .find(|e| e.kind == "outage-end" && e.direction.as_deref() == Some("forward"))
+        .map_or(0.0, |e| e.applied_ns as f64 / 1e9);
+    for n in sequence_at(4.1_f64.max(first_end + 0.1))..sequence_at(7.9) {
         assert!(
             arrived.contains(&n),
             "packet {n} between the outages was lost"

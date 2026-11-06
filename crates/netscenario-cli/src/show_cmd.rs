@@ -169,7 +169,41 @@ fn describe_link(link: &netscenario_model::Link) -> Vec<(&'static str, String)> 
     if let Some(reverse) = &link.reverse {
         found.push(("reverse", describe(reverse)));
     }
+    if let Some(model) = &link.model {
+        found.push(("model", describe_model(model)));
+    }
     found
+}
+
+/// The model of a link as one short line: `trace forward uplink.csv (csv, 12 rows, 1m), reverse down.up (mahimahi, 80 rows, 8s)`.
+fn describe_model(model: &netscenario_model::LinkModel) -> String {
+    use netscenario_model::{Direction, ModelKind};
+    if model.kind != ModelKind::Trace {
+        let what = model.kind.word();
+        return format!("{what}, {} states", model.states.len());
+    }
+    let parts: Vec<String> = model
+        .traces()
+        .iter()
+        .map(|(direction, trace)| {
+            let side = match direction {
+                Direction::Forward => "forward",
+                Direction::Reverse => "reverse",
+                Direction::Both => "both",
+            };
+            let file = trace.file.as_deref().unwrap_or("(in the scenario)");
+            let format = trace.format_of_file().map_or("?", |format| format.word());
+            match &trace.points {
+                Some(points) => format!(
+                    "{side} {file} ({format}, {} rows, {})",
+                    points.len(),
+                    points.period()
+                ),
+                None => format!("{side} {file} ({format}, not read)"),
+            }
+        })
+        .collect();
+    format!("trace {}", parts.join(", "))
 }
 
 pub(crate) fn show<S: AsRef<str>>(args: &[S], out: &mut impl Write, err: &mut impl Write) -> u8 {

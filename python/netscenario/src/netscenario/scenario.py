@@ -185,6 +185,7 @@ class Scenario:
         duration: str,
         seed: int | None = None,
         backend: Literal["auto", "kernel"] | None = None,
+        allow_limited: Sequence[str] = (),
     ) -> ScenarioBuilder:
         """Start building a scenario in code.
 
@@ -194,8 +195,13 @@ class Scenario:
             seed: The seed from which the seeds of all random parts are derived. Without it a run
                 draws one and records it.
             backend: ``"auto"`` (the default) or ``"kernel"``.
+            allow_limited: The ids of the features that the backend may reproduce only in part
+                (``allow-limited`` of the file), for example ``["fast-rate-steps"]``. A restriction
+                that is not listed is refused, and the result records the ones that were accepted.
         """
-        return ScenarioBuilder(name, duration=duration, seed=seed, backend=backend)
+        return ScenarioBuilder(
+            name, duration=duration, seed=seed, backend=backend, allow_limited=allow_limited
+        )
 
     @property
     def name(self) -> str:
@@ -230,9 +236,10 @@ class Scenario:
     def needs(self) -> tuple[str, ...]:
         """The ids of the features that a backend has to reproduce for this scenario.
 
-        They are the rows of ``docs/COVERAGE.md``, in the order of their first use.
+        They are the rows of ``docs/COVERAGE.md``, in the order of their first use. The files that
+        the scenario names (a trace) are read, so what they hold is asked for too.
         """
-        return tuple(_native.needs(self._source, self._source_name))
+        return tuple(_native.needs(self._canonical, self._source_name))
 
     def to_json(self) -> str:
         """The scenario as canonical JSON, which is also valid YAML."""
@@ -279,6 +286,7 @@ class ScenarioBuilder:
         duration: str,
         seed: int | None = None,
         backend: Literal["auto", "kernel"] | None = None,
+        allow_limited: Sequence[str] = (),
     ) -> None:
         """Start a scenario (use :meth:`Scenario.builder`)."""
         self._data: dict[str, Any] = {"version": 0, "name": name, "duration": duration}
@@ -286,6 +294,8 @@ class ScenarioBuilder:
             self._data["seed"] = seed
         if backend is not None:
             self._data["backend"] = backend
+        if allow_limited:
+            self._data["allow-limited"] = list(allow_limited)
         self._nodes: list[str] = []
         self._links: list[dict[str, Any]] = []
         self._workloads: list[dict[str, Any]] = []
@@ -317,8 +327,9 @@ class ScenarioBuilder:
             forward: The values for the direction from ``first`` to ``second``.
             reverse: The values for the way back.
             model: How the link changes over time, written as the ``model`` key of a link is in the
-                file (``{"kind": "periodic", "states": [...]}`` or a ``"markov"`` chain). The values
-                above are what the link has outside the states.
+                file (``{"kind": "periodic", "states": [...]}``, a ``"markov"`` chain, or a
+                ``"trace"`` whose files are read when the scenario is loaded from a file with
+                :meth:`Scenario.load`). The values above are what the link has outside the states.
         """
         link: dict[str, Any] = {"id": id, "between": [first, second]}
         for key, impairments in (("both", both), ("forward", forward), ("reverse", reverse)):

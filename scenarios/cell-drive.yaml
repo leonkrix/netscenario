@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A link that follows a trace (LMD-03): the rate, the delay and the loss of a drive through a cell, one row every 5 s, from the file
+# cell-drive.csv next to this one. The trace begins again when its minute is over. The link outside the trace has no rate, so the
+# steps of the rate go to a shaper of the kernel; a trace that changes the rate faster than every 100 ms is followed only in part and
+# needs `allow-limited` (see mahimahi-walk.yaml).
+version: 0
+name: cell-drive
+seed: 5
+duration: 120s
+topology:
+  nodes: [phone, server]
+  links:
+    - id: cell
+      between: [phone, server]
+      both: { queue: { limit: 200p } }
+      model:
+        kind: trace
+        both: { file: cell-drive.csv }
+workloads:
+  - { id: stream, kind: udp-cbr, from: server, to: phone, rate: 6mbit, packet-size: 1200b }
+measure:
+  series: { bin: 1s }

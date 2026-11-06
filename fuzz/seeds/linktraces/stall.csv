@@ -1,0 +1,3 @@
+time,rate,delay,loss
+0ms,0,10ms,50%
+10ms,5mbit,1ms,0%

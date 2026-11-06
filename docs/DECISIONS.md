@@ -96,3 +96,5 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-088](decisions/D-088.md) | The level of a TCP workload is its goodput in a bin, and a bin counts only while the workload is working | Accepted 2026-11-06 |
 | [D-089](decisions/D-089.md) | The routes of a node name its own address as the source of what it sends | Accepted 2026-11-05 |
 | [D-090](decisions/D-090.md) | Models over time are compiled into the steps of the timeline when a run begins | Accepted 2026-11-06 |
+| [D-091](decisions/D-091.md) | A trace is a model whose rows come from a file, and a rate that changes is a class of `htb` that is changed | Accepted 2026-11-06 |
+| [D-092](decisions/D-092.md) | A scenario accepts the restrictions of a backend one feature at a time, and the result records them | Accepted 2026-11-06 |
