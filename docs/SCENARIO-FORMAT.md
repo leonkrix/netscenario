@@ -418,7 +418,7 @@ Both use the **TCP of the machine's kernel**, with ordinary sockets, so what the
 | `id`, `from`, `to` | yes | yes | As for the other workloads. `from` opens the connections and sends the data (or the requests); `to` listens. Two different nodes, with a route between them. |
 | `bytes` | no | not a key | A Size: what each connection sends before it ends. A transfer is complete when the far end has read the last byte. |
 | `request`, `response` | not keys | yes | Sizes from 1 byte to 1 GiB. |
-| `connections` | no | no | From 1 to 1024. Default 1. Up to 256 connections are tried; with about a thousand, some of the connects time out while the listener's queue overflows, and the result counts them as failed connections. |
+| `connections` | no | no | From 1 to 1024. Default 1. All of them start at once; the listener of the agent holds up to 4096 waiting connections (the kernel keeps the smaller of that and `net.core.somaxconn`). |
 | `interval` | not a key | no | A Duration of at least 1 ms: the time between two requests of the whole workload. The latency of a request counts from the moment it was due. Without it the loop is closed. |
 | `timeout` | not a key | no | A Duration above 0. Default 30 s. |
 | `cc` | no | no | The congestion control of the sockets: `cubic` (the default whatever the host's default is, so that a file means one thing on two machines), `reno`, `bbr` or another that the machine has. A machine that lacks it refuses the scenario. |

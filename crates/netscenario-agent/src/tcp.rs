@@ -85,6 +85,12 @@ where
         .unwrap_or_else(|error| panic!("cannot start a thread: {error}"))
 }
 
+/// The length of the queue of connections that the listener holds until the server accepts them. The standard library asks for
+/// 128, and a workload that opens a thousand connections at once overflows that: the kernel drops the first packet of the
+/// connections beyond it and the client retries after a second or more. The kernel keeps the smaller of this and
+/// `net.core.somaxconn` (4096 on the kernels of the supported platforms).
+const LISTEN_BACKLOG: i32 = 4096;
+
 /// What a connection is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -341,6 +347,8 @@ impl Server {
     /// The error of the system if the address cannot be used, or a congestion control that the machine lacks.
     pub fn bind(config: &ServeConfig) -> io::Result<Self> {
         let listener = TcpListener::bind(config.bind)?;
+        // A second `listen` on a listening socket sets the length of the queue (Linux)
+        rustix::net::listen(&listener, LISTEN_BACKLOG)?;
         listener.set_nonblocking(true)?;
         Ok(Self {
             listener,
@@ -1267,6 +1275,24 @@ mod tests {
             max_time_ns: Some(60_000_000_000),
             hello_patience_ns: DEFAULT_HELLO_PATIENCE_NS,
         }
+    }
+
+    /// Hundreds of clients that connect before the server accepts one are all let in by the kernel at once. With the 128 of the
+    /// standard library the connections beyond the queue are not answered until a retry of the client a second later (the
+    /// canary: this test fails with `LISTEN_BACKLOG` at 128 at the 130th connection).
+    #[test]
+    fn the_listener_holds_more_connections_than_the_standard_backlog() {
+        const WAITING: usize = 600;
+        let server = Server::bind(&serve_config()).unwrap();
+        let address = server.local_addr().unwrap();
+        let timeout = Duration::from_millis(500);
+        let held: Vec<TcpStream> = (0..WAITING)
+            .map(|n| {
+                TcpStream::connect_timeout(&address, timeout)
+                    .unwrap_or_else(|error| panic!("connection {n} of {WAITING}: {error}"))
+            })
+            .collect();
+        assert_eq!(held.len(), WAITING);
     }
 
     fn common(target: SocketAddr, connections: u32) -> ClientConfig {

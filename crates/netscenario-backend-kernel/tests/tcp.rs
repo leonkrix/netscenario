@@ -472,3 +472,36 @@ fn many_connections_of_one_workload_fit_into_the_memory_limit_of_the_agent() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A thousand connections that start at once overflow the queue of 128 that the standard library gives a listener: the
+/// kernel drops the first packet of those beyond it, the client retries after a second or more, and in a run of five
+/// seconds 14 % of the transfers were not done (859 of 1000 in the first, 1.4 s after the start). With the queue the agent
+/// asks for, all of them are done in half a second.
+#[test]
+fn a_thousand_connections_of_one_workload_all_get_through_the_listener() {
+    if !ready() {
+        return;
+    }
+    let dir = work_dir("tcp-thousand-connections");
+    let result = go(
+        &dir,
+        &scenario(
+            "      both: { delay: 5ms, rate: 1000mbit }\n",
+            "{ id: many, kind: tcp-bulk, from: client, to: server, bytes: 20kb, connections: 1000 }",
+            "5s",
+        ),
+    )
+    .unwrap();
+    let tcp = only(&result);
+    assert_eq!(
+        (tcp.connections, tcp.failed_connections),
+        (1000, 0),
+        "{:?}",
+        tcp.first_error
+    );
+    assert_eq!(
+        (tcp.bytes_sent, tcp.bytes_received),
+        (1000 * 20_000, 1000 * 20_000)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
