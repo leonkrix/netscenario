@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Sixteen TCP connections over two paths between a client and a server, one of 4 mbit and one of 8 mbit, shared by the weights
+# 1 and 2 (the same as their rates). The connections are spread over the paths by the ports (the kernel hashes them, and the
+# backend asks it to look at the ports), each connection stays on one path, and every path is full as long as it has a
+# connection: together they carry the sum of the two rates, which no single path can. Only the way from the client is listed;
+# the acknowledgements take the first path, which has room for them.
+version: 0
+name: tcp-multipath
+seed: 31
+duration: 8s
+topology:
+  multipath:
+    from: client
+    to: server
+    paths:
+      - routers: [slow]
+        link: { both: { delay: 5ms, rate: 4mbit, queue: { limit: 30p } } }
+      - routers: [wide]
+        link: { both: { delay: 5ms, rate: 8mbit, queue: { limit: 30p } } }
+  routes:
+    - { node: client, to: server, via: client-slow, weight: 1 }
+    - { node: client, to: server, via: client-wide, weight: 2 }
+workloads:
+  - { id: flows, kind: tcp-bulk, from: client, to: server, cc: reno, connections: 16, stop: 7s }
+measure:
+  series: { bin: 1s }

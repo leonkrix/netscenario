@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Reno over a path with a round trip of 40 ms and 1 % of the data segments lost: four connections, so that a run sees enough
+# losses to average over. The formula of Mathis et al. (1997) gives each connection a goodput of MSS / RTT * C / sqrt(p), with
+# C = sqrt(3/2) = 1.22 for reno; with a delay and a loss and no rate nothing else limits it. Read the goodput of the entry under
+# `tcp` and compare: about 3.7 mbit for each connection. The test that judges it, with its bounds, is
+# python/netscenario/tests/test_acceptance_tcp_models.py.
+version: 0
+name: tcp-throughput-vs-loss
+seed: 21
+duration: 12s
+topology:
+  nodes: [client, server]
+  links:
+    - id: path
+      between: [client, server]
+      forward: { delay: 20ms, loss: { model: random, p: 1% } }
+      reverse: { delay: 20ms }
+workloads:
+  - { id: flow, kind: tcp-bulk, from: client, to: server, cc: reno, connections: 4, stop: 11s }
+measure:
+  series: { bin: 1s }

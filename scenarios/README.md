@@ -27,6 +27,10 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [dumbbell.yaml](dumbbell.yaml) | The `dumbbell` shortcut: two senders and two receivers share a bottleneck between two routers |
 | [tcp-fairness.yaml](tcp-fairness.yaml) | Two reno flows with the same round trip time over a dumbbell with a bottleneck of 10 mbit and a queue: the classic fairness test, judged by the Jain index of their goodputs |
 | [tcp-fairness-unequal-rtt.yaml](tcp-fairness-unequal-rtt.yaml) | The same with a longer access link for one flow (long form): the flow with the shorter round trip takes most of the bottleneck |
+| [tcp-throughput-vs-loss.yaml](tcp-throughput-vs-loss.yaml) | Reno over a path with a loss of 1 % and a round trip of 40 ms: the goodput to compare with the formula of Mathis |
+| [tcp-multipath.yaml](tcp-multipath.yaml) | Sixteen TCP connections over two paths of 4 and 8 mbit with the weights 1 and 2: together they carry the sum of the rates |
+| [tcp-multipath-weights.yaml](tcp-multipath-weights.yaml) | 32 light connections over two paths with the weights 1 and 7: the share of the slow path, counted by `capture` |
+| [tcp-queue.yaml](tcp-queue.yaml) | Two reno connections over a bottleneck with CoDel: the time in the queue stays near the target, where a FIFO of the same size keeps most of a second |
 | [star-and-chain.yaml](star-and-chain.yaml) | The `star` shortcut with values for each link, and how the `chain` and `multipath` shortcuts are written |
 | [trace-replay.yaml](trace-replay.yaml) | A recorded call ([call.csv](call.csv): the moments and sizes of 695 packets) sent through a link of 2 mbit with a queue |
 | [jitter-from-samples.yaml](jitter-from-samples.yaml) | A jitter that takes its shape from a file of measured round trips ([round-trips.txt](round-trips.txt)), read when the scenario is loaded |

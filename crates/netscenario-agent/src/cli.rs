@@ -697,6 +697,7 @@ fn tcp_serve_command(
         )?,
         congestion: options.optional("congestion")?,
         max_time_ns: options.optional("max-time-ns")?,
+        hello_patience_ns: tcp::DEFAULT_HELLO_PATIENCE_NS,
     };
     let file = create_file(options)?;
     let server = Server::bind(&config)

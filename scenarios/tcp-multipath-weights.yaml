@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# The weights of a multipath route. 32 connections of a request/response workload (light, so that no path is full) between a
+# client and a server over two paths, with the weights 1 and 7 in both directions: about one connection in eight takes the
+# slow path. `capture` counts what each path carries at the client, and a test reads the share from the bytes. The weights
+# decide where a connection goes, not how much it gets, so they show in a workload that does not fill the paths; a full path
+# carries its rate whatever the weights are (see tcp-multipath.yaml).
+version: 0
+name: tcp-multipath-weights
+seed: 31
+duration: 6s
+topology:
+  multipath:
+    from: client
+    to: server
+    paths:
+      - routers: [slow]
+        link: { both: { delay: 5ms, rate: 4mbit, queue: { limit: 30p } } }
+      - routers: [wide]
+        link: { both: { delay: 5ms, rate: 8mbit, queue: { limit: 30p } } }
+  routes:
+    - { node: client, to: server, via: client-slow, weight: 1 }
+    - { node: client, to: server, via: client-wide, weight: 7 }
+    - { node: server, to: client, via: slow-server, weight: 1 }
+    - { node: server, to: client, via: wide-server, weight: 7 }
+workloads:
+  - { id: api, kind: request-response, from: client, to: server, request: 200b, response: 2kb, connections: 32, interval: 20ms, stop: 5s }
+measure:
+  capture: [client-slow, client-wide]

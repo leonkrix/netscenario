@@ -439,3 +439,36 @@ fn a_connection_through_routers_gets_its_answer_in_both_families() {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+/// The agent runs under a limit on its address space (SAF-02), and every connection has two threads in it. The allocator of
+/// glibc reserved 64 MiB for the arena of each thread, so the limit was gone with 16 connections and the agent died with
+/// "failed to allocate an alternative stack" (found by the first multipath experiment). 64 connections, each with its bytes
+/// delivered to the byte, are four times that.
+#[test]
+fn many_connections_of_one_workload_fit_into_the_memory_limit_of_the_agent() {
+    if !ready() {
+        return;
+    }
+    let dir = work_dir("tcp-many-connections");
+    let result = go(
+        &dir,
+        &scenario(
+            "      both: { delay: 5ms, rate: 100mbit }\n",
+            "{ id: many, kind: tcp-bulk, from: client, to: server, bytes: 50kb, connections: 64 }",
+            "5s",
+        ),
+    )
+    .unwrap();
+    let tcp = only(&result);
+    assert_eq!(
+        (tcp.connections, tcp.failed_connections),
+        (64, 0),
+        "{:?}",
+        tcp.first_error
+    );
+    assert_eq!(
+        (tcp.bytes_sent, tcp.bytes_received),
+        (64 * 50_000, 64 * 50_000)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

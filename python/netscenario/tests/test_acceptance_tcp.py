@@ -17,8 +17,11 @@ verdict:
   packets, more than the 15 of the bandwidth-delay product) never empties after the window of the
   two flows has been halved, so the link is busy all the time. Measured 9.56 mbit in every run,
   which is 10 mbit * 1448/1514 (1448 bytes of payload in a frame of 1514) to the third digit. The
-  upper bound is that capacity exactly (nothing is faster than the link, with 0.1 % for the rounding
-  of the bins); the lower bound is 95 % of it, for a stall of a shared machine, and a queue that is
+  upper bound is that capacity plus what the window can take out of the network that was put in it
+  before: the goodput counts bytes in order, so the bytes that were in the queue (30 packets of 1514
+  bytes) and in flight (the one-way delay of at most 29 ms at 10 mbit) when the window began can
+  leave in it, 82 kB or 82 kbit/s over the 8 bins (measured at most +0.3 %, 9.59 mbit in one run of
+  10); the lower bound is 95 % of the capacity, for a stall of a shared machine, and a queue that is
   too short or a sender that does not fill the link would be below.
 - **The imbalance** ``d = (a - b) / (a + b)`` of the two goodputs has a mean of 0 (the two flows are
   the same) and a standard deviation of 0.06 to 0.11 between runs (0.105 for these bins, the worst
@@ -63,6 +66,8 @@ END_BIN = 11
 """The bin after the window: the flows stop at 11 s, and the queue drains after that."""
 CAPACITY = 10e6 * 1448 / 1514
 """What the bottleneck carries as payload, in bits per second (1448 bytes in a frame of 1514)."""
+EXTRA = (30 * 1514 + 10e6 / 8 * 0.029) * 8 / (END_BIN - FIRST_BIN)
+"""What the window can carry above the capacity, bit/s (the queue and the flight at its start)."""
 FAIR = 0.90
 """The bound on the mean Jain index; see the module."""
 
@@ -120,7 +125,7 @@ def test_two_flows_with_the_same_round_trip_share_the_bottleneck_fairly(equal: n
         total = sum(shares(result))
         # Nothing is faster than the link, and the link is kept busy (the queue is deeper than the
         # bandwidth-delay product)
-        assert 0.95 * CAPACITY <= total <= CAPACITY * 1.001, f"{total / 1e6:.3f} mbit/s"
+        assert 0.95 * CAPACITY <= total <= CAPACITY + EXTRA, f"{total / 1e6:.3f} mbit/s"
     assert mean_jain(equal) >= FAIR
 
 
@@ -129,7 +134,7 @@ def test_canary_unequal_round_trips_are_not_fair_and_the_claim_fails(unequal: ns
     for result in unequal.results:
         a, b = shares(result)
         assert a > b, "the flow with the shorter round trip takes the larger share"
-        assert 0.95 * CAPACITY <= a + b <= CAPACITY * 1.001
+        assert 0.95 * CAPACITY <= a + b <= CAPACITY + EXTRA
     with pytest.raises(AssertionError):
         assert mean_jain(unequal) >= FAIR
 

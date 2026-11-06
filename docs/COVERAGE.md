@@ -34,7 +34,7 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Star                         | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs)) | ✔ 0.4  | ~ 0.5 |
 | Chain with routing           | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs), [fidelity](../crates/netscenario-backend-kernel/tests/fidelity.rs)) | ✔ 0.4  | ✘     |
 | Dumbbell (shared bottleneck) | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs), [fairness](../python/netscenario/tests/test_acceptance_tcp.py)) | ✔ 0.4  | ✘     |
-| Multipath, multi-homing      | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs)) | ✔ 0.4  | ✘     |
+| Multipath, multi-homing      | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs), [TCP over two paths](../python/netscenario/tests/test_acceptance_tcp_models.py)) | ✔ 0.4  | ✘     |
 | Arbitrary graph              | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs)) | ✔ 0.4  | ✘     |
 | Links up and down            | ✔ 0.2                                                             | ✔ 0.4  | ✔ 0.5 |
 | Nodes joining and leaving    | ✔ 0.6                                                             | ✔ 0.6  | ✘     |
@@ -56,7 +56,7 @@ Docker is not a column: it is a way to start programs and to reach the Kernel ba
 | Corruption | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs): 10 % at three payload sizes, dropped by the node and not lost in the queue, and told apart from a loss) | ✔ 0.4 | ✘ |
 | Rate limit | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs); counts Ethernet frames, see below) | ✔ 0.4 | ✔ 0.5 |
 | Queue limit | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/queues.rs): a `fifo` drops the tail, the delay of a full queue is its frames at the rate, and the delay of the link comes after it; a direction without a `queue` keeps the derived limit, see below) | ✔ 0.4 | ~ 0.5 |
-| Queue disciplines (CoDel, FQ-CoDel, PIE) | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/queues.rs): every discipline drops under an overload and its counters agree with the packets the run lost; a link with a queue goes down and comes back; the fabric survives a crash of the agent) | ✔ 0.4 | ✘ |
+| Queue disciplines (CoDel, FQ-CoDel, PIE) | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/queues.rs): every discipline drops under an overload and its counters agree with the packets the run lost; a link with a queue goes down and comes back; the fabric survives a crash of the agent; [under TCP load](../python/netscenario/tests/test_acceptance_tcp_models.py): the time in the queue stays near the target) | ✔ 0.4 | ✘ |
 | MTU, fragmentation | ✔ 0.3 ([test](../crates/netscenario-backend-kernel/tests/network.rs): the sender cuts the packet, the router carries the fragments; [fidelity](../crates/netscenario-backend-kernel/tests/fidelity.rs): a lost fragment loses the packet) | ✔ 0.4 | ✘ |
 | Different values per direction | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/provision.rs)) | ✔ 0.4 | ✔ 0.5 |
 | Outages | ✔ 0.2 ([test](../crates/netscenario-backend-kernel/tests/timeline.rs): nothing arrives in the window, the packets that were on their way are dropped, the edges are placed by the clock) | ✔ 0.4 | ✔ 0.5 |

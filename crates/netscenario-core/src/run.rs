@@ -1654,7 +1654,12 @@ pub(crate) fn event(line: &str, what: &str) -> Result<Event, Error> {
 pub(crate) fn agent_program(options: &RunOptions, arguments: &[String]) -> Program {
     let mut argv = vec![options.agent.display().to_string()];
     argv.extend_from_slice(arguments);
-    Program::new(argv).with_memory_limit(options.agent_memory_limit)
+    // The agent runs under a limit on its address space, and the allocator of glibc reserves 64 MiB for the arena of each
+    // thread it sees: with a few dozen threads (two for each connection of a TCP workload) the limit was gone and the agent
+    // died with "failed to allocate an alternative stack". Two arenas are plenty for it.
+    Program::new(argv)
+        .with_memory_limit(options.agent_memory_limit)
+        .with_env(vec![("MALLOC_ARENA_MAX".to_owned(), "2".to_owned())])
 }
 
 /// `--udp-checksum off` for a workload that sends without the checksum of UDP, nothing for one that does not.
