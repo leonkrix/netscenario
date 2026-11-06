@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Two reno connections fill a bottleneck of 10 mbit (a round trip of 40 ms) whose queue is CoDel with a target of 5 ms. The
+# kernel's round trip time of the connections minus the smallest one is the time they spend in the queue: with CoDel it is
+# near the target, and with a plain FIFO of the same 1000 packets it is most of a second (the queue is full: 1000 x 1514 bytes
+# at 10 mbit is 1.2 s). Change `discipline` to `fifo` or `fq-codel` to see the other two; the test that judges the three, with
+# its bounds, is python/netscenario/tests/test_acceptance_tcp_models.py.
+version: 0
+name: tcp-queue
+seed: 41
+duration: 12s
+topology:
+  nodes: [client, { id: edge, role: router }, server]
+  links:
+    - { id: access, between: [client, edge], both: { delay: 1ms } }
+    - id: bottleneck
+      between: [edge, server]
+      forward: { delay: 19ms, rate: 10mbit, queue: { discipline: codel, limit: 1000p, target: 5ms, interval: 100ms } }
+      reverse: { delay: 19ms }
+workloads:
+  - { id: flow, kind: tcp-bulk, from: client, to: server, cc: reno, connections: 2, stop: 11s }
+measure:
+  series: { bin: 1s }

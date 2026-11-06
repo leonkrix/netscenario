@@ -55,8 +55,35 @@ const POLL: Duration = Duration::from_millis(20);
 /// How long a connection of the server goes on without data after the stop, before it gives up.
 const IDLE_AFTER_STOP: Duration = Duration::from_millis(500);
 
-/// How long a client may take to say hello after it connected.
-const HELLO_PATIENCE: Duration = Duration::from_secs(5);
+/// How long a client may take to say hello after it connected, in nanoseconds. The hello is the first thing a client sends, and
+/// on a congested path it can be lost again and again: the retransmissions wait 0.2, 0.4, 0.8, 1.6 and 3.2 s, so a patience of
+/// 5 s refused a connection that TCP would have delivered a second later, and the client saw it as a broken pipe (a connection
+/// in one run in about a hundred, with sixteen of them in a queue of 30 packets). The server waits as long as a client waits
+/// for the server's answer at the end.
+pub const DEFAULT_HELLO_PATIENCE_NS: u64 = DEFAULT_FINISH_TIMEOUT_NS;
+
+/// How long the server waits for the client to close, after it answered the end of the data.
+const CLOSE_PATIENCE: Duration = Duration::from_secs(5);
+
+/// The stack of a thread of a connection, in bytes. A connection needs little, and the agent runs under a limit on its address
+/// space (SAF-02), where the 2 MiB that the standard library gives each thread add up to the whole limit with a few hundred
+/// connections: a workload with `connections: 1000` has two threads for each.
+const CONNECTION_STACK: usize = 256 * 1024;
+
+/// Starts a thread of a connection in `scope`, with the small stack.
+fn start<'scope, 'env, F, T>(
+    scope: &'scope thread::Scope<'scope, 'env>,
+    work: F,
+) -> thread::ScopedJoinHandle<'scope, T>
+where
+    F: FnOnce() -> T + Send + 'scope,
+    T: Send + 'scope,
+{
+    thread::Builder::new()
+        .stack_size(CONNECTION_STACK)
+        .spawn_scoped(scope, work)
+        .unwrap_or_else(|error| panic!("cannot start a thread: {error}"))
+}
 
 /// What a connection is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +311,9 @@ pub struct ServeConfig {
     pub congestion: Option<String>,
     /// Stop after this many nanoseconds even if nobody said stop. A safety net.
     pub max_time_ns: Option<u64>,
+    /// How long a client may take to say hello after it connected, in nanoseconds ([`DEFAULT_HELLO_PATIENCE_NS`]). A connection
+    /// that has not said it by then is refused.
+    pub hello_patience_ns: u64,
 }
 
 /// A server that listens and does not yet serve.
@@ -344,6 +374,7 @@ impl Server {
             .map(|limit| monotonic_ns().saturating_add(limit));
         let interval = self.config.progress_interval_ns.max(1);
         let congestion = self.config.congestion.as_deref();
+        let patience = Duration::from_nanos(self.config.hello_patience_ns);
         let mut summary = ServeSummary {
             flow: self.config.flow,
             connections: 0,
@@ -364,10 +395,9 @@ impl Server {
                 match self.listener.accept() {
                     Ok((stream, _)) => {
                         let (sink, stopping) = (&sink, &stopping);
-                        handles
-                            .push(scope.spawn(move || {
-                                serve(stream, stopping, sink, interval, congestion)
-                            }));
+                        handles.push(start(scope, move || {
+                            serve(stream, stopping, sink, interval, congestion, patience)
+                        }));
                     }
                     Err(error) if is_timeout(&error) => thread::sleep(Duration::from_millis(2)),
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
@@ -406,6 +436,7 @@ fn serve(
     sink: &Sink,
     interval: u64,
     congestion: Option<&str>,
+    patience: Duration,
 ) -> Served {
     let mut served = Served::default();
     if stream.set_nonblocking(false).is_err()
@@ -417,7 +448,7 @@ fn serve(
     }
     let _ = stream.set_nodelay(true);
     let mut raw = [0_u8; HELLO_LEN];
-    let hello = match fill(&mut stream, &mut raw, stop, HELLO_PATIENCE) {
+    let hello = match fill(&mut stream, &mut raw, stop, patience) {
         Ok(Fill::Full) => Hello::from_bytes(&raw).ok(),
         _ => None,
     };
@@ -545,7 +576,7 @@ fn serve_bulk(
     // The end is answered, then the client closes; the server waits for that and lets go
     write_all(stream, &[1], stop)?;
     let mut rest = [0_u8; 1];
-    let _ = fill(stream, &mut rest, stop, HELLO_PATIENCE);
+    let _ = fill(stream, &mut rest, stop, CLOSE_PATIENCE);
     Ok(())
 }
 
@@ -782,7 +813,9 @@ pub fn run_bulk(
             let handles: Vec<_> = (0..config.common.connections)
                 .map(|connection| {
                     let sink = &sink;
-                    scope.spawn(move || bulk_connection(config, connection, begin, stop, sink))
+                    start(scope, move || {
+                        bulk_connection(config, connection, begin, stop, sink)
+                    })
                 })
                 .collect();
             handles
@@ -871,7 +904,9 @@ fn bulk_connection(
         let sampler = (config.common.info_interval_ns > 0).then(|| {
             let (sampling, sink) = (&sampling, sink);
             let interval = config.common.info_interval_ns;
-            scope.spawn(move || sample(sink, connection, local, peer, interval, sampling))
+            start(scope, move || {
+                sample(sink, connection, local, peer, interval, sampling)
+            })
         });
         let result = send_chunks(config, begin, &mut stream, stop, &mut done);
         let finished = result.and_then(|complete| {
@@ -1007,7 +1042,7 @@ pub fn run_requests(
             let handles: Vec<_> = (0..config.common.connections)
                 .map(|connection| {
                     let (sink, next) = (&sink, &next);
-                    scope.spawn(move || {
+                    start(scope, move || {
                         request_connection(config, connection, begin, next, stop, sink)
                     })
                 })
@@ -1057,7 +1092,9 @@ fn request_connection(
         let sampler = (config.common.info_interval_ns > 0).then(|| {
             let (sampling, sink) = (&sampling, sink);
             let interval = config.common.info_interval_ns;
-            scope.spawn(move || sample(sink, connection, local, peer, interval, sampling))
+            start(scope, move || {
+                sample(sink, connection, local, peer, interval, sampling)
+            })
         });
         requests(
             config,
@@ -1228,6 +1265,7 @@ mod tests {
             progress_interval_ns: 5_000_000,
             congestion: None,
             max_time_ns: Some(60_000_000_000),
+            hello_patience_ns: DEFAULT_HELLO_PATIENCE_NS,
         }
     }
 
@@ -1522,6 +1560,40 @@ mod tests {
             summary.first_error.unwrap().contains("nonexistent-cc"),
             "the name of the congestion control is in the reason"
         );
+    }
+
+    /// A hello that comes late is waited for: a connection whose first segments are lost again and again on a congested path says
+    /// hello after the retransmissions, seconds late, and is not refused for it (the patience is long). With a short patience,
+    /// the same late hello is refused, which shows that the patience is what decides.
+    #[test]
+    fn a_late_hello_is_waited_for_as_long_as_the_patience_lasts() {
+        let late = |config: &ServeConfig| {
+            let ((), served, _) = with_server(config, |address| {
+                let mut client = TcpStream::connect(address).unwrap();
+                thread::sleep(Duration::from_millis(600));
+                let hello = Hello {
+                    mode: Mode::Bulk,
+                    connection: 0,
+                    request_bytes: 0,
+                    response_bytes: 0,
+                };
+                // The client may find the connection closed by now, which is the point of the other half of the test
+                let _ = client.write_all(&hello.to_bytes());
+            });
+            served.refused
+        };
+        assert_eq!(late(&serve_config()), 0, "the late hello was refused");
+        let mut impatient = serve_config();
+        impatient.hello_patience_ns = 200_000_000;
+        assert_eq!(late(&impatient), 1, "a hello after the patience is refused");
+    }
+
+    /// The retransmission timer of TCP doubles from 0.2 s: eight retransmissions take 51 s. A server that gives up on the hello
+    /// before that refuses connections that TCP would still have delivered.
+    #[test]
+    fn the_default_patience_for_a_hello_outlasts_eight_retransmissions() {
+        let eight_retransmissions_ns = (0..8).map(|n| 200_000_000_u64 << n).sum::<u64>();
+        assert!(DEFAULT_HELLO_PATIENCE_NS > eight_retransmissions_ns);
     }
 
     /// A stranger that does not say hello is refused and does not stop the server.

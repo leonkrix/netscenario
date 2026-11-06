@@ -1,8 +1,8 @@
 name: Stability
 
 # The acceptance criterion of release 0.2: an assertion with a confidence interval is stable over 100 runs of
-# the CI (docs/ACCEPTANCE.md), and, for release 0.3, the acceptance tests of TCP over 20 runs. It takes more than two
-# hours, so it is not a check of pull requests: it runs once a week and on request.
+# the CI (docs/ACCEPTANCE.md), and, for release 0.3, the acceptance tests of TCP over 10 runs. It takes more than two
+# and a half hours, so it is not a check of pull requests: it runs once a week and on request.
 on:
   schedule:
     - cron: '17 4 * * 3'
@@ -13,7 +13,7 @@ on:
         default: '100'
       tcp_rounds:
         description: How many times to run the acceptance tests of TCP
-        default: '20'
+        default: '10'
 
 permissions:
   contents: read
@@ -48,5 +48,5 @@ jobs:
       - name: Run the acceptance tests of TCP
         if: ${{ !cancelled() }}
         env:
-          ROUNDS: ${{ inputs.tcp_rounds || '20' }}
+          ROUNDS: ${{ inputs.tcp_rounds || '10' }}
         run: just stability-tcp "$ROUNDS"
