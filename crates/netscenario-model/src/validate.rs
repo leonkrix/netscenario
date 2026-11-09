@@ -877,9 +877,11 @@ pub const MAX_BURST_PACKETS: u32 = 100_000;
 
 /// The rules of a pattern: the rate is one that the agent was measured at, and the times make a source that sends.
 fn check_pattern(workload: &Generator<'_>, size: u64, base: &str, problems: &mut Vec<Problem>) {
+    // A packet of no bytes is refused with the size, and has no packets per second to count
     let too_fast = |rate: Rate| {
-        u128::from(rate.bits_per_second())
-            > u128::from(MAX_PACKETS_PER_SECOND) * u128::from(size) * 8
+        size > 0
+            && u128::from(rate.bits_per_second())
+                > u128::from(MAX_PACKETS_PER_SECOND) * u128::from(size) * 8
     };
     let rate_problem = |rate: Rate, problems: &mut Vec<Problem>| {
         let per_second = u128::from(rate.bits_per_second()) / (u128::from(size) * 8);

@@ -207,14 +207,17 @@ fn locate(mut problem: Problem, index: &SourceIndex) -> Problem {
 }
 
 fn sorted(mut problems: Vec<Problem>) -> Vec<Problem> {
-    // The order of the file, the files that it includes after it; problems at the same place by their text, so that the order
-    // never depends on a hash
+    // The order of the file, the files that it includes after it; problems at the same place (the uses of a template share
+    // the lines of its content) by their path in the scenario that results and by their text, so that the order never depends
+    // on a hash
     problems.sort_by_cached_key(|problem| {
         let (line, column) = problem.location.map_or((0, 0), |l| (l.line, l.column));
         (
             problem.file().map(str::to_owned),
             line,
             column,
+            problem.path.as_deref().map(natural),
+            problem.chain().to_vec(),
             problem.message.clone(),
         )
     });
@@ -226,6 +229,25 @@ fn sorted(mut problems: Vec<Problem>) -> Vec<Problem> {
             && a.message == b.message
     });
     problems
+}
+
+/// A path as a key that puts `links[2]` before `links[10]`: the text and the numbers of the path in turn.
+fn natural(path: &str) -> Vec<(String, u64)> {
+    let mut parts = Vec::new();
+    let mut rest = path;
+    while !rest.is_empty() {
+        let text_end = rest
+            .find(|c: char| c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        let (text, after) = rest.split_at(text_end);
+        let digits_end = after
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(after.len());
+        let (digits, next) = after.split_at(digits_end);
+        parts.push((text.to_owned(), digits.parse().unwrap_or(0)));
+        rest = next;
+    }
+    parts
 }
 
 /// Turns an error of the YAML library into a problem with the bare message, the position, and the length of the

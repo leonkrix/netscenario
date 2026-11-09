@@ -5,6 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::cell::RefCell;
+use std::fmt::Write as _;
 
 use netscenario_model::{Error, FileSource, LoadOptions, Problem, Scenario};
 
@@ -776,4 +777,39 @@ fn an_expression_inside_a_longer_text_is_replaced_by_its_value() {
         rendered.contains("{{x}}") && rendered.contains("{server.addr}"),
         "{rendered}"
     );
+}
+
+/// The uses of a template share the lines of its content, so their faults are found at one place. Their order is that of the
+/// uses (`links[2]` before `links[10]`) and the same on every read; the fuzz target found it reading a file twice (the order
+/// was that of a hash map).
+#[test]
+fn faults_at_one_place_come_in_the_order_of_the_uses() {
+    let mut yaml = String::from(
+        "version: 0\nname: t\nduration: 5s\ntemplates:\n  access:\n    params: { id: , node: }\n    content:\n      id: \"{id}\"\n      betweon: [\"{node}\", hub]\ntopology:\n  nodes: [a, hub]\n  links:\n",
+    );
+    for index in 0..12 {
+        writeln!(
+            yaml,
+            "    - use: access\n      with: {{ id: l{index}, node: a }}"
+        )
+        .unwrap();
+    }
+    let first = Scenario::from_yaml(&yaml, "t.yaml").unwrap_err();
+    let uses: Vec<String> = first
+        .problems()
+        .iter()
+        .filter(|problem| problem.message.contains("`between` is missing"))
+        .map(|problem| problem.path.clone().unwrap())
+        .collect();
+    let expected: Vec<String> = (0..12)
+        .map(|index| format!("topology.links[{index}]"))
+        .collect();
+    assert_eq!(uses, expected);
+    // A hash map is different on every read
+    for _ in 0..20 {
+        assert_eq!(
+            Scenario::from_yaml(&yaml, "t.yaml").unwrap_err().render(),
+            first.render()
+        );
+    }
 }
