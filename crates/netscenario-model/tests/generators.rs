@@ -153,3 +153,36 @@ fn a_program_of_your_own_is_not_a_generator() {
     assert!(s.workloads[0].generator().is_some());
     assert!(s.workloads[1].generator().is_none());
 }
+
+/// A packet of no bytes is refused for its size. The check of the rate divides by the size, which was zero here: the fuzz
+/// target of the reader found it.
+#[test]
+fn a_packet_of_no_bytes_is_refused_without_dividing_by_it() {
+    for kind in [
+        "udp-cbr, rate: 1mbit",
+        "udp-poisson, rate: 1mbit",
+        "udp-onoff, rate: 1mbit, on: 1s, off: 1s",
+    ] {
+        let text =
+            format!("{HEAD}  - {{ id: w, kind: {kind}, from: a, to: b, packet-size: 0b }}\n");
+        let error = Scenario::from_yaml(&text, "t.yaml").unwrap_err();
+        let messages: Vec<&str> = error
+            .problems()
+            .iter()
+            .map(|problem| problem.message.as_str())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("0 bytes") || message.contains("packet")),
+            "{messages:?}"
+        );
+        // The rate was not the problem: it is a rate that the agent sends at
+        assert!(
+            !messages
+                .iter()
+                .any(|message| message.contains("packets per second")),
+            "{messages:?}"
+        );
+    }
+}

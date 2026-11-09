@@ -761,8 +761,18 @@ impl Scenario {
     ///
     /// # Errors
     ///
-    /// A model or an event that would make more events than the bounds allow ([`MAX_EVENTS_PER_LINK`], [`MAX_EVENTS`]).
+    /// A model or an event that would make more events than the bounds allow ([`MAX_EVENTS_PER_LINK`], [`MAX_EVENTS`]); a
+    /// trace whose file has not been read (D-083): without its rows the model would make no events and the link would
+    /// silently keep what the file says outside the trace.
     pub fn compile(&self, uniform: &mut dyn FnMut(&Name) -> Uniform) -> Result<Compiled, Problem> {
+        if let Some(file) = self.unresolved_link_trace_files().first() {
+            return Err(Problem::new(format!(
+                "the trace of a link has not been read from its file '{file}'"
+            ))
+            .with_help(
+                "read the files of the scenario before the models are compiled (`resolve_files`)",
+            ));
+        }
         let mut compiled = self.clone();
         let mut timeline = Vec::new();
         for event in &self.timeline {

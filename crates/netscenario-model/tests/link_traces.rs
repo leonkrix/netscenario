@@ -93,6 +93,27 @@ fn a_csv_trace_makes_a_step_for_each_row_and_repeats() {
     assert_eq!(scenario.validate(), Vec::new());
 }
 
+/// A trace whose file has not been read has no rows: compiling it would drop the model and leave the link with a `queue` and
+/// no `rate`. It is refused with the file named (the fuzz target of the reader found it on the example `cell-drive`).
+#[test]
+fn a_trace_that_was_not_read_is_not_compiled() {
+    let yaml = head(
+        "1s",
+        "      model:\n        kind: trace\n        both: { file: cell.csv }\n",
+    );
+    let mut scenario = Scenario::from_yaml(&yaml, "t.yaml").unwrap();
+    // Valid as it is: the file is read when the scenario is loaded
+    assert_eq!(scenario.validate(), Vec::new());
+    let error = scenario.compile(&mut no_numbers).unwrap_err();
+    assert!(error.message.contains("'cell.csv'"), "{}", error.message);
+    // Canary: once the file is read the same scenario compiles, so the refusal is about the missing rows
+    assert_eq!(
+        scenario.resolve_files(|_| Ok(CSV.as_bytes().to_vec())),
+        Vec::new()
+    );
+    assert_ne!(compile(&scenario), Vec::new());
+}
+
 /// A trace that does not repeat gives the link back to what the file says when its period is over.
 #[test]
 fn a_trace_that_does_not_repeat_ends_with_the_link_as_the_file_writes_it() {
