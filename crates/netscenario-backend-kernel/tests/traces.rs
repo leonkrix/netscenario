@@ -81,6 +81,24 @@ fn slack(result: &RunResult) -> f64 {
     latest as f64 / 1e9 + 0.005
 }
 
+/// How long the receiver had seen nothing before the two edges of a window, in seconds: the receiver stamps a packet when it reads
+/// it, so a receiver that was not scheduled for a while stamps what arrived meanwhile in one burst after the edge, and the window
+/// holds fewer packets than the link delivered in it (11 of 2,000 on a loaded runner, with 5 ms assumed). The wait is read from the
+/// records: the time from the last arrival before an edge to the edge. On a link that delivers a packet every millisecond it is at
+/// most one packet, which the room of a test already holds; a stall shows as the surplus.
+fn edge_waits(records: &[Record], from: u64, to: u64) -> f64 {
+    let wait = |edge: u64| {
+        let last = records
+            .iter()
+            .map(|r| r.receive_ns)
+            .filter(|&t| t < edge)
+            .max()
+            .unwrap_or(edge);
+        (edge - last) as f64 / 1e9
+    };
+    wait(from) + wait(to)
+}
+
 /// The moment the measured phase began, on the clock of the records: the first packet is sent at the start.
 fn start_of(records: &[Record]) -> u64 {
     records
@@ -162,7 +180,7 @@ fn a_mahimahi_file_of_a_known_rate_gives_that_rate() {
         .iter()
         .filter(|r| r.receive_ns >= from && r.receive_ns < to)
         .count() as i64;
-    let room = 4.0 + 1000.0 * slack(&result);
+    let room = 4.0 + 1000.0 * (slack(&result) + edge_waits(&records, from, to));
     assert!(
         ((arrived - 2000) as f64).abs() <= room,
         "{arrived} packets arrived in two seconds, the file says 2000 (room {room})"
@@ -210,7 +228,7 @@ fn a_mahimahi_file_that_alternates_every_100_ms_is_followed() {
         .iter()
         .filter(|r| r.receive_ns >= from && r.receive_ns < to)
         .count() as i64;
-    let room = 24.0 + 2000.0 * slack(&result);
+    let room = 24.0 + 2000.0 * (slack(&result) + edge_waits(&records, from, to));
     assert!(
         ((arrived - 3000) as f64).abs() <= room,
         "{arrived} packets arrived in two passes (2 s), the file says 3000 (room {room})"
@@ -280,7 +298,7 @@ fn a_fast_trace_needs_allow_limited_and_the_result_says_it_was_accepted() {
         .iter()
         .filter(|r| r.receive_ns >= from && r.receive_ns < to)
         .count() as f64;
-    let room = 6.0 + 2000.0 * slack(&result);
+    let room = 6.0 + 2000.0 * (slack(&result) + edge_waits(&records, from, to));
     assert!(
         (3000.0 * 0.98 - room..=3000.0 + room).contains(&arrived),
         "{arrived} packets arrived, the model says 3000 (up to 2 % fewer, room {room})"
