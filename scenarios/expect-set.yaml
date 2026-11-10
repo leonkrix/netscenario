@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# Checks on a set of runs (ASR-07, D-094). `repetitions` is what the claim needs: `netscenario run` makes that many runs (more with
+# --repetitions, never fewer) and judges the statistics of the set: `mean`, `median`, `min`, `max`, and `ci95-low` and `ci95-high`, the
+# ends of the 95 % interval around the mean (docs/STATISTICS.md). Compare the end that is on the dangerous side with a threshold that has
+# room: a threshold near the mean fails about half of the time however many runs are made.
+version: 0
+name: expect-set
+duration: 10s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward: { delay: 20ms, rate: 10mbit, loss: { model: random, p: 0.5% } }
+      reverse: { delay: 20ms, rate: 10mbit }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }
+expect:
+  repetitions: 10
+  checks:
+    - name: the loss stays below 2 % with 95 % confidence
+      metric: media.loss_ratio
+      ci95-high: "< 2%"
+    - name: the stream is delivered at its rate
+      metric: media.throughput.mean
+      ci95-low: ">= 1.8mbit"
+    - name: no run has a delay above 50 ms
+      metric: media.delay.p99
+      max: "< 50ms"

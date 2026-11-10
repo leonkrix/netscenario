@@ -205,6 +205,25 @@ fn set_options(parsed: &Parsed) -> Result<Option<RunSetOptions>, String> {
     Ok(Some(set))
 }
 
+/// The set that the checks of the file need, when the command line asked for none, and the refusal of a set that cannot judge them
+/// (a file that judges one run, fewer runs than the file needs, another interval than the one the keys `ci95-*` name).
+fn with_needed_runs(
+    set: Option<RunSetOptions>,
+    scenario: &Scenario,
+) -> Result<Option<RunSetOptions>, String> {
+    let set = match (set, netscenario_core::needed_repetitions(scenario)) {
+        (None, Some(needed)) => Some(RunSetOptions::new(needed)),
+        (set, _) => set,
+    };
+    if let Some(set) = &set {
+        netscenario_core::check_set_options(scenario, set).map_err(|error| match error {
+            Error::Run { message, .. } => message,
+            other => other.to_string(),
+        })?;
+    }
+    Ok(set)
+}
+
 /// The directory for a result when none is given: the name of the scenario and the time, so that two runs do
 /// not overwrite each other.
 /// The directory of the scenario file, as an absolute path: where the programs of your own run (D-041).
@@ -423,23 +442,16 @@ pub(crate) fn run_command<S: AsRef<str>>(
         Ok(scenario) => scenario,
         Err(code) => return code,
     };
-
-    let exe = match std::env::current_exe() {
-        Ok(exe) => exe,
-        Err(error) => {
-            let _ = writeln!(err, "netscenario: cannot find my own program: {error}");
-            return exit::ENVIRONMENT;
-        }
+    // The checks of the file say how many runs they need (D-094): that many are made when the command line does not ask for more
+    let set = match with_needed_runs(set, &scenario) {
+        Ok(set) => set,
+        Err(message) => return crate::usage_error(err, "run", &message, RUN_HELP),
     };
-    let agent = agent_next_to(&exe);
-    if !agent.is_file() {
-        let _ = writeln!(
-            err,
-            "netscenario: the agent {} was not found; it belongs next to the netscenario program (`cargo install` and `cargo build` put it there)",
-            agent.display()
-        );
-        return exit::ENVIRONMENT;
-    }
+
+    let (exe, agent) = match programs(err) {
+        Ok(found) => found,
+        Err(code) => return code,
+    };
     let out_dir = parsed
         .value("out")
         .map_or_else(|| default_out(scenario.name.as_str()), PathBuf::from);
@@ -494,6 +506,27 @@ pub(crate) fn run_command<S: AsRef<str>>(
         out,
         err,
     )
+}
+
+/// This program and the agent next to it, or the exit code and the message for the one that is missing.
+fn programs(err: &mut impl Write) -> Result<(PathBuf, PathBuf), u8> {
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(error) => {
+            let _ = writeln!(err, "netscenario: cannot find my own program: {error}");
+            return Err(exit::ENVIRONMENT);
+        }
+    };
+    let agent = agent_next_to(&exe);
+    if !agent.is_file() {
+        let _ = writeln!(
+            err,
+            "netscenario: the agent {} was not found; it belongs next to the netscenario program (`cargo install` and `cargo build` put it there)",
+            agent.display()
+        );
+        return Err(exit::ENVIRONMENT);
+    }
+    Ok((exe, agent))
 }
 
 /// What a set of runs is run with.
@@ -590,7 +623,12 @@ fn conclude_set(
             } else {
                 let _ = write!(out, "{}", set_summary(&set, target.out_dir));
             }
-            exit::OK
+            // A check of the file that does not hold is a failed assertion (D-094)
+            if set.expect.as_ref().is_some_and(|expect| !expect.passed) {
+                exit::ASSERTION_FAILED
+            } else {
+                exit::OK
+            }
         }
         Err(Error::Cancelled) => {
             let _ = writeln!(
@@ -652,6 +690,9 @@ fn conclude(
             // A run that was interrupted has a result, and the exit code says that it is not the whole one
             if result.timing.interrupted_ns.is_some() {
                 by_signal()
+            } else if result.expect.as_ref().is_some_and(|expect| !expect.passed) {
+                // A check of the file that does not hold is a failed assertion (D-094)
+                exit::ASSERTION_FAILED
             } else {
                 exit::OK
             }

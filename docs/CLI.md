@@ -23,7 +23,7 @@ They are part of the interface. A script can rely on them.
 | Code | Meaning |
 | --- | --- |
 | 0 | The command did what was asked (`run`: the run finished; `replay`: the same packets were lost, or the loss was not promised to repeat; `report`: the report was made; `validate`: the scenario is valid; `doctor`: scenarios can run here). |
-| 1 | A check that the command was asked to make did not hold. `replay`: the replay lost other packets than the original, although the loss repeats from the seed. Assertions on a result (the `expect` section) will return it too. |
+| 1 | A check that the command was asked to make did not hold. `replay`: the replay lost other packets than the original, although the loss repeats from the seed. `run`: a check of the `expect` section of the file does not hold ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#what-the-scenario-must-show-expect), D-094); the summary and `result.json` (`runset.json`) say which. |
 | 2 | The command line or the scenario is wrong: an unknown option, a file that cannot be read, a scenario with problems, or a scenario that asks for something the backend cannot reproduce exactly (the message names the feature, the backend and the way out). |
 | 3 | The machine does not allow the run: a tool or a permission is missing (`doctor` fails, the agent is not next to the program, the namespaces cannot be created). Run `netscenario doctor`. |
 | 4 | The run failed after it started: an agent did not start, did not answer or ended badly. The network is torn down all the same. |
@@ -65,6 +65,8 @@ What a run measures is in the scenario, in the section `measure` ([SCENARIO-FORM
 **Ctrl-C** (or SIGTERM) while the workloads run stops them, waits for the packets that are still in the network (the settle time), writes the result of the part that ran and exits with 130 (143). The summary says how long it ran, and `result.json` has `timing.interrupted_ns`. The steps of the timeline that were not due are not done, and the packets that were not sent are not lost: the result counts what the senders sent. **Ctrl-C a second time quits at once**; the network is removed all the same (D-022). The supervisor, the nodes and the agents are in a process group of their own, so the signal of the terminal reaches the program only and the run can stop in an orderly way (D-066).
 
 On a terminal, one line shows how far the run is (`running, 12 of 30 s`) and is erased before the summary; in a file or a CI log, where standard error is not a terminal, one line says what runs. Nothing about progress goes to standard output.
+
+**Checks in the file.** A scenario with an `expect` section is judged when the run is over: the summary lists each check with its value and margin, and the command exits with 1 if one does not hold. A file whose checks need a set of runs (`expect: {repetitions: n}`) is run as a set without `--repetitions`; `--repetitions` may ask for more runs and not for fewer, and a file that judges one run refuses `--repetitions` (exit 2, nothing runs).
 
 The run, in order: the file is read and checked (exit 2 with the lines if it is wrong), the backend checks that it can reproduce the scenario exactly (exit 2 if not, before anything is created), the network is built, the agents start, the workloads run for the `duration` of the scenario, the result is written, and everything is removed. The summary shows the seed, the packets, the delay and the throughput of each workload; `result.json` has everything ([RESULTS.md](RESULTS.md)).
 

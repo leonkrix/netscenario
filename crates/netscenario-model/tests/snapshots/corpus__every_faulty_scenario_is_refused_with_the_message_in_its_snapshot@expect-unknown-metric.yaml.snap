@@ -1,0 +1,31 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/expect-unknown-metric.yaml
+---
+error: 'delay.p99x' is not a metric of the workload 'media'
+  --> expect-unknown-metric.yaml:13:34
+   |
+12 |   checks:
+13 |     - { name: the delay, metric: media.delay.p99x, value: "< 150ms" }
+   |                                  ^^^^^^^^^^^^^^^^
+   = path: expect.checks[0].metric
+   = help: the metrics of 'media' begin with: sent, received, lost, duplicates, reordered, loss_ratio, throughput., loss_runs., jitter., delay. (all are in docs/STATISTICS.md)
+
+error: 'medai.loss_ratio' is not a metric: there is no workload 'medai'
+  --> expect-unknown-metric.yaml:14:47
+   |
+13 |     - { name: the delay, metric: media.delay.p99x, value: "< 150ms" }
+14 |     - { name: a typo in the workload, metric: medai.loss_ratio, value: "< 1%" }
+   |                                               ^^^^^^^^^^^^^^^^
+   = path: expect.checks[1].metric
+   = help: did you mean 'media'? the workloads are: media
+
+error: 'round_trip.p99' is not a metric of the workload 'media'
+  --> expect-unknown-metric.yaml:15:53
+   |
+14 |     - { name: a typo in the workload, metric: medai.loss_ratio, value: "< 1%" }
+15 |     - { name: the round trip needs an echo, metric: media.round_trip.p99, value: "< 1s" }
+   |                                                     ^^^^^^^^^^^^^^^^^^^^
+   = path: expect.checks[2].metric
+   = help: this metric needs `echo: true` on the workload (D-087)

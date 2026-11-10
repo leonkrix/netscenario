@@ -91,7 +91,7 @@ The layout of the repository: a Cargo workspace plus Python packages. The two ba
 6. **Run the timeline.** A scheduler applies the events and link-model updates at their times and records when each was applied, so that the result shows the real moment, not only the planned one.
 7. **Collect.** Agents stream per-packet records; the backend adds counters and packet captures; your program's metrics are read. Everything goes into one result with the provenance block.
 8. **Stop and tear down.** Orderly stop of programs with a timeout, then removal of everything. A watchdog does the same when a run hangs.
-9. **Assert.** Done by the test code or by the `expect` section, on the finished result. Repetitions and statistics happen above single runs.
+9. **Assert.** Done by the test code or by the `expect` section (judged by the core, D-094), on the finished result. Repetitions and statistics happen above single runs.
 
 **Watching and stopping a run.** The steps above are reported as events to an observer that the caller passes in the options (`RunEvent`: the network is built, the receivers are ready, the workloads have started with their length, the progress once a second, the wait for the packets in the network, the collecting, the teardown, the end), and the caller can hand in a `CancelToken` that stops the run: the waiting loops look at it at least every 200 milliseconds, the network is torn down as always, and the run returns `Cancelled` without a result. The command line shows a progress line from the events when standard error is a terminal; the Python layer passes a callable and cancels on an interrupt (D-031).
 

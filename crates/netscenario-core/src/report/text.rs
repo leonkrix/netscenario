@@ -85,6 +85,9 @@ fn markdown_run(result: &RunResult) -> String {
             accepted.feature, accepted.restriction
         );
     }
+    if let Some(expect) = &result.expect {
+        markdown_expect(&mut text, expect);
+    }
     markdown_workloads(&mut text, result);
     markdown_tcp(&mut text, result);
     markdown_timeline(&mut text, result);
@@ -495,6 +498,9 @@ fn markdown_set(set: &RunSetResult) -> String {
             "\n> **Warning:** the loss of {unreproducible} of the runs does not repeat from its seed."
         );
     }
+    if let Some(expect) = &set.expect {
+        markdown_expect(&mut text, expect);
+    }
     let _ = writeln!(text, "\n### Headline metrics\n");
     let _ = writeln!(
         text,
@@ -662,8 +668,15 @@ struct Case {
     seconds: f64,
     properties: Vec<(String, String)>,
     failure: Option<String>,
+    /// The `type` of the failure: the run failed, or a check of the file does not hold.
+    failure_type: &'static str,
     out: String,
 }
+
+/// The `type` of the failure of a case about a run (see [`failure_of`](super::failure_of)).
+const RUN_FAILED: &str = "netscenario.RunFailed";
+/// The `type` of the failure of a case about a check of the file (D-094).
+const CHECK_FAILED: &str = "netscenario.CheckFailed";
 
 fn write_suite(
     out: &mut String,
@@ -700,8 +713,9 @@ fn write_suite(
         if let Some(message) = &case.failure {
             let _ = writeln!(
                 out,
-                "      <failure message=\"{}\" type=\"netscenario.RunFailed\">{}</failure>",
+                "      <failure message=\"{}\" type=\"{}\">{}</failure>",
                 escape(message),
+                case.failure_type,
                 escape(message)
             );
         }
@@ -868,6 +882,7 @@ fn junit_run(result: &RunResult) -> String {
             seconds: workload.duration_ns as f64 / 1e9,
             properties: workload_properties(scenario, workload),
             failure: failure_of(result, workload),
+            failure_type: RUN_FAILED,
             out,
         });
     }
@@ -881,6 +896,7 @@ fn junit_run(result: &RunResult) -> String {
             seconds: tcp.window_ns as f64 / 1e9,
             properties: tcp_properties(scenario, tcp),
             failure: super::tcp_failure_of(result, tcp),
+            failure_type: RUN_FAILED,
             out: format!(
                 "{} -> {}: {}, {} connections ({} failed), completion {completion}",
                 tcp.from, tcp.to, tcp.kind, tcp.connections, tcp.failed_connections
@@ -897,6 +913,7 @@ fn junit_run(result: &RunResult) -> String {
                 .timing
                 .interrupted_ns
                 .map(|ns| format!("the run was interrupted after {} s", seconds(ns))),
+            failure_type: RUN_FAILED,
             out: format!(
                 "{}: node {}, {}, exit {}",
                 program.id,
@@ -905,6 +922,9 @@ fn junit_run(result: &RunResult) -> String {
                 exit_text(program)
             ),
         });
+    }
+    if let Some(expect) = &result.expect {
+        cases.extend(check_cases(scenario, expect));
     }
     let mut out = String::new();
     write_suite(
@@ -915,6 +935,69 @@ fn junit_run(result: &RunResult) -> String {
         &cases,
     );
     out
+}
+
+/// One case for each bound of the checks of the file: the name the file gives, the value and the bound as properties, and a failure
+/// that says what was found and by how much it was missed (D-094).
+fn check_cases(scenario: &str, expect: &crate::expect::ExpectResult) -> Vec<Case> {
+    expect
+        .checks
+        .iter()
+        .map(|check| {
+            let prefix = format!(
+                "netscenario.{scenario}.expect.{}.{}",
+                check.metric, check.statistic
+            );
+            let mut properties = vec![
+                (format!("{prefix}.bound"), check.bound.clone()),
+                (format!("{prefix}.threshold"), check.threshold.to_string()),
+            ];
+            if let Some(actual) = check.actual {
+                properties.push((format!("{prefix}.value"), actual.to_string()));
+            }
+            Case {
+                name: format!("expect: {}", check.name),
+                seconds: 0.0,
+                properties,
+                failure: (!check.passed).then(|| check.line()),
+                failure_type: CHECK_FAILED,
+                out: check.line(),
+            }
+        })
+        .collect()
+}
+
+/// The checks of the file as a table (D-094).
+fn markdown_expect(text: &mut String, expect: &crate::expect::ExpectResult) {
+    let (held, total) = expect.counts();
+    let runs = if expect.runs > 1 {
+        format!(" over {} runs", expect.runs)
+    } else {
+        String::new()
+    };
+    let _ = writeln!(
+        text,
+        "\n### Checks of the file{runs}: {held} of {total} hold\n"
+    );
+    let _ = writeln!(
+        text,
+        "| Check | Value | Bound | |\n| --- | ---: | --- | --- |"
+    );
+    for check in &expect.checks {
+        let verdict = match (check.passed, check.margin) {
+            (true, _) => format!("holds, {}", check.margin_text()),
+            (false, Some(_)) => format!("**fails**, {}", check.margin_text()),
+            (false, None) => format!("**fails**: {}", check.margin_text()),
+        };
+        let _ = writeln!(
+            text,
+            "| {} | {} | {} | {} |",
+            cell(&check.name),
+            check.actual_text(),
+            cell(&check.bound),
+            cell(&verdict)
+        );
+    }
 }
 
 /// The properties that a set gives to the suite of its JUnit report: the number of runs, the level, the seed, and the mean and the
@@ -954,7 +1037,7 @@ fn junit_set(set: &RunSetResult) -> String {
     let scenario = &set.scenario.name;
     let prefix = format!("netscenario.{scenario}");
     let suite_properties = set_properties(set);
-    let cases: Vec<Case> = set
+    let mut cases: Vec<Case> = set
         .runs
         .iter()
         .map(|run| Case {
@@ -965,6 +1048,7 @@ fn junit_set(set: &RunSetResult) -> String {
                 run.seed.to_string(),
             )],
             failure: None,
+            failure_type: RUN_FAILED,
             out: if run.loss_reproducible {
                 String::new()
             } else {
@@ -972,6 +1056,9 @@ fn junit_set(set: &RunSetResult) -> String {
             },
         })
         .collect();
+    if let Some(expect) = &set.expect {
+        cases.extend(check_cases(scenario, expect));
+    }
     let mut out = String::new();
     write_suite(
         &mut out,

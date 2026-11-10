@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A scenario that says what it must show (ASR-07, D-094). `netscenario run` judges the checks when the run is over, prints each one
+# with its value and how far it is from the bound, and exits with 1 when one does not hold; the same verdict is in result.json and in
+# the Markdown, JUnit and HTML reports. A bound is an operator and a value in the unit of the metric ("< 150ms", ">= 97%", "<= 0").
+# This file is judged by one run (`value`); expect-set.yaml is judged by a set of runs and their interval.
+version: 0
+name: expect
+seed: 21
+duration: 20s
+params:
+  rtt: 40ms
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward: { delay: "{rtt / 2}", rate: 10mbit, loss: { model: random, p: 0.5% } }
+      reverse: { delay: "{rtt / 2}", rate: 10mbit }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }
+expect:
+  checks:
+    - name: the stream arrives at its rate
+      metric: media.throughput.mean
+      value: ">= 1.9mbit"
+    - name: the delay is that of the link
+      metric: media.delay.p99
+      value: "< {rtt / 2 + 10ms}"
+    - name: the link does not lose more than it was told to
+      metric: media.loss_ratio
+      value: "< 2%"

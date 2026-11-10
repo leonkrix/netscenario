@@ -1,0 +1,15 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [a, b]
+  links:
+    - id: l
+      between: [a, b]
+workloads:
+  - { id: media, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }
+expect:
+  checks:
+    - { metric: media.loss_ratio, ci95-high: "< 2%" }
+    - { metric: media.sent, value: "> 100" }
+    - { metric: media.lost }

@@ -279,8 +279,18 @@ def describe_set(runs: RunSet) -> str:
         lines.append(
             f"  {len(runs.partial)} metrics are missing in some runs, no interval: {names}"
         )
+    if runs.expect is not None:
+        lines.extend(_expect_lines(runs.expect))
     lines.append(f"  set: {runs.out_dir / 'runset.json'}")
     return "\n".join(lines)
+
+
+def _expect_lines(expect: ns.Expectations) -> list[str]:
+    """The checks of the scenario file: how many hold, and a line for each that does not."""
+    held = len(expect.checks) - len(expect.failures)
+    lines = [f"  checks of the file: {held} of {len(expect.checks)} hold"]
+    lines.extend(f"    FAIL {check}" for check in expect.failures)
+    return lines
 
 
 def set_properties(runs: RunSet) -> list[tuple[str, object]]:
@@ -317,6 +327,8 @@ def describe(result: Result) -> str:
         )
     lines.extend(_timeline_lines(result))
     lines.extend(_program_lines(result))
+    if result.expect is not None:
+        lines.extend(_expect_lines(result.expect))
     lines.append(f"  result: {result.out_dir / 'result.json'}")
     return "\n".join(lines)
 

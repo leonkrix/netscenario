@@ -38,6 +38,8 @@ Example scenarios in the format of [docs/SCENARIO-FORMAT.md](../docs/SCENARIO-FO
 | [mahimahi-walk.yaml](mahimahi-walk.yaml) | A downlink from a Mahimahi trace ([walk.mahimahi](walk.mahimahi)) in windows of 50 ms, which the Kernel backend follows only in part: the scenario accepts it with `allow-limited` |
 | [parameters.yaml](parameters.yaml) | Parameters (SCN-05): `params:` with defaults, `"{rtt / 2}"` and `"{rate * share}"` in the values, `--param rtt=100ms` on the command line. |
 | [templates.yaml](templates.yaml) | A template (SCN-05) for the link that is needed twice, used with `use:` and `with:`. |
+| [expect.yaml](expect.yaml) | `expect` (ASR-07): three checks on one run, with a bound computed from a parameter; `netscenario run` exits with 1 when one does not hold |
+| [expect-set.yaml](expect-set.yaml) | Checks on a set of runs: `repetitions: 10`, and bounds on the 95 % interval around the mean (`ci95-high`, `ci95-low`) and on the worst run (`max`) |
 | [include.yaml](include.yaml) | Includes (SCN-05): a link and a list of workloads from files in [parts/](parts/). |
 | [star-and-chain.yaml](star-and-chain.yaml) | The `star` shortcut with values for each link, and how the `chain` and `multipath` shortcuts are written |
 | [trace-replay.yaml](trace-replay.yaml) | A recorded call ([call.csv](call.csv): the moments and sizes of 695 packets) sent through a link of 2 mbit with a queue |

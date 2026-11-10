@@ -58,6 +58,7 @@ mod capability;
 mod captures;
 mod drive;
 mod error;
+mod expect;
 mod export;
 mod feature;
 mod files;
@@ -90,6 +91,10 @@ pub use backend::{
 };
 pub use capability::{Accepted, Capabilities, CapabilityError, Refusal, Support, check};
 pub use error::Error;
+pub use expect::{
+    CheckResult, EXPECT_LEVEL, ExpectResult, check_set_options, judge_run, judge_set,
+    needed_repetitions, show_value,
+};
 pub use export::{write_packets, write_packets_marked, write_packets_refused};
 pub use feature::{FAST_RATE_STEP, FASTEST_RATE_STEP, Feature, Requirement, requirements};
 pub use files::{DirectoryFiles, load_scenario, read_referenced, resolve_files};

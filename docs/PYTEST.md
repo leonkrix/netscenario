@@ -20,7 +20,7 @@ def test_with_the_marker(netscenario_result):           # the result of the scen
     assert netscenario_result["media"].sent > 0
 ```
 
-Assertions are plain `assert` on the numbers of the [result](RESULTS.md), which are in SI units (seconds, bits per second, ratios from 0 to 1). The `expect` section of a scenario file and baselines come in later releases.
+Assertions are plain `assert` on the numbers of the [result](RESULTS.md), which are in SI units (seconds, bits per second, ratios from 0 to 1). The `expect` section of a scenario file (D-094) is judged by the core: a test that ran a file with checks **fails when a check does not hold**, with the checks that do not, also when its body asserts nothing; a file whose checks need a set of runs is run by `netscenario_runs` without `repetitions` in the marker, and `netscenario_result` refuses it. In the JUnit file the checks are in the failure of the test. Baselines come in a later release.
 
 ## The fixture `netscenario`
 

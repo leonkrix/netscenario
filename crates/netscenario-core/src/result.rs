@@ -73,6 +73,10 @@ pub struct RunResult {
     /// Whether the run can be repeated exactly or has to be repeated and read with an interval (D-086).
     #[serde(default)]
     pub reproducibility: Reproducibility,
+    /// What the checks of `expect` found, if the scenario has checks on one run (ASR-07, D-094). Absent for a scenario without
+    /// them, for a scenario whose checks judge a set of runs, and for a run that was cut short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect: Option<crate::expect::ExpectResult>,
 }
 
 /// Whether a run can be repeated exactly (D-086).
@@ -1019,6 +1023,7 @@ pub(crate) mod tests {
             captures: Vec::new(),
             tcp: Vec::new(),
             reproducibility: Reproducibility::exact(),
+            expect: None,
             queues: Vec::new(),
             directions: vec![DirectionTally {
                 link: "l".to_owned(),

@@ -1,0 +1,11 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/expect-bound-syntax.yaml
+---
+error: 'lots' begins with no operator; a bound is `<`, `<=`, `>` or `>=` and a value, such as "< 150ms"
+  --> expect-bound-syntax.yaml:13:36
+   |
+12 |   checks:
+13 |     - { metric: media.sent, value: "lots" }
+   |                                    ^^^^^^

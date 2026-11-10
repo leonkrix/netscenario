@@ -1,0 +1,15 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [a, b]
+  links:
+    - id: l
+      between: [a, b]
+workloads:
+  - { id: media, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }
+expect:
+  checks:
+    - { name: the delay, metric: media.delay.p99x, value: "< 150ms" }
+    - { name: a typo in the workload, metric: medai.loss_ratio, value: "< 1%" }
+    - { name: the round trip needs an echo, metric: media.round_trip.p99, value: "< 1s" }

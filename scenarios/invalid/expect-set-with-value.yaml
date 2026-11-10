@@ -1,0 +1,14 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [a, b]
+  links:
+    - id: l
+      between: [a, b]
+workloads:
+  - { id: media, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }
+expect:
+  repetitions: 3
+  checks:
+    - { metric: media.loss_ratio, value: "< 2%" }

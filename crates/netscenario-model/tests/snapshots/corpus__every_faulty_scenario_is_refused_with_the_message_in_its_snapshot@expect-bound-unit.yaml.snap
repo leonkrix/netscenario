@@ -1,0 +1,28 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/expect-bound-unit.yaml
+---
+error: '150' is not a duration; this metric is a time, written like 150ms
+  --> expect-bound-unit.yaml:13:41
+   |
+12 |   checks:
+13 |     - { metric: media.delay.p99, value: "< 150" }
+   |                                         ^^^^^^^
+   = path: expect.checks[0].value
+
+error: '5' is not a ratio from 0 to 1; write a share as a percentage, such as 5%
+  --> expect-bound-unit.yaml:14:42
+   |
+13 |     - { metric: media.delay.p99, value: "< 150" }
+14 |     - { metric: media.loss_ratio, value: "< 5" }
+   |                                          ^^^^^
+   = path: expect.checks[1].value
+
+error: '150ms' is not a rate; this metric is a rate, written like 8mbit
+  --> expect-bound-unit.yaml:15:47
+   |
+14 |     - { metric: media.loss_ratio, value: "< 5" }
+15 |     - { metric: media.throughput.mean, value: ">= 150ms" }
+   |                                               ^^^^^^^^^^
+   = path: expect.checks[2].value

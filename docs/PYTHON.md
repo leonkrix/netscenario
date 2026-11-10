@@ -140,6 +140,20 @@ print(runs.results[3]["media"].lost)                  # the Result of run number
 - **Failure.** A set ends with the first run that fails, with that run's exception, and has no `RunSet`; the directories of the finished runs stay in `out`. The observer is told `RepetitionStarted(index, total)` before the events of each run.
 - **What to assert.** Compare the end of the interval that is on the dangerous side with a threshold that has room: `loss.ci95_high < 0.05` for a link that loses 1 %. A threshold near the mean fails about half of the time however many runs there are ([STATISTICS.md](STATISTICS.md#what-stable-means)).
 
+## Checks in the scenario file
+
+A scenario with an `expect` section ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#what-the-scenario-must-show-expect), D-094) is judged by the core when the run is over. `Result.expect` holds the verdict of a file that is judged by one run and `RunSet.expect` that of a file that is judged by a set (`expect: {repetitions: n}`); both are `None` without checks.
+
+```python
+runs = ns.run("scenarios/expect-set.yaml")    # 10 runs, the file says so: a RunSet
+runs.expect.passed                             # False if one check does not hold
+for check in runs.expect.failures:             # ExpectCheck: name, metric, statistic, bound, actual, margin, note
+    print(check)                               # the delay: 0.2 s (<= 150ms, misses by 0.05 s)
+runs.expect.raise_for_failures()               # AssertionError with the checks that do not hold
+```
+
+`run` does not raise when a check does not hold: the numbers are there to look at. `Scenario.expect_repetitions` is the number of runs the checks need, and `repetitions=` may ask for more and not for fewer. Values are in SI units (`actual`, `margin` and `threshold` in seconds, bits per second, ratios from 0 to 1 or counts, `unit` says which).
+
 ## Reports
 
 The reports of the command line ([REPORTS.md](REPORTS.md)) are functions too. They are made from a result directory and nothing else, so the same directory gives the same text:

@@ -1,0 +1,21 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/expect-set-with-value.yaml
+---
+error: `repetitions` is 3; it is from 5 (fewer runs say too little about the spread for an interval) to 1000
+  --> expect-set-with-value.yaml:12:16
+   |
+11 | expect:
+12 |   repetitions: 3
+   |                ^
+   = path: expect.repetitions
+
+error: `value` is the value of one run, and this file is judged by a set of runs
+  --> expect-set-with-value.yaml:14:42
+   |
+13 |   checks:
+14 |     - { metric: media.loss_ratio, value: "< 2%" }
+   |                                          ^^^^^^
+   = path: expect.checks[0].value
+   = help: use `mean`, `median`, `min`, `max`, `ci95-low` or `ci95-high`, or take `repetitions` out of `expect`

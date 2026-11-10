@@ -61,6 +61,7 @@ impl Scenario {
         self.check_timeline(&mut problems);
         self.check_models(&mut problems);
         self.check_measure(&mut problems);
+        self.check_expect(&mut problems);
         problems
     }
 
