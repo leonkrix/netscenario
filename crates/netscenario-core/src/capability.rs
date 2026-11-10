@@ -380,4 +380,86 @@ mod tests {
         assert_ne!(crate::provision::checked(&scenario), Vec::new());
         assert_eq!(unknown_allowed_features(&self::scenario()), Vec::new());
     }
+
+    /// What the user reads when a scenario is refused: the line of the file, the source line with a mark under the value, the
+    /// feature, the backend, the reason and the way out. The mutation test found that nothing proved the text: a `render` that
+    /// returned an empty string passed every test of this crate.
+    #[test]
+    fn a_refusal_is_shown_at_its_line_with_the_feature_the_backend_the_reason_and_the_fix() {
+        let caps = all_exact().with(
+            Feature::FixedDelay,
+            Support::Unsupported {
+                reason: "this machine has no netem".to_owned(),
+                fix: "load the module sch_netem".to_owned(),
+            },
+        );
+        let error = check(&scenario(), &caps).unwrap_err();
+        let text = error.render("t.yaml", FILE);
+        assert!(text.contains("t.yaml:"), "{text}");
+        assert!(
+            text.contains("the fake backend cannot reproduce 'Fixed delay'"),
+            "{text}"
+        );
+        assert!(text.contains("this machine has no netem"), "{text}");
+        assert!(text.contains("load the module sch_netem"), "{text}");
+        // The place: the line of the link with its delay, which is line 10 of the file
+        assert!(
+            text.contains("both: { delay: 20ms"),
+            "the source line is shown: {text}"
+        );
+        // For a scenario read from a file with nothing expanded it is the same text
+        let same = error.render_for(&scenario(), "t.yaml", FILE);
+        assert_eq!(same, text);
+        // Canary: the text is made of the refusals, so no refusal gives no text
+        assert_eq!(
+            CapabilityError::new("fake", Vec::new()).render("t.yaml", FILE),
+            ""
+        );
+    }
+
+    /// A refusal of a value that came from a parameter is shown where the value was written (D-093), not at the place of the
+    /// expanded scenario that has no line of its own.
+    #[test]
+    fn a_refusal_of_a_value_from_a_parameter_is_shown_at_the_line_where_it_was_written() {
+        let file = "version: 0\nname: t\nduration: 10s\nparams:\n  rtt: 40ms\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: { delay: \"{rtt / 2}\" }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\n";
+        let scenario = Scenario::from_yaml(file, "p.yaml").expect("valid");
+        let caps = all_exact().with(
+            Feature::FixedDelay,
+            Support::Unsupported {
+                reason: "no".to_owned(),
+                fix: "none".to_owned(),
+            },
+        );
+        let error = check(&scenario, &caps).unwrap_err();
+        let text = error.render_for(&scenario, "p.yaml", file);
+        assert!(text.contains("p.yaml:11"), "the line of the value: {text}");
+        assert!(
+            text.contains("{rtt / 2}"),
+            "the value as it was written: {text}"
+        );
+    }
+
+    /// The declaration can be read back: the name of the backend, and the features that were declared, in the order of the features
+    /// and without those that were not.
+    #[test]
+    fn the_declaration_gives_back_the_backend_and_the_features_that_were_declared() {
+        let caps = Capabilities::new("fake")
+            .with(Feature::SeededLoss, Support::Exact)
+            .with(
+                Feature::FixedDelay,
+                Support::Limited {
+                    restriction: "steps".to_owned(),
+                },
+            );
+        assert_eq!(caps.backend(), "fake");
+        let declared: Vec<Feature> = caps.iter().map(|(feature, _)| feature).collect();
+        assert_eq!(declared.len(), 2);
+        let mut ordered = declared.clone();
+        ordered.sort();
+        assert_eq!(declared, ordered, "in the order of Feature");
+        assert!(declared.contains(&Feature::FixedDelay) && declared.contains(&Feature::SeededLoss));
+        assert!(caps.iter().any(|(_, support)| *support == Support::Exact));
+        assert_eq!(Capabilities::new("none").iter().count(), 0);
+        assert_eq!(Capabilities::new("x").backend(), "x");
+    }
 }

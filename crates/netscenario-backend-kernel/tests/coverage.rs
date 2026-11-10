@@ -118,3 +118,137 @@ fn the_reader_of_links_finds_a_missing_link_and_a_missing_file() {
     let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
     assert!(!docs.join("../crates/no-such-crate/tests/a.rs").is_file());
 }
+
+/// One row of a table of the page: the section it is in, its label and its three cells (Kernel, Engine, Proxy).
+struct Row {
+    section: String,
+    label: String,
+    cells: Vec<String>,
+}
+
+fn rows_of(markdown: &str) -> Vec<Row> {
+    let mut section = String::new();
+    let mut rows = Vec::new();
+    for line in markdown.lines() {
+        if let Some(title) = line.strip_prefix("## ") {
+            title.trim().clone_into(&mut section);
+        }
+        let Some(inner) = line.strip_prefix('|') else {
+            continue;
+        };
+        let cells: Vec<String> = inner
+            .trim_end_matches('|')
+            .split('|')
+            .map(|cell| cell.trim().to_owned())
+            .collect();
+        let separator = cells
+            .iter()
+            .all(|c| c.chars().all(|ch| matches!(ch, '-' | ':' | ' ')));
+        if cells.len() >= 4 && !separator && cells[1] != "Kernel" {
+            rows.push(Row {
+                section: section.clone(),
+                label: cells[0].clone(),
+                cells: cells[1..4].to_vec(),
+            });
+        }
+    }
+    rows
+}
+
+/// The release of a faithful mark (`✔ 0.2 (...)` is `Some(2)`), or `None` for any other cell.
+fn faithful_release(cell: &str) -> Option<u32> {
+    let rest = cell.strip_prefix("✔ 0.")?;
+    rest.split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Every link of a cell: `[text](target)` gives `target`.
+fn links_in(cell: &str) -> Vec<&str> {
+    cell.split("](")
+        .skip(1)
+        .filter_map(|part| part.split(')').next())
+        .collect()
+}
+
+fn is_a_test(target: &str) -> bool {
+    let path = target.split('#').next().unwrap_or(target);
+    path.split('/').any(|part| part == "tests")
+        || path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("test_"))
+}
+
+/// A faithful mark of a release that is out is proven: its Kernel cell links to a test, for every row of the page and not only for
+/// the rows that the code declares (`Feature`). A mark of a later release is a plan (the page says so) and has no link yet; the
+/// release pull request raises the version of the crates, and from then on the marks of that release need theirs. Links in any
+/// cell of any column must lead to a file.
+#[test]
+fn every_faithful_mark_of_a_released_version_links_to_a_test_and_no_link_leads_nowhere() {
+    let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+    let minor: u32 = env!("CARGO_PKG_VERSION")
+        .split('.')
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let rows = rows_of(COVERAGE);
+    assert!(
+        rows.len() > 50,
+        "the table was not read: {} rows",
+        rows.len()
+    );
+    for row in &rows {
+        for cell in &row.cells {
+            for target in links_in(cell) {
+                let path = target.split('#').next().unwrap();
+                if !path.starts_with("http") && !path.is_empty() {
+                    assert!(
+                        docs.join(path).exists(),
+                        "'{}' links to {target}, which is not there",
+                        row.label
+                    );
+                }
+            }
+        }
+        let kernel = &row.cells[0];
+        if faithful_release(kernel).is_some_and(|release| release <= minor) {
+            let links = links_in(kernel);
+            assert!(
+                !links.is_empty(),
+                "'{}' is faithful in release 0.{minor} and has no link: {kernel}",
+                row.label
+            );
+            // Where a run works, the proof is the CI; for a feature it is a test
+            if row.section != "Where it can run" {
+                assert!(
+                    links.iter().any(|link| is_a_test(link)),
+                    "'{}' links to no test: {kernel}",
+                    row.label
+                );
+            }
+        }
+    }
+}
+
+/// Canary: the reader of the page and the rules find what they are for.
+#[test]
+fn the_rules_for_the_marks_find_a_plan_a_proof_and_a_missing_test() {
+    let page = "## Topology\n| Feature | Kernel | Engine | Proxy |\n| --- | --- | --- | --- |\n| A | ✔ 0.1 ([t](../crates/x/tests/a.rs)) | ✔ 0.4 | ✘ |\n| B | ✔ 0.6 | ✔ 0.6 | ✘ |\n## Where it can run\n| Place | Kernel | Engine | Proxy |\n| P | ✔ 0.1 ([ci](../.github/workflows/ci.yml)) | · | · |\n";
+    let rows = rows_of(page);
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].section, "Topology");
+    assert_eq!(rows[2].section, "Where it can run");
+    assert_eq!(faithful_release(&rows[0].cells[0]), Some(1));
+    assert_eq!(faithful_release(&rows[1].cells[0]), Some(6));
+    assert_eq!(faithful_release("~ 0.2"), None);
+    assert_eq!(faithful_release("✘"), None);
+    assert_eq!(links_in(&rows[0].cells[0]), ["../crates/x/tests/a.rs"]);
+    assert_eq!(links_in(&rows[1].cells[0]), Vec::<&str>::new());
+    assert!(is_a_test("../crates/x/tests/a.rs#L3"));
+    assert!(is_a_test("../python/netscenario/tests/test_a.py"));
+    assert!(!is_a_test("decisions/D-083.md"));
+    assert!(!is_a_test("../.github/workflows/ci.yml"));
+}
