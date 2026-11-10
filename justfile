@@ -59,6 +59,14 @@ fidelity-test part="1" of="1":
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 
+# Build the guide (docs/book) into docs/book/book. One-time: cargo install mdbook --locked --version 0.5.4
+book:
+    mdbook build docs/book
+
+# Check the scenarios, the Python, the commands and the links of the guide; --run also runs the marked blocks
+book-check *args:
+    uv run python docs/book/check.py {{args}}
+
 # Licences, advisories, sources and bans (deny.toml)
 deny:
     cargo deny check

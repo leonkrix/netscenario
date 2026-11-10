@@ -186,6 +186,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [docs/AGENT.md](docs/AGENT.md): the agent in the nodes: the packet, the record file, the command line.
 - [docs/PERMISSIONS.md](docs/PERMISSIONS.md): the ways to get the right to create namespaces, on a laptop, in a container and in a CI.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): from a message or a symptom to the cause and the fix.
+- [docs/book/](docs/book/): the guide, with tutorials for a tester, a network engineer and the maintainer of a CI, and a chapter for each shape of network; every scenario in it is checked and the short ones are run by the tests.
 - [examples/](examples/): a UDP protocol on the command line, your own program over a bad link, a pytest test with a confidence interval, and a link that changes during a run, with their output.
 - [docs/STATISTICS.md](docs/STATISTICS.md): repetitions and confidence intervals: the method, its coverage, and what "stable" means.
 - [docs/PROGRAMS.md](docs/PROGRAMS.md): your own program as a node: order, readiness, supervision, logs, metrics.

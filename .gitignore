@@ -39,3 +39,6 @@ __pycache__/
 /PLAN-ARCHIVE.md
 /CLAUDE.md
 /.claude/
+
+# The built book
+/docs/book/book/
