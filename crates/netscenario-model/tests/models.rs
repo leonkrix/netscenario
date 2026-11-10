@@ -542,3 +542,232 @@ fn the_examples_compile_to_valid_scenarios() {
     }
     assert!(found >= 3, "the examples with a model: {found}");
 }
+
+// ---- the faults of a model that no file of scenarios/invalid/ shows ----
+
+fn model(kind: &str, rest: &str) -> String {
+    format!("      model:\n        kind: {kind}\n{rest}")
+}
+
+/// Each fault is refused with the reason and the place; the same scenario with the fault mended is accepted, so the message is about
+/// that fault and not about something else in the file.
+#[test]
+fn a_periodic_model_with_a_fault_is_refused_with_the_reason_and_the_place() {
+    let periodic = |rest: &str| model("periodic", rest);
+    let one = "        states:\n          - { for: 2s, set: { both: { rate: 1mbit } } }\n";
+    let cases: Vec<(&str, String, &str, &str)> = vec![
+        (
+            "begins after the end",
+            periodic(&format!("        begin: 20s\n{one}")),
+            "which is not before the end of the measured phase",
+            "model.begin",
+        ),
+        (
+            "state name twice",
+            periodic(
+                "        states:\n          - { id: a, for: 1s, set: { both: { rate: 1mbit } } }\n          - { id: a, for: 1s, set: { both: { rate: 2mbit } } }\n",
+            ),
+            "the state name 'a' is used twice",
+            "states[1].id",
+        ),
+        (
+            "state without for",
+            periodic("        states:\n          - { set: { both: { rate: 1mbit } } }\n"),
+            "needs `for`: how long it lasts",
+            "states[0]",
+        ),
+        (
+            "state of zero length",
+            periodic("        states:\n          - { for: 0s, set: { both: { rate: 1mbit } } }\n"),
+            "a state must last longer than zero",
+            "states[0].for",
+        ),
+        (
+            "outage and down",
+            periodic("        states:\n          - { for: 1s, outage: true, down: true }\n"),
+            "a state is an `outage` or `down`, not both",
+            "states[0]",
+        ),
+        (
+            "direction without outage",
+            periodic(
+                "        states:\n          - { for: 1s, direction: forward, set: { both: { rate: 1mbit } } }\n",
+            ),
+            "`direction` belongs to `outage`",
+            "states[0].direction",
+        ),
+        (
+            "set without a key",
+            periodic("        states:\n          - { for: 1s, set: {} }\n"),
+            "this state writes no key, so it changes nothing",
+            "states[0].set",
+        ),
+        (
+            "set of a direction without a key",
+            periodic("        states:\n          - { for: 1s, set: { both: {} } }\n"),
+            "this state writes no key, so it changes nothing",
+            "states[0].set.both",
+        ),
+    ];
+    faults_are_refused(&cases);
+}
+
+/// The same for the models that are chains.
+#[test]
+fn a_markov_model_with_a_fault_is_refused_with_the_reason_and_the_place() {
+    let markov = |rest: &str| model("markov", rest);
+    let cases: Vec<(&str, String, &str, &str)> = vec![
+        (
+            "markov state without id",
+            markov(
+                "        start: a\n        states:\n          - { stay: 1s, to: { a: 100% } }\n",
+            ),
+            "needs an `id`: the chances refer to it",
+            "states[0]",
+        ),
+        (
+            "markov state without stay",
+            markov("        start: a\n        states:\n          - { id: a, to: { a: 100% } }\n"),
+            "needs `stay`: how long it lasts, or the mean",
+            "states[0]",
+        ),
+        (
+            "markov state of zero stay",
+            markov(
+                "        start: a\n        states:\n          - { id: a, stay: 0s, to: { a: 100% } }\n",
+            ),
+            "a stay must be longer than zero",
+            "states[0].stay",
+        ),
+        (
+            "markov state with for",
+            markov(
+                "        start: a\n        states:\n          - { id: a, stay: 1s, for: 1s, to: { a: 100% } }\n",
+            ),
+            "belongs to",
+            "states[0].for",
+        ),
+        (
+            "markov without start",
+            markov("        states:\n          - { id: a, stay: 1s, to: { a: 100% } }\n"),
+            "a Markov model needs `start`: the state it begins in",
+            "model",
+        ),
+        (
+            "markov state without chances",
+            markov("        start: a\n        states:\n          - { id: a, stay: 1s }\n"),
+            "needs `to`: the chances of the next state",
+            "states[0]",
+        ),
+    ];
+    faults_are_refused(&cases);
+}
+
+/// Each case is a name, the lines of the link, the reason that must be said and the place that must be named.
+fn faults_are_refused(cases: &[(&str, String, &str, &str)]) {
+    for (name, link, expected, place) in cases {
+        let message = refused(&head("12s", link, ""));
+        assert!(message.contains(expected), "{name}: {message}");
+        assert!(
+            message.contains(place),
+            "{name}: the place {place} is not in\n{message}"
+        );
+    }
+}
+
+#[test]
+fn the_start_of_a_chain_that_is_a_misspelling_is_corrected_in_the_help() {
+    let link = model(
+        "markov",
+        "        start: goood\n        states:\n          - { id: good, stay: 1s, to: { good: 100% } }\n",
+    );
+    let message = refused(&head("12s", &link, ""));
+    assert!(
+        message.contains("the start state 'goood' does not exist"),
+        "{message}"
+    );
+    assert!(message.contains("did you mean 'good'?"), "{message}");
+}
+
+#[test]
+fn the_faults_of_a_trace_of_a_link_are_refused_with_the_key() {
+    let trace = |keys: &str| model("trace", &format!("        both: {{ {keys} }}\n"));
+    let cases = [
+        ("no file", trace(""), "a trace needs a `file`", "model.both"),
+        (
+            "a window of zero",
+            trace("file: walk.mahimahi, format: mahimahi, window: 0s"),
+            "the window must be longer than zero",
+            "model.both.window",
+        ),
+        (
+            "a period of zero",
+            trace("file: drive.csv, period: 0s"),
+            "the period must be longer than zero",
+            "model.both.period",
+        ),
+        (
+            "a window for a csv file",
+            trace("file: drive.csv, window: 50ms"),
+            "`window` belongs to a mahimahi trace, and this one is csv",
+            "model.both.window",
+        ),
+        (
+            "a period for a mahimahi file",
+            trace("file: walk.mahimahi, format: mahimahi, period: 1s"),
+            "`period` belongs to a csv trace, and this one is mahimahi",
+            "model.both.period",
+        ),
+        (
+            "a format that cannot be told",
+            trace("file: drive.dat"),
+            "cannot tell the format of 'drive.dat' from its name",
+            "model.both.file",
+        ),
+        (
+            "a hash of the wrong length",
+            trace("file: drive.csv, sha256: abc"),
+            "a SHA-256 is 64 hexadecimal digits",
+            "model.both.sha256",
+        ),
+    ];
+    for (name, link, expected, place) in &cases {
+        let message = refused(&head("12s", link, ""));
+        assert!(message.contains(expected), "{name}: {message}");
+        assert!(
+            message.contains(place),
+            "{name}: the place {place} is not in\n{message}"
+        );
+    }
+}
+
+#[test]
+fn an_event_that_repeats_zero_times_or_ends_before_it_begins_is_refused() {
+    let timeline = |event: &str| format!("timeline:\n  - {event}\n");
+    let message = refused(&head(
+        "12s",
+        "",
+        &timeline("{ at: 2s, link: l, outage: 100ms, every: 3s, count: 0 }"),
+    ));
+    assert!(message.contains("`count` must be at least 1"), "{message}");
+    let message = refused(&head(
+        "12s",
+        "",
+        &timeline("{ at: 4s, link: l, outage: 100ms, every: 3s, until: 3s }"),
+    ));
+    assert!(
+        message.contains("must be after the first event"),
+        "{message}"
+    );
+    // One more than zero, and an end after the start, are accepted
+    read(&head(
+        "12s",
+        "",
+        &timeline("{ at: 4s, link: l, outage: 100ms, every: 3s, until: 11s }"),
+    ));
+    read(&head(
+        "12s",
+        "",
+        &timeline("{ at: 4s, link: l, outage: 100ms, every: 3s, count: 1 }"),
+    ));
+}

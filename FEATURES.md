@@ -29,16 +29,16 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| SCN-01 | Scenario file in YAML with a JSON Schema, versioned | M | 0.1 | done |
-| SCN-02 | Validation with precise errors (line, column and source line for every error, the path in the file for errors of content, what was expected, how to fix it; reserved keys name their release) | M | 0.1 | done |
-| SCN-03 | Units and durations parsed strictly (`40ms`, `10mbit`, `2%`) | M | 0.1 | done |
-| SCN-04 | Scenarios built in code (Python and Rust builders), same model as the file | M | 0.1 | done (the Rust builder, and the Python builder, which gives the same canonical form as the file: a test compares them) |
+| SCN-01 | Scenario file in YAML with a JSON Schema, versioned | M | 0.1 | done (tests: [`schema.rs`](crates/netscenario-model/tests/schema.rs), [`corpus.rs`](crates/netscenario-model/tests/corpus.rs)) |
+| SCN-02 | Validation with precise errors (line, column and source line for every error, the path in the file for errors of content, what was expected, how to fix it; reserved keys name their release) | M | 0.1 | done (tests: [`corpus.rs`](crates/netscenario-model/tests/corpus.rs)) |
+| SCN-03 | Units and durations parsed strictly (`40ms`, `10mbit`, `2%`) | M | 0.1 | done (tests: [`roundtrip.rs`](crates/netscenario-model/tests/roundtrip.rs)) |
+| SCN-04 | Scenarios built in code (Python and Rust builders), same model as the file | M | 0.1 | done (the Rust builder, and the Python builder, which gives the same canonical form as the file: a test compares them; tests: [`test_scenario.py`](python/netscenario/tests/test_scenario.py), [`roundtrip.rs`](crates/netscenario-model/tests/roundtrip.rs)) |
 | SCN-05 | Parameters, includes and templates (reuse a link, vary a value) | S | 0.3 | done (`params:` with `--param name=value`, exact `{expressions}`, `templates:` with `use:`, files with `include:`; the expanded scenario is what is hashed, recorded and replayed, and an error names the file, the line and each place of use, D-093: `crates/netscenario-model/tests/expand.rs`, `python/netscenario/tests/test_params.py`, the fuzz target `expand`, the examples [parameters](scenarios/parameters.yaml), [templates](scenarios/templates.yaml), [include](scenarios/include.yaml)) |
-| SCN-06 | Profile library: 3G, LTE, 5G, Wi-Fi, DSL, GEO and LEO satellite, datacenter, lossy radio. Every value has a source ([PROFILES.md](docs/PROFILES.md)) | S | 0.3 | done (version 1: 14 profiles of 3G, LTE, 5G, DSL, GEO, LEO and datacenter, mostly delays; Wi-Fi, cable, lossy radio and the rest of the keys wait for sources, D-095) |
+| SCN-06 | Profile library: 3G, LTE, 5G, Wi-Fi, DSL, GEO and LEO satellite, datacenter, lossy radio. Every value has a source ([PROFILES.md](docs/PROFILES.md)) | S | 0.3 | done (version 1: 14 profiles of 3G, LTE, 5G, DSL, GEO, LEO and datacenter, mostly delays; Wi-Fi, cable, lossy radio and the rest of the keys wait for sources, D-095; tests: [`profiles.rs`](crates/netscenario-model/tests/profiles.rs), [`profiles.rs`](crates/netscenario-backend-kernel/tests/profiles.rs)) |
 | SCN-07 | Matrices and sweeps (grids, random sampling) | S | 0.5 | planned |
 | SCN-08 | Migration between schema versions (`netscenario migrate`) | S | 0.7 | planned |
 | SCN-09 | Convert to and from `tc netem` command lines | C | 0.7 | idea |
-| SCN-10 | Hints for misspelled names and keys ("did you mean 'server'?"); node names have them since 0.1, keys, units and values follow | S | 0.2 | done |
+| SCN-10 | Hints for misspelled names and keys ("did you mean 'server'?"); node names have them since 0.1, keys, units and values follow | S | 0.2 | done (tests: [`corpus.rs`](crates/netscenario-model/tests/corpus.rs)) |
 
 ## Topology (TOP)
 
@@ -81,11 +81,11 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| LMD-01 | Static model | M | 0.1 | done (a link keeps its values for the whole run; changes over time are TML-01, 0.2) |
-| LMD-02 | Scheduled steps | M | 0.2 | done (format with D-050; the Kernel backend applies the steps by the clock or at a barrier of the workload, D-060, D-062, D-064) |
+| LMD-01 | Static model | M | 0.1 | done (a link keeps its values for the whole run; changes over time are TML-01, 0.2; tests: [`provision.rs`](crates/netscenario-backend-kernel/tests/provision.rs), [`fidelity.rs`](crates/netscenario-backend-kernel/tests/fidelity.rs)) |
+| LMD-02 | Scheduled steps | M | 0.2 | done (format with D-050; the Kernel backend applies the steps by the clock or at a barrier of the workload, D-060, D-062, D-064; tests: [`timeline.rs`](crates/netscenario-backend-kernel/tests/timeline.rs), [`timeline.rs`](crates/netscenario-model/tests/timeline.rs)) |
 | LMD-03 | Trace-driven rate, delay and loss (including import of Mahimahi traces) | M | 0.3 | done (`model: { kind: trace }` with a CSV or a Mahimahi file for each direction, D-091; a rate that changes is a class of `htb` that is changed, so a trace is followed to within 0.4 % at steps of 100 ms; closer steps need `allow-limited`, D-092: `crates/netscenario-backend-kernel/tests/traces.rs`, `crates/netscenario-model/tests/link_traces.rs`) |
 | LMD-04 | Markov models with states and transitions | S | 0.3 | done (D-090; `tests/models.rs` of the model and of the Kernel backend: the share of time against the stationary distribution, the same seed gives the same states and lost packets) |
-| LMD-05 | Periodic patterns (a satellite pass, a duty cycle) | S | 0.3 | done (D-090; the period is exact, and the run does what the same events written by hand do) |
+| LMD-05 | Periodic patterns (a satellite pass, a duty cycle) | S | 0.3 | done (D-090; the period is exact, and the run does what the same events written by hand do; tests: [`models.rs`](crates/netscenario-backend-kernel/tests/models.rs), [`models.rs`](crates/netscenario-model/tests/models.rs)) |
 | LMD-06 | Geometry-based: distance to loss, delay and rate (free space, log-distance) | M | 0.6 | planned |
 | LMD-07 | Plug-in interface for your own model | S | 0.7 | planned |
 
@@ -93,9 +93,9 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID     | Feature                                                    | Prio | Release | Status  |
 | ------ | ---------------------------------------------------------- | ---- | ------- | ------- |
-| TML-01 | Events at times: change parameters                         | M    | 0.2     | done (format with D-050; the queues and the whole-state change, D-059; every step is recorded in `events`, D-060, and done at a barrier of the workload so that the same seed gives the same lost packets, D-062, by a `tc` that lives for the run, D-063; `outage`, `down` and `up` are steps too, D-064) |
+| TML-01 | Events at times: change parameters                         | M    | 0.2     | done (format with D-050; the queues and the whole-state change, D-059; every step is recorded in `events`, D-060, and done at a barrier of the workload so that the same seed gives the same lost packets, D-062, by a `tc` that lives for the run, D-063; `outage`, `down` and `up` are steps too, D-064; tests: [`timeline.rs`](crates/netscenario-backend-kernel/tests/timeline.rs), [`changes.rs`](crates/netscenario-backend-kernel/tests/changes.rs)) |
 | TML-02 | Link down and up                                           | M    | 0.2     | done (format with D-050; the Kernel backend since D-064; `tests/timeline.rs`: the sender is refused for exactly the packets of the window, the statistics leave the refused packets out) |
-| TML-03 | Repeating events                                           | S    | 0.3     | done (`every`, `until`, `count`; D-090) |
+| TML-03 | Repeating events                                           | S    | 0.3     | done (`every`, `until`, `count`; D-090; tests: [`models.rs`](crates/netscenario-backend-kernel/tests/models.rs), [`models.rs`](crates/netscenario-model/tests/models.rs)) |
 | TML-04 | Events tied to a milestone of a workload (after N packets) | C    | 0.7     | idea    |
 | TML-05 | Change a link from test code while the run is going        | S    | 0.3     | done (D-096; `crates/netscenario-backend-kernel/tests/live.rs`: the change lands between two packets, a replay loses the same packets; `python/netscenario/tests/test_live.py`) |
 
@@ -115,7 +115,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| WRK-01 | UDP constant bit rate | M | 0.1 | done (`netscenario run`, tested in real namespaces; [AGENT.md](docs/AGENT.md)) |
+| WRK-01 | UDP constant bit rate | M | 0.1 | done (`netscenario run`, tested in real namespaces; [AGENT.md](docs/AGENT.md); tests: [`run.rs`](crates/netscenario-backend-kernel/tests/run.rs), [`agent.rs`](crates/netscenario-backend-kernel/tests/agent.rs)) |
 | WRK-02 | UDP Poisson, on/off and bursty | M | 0.2 | done (`udp-poisson`, `udp-onoff`, `udp-bursty`; a seeded schedule from a generator written out in the agent, pinned against an independent implementation; unit tests of the distributions with derived bounds, [patterns.rs](crates/netscenario-backend-kernel/tests/patterns.rs) in real namespaces; [AGENT.md](docs/AGENT.md), [SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md), D-071) |
 | WRK-03 | Replay of a trace of packet sizes and times | S | 0.3 | done (`trace-replay` with a CSV file or a capture, D-085: `crates/netscenario-backend-kernel/tests/trace.rs`, `crates/netscenario-model/tests/trace.rs`; the packets are expanded into the scenario, D-083) |
 | WRK-04 | TCP bulk transfer | M | 0.3 | done (`tcp-bulk` with `bytes`, `connections` and `cc`, the goodput by bin, the completion of each transfer, the retransmissions and the round trip time of the kernel in the `tcp` entry of the result; [tcp.rs](crates/netscenario-backend-kernel/tests/tcp.rs), [RESULTS.md](docs/RESULTS.md), D-086) |
@@ -124,21 +124,21 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | WRK-07 | A container as a node | S | 0.5 | planned |
 | WRK-08 | Replay of a pcap | C | 0.8 | idea |
 | WRK-09 | Models of real traffic (video, voice, game) | S | 0.7 | planned |
-| WRK-10 | Supervision: start order, readiness checks, orderly stop, captured logs, timeouts | M | 0.2 | done (order of the file, five ways of being ready with a limit, `TERM` then `KILL` to the process group, logs of the first megabyte with the dropped bytes counted, `on-exit`; D-072) |
+| WRK-10 | Supervision: start order, readiness checks, orderly stop, captured logs, timeouts | M | 0.2 | done (order of the file, five ways of being ready with a limit, `TERM` then `KILL` to the process group, logs of the first megabyte with the dropped bytes counted, `on-exit`; D-072; tests: [`command.rs`](crates/netscenario-backend-kernel/tests/command.rs)) |
 | WRK-11 | UDP without the checksum, so that a corrupted payload arrives and is counted (`udp-checksum: false`) | S | 0.2 | done (D-056: raw socket, wire format 2 with a CRC-32, `corrupted` in the result; `tests/fidelity.rs` cases 19 to 21 and `tests/agent.rs`) |
 
 ## Measurement (PRB)
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| PRB-01 | Per-packet records (sequence, send time, receive time) | M | 0.1 | done (record file, JSON Lines export; [RESULTS.md](docs/RESULTS.md)) |
+| PRB-01 | Per-packet records (sequence, send time, receive time) | M | 0.1 | done (record file, JSON Lines export; [RESULTS.md](docs/RESULTS.md); tests: [`run.rs`](crates/netscenario-backend-kernel/tests/run.rs)) |
 | PRB-02 | Loss and delivery ratio | M | 0.1 | done (`tests/run.rs`, canaries in `stats.rs`) |
 | PRB-03 | One-way delay with percentiles | M | 0.1 | done (one-way delay with nearest-rank percentiles, `stats.rs` and `tests/run.rs`); the round trip time is PRB-12 |
 | PRB-04 | Jitter (as in RFC 3550) and reordering metrics | S | 0.2 | done (`patterns.rs`: the extent and late time of RFC 4737 against all its worked examples, the RFC 3550 estimate against hand-worked series; modelled and measured in `tests/fidelity.rs`; [RESULTS.md](docs/RESULTS.md), D-058) |
-| PRB-05 | Throughput and goodput over time | M | 0.1 | done (payload per second; for UDP throughput and goodput are the same number; the series by time bin of PRB-07 adds sent, lost and the delays for each bin) |
-| PRB-06 | Burst statistics (length of loss runs) | S | 0.2 | done (`loss_runs` in the result: runs, longest, mean, histogram; D-058) |
+| PRB-05 | Throughput and goodput over time | M | 0.1 | done (payload per second; for UDP throughput and goodput are the same number; the series by time bin of PRB-07 adds sent, lost and the delays for each bin; tests: [`run.rs`](crates/netscenario-backend-kernel/tests/run.rs)) |
+| PRB-06 | Burst statistics (length of loss runs) | S | 0.2 | done (`loss_runs` in the result: runs, longest, mean, histogram; D-058; tests: [`fidelity.rs`](crates/netscenario-backend-kernel/tests/fidelity.rs), [`test_results.py`](python/netscenario/tests/test_results.py)) |
 | PRB-07 | Time to recover after an event | M | 0.2 | done (a series by time bin for each workload in `series-<id>.jsonl`, sent and arrived side by side, and `recoveries` for each event of the timeline with explicit parameters; unit tests on series with known answers and canaries in `recovery.rs` and `series.rs`, a real run with a drop in the rate and an outage in [timeline.rs](crates/netscenario-backend-kernel/tests/timeline.rs); [RESULTS.md](docs/RESULTS.md), D-070); and for TCP workloads on the goodput of a bin, only while the workload is working: [tcp.rs](crates/netscenario-backend-kernel/tests/tcp.rs), D-088) |
-| PRB-08 | Metrics from your program (JSON on stdout, exit code) | M | 0.2 | done (`{"metric", "value", "unit"}` lines with the time they were read, a summary and a file of readings, invalid lines counted and shown, the exit code and signal in the result; D-072) |
+| PRB-08 | Metrics from your program (JSON on stdout, exit code) | M | 0.2 | done (`{"metric", "value", "unit"}` lines with the time they were read, a summary and a file of readings, invalid lines counted and shown, the exit code and signal in the result; D-072; tests: [`command.rs`](crates/netscenario-backend-kernel/tests/command.rs), [`test_echo.py`](examples/echo-server/test_echo.py)) |
 | PRB-09 | Packet capture per link | M | 0.2 | done (`measure.capture`: both interfaces of a link as `capture-<link>-<node>.pcap`, nanosecond timestamps, checked against the counter of the interface; [capture.rs](crates/netscenario-backend-kernel/tests/capture.rs): read by `tcpdump`, lost packets absent and duplicates present, timestamps against the records, a capture cut short refused, a receive buffer that overflows reported; D-047, D-073) |
 | PRB-10 | Queue occupancy and drops from the kernel | S | 0.3 | done (`queues` in the result: the counters at the end and a sample each second, D-082; `crates/netscenario-backend-kernel/tests/queues.rs`) |
 | PRB-11 | CPU and memory of the program under test | C | 0.8 | idea |
@@ -148,7 +148,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| ASR-01 | Threshold assertions on metrics | M | 0.1 | done (plain `assert` on the numbers of the result in test code: [PYTEST.md](docs/PYTEST.md), [examples/python-test/](examples/python-test/); the `expect` section is ASR-07) |
+| ASR-01 | Threshold assertions on metrics | M | 0.1 | done (plain `assert` on the numbers of the result in test code: [PYTEST.md](docs/PYTEST.md), [examples/python-test/](examples/python-test/); the `expect` section is ASR-07; tests: [`test_plugin.py`](python/pytest-netscenario/tests/test_plugin.py)) |
 | ASR-02 | Repetitions with derived seeds | M | 0.2 | done (`run --repetitions`, `run(..., repetitions=n)`, the marker and `netscenario_runs`: [STATISTICS.md](docs/STATISTICS.md), D-074; tests in [`test_runset.py`](python/netscenario/tests/test_runset.py) and [`binary.rs`](crates/netscenario-cli/tests/binary.rs)) |
 | ASR-03 | Confidence intervals (bootstrap) | M | 0.2 | done (expanded percentile for the mean, percentile for the median, coverage measured: [STATISTICS.md](docs/STATISTICS.md), D-074; tests in [`bootstrap.rs`](crates/netscenario-core/src/bootstrap.rs), the stability of the claim in [ACCEPTANCE.md](docs/ACCEPTANCE.md)) |
 | ASR-04 | Baselines and regression detection (effect size, interval, "erratic" marking) | M | 0.7 | planned |
@@ -162,7 +162,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | BKD-01 | Kernel backend: namespaces, veth and `netem` as root | M | 0.1 | done (the CI runs the Kernel backend a second time as root, and as an ordinary user with the two ambient capabilities: `tests/rights.rs`, D-035) |
-| BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | done (the CI runs the tests as an ordinary user on `ubuntu-22.04` and `ubuntu-24.04`) |
+| BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | done (the CI runs the tests as an ordinary user on `ubuntu-22.04` and `ubuntu-24.04`; tests: [`doctor.rs`](crates/netscenario-backend-kernel/tests/doctor.rs), [`run.rs`](crates/netscenario-backend-kernel/tests/run.rs)) |
 | BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | done (`tests/refusal.rs`, `tests/coverage.rs`, `capability.rs`; D-023; a restriction that a scenario accepts with `allow-limited` is recorded in the result, D-092) |
 | BKD-04 | Cleanup guarantee: no leftovers after a crash (PID namespace, D-022), and `netscenario clean` as a safety net | M | 0.1 | done (the guarantee is tested at 18 steps in `tests/crash.rs`; `clean` in `tests/clean.rs`, D-024) |
 | BKD-05 | Netlink instead of calls to `ip` and `tc` | S | 0.4 | planned |
@@ -180,11 +180,11 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | ENV-01 | Seeds: one per scenario, derived for each component | M | 0.1 | done (derivation pinned, drawing and recording in the result, `tests/run.rs`; [RESULTS.md](docs/RESULTS.md)) |
-| ENV-02 | Provenance in every result (versions, kernel, `tc`, CPU, backend, seeds, scenario hash) | M | 0.1 | done |
+| ENV-02 | Provenance in every result (versions, kernel, `tc`, CPU, backend, seeds, scenario hash) | M | 0.1 | done (tests: [`run.rs`](crates/netscenario-backend-kernel/tests/run.rs), [`machine.rs`](crates/netscenario-core/src/machine.rs)) |
 | ENV-03 | Replay a run from its result file | S | 0.2 | done (`netscenario replay <dir>`: [CLI.md](docs/CLI.md), D-075; tests in [`replay.rs`](crates/netscenario-core/src/replay.rs) and [`binary.rs`](crates/netscenario-cli/tests/binary.rs)) |
 | ENV-04 | `netscenario doctor`: what this machine can do, and what it cannot | M | 0.1 | done for the Kernel backend ([DOCTOR.md](docs/DOCTOR.md), `tests/doctor.rs`); the probe of other backends comes with them |
 | ENV-05 | Report on timer and clock precision | S | 0.3 | done (`provenance.timers` of every result, `netscenario doctor --timers`, `ns.doctor(timers=True)`: [DOCTOR.md](docs/DOCTOR.md), D-097; tests in [`timers.rs`](crates/netscenario-core/src/timers.rs) and [`timers.rs`](crates/netscenario-backend-kernel/src/timers.rs)) |
-| ENV-06 | Result format with a version | M | 0.1 | done (`format` and `version`, 0 until 1.0) |
+| ENV-06 | Result format with a version | M | 0.1 | done (`format` and `version`, 0 until 1.0; tests: [`test_results.py`](python/netscenario/tests/test_results.py), [`run.rs`](crates/netscenario-backend-kernel/tests/run.rs)) |
 | ENV-07 | Reproducibility check: the run compares the packet counter of each queue with the packets of the workload, and marks a run in which something else entered the queue as not reproducible; `doctor` checks that `tc` knows `seed` | M | 0.1 | done (`doctor` checks that `tc` knows `seed`; a run counts the packets of the queue of each direction with loss and compares them with the packets the workloads sent: `check_queues` in `run.rs`, `tests/run.rs` with a canary that sends one extra packet, D-036; two workloads in one direction whose queue draws are said not to be reproducible, D-065, because the count cannot see the order of their packets) |
 
 ## Safety (SAF)
@@ -200,25 +200,25 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | CLI-01 | `run`, `validate`, `doctor`, `clean` | M | 0.1 | done ([CLI.md](docs/CLI.md), `tests/binary.rs`) |
-| CLI-02 | `report`: HTML and Markdown from result files | M | 0.2 | done (`netscenario report <dir> --format md\|html\|junit`: [REPORTS.md](docs/REPORTS.md), D-076) |
-| CLI-03 | `profiles` and `capabilities`: what exists, what a backend can do | S | 0.3 | done |
+| CLI-02 | `report`: HTML and Markdown from result files | M | 0.2 | done (`netscenario report <dir> --format md\|html\|junit`: [REPORTS.md](docs/REPORTS.md), D-076; tests: [`binary.rs`](crates/netscenario-cli/tests/binary.rs), [`tests.rs`](crates/netscenario-core/src/report/tests.rs), [`test_reports.py`](python/netscenario/tests/test_reports.py)) |
+| CLI-03 | `profiles` and `capabilities`: what exists, what a backend can do | S | 0.3 | done (tests: [`profiles_cmd.rs`](crates/netscenario-cli/src/profiles_cmd.rs)) |
 | CLI-07 | `expand` (the long form of a scenario that uses shortcuts, parameters or profiles) and `show` (the graph, the addresses, the effective routes: text and Graphviz) | S | 0.3 | in progress (`expand` and `show` of the topology, with the shortcuts, are in [CLI.md](docs/CLI.md); the addresses join `show` when the Kernel backend builds networks; parameters and profiles when they exist) |
-| CLI-04 | `schema`: print the JSON Schema | S | 0.1 | done (`netscenario schema`) |
+| CLI-04 | `schema`: print the JSON Schema | S | 0.1 | done (`netscenario schema`; tests: [`schema.rs`](crates/netscenario-model/tests/schema.rs), [`lib.rs`](crates/netscenario-cli/src/lib.rs)) |
 | CLI-05 | Shell completions and man pages | S | 0.8 | planned |
-| CLI-06 | Machine-readable output and documented exit codes | M | 0.1 | done (exit codes in [CLI.md](docs/CLI.md), 130 and 143 for Ctrl-C and `kill` with the result of the part that ran, D-066; `--json` on `run`, `validate`, `doctor`, `clean`; the code 1 comes with assertions) |
+| CLI-06 | Machine-readable output and documented exit codes | M | 0.1 | done (exit codes in [CLI.md](docs/CLI.md), 130 and 143 for Ctrl-C and `kill` with the result of the part that ran, D-066; `--json` on `run`, `validate`, `doctor`, `clean`; the code 1 comes with assertions; tests: [`binary.rs`](crates/netscenario-cli/tests/binary.rs)) |
 
 ## Python (PYT)
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | PYT-01 | Python package with bindings and API (builder, run, results) | M | 0.1 | done ([PYTHON.md](docs/PYTHON.md); `python/netscenario/tests`, wheels: PYT-08); since 0.2 also repetitions and sets of runs, `report`, `replay` and `junit_properties` (D-077) |
-| PYT-02 | `pytest` plugin: fixtures, markers, options | M | 0.1 | done (fixture `netscenario`, marker and `netscenario_result`, the guard, report section and JUnit properties; [PYTEST.md](docs/PYTEST.md), tested with `pytester` in real runs) |
-| PYT-03 | Typed API (`py.typed`, checked with a strict type checker) | M | 0.1 | done (`pyright` strict over the package and its tests, part of `just check`) |
+| PYT-02 | `pytest` plugin: fixtures, markers, options | M | 0.1 | done (fixture `netscenario`, marker and `netscenario_result`, the guard, report section and JUnit properties; [PYTEST.md](docs/PYTEST.md), tested with `pytester` in real runs; tests: [`test_plugin.py`](python/pytest-netscenario/tests/test_plugin.py)) |
+| PYT-03 | Typed API (`py.typed`, checked with a strict type checker) | M | 0.1 | done (`pyright` strict over the package and its tests, part of `just check`; see: [`pyproject.toml`](pyproject.toml)) |
 | PYT-04 | `asyncio` friendly API | S | 0.3 | done (`run_async`, `start_async`, a cancelled task cancels the run and no thread is left; D-096; `python/netscenario/tests/test_live.py`) |
 | PYT-05 | Per-packet data as pandas and polars frames | S | 0.3 | done (`Workload.packets_table`, `Series.table`, `Result.steps_table`, `Table.to_pandas`/`to_polars` as the extras `netscenario[pandas]` and `[polars]`; `python/netscenario/tests/test_frames.py`, also in the minimum environment without them) |
 | PYT-06 | Notebook helpers for plots | C | 0.8 | idea |
 | PYT-07 | Safe with `pytest-xdist` (parallel runs) | M | 0.5 | planned |
-| PYT-08 | Wheels for manylinux on x86_64 and aarch64 | M | 0.1 | done (built and installed into clean environments by every CI run, and published to PyPI: REL-01) |
+| PYT-08 | Wheels for manylinux on x86_64 and aarch64 | M | 0.1 | done (built and installed into clean environments by every CI run, and published to PyPI: REL-01; see: [`wheels.yml`](.github/workflows/wheels.yml)) |
 
 ## Rust API (RST)
 
@@ -231,10 +231,10 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| RPT-01 | Results as JSON, per-packet data as JSON Lines | M | 0.1 | done (`result.json`, `--packets`; [RESULTS.md](docs/RESULTS.md)) |
+| RPT-01 | Results as JSON, per-packet data as JSON Lines | M | 0.1 | done (`result.json`, `--packets`; [RESULTS.md](docs/RESULTS.md); tests: [`run.rs`](crates/netscenario-backend-kernel/tests/run.rs), [`test_results.py`](python/netscenario/tests/test_results.py)) |
 | RPT-02 | JUnit XML | M | 0.2 | done ([REPORTS.md](docs/REPORTS.md#junit---format-junit-rpt-02); [`tests.rs`](crates/netscenario-core/src/report/tests.rs)) |
-| RPT-03 | HTML report with time series and distributions | M | 0.2 | done (one file, inline SVG, no external reference: [REPORTS.md](docs/REPORTS.md#html---format-html-rpt-03), [`sample-report/`](docs/sample-report/)) |
-| RPT-04 | Markdown for the summary of a CI run | S | 0.2 | done ([REPORTS.md](docs/REPORTS.md#in-a-ci-job)) |
+| RPT-03 | HTML report with time series and distributions | M | 0.2 | done (one file, inline SVG, no external reference: [REPORTS.md](docs/REPORTS.md#html---format-html-rpt-03), [`sample-report/`](docs/sample-report/); tests: [`tests.rs`](crates/netscenario-core/src/report/tests.rs)) |
+| RPT-04 | Markdown for the summary of a CI run | S | 0.2 | done ([REPORTS.md](docs/REPORTS.md#in-a-ci-job); tests: [`tests.rs`](crates/netscenario-core/src/report/tests.rs)) |
 | RPT-05 | Comparison of two runs or two backends | S | 0.7 | planned |
 | RPT-06 | OpenMetrics export | C | 0.8 | idea |
 | RPT-07 | Trends over many runs | C | 1.x | idea |
@@ -252,14 +252,14 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
-| QA-01 | Unit tests and property tests | M | 0.1 | done for 0.1 (unit tests in every crate, property tests of the units in `netscenario-model`; it grows with every release) |
-| QA-02 | Integration tests inside namespaces, on the CI | M | 0.1 | done (the CI creates real namespaces on `ubuntu-22.04` and `ubuntu-24.04`, as a user and as root) |
-| QA-03 | Fuzzing of the parsers that read input that is not trusted: the scenario, the packets and records of the agent, the metrics of a program | S | 0.2 | done (eight targets and the weekly workflow `fuzz.yml`: the scenario, the values, a datagram, a file of records, a result file, the metrics of a program, the file of a set of runs and the reports made of a result file; [fuzz/](fuzz/), D-045, D-053; the replay reads the same two files and the scenario, which have targets; brought forward from 0.3, because release 0.2 adds parsers of such input; ClusterFuzzLite and a 24-hour run stay in 0.8) |
+| QA-01 | Unit tests and property tests | M | 0.1 | done for 0.1 (unit tests in every crate, property tests of the units in `netscenario-model`; it grows with every release) (tests: [`roundtrip.rs`](crates/netscenario-model/tests/roundtrip.rs)) |
+| QA-02 | Integration tests inside namespaces, on the CI | M | 0.1 | done (the CI creates real namespaces on `ubuntu-22.04` and `ubuntu-24.04`, as a user and as root; tests: [`provision.rs`](crates/netscenario-backend-kernel/tests/provision.rs), [`ci.yml`](.github/workflows/ci.yml)) |
+| QA-03 | Fuzzing of the parsers that read input that is not trusted: the scenario, the packets and records of the agent, the metrics of a program | S | 0.2 | done (eight targets and the weekly workflow `fuzz.yml`: the scenario, the values, a datagram, a file of records, a result file, the metrics of a program, the file of a set of runs and the reports made of a result file; [fuzz/](fuzz/), D-045, D-053; the replay reads the same two files and the scenario, which have targets; brought forward from 0.3, because release 0.2 adds parsers of such input; ClusterFuzzLite and a 24-hour run stay in 0.8; tests: [`fuzz_targets/`](fuzz/fuzz_targets/), [`corpus.rs`](crates/netscenario-model/tests/corpus.rs)) |
 | QA-04 | Snapshot tests for reports and the schema | S | 0.2 | done (the Markdown, the JUnit and each drawing, and a sample report that a test makes again: [`tests.rs`](crates/netscenario-core/src/report/tests.rs); the schema: [`schema.rs`](crates/netscenario-model/tests/schema.rs)) |
 | QA-05 | Benchmarks of the engine (throughput, added delay) | S | 0.4 | planned |
 | QA-06 | Fidelity tests: measured against configured delay, loss and rate, with published tolerances | M | 0.1 | done ([FIDELITY.md](docs/FIDELITY.md), `tests/fidelity.rs`: delay, loss, rate, both jitters, jitter with a rate; three canaries; CI numbers per runner as artifacts) |
-| QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | done (the Rust version is checked on the CI with 1.89; `cargo-semver-checks` compares the public API of `netscenario-model` and `netscenario-core` with `main` in every pull request and with the last release in a release, D-037) |
-| QA-08 | Supply chain: dependency audit and policy, OpenSSF Scorecard, actions pinned to commits | M | 0.1 | done (`cargo deny` in every pull request and weekly, OpenSSF Scorecard, CodeQL, pinned actions, Dependabot) |
+| QA-07 | Supported Rust version policy, checked on the CI, and checks for breaking changes of the API | M | 0.1 | done (the Rust version is checked on the CI with 1.89; `cargo-semver-checks` compares the public API of `netscenario-model` and `netscenario-core` with `main` in every pull request and with the last release in a release, D-037; see: [`ci.yml`](.github/workflows/ci.yml)) |
+| QA-08 | Supply chain: dependency audit and policy, OpenSSF Scorecard, actions pinned to commits | M | 0.1 | done (`cargo deny` in every pull request and weekly, OpenSSF Scorecard, CodeQL, pinned actions, Dependabot; see: [`deny.toml`](deny.toml), [`security.yml`](.github/workflows/security.yml)) |
 | QA-09 | Coverage figures (for information) | C | - | idea |
 | QA-10 | Tests on several kernels and distributions | S | 0.5 | planned |
 
@@ -270,7 +270,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | DOC-01 | README, architecture, decisions, scenario format, coverage | M | 0.1 | done for 0.1 ([README.md](README.md), [examples/](examples/); later releases add to it) |
 | DOC-02 | User guide with tutorials | M | 0.3 | done (mdBook in [docs/book/](docs/book/), three paths and a chapter for each shape; the scenarios, the Python, the commands and the links of every page are checked by [`test_book.py`](python/netscenario/tests/test_book.py), published to GitHub Pages by [`book.yml`](.github/workflows/book.yml)) |
 | DOC-03 | Cookbook: QUIC, WebRTC, games, IoT, satellite | S | 0.7 | planned |
-| DOC-04 | API documentation for Rust and Python | M | 0.1 | done (`missing_docs` and ruff `D` are errors in the CI; a runnable example in `netscenario-model` and `netscenario-core`) |
+| DOC-04 | API documentation for Rust and Python | M | 0.1 | done (`missing_docs` and ruff `D` are errors in the CI; a runnable example in `netscenario-model` and `netscenario-core`; see: [`pyproject.toml`](pyproject.toml)) |
 | DOC-05 | Troubleshooting (permissions, kernels, containers) | M | 0.1 | done ([docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)) |
 | DOC-06 | Chapter on fidelity and limits, generated from the coverage matrix | M | 0.4 | planned |
 | DOC-07 | Validation report: how well the emulation matches what it claims | C | 0.9 | idea |
@@ -280,8 +280,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | REL-01 | Release by tag to crates.io and PyPI with provenance and a staged approval | M | 0.1 | done (`release.yml`: the checks, the builds, trusted publishing to crates.io and PyPI with attestations after the approval of a maintainer; `0.1.0-rc.1` and `0.1.0-rc.2` went through it, [RELEASING.md](docs/RELEASING.md), D-034) |
-| REL-02 | Automatic changelog from the history | M | 0.1 | done |
-| REL-03 | Compatibility policy for the scenario format, the result format, the APIs | M | 0.1 | done |
+| REL-02 | Automatic changelog from the history | M | 0.1 | done (see: [`cliff.toml`](cliff.toml)) |
+| REL-03 | Compatibility policy for the scenario format, the result format, the APIs | M | 0.1 | done (see: [`VERSIONING.md`](docs/VERSIONING.md)) |
 | REL-04 | Review list for 1.0 | M | 0.9 | planned |
 
 ## Integration with other projects (INT)

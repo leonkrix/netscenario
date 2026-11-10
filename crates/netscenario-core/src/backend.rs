@@ -672,7 +672,7 @@ pub trait Backend {
     /// [`Error::Backend`] if the link does not exist, or the backend has no interfaces to name (the default).
     fn interface_name(&self, _link: LinkHandle, _end: usize) -> Result<String, Error> {
         Err(Error::Backend {
-            backend: "this".to_owned(),
+            backend: self.name().to_owned(),
             action: "name an interface".to_owned(),
             message: "the backend cannot do it".to_owned(),
         })
@@ -706,7 +706,7 @@ pub trait Backend {
         _signal: ProgramSignal,
     ) -> Result<(), Error> {
         Err(Error::Backend {
-            backend: "this".to_owned(),
+            backend: self.name().to_owned(),
             action: "signal a program".to_owned(),
             message: "the backend cannot do it".to_owned(),
         })
@@ -726,7 +726,7 @@ pub trait Backend {
         _port: u16,
     ) -> Result<bool, Error> {
         Err(Error::Backend {
-            backend: "this".to_owned(),
+            backend: self.name().to_owned(),
             action: "look at the ports of a node".to_owned(),
             message: "the backend cannot do it".to_owned(),
         })
@@ -747,4 +747,179 @@ pub trait Backend {
     ///
     /// [`Error::Backend`] if something could not be removed. The message says what is left.
     fn teardown(&mut self) -> Result<(), Error>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A backend that does only what every backend must, and leaves the rest to the defaults of the trait. What a user gets from
+    /// a backend that lacks a feature is what these defaults say, so each is checked: a default that says "yes" or says nothing
+    /// would let a scenario run on a backend that cannot reproduce it.
+    struct Bare;
+
+    impl Backend for Bare {
+        fn name(&self) -> &'static str {
+            "bare"
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::new("bare")
+        }
+        fn create_node(&mut self, _name: &Name) -> Result<NodeHandle, Error> {
+            Ok(NodeHandle(0))
+        }
+        fn create_link(
+            &mut self,
+            _name: &Name,
+            _between: [NodeHandle; 2],
+        ) -> Result<LinkHandle, Error> {
+            Ok(LinkHandle(0))
+        }
+        fn apply(
+            &mut self,
+            _link: LinkHandle,
+            _direction: Direction,
+            _impairments: &Impairments,
+            _seed: Option<u64>,
+        ) -> Result<(), Error> {
+            Ok(())
+        }
+        fn start_program(
+            &mut self,
+            _node: NodeHandle,
+            _program: &Program,
+        ) -> Result<ProgramHandle, Error> {
+            Ok(ProgramHandle(0))
+        }
+        fn address(&self, _link: LinkHandle, _end: usize) -> Result<Ipv4Addr, Error> {
+            Ok(Ipv4Addr::LOCALHOST)
+        }
+        fn describe(&self) -> BackendInfo {
+            BackendInfo {
+                name: "bare".to_owned(),
+                details: BTreeMap::new(),
+            }
+        }
+        fn poll_program(
+            &mut self,
+            _program: ProgramHandle,
+            _wait: Duration,
+        ) -> Result<ProgramState, Error> {
+            Ok(ProgramState::default())
+        }
+        fn send_line(&mut self, _program: ProgramHandle, _line: &str) -> Result<(), Error> {
+            Ok(())
+        }
+        fn teardown(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+
+    const LINK: LinkHandle = LinkHandle(1);
+    const NODE: NodeHandle = NodeHandle(1);
+
+    /// The three parts of a refusal, or a panic with what the call gave instead.
+    fn refusal<T: std::fmt::Debug>(result: Result<T, Error>) -> (String, String, String) {
+        match result {
+            Err(Error::Backend {
+                backend,
+                action,
+                message,
+            }) => (backend, action, message),
+            other => panic!("a backend without the feature must refuse, and it gave {other:?}"),
+        }
+    }
+
+    /// Every default that refuses says which backend refuses, what it was asked and why: the message is what the user reads
+    /// ("the bare backend failed to ..."). Canary: three of them said "this" for the backend, which no reader can place.
+    #[test]
+    fn a_backend_without_a_feature_refuses_and_names_itself_and_the_action() {
+        let mut bare = Bare;
+        let route = NodeRoute {
+            family: IpFamily::V4,
+            destination: None,
+            metric: 100,
+            next_hops: Vec::new(),
+        };
+        let name = Name::new("a").unwrap();
+        let refusals = [
+            refusal(bare.change(LINK, Direction::Forward, &Impairments::default())),
+            refusal(bare.set_outage(LINK, Direction::Forward, true)),
+            refusal(bare.set_link(LINK, false)),
+            refusal(bare.set_ip_families(true, true)),
+            refusal(bare.set_node_address(NODE, IpAddr::V4(Ipv4Addr::LOCALHOST))),
+            refusal(bare.create_link_through_fabric(&name, [NODE, NODE])),
+            refusal(bare.set_link_mtu(LINK, 1400)),
+            refusal(bare.set_forwarding(NODE, true)),
+            refusal(bare.add_route(NODE, &route)),
+            refusal(bare.address_v6(LINK, 0)),
+            refusal(bare.interface_name(LINK, 0)),
+            refusal(bare.signal_program(ProgramHandle(0), ProgramSignal::Term)),
+            refusal(bare.port_bound(NODE, PortKind::Udp, 4433)),
+        ];
+        let mut actions = std::collections::BTreeSet::new();
+        for (backend, action, message) in refusals {
+            assert_eq!(backend, "bare", "{action}: {message}");
+            assert!(!action.is_empty() && !message.is_empty());
+            actions.insert(action);
+        }
+        assert_eq!(
+            actions.len(),
+            13,
+            "each refusal says what it was asked: {actions:?}"
+        );
+        // What the user reads
+        let (backend, action, message) = refusal(bare.set_link(LINK, false));
+        let error = Error::Backend {
+            backend,
+            action,
+            message,
+        };
+        assert_eq!(
+            error.to_string(),
+            "the bare backend failed to take a link down or bring it up: this backend does not take links down"
+        );
+    }
+
+    /// The defaults that have nothing to say are neutral: they accept, or answer that the backend cannot count, and a run then
+    /// leaves the comparison out instead of failing on it.
+    #[test]
+    fn a_backend_that_counts_nothing_says_so_and_accepts_the_steps_that_need_no_work() {
+        let mut bare = Bare;
+        let scenario = Scenario::from_yaml(
+            "version: 0\nname: bare\nduration: 1s\ntopology:\n  nodes: [a, b]\n  links:\n    - { id: l, between: [a, b] }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1000b }\n",
+            "n.yaml",
+        )
+        .unwrap();
+        assert!(bare.check_values(&scenario).is_ok());
+        assert!(bare.plan_states(LINK, Direction::Forward, &[]).is_ok());
+        assert!(bare.plan_outage(LINK, Direction::Reverse).is_ok());
+        assert_eq!(bare.notes(), Vec::<String>::new());
+        assert_eq!(bare.queue_packets(LINK, Direction::Forward).unwrap(), None);
+        assert_eq!(bare.queue_backlog(LINK, Direction::Forward).unwrap(), None);
+        assert!(
+            bare.node_counts(LINK, Direction::Forward)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            bare.queue_stats(LINK, Direction::Forward)
+                .unwrap()
+                .is_none()
+        );
+        assert!(bare.set_ip_families(true, false).is_ok());
+        assert!(bare.finish_network().is_ok());
+    }
+
+    #[test]
+    fn a_signal_is_the_signal_of_the_model() {
+        assert_eq!(
+            ProgramSignal::from(netscenario_model::Signal::Int),
+            ProgramSignal::Int
+        );
+        assert_eq!(
+            ProgramSignal::from(netscenario_model::Signal::Term),
+            ProgramSignal::Term
+        );
+    }
 }
