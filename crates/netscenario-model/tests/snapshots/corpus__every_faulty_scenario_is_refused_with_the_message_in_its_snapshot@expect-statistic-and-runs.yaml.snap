@@ -1,0 +1,22 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/expect-statistic-and-runs.yaml
+---
+error: `ci95-high` is a statistic of a set of runs, and this file is judged by one run
+  --> expect-statistic-and-runs.yaml:13:46
+   |
+12 |   checks:
+13 |     - { metric: media.loss_ratio, ci95-high: "< 2%" }
+   |                                              ^^^^^^
+   = path: expect.checks[0].ci95-high
+   = help: add `repetitions: 5` or more to `expect`, or use `value`
+
+error: a check has no bound
+  --> expect-statistic-and-runs.yaml:15:7
+   |
+14 |     - { metric: media.sent, value: "> 100" }
+15 |     - { metric: media.lost }
+   |       ^
+   = path: expect.checks[2]
+   = help: add a bound such as `value: "< 5%"`

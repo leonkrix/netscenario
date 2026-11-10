@@ -1,0 +1,13 @@
+version: 0
+name: t
+duration: 10s
+topology:
+  nodes: [a, b]
+  links:
+    - id: l
+      between: [a, b]
+workloads:
+  - { id: media, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }
+expect:
+  checks:
+    - { metric: media.sent, value: "lots" }

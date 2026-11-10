@@ -30,6 +30,7 @@ mod command;
 mod decimal;
 pub mod error;
 mod expand;
+mod expect;
 mod generators;
 mod graph;
 mod hash;
@@ -61,6 +62,10 @@ pub use builder::ScenarioBuilder;
 pub use command::{MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ENV_ENTRIES, RESERVED_ENV_PREFIX};
 pub use error::{Error, Location, Problem};
 pub use expand::{FileSource, LoadOptions, MAX_EXPANDED_NODES, MAX_USE_DEPTH, MAX_USES};
+pub use expect::{
+    Bound, Check, Expect, MAX_CHECK_NAME, MAX_CHECKS, MAX_EXPECT_REPETITIONS,
+    MIN_EXPECT_REPETITIONS, MetricUnit, Op, Statistic,
+};
 pub use generators::{
     Generator, Pattern, PhaseDistribution, TraceReplay, UdpBursty, UdpOnOff, UdpPoisson,
 };

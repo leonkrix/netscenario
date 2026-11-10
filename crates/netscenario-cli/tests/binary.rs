@@ -1277,3 +1277,141 @@ fn a_fault_in_an_included_file_is_shown_in_that_file_with_the_place_of_the_inclu
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
+
+// ---- the checks of the file (ASR-07, D-094) ----
+
+/// The same scenario with a check that holds and one that cannot (the delay is that of the link, 20 ms).
+fn checked(bound: &str) -> String {
+    format!(
+        "{SCENARIO}expect:
+  checks:
+    - {{ name: nothing is lost, metric: media.loss_ratio, value: \"<= 0%\" }}
+    - {{ name: the delay, metric: media.delay.p99, value: \"< {bound}\" }}
+"
+    )
+}
+
+#[test]
+fn a_check_of_the_file_that_holds_exits_with_zero_and_one_that_does_not_exits_with_one() {
+    if !can_run(
+        "a_check_of_the_file_that_holds_exits_with_zero_and_one_that_does_not_exits_with_one",
+    ) {
+        return;
+    }
+    let dir = work_dir("expect-run");
+    let out = dir.join("result");
+    for (bound, code, word) in [("1s", 0, "ok  "), ("1ns", 1, "FAIL")] {
+        let file = write_scenario(&dir, &checked(bound));
+        let output = netscenario_in(&dir, &["run", &file, "--out", out.to_str().unwrap()]).unwrap();
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{bound}\n{stdout}\n{stderr}"
+        );
+        assert!(
+            stdout.contains(&format!("{word} the delay")),
+            "{bound}\n{stdout}"
+        );
+        let result =
+            RunResult::from_json(&std::fs::read_to_string(out.join("result.json")).unwrap())
+                .unwrap();
+        let expect = result.expect.expect("the verdict is in the result");
+        assert_eq!(expect.passed, code == 0);
+        // The reports read the same verdict from the directory
+        let report = netscenario_in(
+            &dir,
+            &["report", out.to_str().unwrap(), "--format", "junit"],
+        )
+        .unwrap();
+        let junit = String::from_utf8_lossy(&report.stdout);
+        assert_eq!(
+            junit.matches("netscenario.CheckFailed").count(),
+            usize::from(code == 1),
+            "{junit}"
+        );
+        assert_eq!(
+            report.status.code(),
+            Some(0),
+            "a report is made whatever it says"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_file_whose_checks_need_a_set_is_run_as_a_set_and_refuses_fewer_runs() {
+    let dir = work_dir("expect-set");
+    let text = format!(
+        "{SCENARIO}expect:\n  repetitions: 6\n  checks:\n    - {{ metric: media.loss_ratio, ci95-high: \"< 5%\" }}\n"
+    );
+    let file = write_scenario(&dir, &text);
+    let out = dir.join("result");
+    // Fewer runs than the file needs, and a single run for a set: a wrong command line, whatever the machine
+    let output = netscenario_in(
+        &dir,
+        &[
+            "run",
+            &file,
+            "--out",
+            out.to_str().unwrap(),
+            "--repetitions",
+            "5",
+        ],
+    )
+    .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("at least 6 runs"));
+    let one = write_scenario(
+        &dir,
+        &format!(
+            "{SCENARIO}expect:\n  checks:\n    - {{ metric: media.loss_ratio, value: \"< 5%\" }}\n"
+        ),
+    );
+    let output = netscenario_in(
+        &dir,
+        &[
+            "run",
+            &one,
+            "--out",
+            out.to_str().unwrap(),
+            "--repetitions",
+            "5",
+        ],
+    )
+    .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("judge one run"));
+    assert!(!out.exists(), "nothing was run, so nothing was written");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_set_judged_by_the_file_exits_with_the_verdict() {
+    if !can_run("a_set_judged_by_the_file_exits_with_the_verdict") {
+        return;
+    }
+    let dir = work_dir("expect-set-run");
+    let out = dir.join("result");
+    for (bound, code) in [("5%", 0), ("0%", 1)] {
+        let text = format!(
+            "{SCENARIO}expect:\n  repetitions: 5\n  checks:\n    - {{ metric: media.loss_ratio, max: \"< {bound}\" }}\n"
+        );
+        let file = write_scenario(&dir, &text);
+        let output = netscenario_in(&dir, &["run", &file, "--out", out.to_str().unwrap()]).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(code), "{bound}\n{stderr}");
+        let set =
+            RunSetResult::from_json(&std::fs::read_to_string(out.join("runset.json")).unwrap())
+                .unwrap();
+        assert_eq!(set.repetitions, 5);
+        assert_eq!(
+            set.expect.expect("the verdict is in the set").passed,
+            code == 0
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

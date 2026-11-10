@@ -46,6 +46,7 @@ code{font:.9em ui-monospace,monospace}
 .dot.line-offered,.swatch.line-offered{fill:var(--muted)}
 .bar-lost{fill:var(--warn)}.bar-delay{fill:var(--c1)}
 .marker{stroke:var(--warn);stroke-dasharray:3 3}.marker-p50{stroke:var(--c1)}.marker-p99{stroke:var(--c3)}
+.fail{color:var(--warn);font-weight:600}.ok{color:var(--muted)}
 .interval{fill:var(--c1);opacity:.35}.estimate{stroke:var(--c1);stroke-width:2}.run{fill:var(--fg);opacity:.55}
 ";
 
@@ -85,6 +86,47 @@ fn page(title: &str, body: &str) -> String {
     )
 }
 
+/// The checks of the file as a table, each with its value, its bound and its margin (D-094).
+fn expect_section(out: &mut String, expect: &crate::expect::ExpectResult) {
+    let (held, total) = expect.counts();
+    let runs = if expect.runs > 1 {
+        format!(" over {} runs", expect.runs)
+    } else {
+        String::new()
+    };
+    let _ = write!(
+        out,
+        "<h2>Checks of the file{runs}: {held} of {total} hold</h2>"
+    );
+    if !expect.passed {
+        out.push_str("<p class=\"warn\"><strong>Not all checks hold.</strong></p>");
+    }
+    let rows: Vec<Vec<String>> = expect
+        .checks
+        .iter()
+        .map(|check| {
+            let verdict = if check.passed {
+                format!(
+                    "<span class=\"ok\">holds, {}</span>",
+                    escape(&check.margin_text())
+                )
+            } else {
+                format!(
+                    "<span class=\"fail\">fails</span>, {}",
+                    escape(&check.margin_text())
+                )
+            };
+            vec![
+                escape(&check.name),
+                escape(&check.actual_text()),
+                escape(&check.bound),
+                verdict,
+            ]
+        })
+        .collect();
+    table(out, &["Check", ">Value", "Bound", ""], &rows);
+}
+
 /// The HTML report.
 ///
 /// # Errors
@@ -114,6 +156,9 @@ fn html_run(run: &RunReport) -> Result<String, ReportError> {
         escape(&result.scenario.name)
     );
     summary(&mut body, result);
+    if let Some(expect) = &result.expect {
+        expect_section(&mut body, expect);
+    }
     for (workload, detail) in result.workloads.iter().zip(&run.details) {
         workload_section(&mut body, result, workload, detail);
     }
@@ -785,6 +830,9 @@ fn html_set(set: &RunSetResult) -> String {
             body,
             "<p class=\"warn\"><strong>Warning:</strong> the loss of {unreproducible} of the runs does not repeat from its seed.</p>"
         );
+    }
+    if let Some(expect) = &set.expect {
+        expect_section(&mut body, expect);
     }
     body.push_str("<h2>Headline metrics</h2><p>Each dot is one run, the bar is the interval around the mean, the line is the mean.</p>");
     for metric in set

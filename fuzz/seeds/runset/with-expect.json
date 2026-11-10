@@ -1,0 +1,391 @@
+{
+ "format": "netscenario-runset",
+ "version": 0,
+ "scenario": {
+  "name": "t",
+  "hash": "sha256:510be03f3d7b63382ab6d8d1fce4998faa996b539051c1ce93482b6976c02809"
+ },
+ "provenance": {
+  "netscenario": "0.0.0",
+  "started_at": "2026-01-01T00:00:00Z",
+  "backend": "kernel",
+  "backend_details": {},
+  "kernel": null,
+  "cpu_model": null,
+  "cpus": 4
+ },
+ "seed": {
+  "value": 7,
+  "drawn": false
+ },
+ "repetitions": 6,
+ "confidence": {
+  "statistic": "mean",
+  "level": 0.95,
+  "resamples": 10000,
+  "method": "expanded-percentile"
+ },
+ "runs": [
+  {
+   "index": 0,
+   "seed": 13836799946177249161,
+   "directory": "run-001",
+   "loss_reproducible": true
+  },
+  {
+   "index": 1,
+   "seed": 4750671471871937387,
+   "directory": "run-002",
+   "loss_reproducible": true
+  },
+  {
+   "index": 2,
+   "seed": 18150273063603234735,
+   "directory": "run-003",
+   "loss_reproducible": true
+  },
+  {
+   "index": 3,
+   "seed": 3529771608138395119,
+   "directory": "run-004",
+   "loss_reproducible": true
+  },
+  {
+   "index": 4,
+   "seed": 5542523133318148084,
+   "directory": "run-005",
+   "loss_reproducible": true
+  },
+  {
+   "index": 5,
+   "seed": 382815278662272371,
+   "directory": "run-006",
+   "loss_reproducible": true
+  }
+ ],
+ "metrics": [
+  {
+   "name": "w.duplicates",
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "mean": 0.0,
+   "median": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "stddev": 0.0,
+   "interval": {
+    "statistic": "mean",
+    "estimate": 0.0,
+    "low": 0.0,
+    "high": 0.0,
+    "level": 0.95,
+    "method": "expanded-percentile",
+    "tail": 0.002431803174611773,
+    "resamples": 10000,
+    "runs": 6
+   }
+  },
+  {
+   "name": "w.loss_ratio",
+   "values": [
+    0.02,
+    0.04,
+    0.06,
+    0.08,
+    0.1,
+    0.12
+   ],
+   "mean": 0.07,
+   "median": 0.07,
+   "min": 0.02,
+   "max": 0.12,
+   "stddev": 0.03741657386773941,
+   "interval": {
+    "statistic": "mean",
+    "estimate": 0.07,
+    "low": 0.03333333333333333,
+    "high": 0.10666666666666667,
+    "level": 0.95,
+    "method": "expanded-percentile",
+    "tail": 0.002431803174611773,
+    "resamples": 10000,
+    "runs": 6
+   }
+  },
+  {
+   "name": "w.loss_runs.longest",
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "mean": 0.0,
+   "median": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "stddev": 0.0,
+   "interval": {
+    "statistic": "mean",
+    "estimate": 0.0,
+    "low": 0.0,
+    "high": 0.0,
+    "level": 0.95,
+    "method": "expanded-percentile",
+    "tail": 0.002431803174611773,
+    "resamples": 10000,
+    "runs": 6
+   }
+  },
+  {
+   "name": "w.loss_runs.mean",
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "mean": 0.0,
+   "median": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "stddev": 0.0,
+   "interval": {
+    "statistic": "mean",
+    "estimate": 0.0,
+    "low": 0.0,
+    "high": 0.0,
+    "level": 0.95,
+    "method": "expanded-percentile",
+    "tail": 0.002431803174611773,
+    "resamples": 10000,
+    "runs": 6
+   }
+  },
+  {
+   "name": "w.lost",
+   "values": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "mean": 1.0,
+   "median": 1.0,
+   "min": 1.0,
+   "max": 1.0,
+   "stddev": 0.0,
+   "interval": {
+    "statistic": "mean",
+    "estimate": 1.0,
+    "low": 1.0,
+    "high": 1.0,
+    "level": 0.95,
+    "method": "expanded-percentile",
+    "tail": 0.002431803174611773,
+    "resamples": 10000,
+    "runs": 6
+   }
+  },
+  {
+   "name": "w.received",
+   "values": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "mean": 1.0,
+   "median": 1.0,
+   "min": 1.0,
+   "max": 1.0,
+   "stddev": 0.0,
+   "interval": {
+    "statistic": "mean",
+    "estimate": 1.0,
+    "low": 1.0,
+    "high": 1.0,
+    "level": 0.95,
+    "method": "expanded-percentile",
+    "tail": 0.002431803174611773,
+    "resamples": 10000,
+    "runs": 6
+   }
+  },
+  {
+   "name": "w.reordered",
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "mean": 0.0,
+   "median": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "stddev": 0.0,
+   "interval": {
+    "statistic": "mean",
+    "estimate": 0.0,
+    "low": 0.0,
+    "high": 0.0,
+    "level": 0.95,
+    "method": "expanded-percentile",
+    "tail": 0.002431803174611773,
+    "resamples": 10000,
+    "runs": 6
+   }
+  },
+  {
+   "name": "w.sent",
+   "values": [
+    2.0,
+    2.0,
+    2.0,
+    2.0,
+    2.0,
+    2.0
+   ],
+   "mean": 2.0,
+   "median": 2.0,
+   "min": 2.0,
+   "max": 2.0,
+   "stddev": 0.0,
+   "interval": {
+    "statistic": "mean",
+    "estimate": 2.0,
+    "low": 2.0,
+    "high": 2.0,
+    "level": 0.95,
+    "method": "expanded-percentile",
+    "tail": 0.002431803174611773,
+    "resamples": 10000,
+    "runs": 6
+   }
+  },
+  {
+   "name": "w.throughput.mean",
+   "values": [
+    7999999999999.999,
+    7999999999999.999,
+    7999999999999.999,
+    7999999999999.999,
+    7999999999999.999,
+    7999999999999.999
+   ],
+   "mean": 7999999999999.999,
+   "median": 7999999999999.999,
+   "min": 7999999999999.999,
+   "max": 7999999999999.999,
+   "stddev": 0.0,
+   "interval": {
+    "statistic": "mean",
+    "estimate": 7999999999999.999,
+    "low": 7999999999999.999,
+    "high": 7999999999999.999,
+    "level": 0.95,
+    "method": "expanded-percentile",
+    "tail": 0.002431803174611773,
+    "resamples": 10000,
+    "runs": 6
+   }
+  }
+ ],
+ "partial": [
+  {
+   "name": "w.delay.max",
+   "present_in": 5,
+   "of": 6
+  },
+  {
+   "name": "w.delay.mean",
+   "present_in": 5,
+   "of": 6
+  },
+  {
+   "name": "w.delay.min",
+   "present_in": 5,
+   "of": 6
+  },
+  {
+   "name": "w.delay.p50",
+   "present_in": 5,
+   "of": 6
+  },
+  {
+   "name": "w.delay.p90",
+   "present_in": 5,
+   "of": 6
+  },
+  {
+   "name": "w.delay.p95",
+   "present_in": 5,
+   "of": 6
+  },
+  {
+   "name": "w.delay.p99",
+   "present_in": 5,
+   "of": 6
+  },
+  {
+   "name": "w.delay.p999",
+   "present_in": 5,
+   "of": 6
+  }
+ ],
+ "expect": {
+  "passed": false,
+  "runs": 6,
+  "checks": [
+   {
+    "name": "loss stays small",
+    "metric": "w.loss_ratio",
+    "statistic": "ci95-high",
+    "unit": "ratio",
+    "bound": "< 5%",
+    "threshold": 0.05,
+    "actual": 0.012,
+    "margin": 0.038,
+    "passed": true
+   },
+   {
+    "name": "the delay",
+    "metric": "w.delay.p99",
+    "statistic": "ci95-high",
+    "unit": "seconds",
+    "bound": "<= 150ms",
+    "threshold": 0.15,
+    "actual": 0.2,
+    "margin": -0.05,
+    "passed": false
+   },
+   {
+    "name": "not there",
+    "metric": "w.jitter.max",
+    "statistic": "ci95-high",
+    "unit": "seconds",
+    "bound": "< 1s",
+    "threshold": 1.0,
+    "passed": false,
+    "note": "the run has no 'w.jitter.max'"
+   }
+  ]
+ }
+}

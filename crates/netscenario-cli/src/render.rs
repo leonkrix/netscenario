@@ -100,6 +100,9 @@ pub(crate) fn summary(result: &RunResult, out_dir: &Path) -> String {
     for note in &result.notes {
         let _ = writeln!(text, "  note: {note}");
     }
+    if let Some(expect) = &result.expect {
+        expect_text(&mut text, expect);
+    }
     let _ = writeln!(text, "\nresult: {}", out_dir.join("result.json").display());
     text
 }
@@ -264,6 +267,30 @@ impl Unit {
     }
 }
 
+/// The verdict of the checks of the file: how many hold, and one line for each that does not, or for each when all are small
+/// enough to list (D-094).
+fn expect_text(text: &mut String, expect: &netscenario_core::ExpectResult) {
+    let (held, total) = expect.counts();
+    let runs = if expect.runs > 1 {
+        format!(" over {} runs", expect.runs)
+    } else {
+        String::new()
+    };
+    let _ = writeln!(
+        text,
+        "\nchecks of the file{runs}: {held} of {total} hold{}",
+        if expect.passed { "" } else { ", NOT ALL" }
+    );
+    for check in &expect.checks {
+        let _ = writeln!(
+            text,
+            "  {} {}",
+            if check.passed { "ok  " } else { "FAIL" },
+            check.line()
+        );
+    }
+}
+
 /// The text printed after a set of runs: what ran, the seed and how the intervals were made, and for each workload the
 /// headline metrics with the value in the middle, the interval and the spread between the runs.
 pub(crate) fn set_summary(set: &RunSetResult, out_dir: &Path) -> String {
@@ -352,6 +379,9 @@ pub(crate) fn set_summary(set: &RunSetResult, out_dir: &Path) -> String {
             names.join(", "),
             if set.partial.len() > 3 { ", ..." } else { "" }
         );
+    }
+    if let Some(expect) = &set.expect {
+        expect_text(&mut text, expect);
     }
     let _ = writeln!(
         text,

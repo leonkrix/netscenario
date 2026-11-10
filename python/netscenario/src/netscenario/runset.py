@@ -26,7 +26,7 @@ from types import MappingProxyType
 from typing import Any
 
 from netscenario.reports import ReportFormat, report
-from netscenario.results import Result
+from netscenario.results import Expectations, Result, expectations_of
 
 _LEVEL_95 = 0.95
 
@@ -203,6 +203,10 @@ class RunSet:
     """The directory of the set: ``runset.json`` and one directory for each run."""
     raw: Mapping[str, Any]
     """The decoded ``runset.json``, unchanged."""
+    expect: Expectations | None = None
+    """What the checks of the ``expect`` section of the scenario found, for a file whose checks
+    judge a set of runs (``expect: {repetitions: n}``, D-094). ``None`` for a scenario without
+    such checks."""
 
     def metric(self, name: str) -> SetMetric:
         """The metric called ``name``.
@@ -302,6 +306,7 @@ class RunSet:
             ),
             out_dir=directory,
             raw=MappingProxyType(raw),
+            expect=expectations_of(raw.get("expect")),
         )
 
 

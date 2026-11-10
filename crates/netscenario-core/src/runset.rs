@@ -200,6 +200,9 @@ pub struct RunSetResult {
     /// The metrics that only some runs have; they have no interval.
     #[serde(default)]
     pub partial: Vec<PartialMetric>,
+    /// What the checks of `expect` found, if the scenario has checks on a set of runs (ASR-07, D-094).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect: Option<crate::expect::ExpectResult>,
 }
 
 impl RunSetResult {
@@ -501,6 +504,7 @@ pub fn run_set(
     before: &mut dyn FnMut(&Repetition),
 ) -> Result<RunSetResult, Error> {
     set.check()?;
+    crate::expect::check_set_options(scenario, set)?;
     let failed = |action: &str, error: &std::io::Error| Error::Run {
         action: action.to_owned(),
         message: error.to_string(),
@@ -542,6 +546,14 @@ pub fn run_set(
     }
     let (metrics, partial) = aggregate(&results, set_seed, set)?;
     let first = &results[0];
+    let confidence = Confidence {
+        statistic: set.statistic,
+        level: set.level,
+        resamples: set.resamples,
+        method: Method::of(set.statistic),
+    };
+    let expect =
+        crate::expect::judge_set(scenario, &metrics, &partial, &confidence, set.repetitions);
     let result = RunSetResult {
         format: RUNSET_FORMAT.to_owned(),
         version: RUNSET_VERSION,
@@ -556,15 +568,11 @@ pub fn run_set(
             drawn,
         },
         repetitions: set.repetitions,
-        confidence: Confidence {
-            statistic: set.statistic,
-            level: set.level,
-            resamples: set.resamples,
-            method: Method::of(set.statistic),
-        },
+        confidence,
         runs,
         metrics,
         partial,
+        expect,
     };
     std::fs::write(options.out_dir.join(RUNSET_FILE), result.to_json())
         .map_err(|error| failed("write the result of the set", &error))?;

@@ -99,3 +99,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-091](decisions/D-091.md) | A trace is a model whose rows come from a file, and a rate that changes is a class of `htb` that is changed | Accepted 2026-11-06 |
 | [D-092](decisions/D-092.md) | A scenario accepts the restrictions of a backend one feature at a time, and the result records them | Accepted 2026-11-06 |
 | [D-093](decisions/D-093.md) | Parameters, templates and includes are expanded when a file is read, and the file stays data | Accepted 2026-11-06 |
+| [D-094](decisions/D-094.md) | `expect` in the file is a list of named checks on the metrics of one run or of a set of runs, judged by the core and recorded in the result | Accepted 2026-11-10 |

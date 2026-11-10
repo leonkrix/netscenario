@@ -1004,6 +1004,105 @@ class Address:
 
 
 @dataclass(frozen=True)
+class ExpectCheck:
+    """One bound of one check of the ``expect`` section of the scenario, judged (D-094)."""
+
+    name: str
+    """The name of the check, as the reports show it."""
+    metric: str
+    """The metric: ``media.delay.p99``."""
+    statistic: str
+    """What of the metric is compared: ``"value"`` for one run; ``"mean"``, ``"median"``,
+    ``"min"``, ``"max"``, ``"ci95-low"`` or ``"ci95-high"`` for a set of runs."""
+    unit: str
+    """The unit of the numbers: ``"seconds"``, ``"bits-per-second"``, ``"ratio"``, ``"number"``."""
+    bound: str
+    """The bound as the file writes it: ``"< 150ms"``."""
+    threshold: float
+    """The bound in the unit of the metric: seconds, bits per second, a ratio of 0 to 1, a count."""
+    actual: float | None
+    """The value of the statistic. ``None`` when the metric was not in the result."""
+    margin: float | None
+    """How far the value is on the good side of the bound: negative by how much it is missed.
+    ``None`` with ``actual``."""
+    passed: bool
+    """Whether the bound holds. A bound that could not be judged does not."""
+    note: str | None = None
+    """Why it could not be judged."""
+
+    def __str__(self) -> str:
+        """The check as a line: what was found, the bound, and the margin or why it is not known."""
+        suffix = {"seconds": " s", "bits-per-second": " bit/s"}.get(self.unit, "")
+        if self.actual is None or self.margin is None:
+            return f"{self.name}: {self.bound} ({self.note or 'could not be judged'})"
+        how = (
+            f"{abs(self.margin):g}{suffix} to spare"
+            if self.passed
+            else f"misses by {abs(self.margin):g}{suffix}"
+        )
+        return f"{self.name}: {self.actual:g}{suffix} ({self.bound}, {how})"
+
+
+@dataclass(frozen=True)
+class Expectations:
+    """What the ``expect`` section of the scenario found: one :class:`ExpectCheck` for each bound.
+
+    ``Result.expect`` holds it for a file whose checks judge one run, ``RunSet.expect`` for a file
+    whose checks judge a set of runs (``expect: {repetitions: n}``). The command line exits with 1
+    and the pytest plugin fails the test when ``passed`` is ``False``.
+    """
+
+    passed: bool
+    """Whether every check holds."""
+    runs: int
+    """The runs the verdict is made of: 1, or the size of the set."""
+    checks: tuple[ExpectCheck, ...]
+    """The checks, in the order of the file."""
+
+    @property
+    def failures(self) -> tuple[ExpectCheck, ...]:
+        """The checks that do not hold."""
+        return tuple(check for check in self.checks if not check.passed)
+
+    def explain(self) -> str:
+        """The checks that do not hold, one line each, as a message."""
+        held = len(self.checks) - len(self.failures)
+        lines = [f"{held} of {len(self.checks)} checks of the scenario file hold:"]
+        lines.extend(f"  {check}" for check in self.failures)
+        return "\n".join(lines)
+
+    def raise_for_failures(self) -> None:
+        """Raise :class:`AssertionError` with :meth:`explain` if a check does not hold."""
+        if not self.passed:
+            raise AssertionError(self.explain())
+
+
+def expectations_of(raw: Mapping[str, Any] | None) -> Expectations | None:
+    """The verdict of ``result.json`` or ``runset.json``, or ``None`` if it has none."""
+    if raw is None:
+        return None
+    return Expectations(
+        passed=bool(raw["passed"]),
+        runs=int(raw["runs"]),
+        checks=tuple(
+            ExpectCheck(
+                name=c["name"],
+                metric=c["metric"],
+                statistic=c["statistic"],
+                unit=c["unit"],
+                bound=c["bound"],
+                threshold=float(c["threshold"]),
+                actual=None if c.get("actual") is None else float(c["actual"]),
+                margin=None if c.get("margin") is None else float(c["margin"]),
+                passed=bool(c["passed"]),
+                note=c.get("note"),
+            )
+            for c in raw["checks"]
+        ),
+    )
+
+
+@dataclass(frozen=True)
 class Result:
     """What a run found out. ``result["media"]`` is the :class:`Workload` called ``media``."""
 
@@ -1058,6 +1157,10 @@ class Result:
     """The TCP workloads (``tcp-bulk``, ``request-response``) by id, in scenario order."""
     reproducibility: Reproducibility = field(default_factory=lambda: Reproducibility("exact", ()))
     """Whether the run can be repeated exactly or has to be repeated and read with an interval."""
+    expect: Expectations | None = None
+    """What the checks of the ``expect`` section of the scenario found, for a file whose checks
+    judge one run (D-094). ``None`` for a scenario without such checks, and for a run that was
+    cut short."""
 
     def __getitem__(self, workload_id: str) -> Workload:
         """The workload with this id."""
@@ -1179,6 +1282,7 @@ class Result:
                 raw.get("reproducibility", {}).get("class", "exact"),
                 tuple(raw.get("reproducibility", {}).get("because", ())),
             ),
+            expect=expectations_of(raw.get("expect")),
             out_dir=directory,
             raw=MappingProxyType(raw),
         )

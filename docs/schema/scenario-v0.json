@@ -31,6 +31,22 @@
         }
       ]
     },
+    "Bound": {
+      "anyOf": [
+        {
+          "pattern": "^\\s*(<=|>=|<|>)\\s*\\S.*$",
+          "type": "string"
+        },
+        {
+          "pattern": "\\{[^{}]+\\}",
+          "type": "string"
+        }
+      ],
+      "description": "An operator (<, <=, >, >=) and a value in the unit of the metric: a duration for a delay, a rate for a throughput, a percentage or a number from 0 to 1 for a ratio, a number for a count.",
+      "examples": [
+        "< 150ms"
+      ]
+    },
     "BurstyKind": {
       "anyOf": [
         {
@@ -147,6 +163,127 @@
         }
       ],
       "description": "What `set` changes, for each direction. `both` changes the two directions."
+    },
+    "Check": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ci95-high": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Bound"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The upper end of the 95 % interval around the mean."
+            },
+            "ci95-low": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Bound"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The lower end of the 95 % interval around the mean (D-074)."
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Bound"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The largest value of the runs."
+            },
+            "mean": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Bound"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The mean of the metric over the runs of the set."
+            },
+            "median": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Bound"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The median of the metric over the runs."
+            },
+            "metric": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{[^{}]+\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "The metric, as STATISTICS.md names them: `<workload>.delay.p99`, `<workload>.loss_ratio`, `<tcp>.goodput.mean`."
+            },
+            "min": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Bound"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The smallest value of the runs."
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                {
+                  "pattern": "\\{[^{}]+\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "What the check is called in the reports. Default: the metric, the statistic and the bound."
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Bound"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The value of the metric in the run (a file without `repetitions`)."
+            }
+          },
+          "required": [
+            "metric"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/Use"
+        }
+      ],
+      "description": "One check: a metric and the bounds that a statistic of it must keep."
     },
     "Command": {
       "anyOf": [
@@ -807,6 +944,54 @@
         }
       ],
       "description": "One event of the timeline: at a moment, one thing happens to a link. It does exactly one of `set`,\n`outage`, `down` and `up`.\n\nA `set`, a `down` and an `up` are applied before the first packet that its workload sends at or after the moment\n(D-038), so the same seed gives the same lost packets; an `outage` is placed by the clock (D-064). Events at the\nsame moment are applied in the order of the file.\n\nNew keys are added to this type in later releases: make one with the constructors of the builder or read a file. (It is\n`non_exhaustive` since the keys of a repeating event came, which was a break of its own.)"
+    },
+    "Expect": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "checks": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Check"
+                  },
+                  "type": "array"
+                },
+                {
+                  "$ref": "#/$defs/Use"
+                }
+              ],
+              "description": "The checks. At least one."
+            },
+            "repetitions": {
+              "anyOf": [
+                {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                {
+                  "pattern": "\\{[^{}]+\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "How many runs the checks need, from 5 to 1,000. Without it the file is judged by one run and its checks use `value`; with\nit the file is judged by a set of that many runs (at least: a run may ask for more) and its checks use the statistics of a\nset. `netscenario run` makes that many runs on its own."
+            }
+          },
+          "required": [
+            "checks"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/Use"
+        }
+      ],
+      "description": "What a scenario must show: the checks, and how many runs they need."
     },
     "FlowProtocol": {
       "description": "The transport protocol of a flow in a capture.",
@@ -4360,6 +4545,17 @@
     "duration": {
       "$ref": "#/$defs/Duration",
       "description": "The length of the measured phase, from the start of the workloads. Greater than zero."
+    },
+    "expect": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Expect"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "What the scenario must show (ASR-07, D-094): named checks on the metrics of a run or of a set of runs, judged by the core\nwhen the run is over. Absent if the file only describes a run."
     },
     "measure": {
       "$ref": "#/$defs/Measure",

@@ -899,3 +899,243 @@ fn the_sample_report_in_the_repository_is_what_the_code_writes() {
         );
     }
 }
+
+/// The names of the metrics that the model lists for a scenario (they are what `expect` is checked against when the file is read)
+/// and the names that a run reports (`metric_values`) are one set: a metric of a run that the model does not know could not be
+/// checked, and the reverse would let a typo through. Every name of a run with every kind of workload is known to its scenario.
+#[test]
+fn the_metrics_a_run_reports_are_metrics_of_its_scenario() {
+    use crate::result::RequestInfo;
+    use crate::stats::DelaySummary;
+
+    let summary = DelaySummary {
+        min_ns: 1,
+        mean_ns: 2,
+        p50_ns: 2,
+        p90_ns: 3,
+        p95_ns: 4,
+        p99_ns: 5,
+        p999_ns: 6,
+        max_ns: 7,
+    };
+    let mut result = example();
+    result.workloads[0].duration_ns = SECOND;
+    result.workloads[0].stats.delay = Some(summary.clone());
+    result.workloads[0].stats.jitter = Some(crate::patterns::Jitter {
+        last_ns: 1,
+        mean_ns: 2,
+        max_ns: 3,
+    });
+    result.workloads[0].echo = Some(crate::result::EchoResult {
+        echoed: 1,
+        echo_errors: 0,
+        foreign_datagrams: 0,
+        records_file: "flow-0.echo.records".to_owned(),
+        stats: result.workloads[0].stats.clone(),
+    });
+    let mut bulk = a_tcp();
+    bulk.rtt = Some(summary.clone());
+    let mut asking = a_tcp();
+    asking.id = "ask".to_owned();
+    asking.kind = "request-response".to_owned();
+    asking.rtt = Some(summary.clone());
+    asking.requests = Some(RequestInfo {
+        sent: 3,
+        answered: 2,
+        failed: 1,
+        latency: Some(summary.clone()),
+        round_trip: Some(summary),
+        max_wait_ns: 0,
+    });
+    result.tcp = vec![bulk, asking];
+    let id = result.workloads[0].id.clone();
+    let scenario = netscenario_model::Scenario::from_yaml(
+        &format!(
+            "version: 0\nname: t\nduration: 1s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\nworkloads:\n  - {{ id: {id}, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1200b, echo: true }}\n  - {{ id: down, kind: tcp-bulk, from: client, to: server, bytes: 1mb }}\n  - {{ id: ask, kind: request-response, from: client, to: server, request: 100b, response: 1kb, interval: 100ms }}\n"
+        ),
+        "t.yaml",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let known = scenario.metric_names();
+    let reported = crate::runset::metric_values(&result);
+    assert!(reported.len() > 60, "{} names", reported.len());
+    for name in reported.keys() {
+        assert!(
+            known.contains(name),
+            "{name} is reported by a run and unknown to the scenario"
+        );
+    }
+    // The units agree too: the value of a delay is in seconds in the run, and the model says seconds
+    for name in reported.keys() {
+        let unit = scenario.metric_unit_of(name).expect(name);
+        if name.contains(".delay.") {
+            assert_eq!(unit, netscenario_model::MetricUnit::Seconds, "{name}");
+        }
+    }
+    // And the model lists no name that a run with all of them does not report, except the ones that are not in this run
+    let missing: Vec<&String> = known
+        .iter()
+        .filter(|name| !reported.contains_key(*name))
+        .collect();
+    assert!(missing.is_empty(), "{missing:?}");
+}
+
+// ---- the checks of the file (D-094) ----
+
+/// A verdict with a check that holds, one that is missed and one that could not be judged.
+fn a_verdict(runs: u32) -> crate::expect::ExpectResult {
+    use crate::expect::{CheckResult, ExpectResult};
+    use netscenario_model::{MetricUnit, Statistic};
+    let line = |name: &str,
+                unit,
+                bound: &str,
+                threshold,
+                actual: Option<f64>,
+                margin: Option<f64>,
+                passed,
+                note: Option<&str>| {
+        CheckResult {
+            name: name.to_owned(),
+            metric: "w.loss_ratio".to_owned(),
+            statistic: if runs > 1 {
+                Statistic::Ci95High
+            } else {
+                Statistic::Value
+            },
+            unit,
+            bound: bound.to_owned(),
+            threshold,
+            actual,
+            margin,
+            passed,
+            note: note.map(str::to_owned),
+        }
+    };
+    ExpectResult {
+        passed: false,
+        runs,
+        checks: vec![
+            line(
+                "loss stays small",
+                MetricUnit::Ratio,
+                "< 5%",
+                0.05,
+                Some(0.012),
+                Some(0.038),
+                true,
+                None,
+            ),
+            line(
+                "the delay | p99",
+                MetricUnit::Seconds,
+                "<= 150ms",
+                0.15,
+                Some(0.2),
+                Some(-0.05),
+                false,
+                None,
+            ),
+            line(
+                "a metric that is not there",
+                MetricUnit::Seconds,
+                "< 1s",
+                1.0,
+                None,
+                None,
+                false,
+                Some("the run has no 'w.delay.p99'"),
+            ),
+        ],
+    }
+}
+
+#[test]
+fn the_checks_of_a_run_are_in_all_three_reports_and_a_missed_one_fails_its_case() {
+    let Report::Run(mut run) = load("checks-run", true) else {
+        panic!("a run")
+    };
+    let plain_junit = junit(&Report::Run(run.clone()));
+    assert!(
+        !plain_junit.contains("expect:"),
+        "a result without checks has no case for them"
+    );
+    assert!(!markdown(&Report::Run(run.clone())).contains("Checks of the file"));
+    run.result.expect = Some(a_verdict(1));
+    let report = Report::Run(run);
+
+    let text = markdown(&report);
+    assert!(
+        text.contains("### Checks of the file: 1 of 3 hold"),
+        "{text}"
+    );
+    assert!(
+        text.contains("| loss stays small | 1.2% | < 5% | holds, 3.8% to spare |"),
+        "{text}"
+    );
+    assert!(
+        text.contains("| the delay \\| p99 | 200ms | <= 150ms | **fails**, misses by 50ms |"),
+        "{text}"
+    );
+    assert!(
+        text.contains("**fails**: the run has no 'w.delay.p99'"),
+        "{text}"
+    );
+
+    let xml = junit(&report);
+    // One case for each check; only the two that do not hold are failures, of the type of a check and not of a run
+    assert_eq!(xml.matches("name=\"expect: ").count(), 3, "{xml}");
+    assert_eq!(
+        xml.matches("type=\"netscenario.CheckFailed\"").count(),
+        2,
+        "{xml}"
+    );
+    assert!(!xml.contains("netscenario.RunFailed"), "{xml}");
+    assert!(
+        xml.contains("<failure message=\"the delay | p99: 200ms (&lt;= 150ms, misses by 50ms)\""),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(
+            "name=\"netscenario.lte-like-link.expect.w.loss_ratio.value.bound\" value=\"&lt; 5%\""
+        ),
+        "{xml}"
+    );
+    assert!(xml.contains("failures=\"2\""), "{xml}");
+
+    let page = html(&report).unwrap();
+    assert_no_external_reference(&page);
+    assert!(
+        page.contains("<h2>Checks of the file: 1 of 3 hold</h2>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("<span class=\"fail\">fails</span>, misses by 50ms"),
+        "{page}"
+    );
+    assert!(page.contains("Not all checks hold."), "{page}");
+}
+
+#[test]
+fn the_checks_of_a_set_are_in_all_three_reports() {
+    let Report::Set(mut set, directory) = a_set() else {
+        panic!("a set")
+    };
+    assert!(!junit(&Report::Set(set.clone(), directory.clone())).contains("expect:"));
+    set.expect = Some(a_verdict(6));
+    let report = Report::Set(set, directory);
+    let text = markdown(&report);
+    assert!(
+        text.contains("### Checks of the file over 6 runs: 1 of 3 hold"),
+        "{text}"
+    );
+    let xml = junit(&report);
+    // The cases of the runs, then those of the checks
+    assert_eq!(xml.matches("name=\"expect: ").count(), 3, "{xml}");
+    assert_eq!(xml.matches("netscenario.CheckFailed").count(), 2, "{xml}");
+    let page = html(&report).unwrap();
+    assert_no_external_reference(&page);
+    assert!(
+        page.contains("Checks of the file over 6 runs: 1 of 3 hold"),
+        "{page}"
+    );
+}

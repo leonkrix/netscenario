@@ -7,7 +7,9 @@ pytest finds this module through the ``pytest11`` entry point. What it offers:
   ``netscenario_result`` and ``netscenario_runs`` (with ``repetitions=``), which run the scenario of
   the marker and give the result or the set of results,
 - the option ``--netscenario-environment`` and the ini option ``netscenario_scenarios``,
-- an attachment to the report of every test that ran a scenario.
+- an attachment to the report of every test that ran a scenario,
+- the verdict of the ``expect`` section of a scenario file (ASR-07, D-094): a test that ran a
+  file with checks fails when a check does not hold, with the checks that do not.
 """
 
 from __future__ import annotations
@@ -183,6 +185,13 @@ def netscenario_result(request: pytest.FixtureRequest, netscenario: Runner) -> n
             "netscenario_runs",
             pytrace=False,
         )
+    needed = netscenario.load(scenario).expect_repetitions
+    if needed is not None:
+        pytest.fail(
+            f"the checks in {scenario} need a set of {needed} runs, so the result is a set: use "
+            "the fixture netscenario_runs",
+            pytrace=False,
+        )
     # No repetitions in the marker, so a single run
     return cast("ns.Result", netscenario.run(scenario, **options))
 
@@ -197,7 +206,8 @@ def netscenario_runs(request: pytest.FixtureRequest, netscenario: Runner) -> ns.
         ...     assert netscenario_runs.metric("media.loss_ratio").ci95_high < 0.05
     """
     scenario, options = _marker_run(request, "netscenario_runs")
-    if "repetitions" not in options:
+    # The checks of a file with `expect: {repetitions: n}` say how many runs they need (D-094)
+    if "repetitions" not in options and netscenario.load(scenario).expect_repetitions is None:
         pytest.fail(
             "the fixture netscenario_runs needs repetitions in the marker: "
             '@pytest.mark.netscenario("scenario.yaml", repetitions=10)',
@@ -221,4 +231,14 @@ def pytest_runtest_makereport(
         for result in results or ():
             text = describe_set(result) if isinstance(result, ns.RunSet) else describe(result)
             report.sections.append(("netscenario", text))
+        # The checks of a scenario file are claims about the runs of the test: when the test body
+        # passed and a claim does not hold, the test fails with the claims that do not (D-094)
+        broken = [
+            result.expect
+            for result in results or ()
+            if result.expect is not None and not result.expect.passed
+        ]
+        if broken and report.passed:
+            report.outcome = "failed"
+            report.longrepr = "\n".join(expect.explain() for expect in broken)
     return report

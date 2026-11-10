@@ -6,7 +6,6 @@ use crate::source::{self, Kind, SourceIndex};
 
 /// Keys by the path of the mapping they stand in (indices as `[]`): key and the release.
 const RESERVED_KEYS: &[(&str, &str, &str)] = &[
-    ("", "expect", "0.3"),
     ("", "matrix", "0.5"),
     ("", "mobility", "0.6"),
     ("topology.links[]", "address", "a later release"),

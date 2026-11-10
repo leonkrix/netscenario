@@ -447,7 +447,7 @@ pub fn run(
     };
     let workloads = workload_results(scenario, &measured, &provisioned, options, &timeline)?;
     let reasons = not_reproducible_because(scenario, &provisioned, &queue_checks, clock_reasons);
-    let result = RunResult {
+    let mut result = RunResult {
         format: RESULT_FORMAT.to_owned(),
         version: RESULT_VERSION,
         scenario: ScenarioInfo {
@@ -496,10 +496,18 @@ pub fn run(
         captures,
         tcp,
         reproducibility,
+        expect: None,
     };
-    write_outputs(original, options, &result)?;
+    write_outputs(original, options, &mut result)?;
     control.emit(&RunEvent::Finished);
     Ok(result)
+}
+
+/// Judges the checks of the file against a run that went through (D-094): a run cut short has the numbers of a part of the run.
+fn judge_checks(scenario: &Scenario, result: &mut RunResult) {
+    if result.timing.interrupted_ns.is_none() {
+        result.expect = crate::expect::judge_run(scenario, &crate::runset::metric_values(result));
+    }
 }
 
 /// Checks the scenario, makes the events of its models and builds the network.
@@ -522,12 +530,13 @@ fn start<'a>(
     Ok((models, provisioned))
 }
 
-/// Writes the scenario as it ran, and then the result, into the directory of the run.
+/// Judges the checks of the file, and writes the scenario as it ran and then the result into the directory of the run.
 fn write_outputs(
     scenario: &Scenario,
     options: &RunOptions,
-    result: &RunResult,
+    result: &mut RunResult,
 ) -> Result<(), Error> {
+    judge_checks(scenario, result);
     // The scenario as it ran, so that the run can be replayed (ENV-03, D-075): it is written first, so that a directory with a
     // result always has it
     let scenario_path = options.out_dir.join(crate::replay::SCENARIO_FILE);

@@ -110,6 +110,13 @@ def run(
     each metric instead of a :class:`Result` (``docs/STATISTICS.md``). A set ends with the first run
     that fails.
 
+    A scenario with an ``expect`` section is judged when the run is over (``Result.expect``,
+    ``RunSet.expect``, ``docs/SCENARIO-FORMAT.md``). A file whose checks need a set of runs
+    (``expect: {repetitions: n}``) is run ``n`` times when ``repetitions`` is not given, and the
+    call returns the :class:`netscenario.RunSet`; ``repetitions`` may ask for more and never for
+    fewer. The call does not raise when a check does not hold: ``raise_for_failures()`` of the
+    verdict does.
+
     Args:
         scenario: A :class:`Scenario`, or the path of a scenario file.
         repetitions: Run the scenario this many times, from 5 to 1000: fewer runs say too little
@@ -176,6 +183,9 @@ def run(
         supervisor, agent = _binaries.find()
     except _binaries.ProgramsNotFoundError as error:
         raise BackendError(str(error)) from None
+    if repetitions is None:
+        # The checks of the file say how many runs they need (D-094)
+        repetitions = loaded.expect_repetitions
     directory = Path(out) if out is not None else Path(tempfile.mkdtemp(prefix="netscenario-"))
 
     def notify(kind: str, fields: dict[str, float]) -> None:

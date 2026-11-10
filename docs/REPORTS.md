@@ -16,23 +16,26 @@ A sample of each format, made from a fixed run, is in [`docs/sample-report/`](sa
 
 ## Markdown (`--format md`)
 
-Made for the summary of a CI job. For a run: a table with the backend, the seed, the duration and the machine, **one table for all workloads** (a column for each workload: packets, loss, reordering, the delay percentiles, jitter, mean throughput, the longest run of lost packets), the timeline with how late each step was, the time to recover, the programs with their metrics, and the notes of the run. A run that was interrupted, and a loss that does not repeat from its seed, are warnings in quotation blocks above the tables. For a set: the headline metrics of each workload (loss, the delay percentiles 50, 95 and 99, the throughput) with their intervals, all metrics in a collapsed block, the metrics that have no interval and why, and the seed of each run.
+Made for the summary of a CI job. A scenario with `expect` has a table of its checks first, each with its value, its bound and its margin (for a set too). For a run: a table with the backend, the seed, the duration and the machine, **one table for all workloads** (a column for each workload: packets, loss, reordering, the delay percentiles, jitter, mean throughput, the longest run of lost packets), the timeline with how late each step was, the time to recover, the programs with their metrics, and the notes of the run. A run that was interrupted, and a loss that does not repeat from its seed, are warnings in quotation blocks above the tables. For a set: the headline metrics of each workload (loss, the delay percentiles 50, 95 and 99, the throughput) with their intervals, all metrics in a collapsed block, the metrics that have no interval and why, and the seed of each run.
 
 ## JUnit (`--format junit`, RPT-02)
 
 One test suite for the scenario. **One test case for each workload** (and one for each TCP workload and each program of your own), with the metrics as `<property>` elements. The names are those of the pytest plugin, `netscenario.<scenario>.<workload>.<metric>`: `sent`, `received`, `lost`, `loss_ratio`, `reordered`, `delay_p50_s` and `delay_p99_s`, and a few more (`duplicates`, `delay_min_s`, `delay_p95_s`, `delay_max_s`, `jitter_mean_s`, `throughput_mean_bps`, `loss_runs_longest`). Times are in seconds. The suite has the version, the backend, the fingerprint of the scenario and the seed as properties.
 
-A case is a **failure** in two cases:
+A case is a **failure** in these cases:
 
 - the run was **interrupted** (`timing.interrupted_ns`), so the numbers are those of the part that ran: every case of the run fails;
 - the kernel **refused packets** of the workload (`sender.send_errors`) and no `down` step of the timeline explains it. A link that is shut on purpose refuses the packets sent into it, and that is what the step is for; the report then says so in the text of the case;
 - connections of a **TCP workload** failed (`failed_connections`) and no `down` step or outage explains it (D-086). The properties of a TCP workload are `bytes_sent`, `bytes_received`, `failed_connections`, `retransmitted_segments`, `goodput_mean_bps`, `completion_s`, `rtt_p50_s`, `rtt_max_s` and, for requests, `requests_answered`, `requests_failed`, `latency_p50_s`, `latency_p95_s`, `latency_p99_s`, `latency_max_s`, `round_trip_p50_s` and `round_trip_p99_s`; a workload with an echo has `echo_received`, `echo_loss_ratio` and `round_trip_min_s` to `round_trip_max_s` as well.
+- a **check of the file** (`expect`) does not hold: every bound of every check is its own case, named `expect: <name>`, with the bound, the threshold and the value as properties, and the failure says what was found and by how much it was missed (`netscenario.CheckFailed`, D-094).
 
 A warning about reproducibility is **not** a failure: it is in the text of the case. A result is only written for a run that went through, so a program with `on-exit: fail` that ended with an error has ended the run without a result and there is nothing to report; thresholds on a result (`expect`) come with a later release, and with them failures for numbers.
 
 For a set: one case for each run, and the headline metrics of the set as properties of the suite (`netscenario.<scenario>.<metric>.mean`, `.low` and `.high`, and `repetitions` and `confidence`).
 
 ## HTML (`--format html`, RPT-03)
+
+A scenario with `expect` has a section of its checks after the summary, with the checks that do not hold marked.
 
 **One file** with inline CSS and inline SVG: no script, no font, no image and no address to fetch, so it can be attached to a CI run and opened anywhere. It follows the light and the dark scheme of the reader. A test checks that the page has no external reference. For a run, for each workload:
 

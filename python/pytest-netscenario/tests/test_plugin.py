@@ -541,3 +541,141 @@ def test_the_numbers_of_a_set_are_in_the_report_and_the_junit_file(
     tree = ET.parse(pytester.path / "junit.xml")  # noqa: S314 - the file was just written by pytest
     names = {e.get("name") for e in tree.iter("property")}
     assert {"netscenario.plug.repetitions", "netscenario.plug.media.loss_ratio.high"} <= names
+
+
+# ---- the checks of a scenario file (ASR-07, D-094) ----
+
+CHECKED = """\
+version: 0
+name: checked
+duration: 1s
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1200b }
+expect:
+  checks:
+    - { name: the stream arrives, metric: media.loss_ratio, value: "<= 0%" }
+    - { name: CHECK_NAME, metric: media.delay.p99, value: "< BOUND" }
+"""
+
+
+@pytest.mark.usefixtures("runnable")
+def test_a_check_of_the_file_that_holds_leaves_the_test_passed(pytester: pytest.Pytester) -> None:
+    pytester.makefile(
+        ".yaml", checked=CHECKED.replace("CHECK_NAME", "small").replace("BOUND", "1s")
+    )
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.netscenario("checked.yaml")
+        def test_it(netscenario_result):
+            assert netscenario_result.expect.passed
+        """
+    )
+    pytester.runpytest().assert_outcomes(passed=1)
+
+
+@pytest.mark.usefixtures("runnable")
+def test_a_check_of_the_file_that_does_not_hold_fails_the_test_that_ran_it(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makefile(
+        ".yaml", checked=CHECKED.replace("CHECK_NAME", "impossibly fast").replace("BOUND", "1ns")
+    )
+    # The body of the test asserts nothing: the claim is in the file
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.netscenario("checked.yaml")
+        def test_it(netscenario_result):
+            assert netscenario_result["media"].sent > 0
+        """
+    )
+    result = pytester.runpytest()
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(["*1 of 2 checks of the scenario file hold*", "*impossibly fast*"])
+    assert "the stream arrives" not in result.stdout.str().split("checks of the scenario file")[1]
+    # The same through the fixture that runs a file by name
+    pytester.makepyfile(
+        test_by_name="""
+        def test_it(netscenario):
+            netscenario.run("checked.yaml")
+        """
+    )
+    pytester.runpytest("test_by_name.py").assert_outcomes(failed=1)
+
+
+@pytest.mark.usefixtures("runnable")
+def test_a_check_of_the_file_is_a_failure_in_the_junit_file(pytester: pytest.Pytester) -> None:
+    pytester.makefile(
+        ".yaml", checked=CHECKED.replace("CHECK_NAME", "impossibly fast").replace("BOUND", "1ns")
+    )
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.netscenario("checked.yaml")
+        def test_it(netscenario_result):
+            pass
+        """
+    )
+    xml = pytester.path / "junit.xml"
+    pytester.runpytest(f"--junitxml={xml}").assert_outcomes(failed=1)
+    suite = ET.parse(xml).getroot()  # noqa: S314 - the file was just written by pytest
+    case = next(suite.iter("testcase"))
+    failure = case.find("failure")
+    assert failure is not None
+    assert "impossibly fast" in (failure.get("message") or failure.text or "")
+
+
+def test_the_fixtures_know_that_the_checks_need_a_set(pytester: pytest.Pytester) -> None:
+    needs_set = (
+        CHECKED.replace("CHECK_NAME", "p99")
+        .replace("BOUND", "1s")
+        .replace("expect:\n  checks:", "expect:\n  repetitions: 5\n  checks:")
+        .replace("value:", "max:")
+    )
+    pytester.makefile(".yaml", checked=needs_set)
+    # A single result cannot judge them
+    pytester.makepyfile(
+        test_single="""
+        import pytest
+
+        @pytest.mark.netscenario("checked.yaml")
+        def test_it(netscenario_result):
+            pass
+        """
+    )
+    result = pytester.runpytest("test_single.py")
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*need a set of 5 runs*netscenario_runs*"])
+
+
+@pytest.mark.usefixtures("runnable")
+def test_the_runs_of_a_file_with_checks_on_a_set_need_no_repetitions_in_the_marker(
+    pytester: pytest.Pytester,
+) -> None:
+    needs_set = (
+        CHECKED.replace("CHECK_NAME", "p99")
+        .replace("BOUND", "1s")
+        .replace("expect:\n  checks:", "expect:\n  repetitions: 5\n  checks:")
+        .replace("value:", "max:")
+    )
+    pytester.makefile(".yaml", checked=needs_set)
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.netscenario("checked.yaml")
+        def test_it(netscenario_runs):
+            assert netscenario_runs.repetitions == 5
+            assert netscenario_runs.expect.passed
+        """
+    )
+    pytester.runpytest().assert_outcomes(passed=1)

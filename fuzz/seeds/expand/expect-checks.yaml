@@ -1,0 +1,16 @@
+version: 0
+name: t
+duration: 5s
+params:
+  rtt: 40ms
+topology:
+  nodes: [a, b]
+  links:
+    - id: l
+      between: [a, b]
+workloads:
+  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }
+expect:
+  repetitions: 5
+  checks:
+    - { name: loss, metric: w.loss_ratio, ci95-high: "< 2%", max: "< {rtt / 4}" }

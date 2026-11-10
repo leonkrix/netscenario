@@ -309,6 +309,18 @@ class Scenario:
         )
 
     @property
+    def expect_repetitions(self) -> int | None:
+        """How many runs the checks of the ``expect`` section need (``expect: {repetitions: n}``).
+
+        ``None`` for a scenario without checks, or whose checks judge one run.
+        :func:`netscenario.run` makes that many runs on its own and returns a
+        :class:`netscenario.RunSet`.
+        """
+        expect: dict[str, Any] = self._data.get("expect") or {}
+        repetitions = expect.get("repetitions")
+        return None if repetitions is None else int(repetitions)
+
+    @property
     def seed(self) -> int | None:
         """The seed written in the scenario, or ``None``."""
         seed = self._data.get("seed")

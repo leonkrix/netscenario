@@ -154,7 +154,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ASR-04 | Baselines and regression detection (effect size, interval, "erratic" marking) | M | 0.7 | planned |
 | ASR-05 | Statistical comparison of two sets of runs (rank test) | S | 0.7 | planned |
 | ASR-06 | Policy for flaky runs: rerun and report it | S | 0.5 | planned |
-| ASR-07 | Declarative `expect` section in the scenario file | S | 0.3 | planned |
+| ASR-07 | Declarative `expect` section in the scenario file | S | 0.3 | done (named checks with bounds on the metrics of a run or of a set of runs and on the 95 % interval, judged by the core, in `result.json` and `runset.json`, exit code 1, the three reports, Python and the plugin: [SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md#what-the-scenario-must-show-expect), D-094; tests in [`expect.rs`](crates/netscenario-model/tests/expect.rs), [`expect.rs`](crates/netscenario-core/src/expect.rs), [`binary.rs`](crates/netscenario-cli/tests/binary.rs), [`test_expect.py`](python/netscenario/tests/test_expect.py)) |
 | ASR-08 | Sweeps with shape checks (goodput does not rise with loss) | C | 0.8 | idea |
 
 ## Backends (BKD)

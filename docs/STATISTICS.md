@@ -37,6 +37,7 @@ JSON with `format` `netscenario-runset` and `version` 0 (a field may change its 
 | `runs` | For each run: `index`, `seed`, `directory` (relative) and `loss_reproducible` (from its `result.json`). |
 | `metrics` | For each metric that **every** run has, by name: `values` (one per run), `mean`, `median`, `min`, `max`, `stddev` (divided by n - 1) and `interval`. |
 | `partial` | Metrics that only some runs have (`present_in` of `of`). They have no interval. |
+| `expect` | The verdict of the checks of the `expect` section for a file that is judged by a set (`expect: {repetitions: n}`, D-094): the same fields as in [RESULTS.md](RESULTS.md) with `runs` the size of the set and `statistic` one of `mean`, `median`, `min`, `max`, `ci95-low`, `ci95-high`. Absent otherwise. |
 
 `interval` is `{statistic, estimate, low, high, level, method, tail, resamples, runs}`: `estimate` is the mean (or median) of the values, `low` and `high` the ends, `tail` the probability left out at each end.
 

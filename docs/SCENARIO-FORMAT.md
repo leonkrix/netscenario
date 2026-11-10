@@ -79,6 +79,7 @@ workloads:
 | `topology` | yes | See below. |
 | `workloads` | yes | A list with at least one workload. |
 | `timeline` | no | A list of events, see [Timeline](#timeline). |
+| `expect` | no | Checks on the metrics of the run or of a set of runs, see [What the scenario must show](#what-the-scenario-must-show-expect). |
 | `measure` | no | The width of the bins of the series, how the time to recover is worked out, the links to capture and the export of every packet, see [What is measured](#what-is-measured). |
 
 ## Values
@@ -466,6 +467,38 @@ The packets are read when the scenario is loaded and kept in the scenario (D-083
 
 The packets of a trace differ in size, so the result counts **bytes**: `received_bytes` is the payload that arrived, the throughput of a bin the bytes of the packets that arrived in it, `bits` in the series the payload sent and arrived in each bin. `packet_size_bytes` is the largest payload and `rate_bits_per_second` the mean over the span of the trace. A packet larger than the MTU of the first link is cut like any other (D-081), and the frames of a trace are counted for each packet. The largest packet must fit the path as for any sender (`mtu`), and a trace is refused with the place of its largest packet.
 
+## What the scenario must show: `expect`
+
+`expect` (ASR-07, [D-094](decisions/D-094.md)) is a list of named checks on the metrics of a run or of a set of runs. The core judges them when the run is over, `netscenario run` prints each one with its value and its margin and exits with 1 when one does not hold, and the verdict is part of `result.json` or `runset.json`, so the Markdown, JUnit and HTML reports and the pytest plugin read the same judgment.
+
+```yaml
+expect:
+  checks:
+    - name: the stream arrives at its rate
+      metric: media.throughput.mean
+      value: ">= 1.9mbit"
+    - { metric: media.delay.p99, value: "< {rtt / 2 + 10ms}" }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `expect.repetitions` | Optional, 5 to 1,000. Without it the file is judged by **one run** and its checks use `value`. With it the file is judged by a **set of runs**: `netscenario run` makes that many runs (`--repetitions` may ask for more and never for fewer) and the checks use the statistics of a set. A file that mixes the two is refused when it is read. |
+| `expect.checks` | At least one check, at most 200. |
+| `name` | Optional. What the check is called in the reports. Without it: the metric, the statistic and the bound. With several bounds, the name gets the statistic added. The names of the bounds of a file are different. |
+| `metric` | A name of [STATISTICS.md](STATISTICS.md#the-metrics): `<workload>.<what>`. It has to exist for the scenario: a typo is refused with a hint, an `echo` metric needs `echo: true`, a TCP metric a TCP workload, and the metrics of a program of your own are `<program>.<name>.last`, `.min` or `.max`. |
+| `value` | A run: the value of the metric. |
+| `mean`, `median`, `min`, `max` | A set: the statistic of the values of the runs. |
+| `ci95-low`, `ci95-high` | A set: the ends of the 95 % interval around the mean ([STATISTICS.md](STATISTICS.md)). A set that was asked for another statistic or level is refused when a check uses them. |
+
+A **bound** is a string: an operator (`<`, `<=`, `>`, `>=`) and a value in the unit of the metric: a duration for a delay (`"< 150ms"`), a rate for a throughput (`">= 8mbit"`), a percentage or a number from 0 to 1 for a ratio (`"< 1%"`), a plain number for a count (`"> 0"`). A value of the wrong kind is refused with what the metric is. A bound may use parameters and expressions ([above](#parameters-templates-and-includes)). A check can have several bounds.
+
+- **A claim that cannot be checked fails.** A check on a metric that the run does not have (no packet arrived, so there is no delay) fails with the reason; in a set the same holds for a metric that only some runs have. A stream that lost every packet does not pass `delay.p99 < 150ms`.
+- **A run that was interrupted is not judged**, and a set that was interrupted has no verdict (it has no set).
+- **The margin** is how far the value is on the good side of the bound, negative by how much it is missed.
+- Compare the end of the interval that is on the dangerous side with a threshold that has room ([STATISTICS.md](STATISTICS.md#what-stable-means)).
+
+Examples: [`scenarios/expect.yaml`](../scenarios/expect.yaml) (one run) and [`scenarios/expect-set.yaml`](../scenarios/expect-set.yaml) (a set).
+
 ## What is measured
 
 ```yaml
@@ -632,7 +665,7 @@ topology:
 - **A template sees its own parameters and nothing else**, so it reads the same wherever it is used. A parameter without a default must be given; one that is not declared, or of another kind than the default, is refused.
 - **An included file** has `params:` and `content:` at its root, and may have `templates:` for its own helpers (they are not seen from outside). It is not a scenario: no `version:`. Its path is relative to the file that includes it, below the directory of the scenario (symbolic links resolved) unless `--allow-outside-files` (D-083); it is read once, at most 4 MiB. Templates and includes may be used inside each other up to 8 levels deep; one that uses itself, directly or through others, is refused with the chain.
 - **Limits:** at most 10,000 places of use and 1,000,000 values in the expanded scenario, and the expanded text may not be longer than a file (4 MiB).
-- **Not here:** a list of values for a parameter, loops and conditions (a sweep is the matrix of release 0.5), a file that changes keys of another (a base scenario), and `expect` (its own).
+- **Not here:** a list of values for a parameter, loops and conditions (a sweep is the matrix of release 0.5), a file that changes keys of another (a base scenario), and `expect` (see [What the scenario must show](#what-the-scenario-must-show-expect)).
 
 ### Errors
 
@@ -657,7 +690,6 @@ These keys are not part of version 0 in release 0.2. A scenario that uses one is
 
 | Key | Planned in | Meaning |
 | --- | --- | --- |
-| `expect` | 0.3 | Assertions in the file. |
 | `matrix` | 0.5 | Sweeps. |
 | `mobility` | 0.6 | Positions over time. |
 | `address` (node, link) | later | Fixed addresses. |
@@ -724,14 +756,6 @@ The following sketches show where the format is heading. They are **not** part o
 The keys `corrupt`, `reorder`, `duplicate`, `udp-checksum` and the loss models of release 0.2 are in Part 1.
 
 **Link models (0.6).** Geometry-based models, with mobility (0.6). (Periodic, Markov and trace models are in Part 1.) A model replaces the static values of its link.
-
-**Expectations in the file (0.3).**
-
-```yaml
-expect:
-  - { metric: media.delivered_ratio, ci95-low: ">= 0.97" }
-  - { metric: media.delay.p99, "<": 150ms }
-```
 
 **Parameters and sweeps (0.3, 0.5).** Values such as `{rtt / 2}` with units and `+ - * /` only; the file stays data. `matrix` describes the grid and the tool runs and judges it.
 
