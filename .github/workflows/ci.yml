@@ -226,6 +226,27 @@ jobs:
       - uses: ./.github/actions/namespaces
       - run: just py-check
 
+  # The scenarios and the Python of the guide (docs/book) that are marked for a run are run in a job of their own, in parallel with the
+  # others, so that the four Python jobs above do not take the 3 minutes it needs. The same test checks every page in those jobs
+  book:
+    name: Book (the scenarios run)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: '3.12'
+      NETSCENARIO_BOOK_RUN: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python: '3.12'
+          tools: just@1.40.0
+      - uses: ./.github/actions/namespaces
+      - run: just py-sync py-programs
+      - run: uv run pytest python/netscenario/tests/test_book.py
+
   # The wheels (PYT-08), built and installed into clean environments: .github/workflows/wheels.yml, which
   # release.yml uses as well
   wheels:
@@ -271,7 +292,7 @@ jobs:
   ci-ok:
     name: CI passed
     if: always()
-    needs: [fmt, clippy, test, fidelity, docs, deny, package, semver, python, wheels, actionlint, dependency-review]
+    needs: [fmt, clippy, test, fidelity, docs, deny, package, semver, python, book, wheels, actionlint, dependency-review]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

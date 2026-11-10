@@ -268,7 +268,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ID | Feature | Prio | Release | Status |
 | --- | --- | --- | --- | --- |
 | DOC-01 | README, architecture, decisions, scenario format, coverage | M | 0.1 | done for 0.1 ([README.md](README.md), [examples/](examples/); later releases add to it) |
-| DOC-02 | User guide with tutorials | M | 0.3 | planned |
+| DOC-02 | User guide with tutorials | M | 0.3 | done (mdBook in [docs/book/](docs/book/), three paths and a chapter for each shape; the scenarios, the Python, the commands and the links of every page are checked by [`test_book.py`](python/netscenario/tests/test_book.py), published to GitHub Pages by [`book.yml`](.github/workflows/book.yml)) |
 | DOC-03 | Cookbook: QUIC, WebRTC, games, IoT, satellite | S | 0.7 | planned |
 | DOC-04 | API documentation for Rust and Python | M | 0.1 | done (`missing_docs` and ruff `D` are errors in the CI; a runnable example in `netscenario-model` and `netscenario-core`) |
 | DOC-05 | Troubleshooting (permissions, kernels, containers) | M | 0.1 | done ([docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)) |

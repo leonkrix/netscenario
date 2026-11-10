@@ -1,0 +1,16 @@
+[book]
+title = "netscenario"
+description = "Describe a network, run a program in it, measure per packet, and assert on it."
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/leonkrix/netscenario"
+edit-url-template = "https://github.com/leonkrix/netscenario/edit/main/docs/book/{path}"
+site-url = "/netscenario/"
+default-theme = "light"
+preferred-dark-theme = "navy"
