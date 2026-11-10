@@ -117,10 +117,20 @@ fn schema() -> String {
 }
 
 /// What this machine can do for the Kernel backend, as the JSON of `netscenario doctor --json`. The probe
-/// starts processes and takes a moment, so the GIL is given up while it runs.
+/// starts processes and takes a moment, so the GIL is given up while it runs. With `timers` the report also holds the
+/// precision of the timers of the machine (ENV-05), which takes about two seconds more.
 #[pyfunction]
-fn doctor(py: Python<'_>) -> String {
-    py.detach(|| netscenario_backend_kernel::doctor::diagnose().to_json())
+#[pyo3(signature = (timers = false))]
+fn doctor(py: Python<'_>, timers: bool) -> String {
+    py.detach(|| {
+        let report = netscenario_backend_kernel::doctor::diagnose();
+        if timers {
+            report.with_timers(netscenario_backend_kernel::timers::measure())
+        } else {
+            report
+        }
+        .to_json()
+    })
 }
 
 /// Runs a scenario and returns the text of `result.json`; with `repetitions`, runs it that many times and returns the text of

@@ -417,6 +417,43 @@ def test_the_doctor_reports_this_machine() -> None:
     assert {"tool-tc", "can-create-namespaces", "netem"} <= ids
 
 
+def test_the_doctor_measures_the_timers_only_when_asked() -> None:
+    assert ns.doctor().timers is None
+    report = ns.doctor(timers=True)
+    assert report.ok
+    timers = report.timers
+    assert timers is not None
+    ids = {check.id for check in report.checks if check.section == "timers"}
+    assert {"timer-clock", "timer-sleep-200us", "timer-sleep-1ms", "timer-load"} <= ids
+    assert [sleep.asked for sleep in timers.sleeps] == [pytest.approx(200e-6), pytest.approx(1e-3)]
+    for sleep in timers.sleeps:
+        assert sleep.samples >= 300
+        assert 0 <= sleep.p50 <= sleep.p99 <= sleep.max < 60
+    # Either the cost of a change or the reason it was not measured, never neither
+    assert (report.tc_change is None) != (report.tc_change_error is None)
+    if report.tc_change is not None:
+        assert report.tc_change.samples == 500
+        assert 0 < report.tc_change.p50 <= report.tc_change.p99 <= report.tc_change.max
+
+
+@pytest.mark.usefixtures("runnable")
+def test_a_run_records_the_timers_it_met_at_its_start(tmp_path: Path) -> None:
+    scenario = (
+        ns.Scenario.builder("py-timers", duration="1s")
+        .nodes("client", "server")
+        .link("access", "client", "server")
+        .udp_cbr("media", "client", "server", rate="1mbit", packet_size="1200b")
+        .build()
+    )
+    result = ns.run(scenario, out=tmp_path / "out", settle=0.2)
+    timers = result.provenance.timers
+    assert timers is not None
+    assert len(timers.sleeps) == 2
+    assert all(sleep.samples > 0 for sleep in timers.sleeps)
+    stored = json.loads((tmp_path / "out" / "result.json").read_text())
+    assert stored["provenance"]["timers"]["sleeps"][0]["asked_ns"] == 200_000
+
+
 def test_a_set_of_repetitions_has_derived_seeds_and_an_interval_for_each_metric(
     tmp_path: Path,
 ) -> None:

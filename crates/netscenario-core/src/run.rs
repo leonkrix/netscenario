@@ -479,6 +479,9 @@ pub fn run(
         )
     })?;
     check_files_are_read(original)?;
+    // The precision of the timers, measured before the network is built, so that the run does not meet its own probe
+    let timers = crate::timers::measure(crate::timers::Effort::Quick);
+    control.checkpoint()?;
     let (models, provisioned) = start(backend, original)?;
     let scenario: &Scenario = &models.scenario;
     control.emit(&RunEvent::Provisioned {
@@ -534,7 +537,7 @@ pub fn run(
             crate::replay::scenario_hash(original),
             original,
         ),
-        provenance: collect(&backend.describe(), started),
+        provenance: collect(&backend.describe(), started).with_timers(timers),
         seed: SeedInfo {
             value: provisioned.seed,
             drawn: provisioned.seed_drawn,

@@ -62,12 +62,14 @@ Exit codes: 0 ok, 1 assertion failed or a replay not reproduced, 2 usage or scen
 ";
 
 const DOCTOR_HELP: &str = "\
-Usage: netscenario doctor [--json]
+Usage: netscenario doctor [--timers] [--json]
 
 Reports what this machine can do for the Kernel backend: the tools, the rights to create network
 namespaces, what the kernel and `tc` accept, and the features that follow. For everything that is missing
 it says how to fix it. See docs/DOCTOR.md.
 
+  --timers  also measure the clock, how late sleeps wake, the load, and what a change of a qdisc
+            costs (about two seconds); a late timer is a warning, never a failure
   --json    print the checks as JSON
 
 Exit codes: 0 scenarios can run here, 3 something has to be fixed first.
@@ -142,7 +144,7 @@ where
 fn doctor(args: &[String], out: &mut impl Write, err: &mut impl Write) -> u8 {
     const SPEC: Spec = Spec {
         values: &[],
-        flags: &["json"],
+        flags: &["json", "timers"],
     };
     let parsed = match Parsed::parse(args, &SPEC) {
         Ok(parsed) => parsed,
@@ -156,7 +158,10 @@ fn doctor(args: &[String], out: &mut impl Write, err: &mut impl Write) -> u8 {
         let message = format!("unexpected extra argument '{extra}'");
         return usage_error(err, "doctor", &message, DOCTOR_HELP);
     }
-    let report = netscenario_backend_kernel::doctor::diagnose();
+    let mut report = netscenario_backend_kernel::doctor::diagnose();
+    if parsed.flag("timers") {
+        report = report.with_timers(netscenario_backend_kernel::timers::measure());
+    }
     let _ = if parsed.flag("json") {
         writeln!(out, "{}", report.to_json())
     } else {
@@ -582,6 +587,48 @@ mod tests {
         assert_eq!(json["version"], 1);
         assert_eq!(json["ok"] == true, code == exit::OK, "{out}");
         assert!(json["checks"].as_array().is_some_and(|c| !c.is_empty()));
+    }
+
+    /// The timers are measured only when asked for (D-097): `doctor` alone has no section for them, and with `--timers` the
+    /// sections, the checks and the measurements are there. A late timer is a warning, so the exit code is the one of the
+    /// rest of the report.
+    #[test]
+    fn the_timers_are_in_the_report_only_with_the_flag() {
+        let (plain_code, plain, _) = call(&["netscenario", "doctor"]);
+        assert!(!plain.contains("Timers"), "{plain}");
+        let (code, out, err) = call(&["netscenario", "doctor", "--timers"]);
+        assert_eq!(err, "");
+        assert_eq!(code, plain_code, "{out}");
+        for word in [
+            "\nTimers\n",
+            "clock",
+            "sleep of 200 us",
+            "sleep of 1 ms",
+            "load",
+        ] {
+            assert!(out.contains(word), "{word}\n{out}");
+        }
+        let (_, json, _) = call(&["netscenario", "doctor", "--timers", "--json"]);
+        let json: serde_json::Value = serde_json::from_str(&json).expect("json on stdout");
+        let ids: Vec<&str> = json["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["section"] == "timers")
+            .filter_map(|c| c["id"].as_str())
+            .collect();
+        for id in [
+            "timer-clock",
+            "timer-sleep-200us",
+            "timer-sleep-1ms",
+            "timer-load",
+            "timer-tc-change",
+        ] {
+            assert!(ids.contains(&id), "{id} in {ids:?}");
+        }
+        let sleeps = json["timers"]["timers"]["sleeps"].as_array().unwrap();
+        assert_eq!(sleeps.len(), 2, "{json}");
+        assert!(sleeps[0]["p99_ns"].as_u64().is_some() && sleeps[0]["samples"] == 1000);
     }
 
     #[test]

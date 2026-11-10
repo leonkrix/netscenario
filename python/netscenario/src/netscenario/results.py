@@ -1056,6 +1056,77 @@ class Provenance:
     """The model of the processor."""
     cpus: int | None
     """How many processors the run could use."""
+    timers: Timers | None = None
+    """The precision of the timers of the machine, measured just before the run built its network
+    (ENV-05). ``None`` in a result of an older release."""
+
+
+@dataclass(frozen=True)
+class SleepLateness:
+    """How late sleeps of one length woke up: the time a sleep took beyond the length asked for."""
+
+    asked: float
+    """The length that was asked for, in seconds."""
+    samples: int
+    """How many sleeps were measured (few in a run: the 99th percentile is close to the largest)."""
+    p50: float
+    """The median lateness, in seconds."""
+    p99: float
+    """The 99th percentile (the nearest rank), in seconds."""
+    max: float
+    """The largest lateness, in seconds."""
+
+
+@dataclass(frozen=True)
+class Timers:
+    """How precise the timers of a machine are (ENV-05, ``docs/DOCTOR.md``). Times are seconds.
+
+    A sender sleeps until 150 microseconds before the slot of a packet and spins for the rest, so
+    a wake-up later than that sends the packet late; ``max_lateness`` of each workload says how
+    late they were.
+    """
+
+    clock_source: str | None
+    """The clock source of the kernel (``tsc``, ``kvm-clock``, ...), if it could be read."""
+    clock_read: float
+    """What one reading of ``CLOCK_MONOTONIC`` costs (the median)."""
+    clock_step: float
+    """The smallest difference seen between two different readings."""
+    timer_slack: float | None
+    """How far the kernel may delay a timer of the process to batch it with others."""
+    cpu_governor: str | None
+    """The governor of the first processor, if there is one."""
+    load_1m: float | None
+    """The load average of the last minute, if it could be read."""
+    runnable_tasks: int | None
+    """The tasks runnable when the measurement began (this process is one of them)."""
+    sleeps: tuple[SleepLateness, ...]
+    """How late sleeps woke, for each length that was measured."""
+
+
+def parse_timers(raw: Mapping[str, Any]) -> Timers:
+    """The timers from their JSON (``provenance.timers`` of a result, ``doctor --timers``)."""
+    load = raw.get("load_1m_hundredths")
+    slack = raw.get("timer_slack_ns")
+    return Timers(
+        clock_source=raw.get("clock_source"),
+        clock_read=_seconds(raw["clock_read_ns"]),
+        clock_step=_seconds(raw["clock_step_ns"]),
+        timer_slack=None if slack is None else _seconds(slack),
+        cpu_governor=raw.get("cpu_governor"),
+        load_1m=None if load is None else load / 100,
+        runnable_tasks=raw.get("runnable_tasks"),
+        sleeps=tuple(
+            SleepLateness(
+                asked=_seconds(sleep["asked_ns"]),
+                samples=sleep["samples"],
+                p50=_seconds(sleep["p50_ns"]),
+                p99=_seconds(sleep["p99_ns"]),
+                max=_seconds(sleep["max_ns"]),
+            )
+            for sleep in raw.get("sleeps", [])
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -1346,6 +1417,7 @@ class Result:
                 kernel=provenance["kernel"],
                 cpu_model=provenance["cpu_model"],
                 cpus=provenance["cpus"],
+                timers=(parse_timers(provenance["timers"]) if provenance.get("timers") else None),
             ),
             seed=SeedInfo(
                 seed["value"],

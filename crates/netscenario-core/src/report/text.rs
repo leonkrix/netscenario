@@ -67,6 +67,9 @@ fn markdown_run(result: &RunResult) -> String {
                 .unwrap_or("processor unknown")
         )
     );
+    if let Some(timers) = &provenance.timers {
+        let _ = writeln!(text, "| Timers | {} |", cell(&timers.summary()));
+    }
     if let Some(interrupted) = result.timing.interrupted_ns {
         let _ = writeln!(
             text,

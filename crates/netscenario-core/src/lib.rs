@@ -83,6 +83,7 @@ mod special;
 pub mod stats;
 mod tcp;
 pub mod timeline;
+pub mod timers;
 mod traffic;
 
 pub use backend::{

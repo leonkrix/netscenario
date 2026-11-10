@@ -220,6 +220,37 @@ fn markdown_warns_where_a_run_was_cut_short_or_cannot_repeat() {
     );
 }
 
+/// The timers that a run met at its start are one line in the text and in the page, and only when the result has them (D-097).
+#[test]
+fn the_timers_of_the_machine_are_in_both_reports_when_the_result_has_them() {
+    let Report::Run(mut run) = load("md-timers", true) else {
+        panic!("a run")
+    };
+    assert!(!markdown(&Report::Run(run.clone())).contains("Timers"));
+    assert!(!html(&Report::Run(run.clone())).unwrap().contains("Timers"));
+    run.result.provenance.timers = Some(
+        serde_json::from_value(serde_json::json!({
+            "clock_source": "tsc", "clock_read_ns": 30, "clock_step_ns": 20,
+            "timer_slack_ns": 50_000, "cpu_governor": null,
+            "load_1m_hundredths": 52, "runnable_tasks": 2,
+            "sleeps": [{"asked_ns": 200_000, "samples": 50, "p50_ns": 54_000, "p99_ns": 59_000, "max_ns": 64_000}],
+        }))
+        .unwrap(),
+    );
+    let line = "a sleep of 200 us wakes 59.0 us late";
+    assert!(
+        markdown(&Report::Run(run.clone())).contains("| Timers | clock tsc"),
+        "md"
+    );
+    assert!(markdown(&Report::Run(run.clone())).contains(line));
+    assert!(
+        html(&Report::Run(run))
+            .unwrap()
+            .contains("<dt>Timers</dt><dd>clock tsc"),
+        "html"
+    );
+}
+
 /// A restriction that the scenario accepted is said in the text and in the page, next to the numbers it limits, and only when there
 /// is one (D-092).
 #[test]

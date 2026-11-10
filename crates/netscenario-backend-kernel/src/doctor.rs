@@ -17,6 +17,7 @@ use serde::Serialize;
 
 use crate::capabilities::{Environment, Probed, capabilities, capabilities_probed};
 use crate::command::{Toolbox, find, has_own_rights, namespace_flags, run, searched};
+use crate::timers::TimerFindings;
 use crate::tools::{Tool, Version, parse_tc_version};
 
 /// The first release of iproute2 whose `tc` knows the `seed` of `netem`.
@@ -39,7 +40,7 @@ pub enum Status {
 /// One line of the report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Check {
-    /// The group: `tools`, `rights`, `kernel` or `features`.
+    /// The group: `tools`, `rights`, `kernel`, `features` or (with `--timers`) `timers`.
     pub section: &'static str,
     /// A stable name, for example `tool-tc` or `seed`.
     pub id: String,
@@ -62,6 +63,9 @@ pub struct Report {
     pub ok: bool,
     /// The checks in the order they are shown.
     pub checks: Vec<Check>,
+    /// The measurements of the timers, with `--timers` (ENV-05); their judging is in `checks`, section `timers`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timers: Option<TimerFindings>,
 }
 
 /// The ways to get the rights for the namespaces of a run (D-022).
@@ -1053,10 +1057,21 @@ pub fn assess(findings: &Findings) -> Report {
         version: 1,
         ok: checks.iter().all(|c| c.status != Status::Fail),
         checks,
+        timers: None,
     }
 }
 
 impl Report {
+    /// Adds the report on the timers (`doctor --timers`, ENV-05): the measurements, and a check for each. A late timer is a
+    /// warning and never a failure: scenarios run, with the lateness recorded.
+    #[must_use]
+    pub fn with_timers(mut self, found: TimerFindings) -> Self {
+        let cpus = std::thread::available_parallelism().map_or(1, usize::from);
+        self.checks.extend(crate::timers::checks(&found, cpus));
+        self.timers = Some(found);
+        self
+    }
+
     /// The report as text for people.
     #[must_use]
     pub fn render(&self) -> String {
@@ -1066,7 +1081,11 @@ impl Report {
             ("rights", "Rights to create namespaces"),
             ("kernel", "Kernel and tc"),
             ("features", "Features of the Kernel backend on this machine"),
+            ("timers", "Timers"),
         ] {
+            if section == "timers" && self.timers.is_none() {
+                continue;
+            }
             let _ = writeln!(text, "\n{heading}");
             for check in self.checks.iter().filter(|c| c.section == section) {
                 let label = match check.status {

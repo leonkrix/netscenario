@@ -102,3 +102,4 @@ Status: **accepted**, **proposed** (to be confirmed by an experiment or a first 
 | [D-094](decisions/D-094.md) | `expect` in the file is a list of named checks on the metrics of one run or of a set of runs, judged by the core and recorded in the result | Accepted 2026-11-10 |
 | [D-095](decisions/D-095.md) | A profile is a named set of sourced values for a link, resolved when the file is read and recorded with the version of the library | Accepted 2026-11-10 |
 | [D-096](decisions/D-096.md) | A change from test code is a step of the timeline made at a hold of the sender, on a link that was declared live, and the async API is the same run handle | Accepted 2026-11-10 |
+| [D-097](decisions/D-097.md) | The precision of the timers is measured by the process that starts a run, recorded in its provenance, and reported in full by `doctor --timers` | Accepted 2026-11-10 |

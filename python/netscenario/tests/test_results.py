@@ -72,6 +72,39 @@ def result(**changes: object) -> ns.Result:
     return ns.Result.from_json(json.dumps(data), Path("/out"))
 
 
+def test_the_timers_of_the_machine_are_in_the_provenance_in_seconds() -> None:
+    assert result().provenance.timers is None, "a result of an older release has none"
+    data = json.loads(json.dumps(RESULT))
+    data["provenance"]["timers"] = {
+        "clock_source": "tsc",
+        "clock_read_ns": 30,
+        "clock_step_ns": 20,
+        "timer_slack_ns": 50_000,
+        "cpu_governor": None,
+        "load_1m_hundredths": 52,
+        "runnable_tasks": 2,
+        "sleeps": [
+            {
+                "asked_ns": 200_000,
+                "samples": 50,
+                "p50_ns": 54_000,
+                "p99_ns": 59_000,
+                "max_ns": 64_000,
+            }
+        ],
+    }
+    timers = ns.Result.from_json(json.dumps(data), Path("/out")).provenance.timers
+    assert timers is not None
+    assert (timers.clock_source, timers.cpu_governor, timers.runnable_tasks) == ("tsc", None, 2)
+    assert timers.clock_read == pytest.approx(30e-9)
+    assert timers.timer_slack == pytest.approx(50e-6)
+    assert timers.load_1m == pytest.approx(0.52)
+    (sleep,) = timers.sleeps
+    assert (sleep.asked, sleep.samples) == (pytest.approx(200e-6), 50)
+    assert sleep.p50 < sleep.p99 < sleep.max
+    assert sleep.p99 == pytest.approx(59e-6)
+
+
 def test_times_are_seconds_and_rates_are_bits_per_second() -> None:
     media = result()["media"]
     assert media.delay is not None

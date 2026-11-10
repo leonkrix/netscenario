@@ -39,7 +39,20 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
     },
     "kernel": "6.12.113+deb13-amd64",
     "cpu_model": "AMD Ryzen 7 5800X 8-Core Processor",
-    "cpus": 16
+    "cpus": 16,
+    "timers": {
+      "clock_source": "tsc",
+      "clock_read_ns": 30,
+      "clock_step_ns": 20,
+      "timer_slack_ns": 50000,
+      "cpu_governor": "performance",
+      "load_1m_hundredths": 52,
+      "runnable_tasks": 2,
+      "sleeps": [
+        { "asked_ns": 200000, "samples": 50, "p50_ns": 54000, "p99_ns": 59000, "max_ns": 64000 },
+        { "asked_ns": 1000000, "samples": 20, "p50_ns": 54500, "p99_ns": 60600, "max_ns": 84600 }
+      ]
+    }
   },
   "seed": {
     "value": 42,
@@ -184,6 +197,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `backend`, `backend_details` | The backend and what it says about itself. The Kernel backend gives `tc` (the iproute2 version) and `rights` (`user namespace` or `own rights`). |
 | `kernel` | The kernel release (`/proc/sys/kernel/osrelease`), or `null`. |
 | `cpu_model`, `cpus` | The model of the first processor and the number of processors the run could use, or `null`. |
+| `timers` | The precision of the timers of the machine, measured for about 40 ms just before the run built its network (ENV-05, D-097); absent in a result of an older release. `clock_source`, `clock_read_ns` and `clock_step_ns` are the source of `CLOCK_MONOTONIC`, what a reading costs and the smallest step seen. `timer_slack_ns`, `cpu_governor`, `load_1m_hundredths` (the load of the last minute times 100) and `runnable_tasks` are `null` where the machine does not say. Each entry of `sleeps` is how much longer than `asked_ns` a `sleep` took: the `samples`, the median, the 99th percentile and the largest, in nanoseconds (few samples, so the 99th percentile is close to the largest). A sender sleeps until 150 microseconds before the slot of a packet and spins for the rest, so a `p99_ns` above 150,000 means that packets may leave late; `max_lateness_ns` of each workload and `applied_ns - scheduled_ns` of the `events` say how late they did. A replay measures its own machine; the comparison does not list the timers. |
 
 The host name, the user name and file paths are **not** recorded: a result may be shared.
 
