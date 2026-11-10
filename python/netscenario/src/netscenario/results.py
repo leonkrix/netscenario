@@ -16,6 +16,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from netscenario.frames import Table
 from netscenario.reports import ReportFormat, report
 
 _NANOSECONDS = 1e9
@@ -181,6 +182,11 @@ class TimelineStep:
     from_model: bool = False
     """Whether a model of the link made the step and not the file. ``event`` is then its place in
     the timeline that the run made from the models, after the events of the file."""
+    live: bool = False
+    """Whether the code made the step while the run went (:func:`netscenario.start`) and not the
+    file. ``event`` is then its place among those changes, ``scheduled`` is the moment the code
+    asked, and the recorded scenario holds the step as an event at the slot of the packet it met,
+    so a replay does it there."""
 
     @property
     def lateness(self) -> float:
@@ -282,6 +288,36 @@ class Series:
                 if line.strip():
                     bins.append(_bin(json.loads(line)))
         return tuple(bins)
+
+    def table(self) -> Table:
+        """The bins as a :class:`netscenario.frames.Table`, one row for each bin.
+
+        The columns are ``bin``, ``start`` (seconds), what the sender saw (``sent``, ``received``,
+        ``lost``, ``delivered_ratio``, ``send_delay_mean`` and ``_p50``, ``_p95``, ``_p99``,
+        ``_max`` in seconds) and what the receiver saw (``arrived``, ``bits`` and
+        ``arrival_delay_mean`` and so on). A delay is ``None`` for a bin with no packet.
+        """
+        bins = self.read()
+        columns: dict[str, list[object]] = {
+            "bin": [b.index for b in bins],
+            "start": [b.start for b in bins],
+            "sent": [b.by_send.sent for b in bins],
+            "received": [b.by_send.received for b in bins],
+            "lost": [b.by_send.lost for b in bins],
+            "delivered_ratio": [b.by_send.delivered_ratio for b in bins],
+        }
+        for prefix, delays in (
+            ("send_delay", [b.by_send.delay for b in bins]),
+            ("arrival_delay", [b.by_arrival.delay for b in bins]),
+        ):
+            for name in ("mean", "p50", "p95", "p99", "max"):
+                columns[f"{prefix}_{name}"] = [
+                    None if d is None else getattr(d, name) for d in delays
+                ]
+            if prefix == "send_delay":
+                columns["arrived"] = [b.by_arrival.received for b in bins]
+                columns["bits"] = [b.by_arrival.bits for b in bins]
+        return Table(columns)
 
 
 @dataclass(frozen=True)
@@ -522,6 +558,44 @@ class Workload:
     def delivery_ratio(self) -> float:
         """``received / sent``, a number between 0 and 1 (1 if nothing was sent)."""
         return 1.0 if self.sent == 0 else self.received / self.sent
+
+    def packets_table(self) -> Table:
+        """The packets of this workload, one row for each line of the export, as a table.
+
+        The columns are ``sequence``, ``send`` and ``receive`` (seconds since the first packet was
+        sent), ``delay`` (seconds), and the flags ``lost``, ``duplicate``, ``corrupted`` and
+        ``unexpected``. A packet that did not arrive has no ``send``, ``receive`` or ``delay``
+        (``None``). The table is made from the file of the export (``packets_file``), so the run
+        has to have been made with ``packets=True`` (or ``measure.packets``).
+
+        Raises:
+            ValueError: The run did not write the export of the packets.
+        """
+        if self.packets_file is None:
+            message = (
+                f"the run did not write the packets of '{self.id}': "
+                "run with packets=True (or measure.packets in the scenario)"
+            )
+            raise ValueError(message)
+        rows: list[dict[str, Any]] = []
+        with self.packets_file.open(encoding="utf-8") as lines:
+            rows.extend(json.loads(line) for line in lines if line.strip())
+
+        def seconds(row: dict[str, Any], key: str) -> float | None:
+            return None if key not in row else _seconds(row[key])
+
+        return Table(
+            {
+                "sequence": [int(row["sequence"]) for row in rows],
+                "send": [seconds(row, "send_ns") for row in rows],
+                "receive": [seconds(row, "receive_ns") for row in rows],
+                "delay": [seconds(row, "delay_ns") for row in rows],
+                "lost": [bool(row.get("lost", False)) for row in rows],
+                "duplicate": [bool(row.get("duplicate", False)) for row in rows],
+                "corrupted": [bool(row.get("corrupted", False)) for row in rows],
+                "unexpected": [bool(row.get("unexpected", False)) for row in rows],
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -1102,6 +1176,23 @@ def expectations_of(raw: Mapping[str, Any] | None) -> Expectations | None:
     )
 
 
+def step_from_record(e: Mapping[str, Any]) -> TimelineStep:
+    """A step from its record in ``result.json`` (``events``), or as a live change returns it."""
+    return TimelineStep(
+        event=int(e["event"]),
+        kind=e["kind"],
+        link=e["link"],
+        direction=e["direction"],
+        scheduled=_seconds(e["scheduled_ns"]),
+        started=_seconds(e["started_ns"]),
+        applied=_seconds(e["applied_ns"]),
+        packet=e.get("packet"),
+        held=None if e.get("held_ns") is None else _seconds(e["held_ns"]),
+        from_model=bool(e.get("from_model", False)),
+        live=bool(e.get("live", False)),
+    )
+
+
 @dataclass(frozen=True)
 class Result:
     """What a run found out. ``result["media"]`` is the :class:`Workload` called ``media``."""
@@ -1157,6 +1248,10 @@ class Result:
     profile_library: int | None = None
     """The version of the profile library that the profiles were resolved with, or ``None`` for a
     scenario without profiles."""
+    live_links: tuple[str, ...] = ()
+    """The links that were declared live (``netscenario.start(..., live=...)``): their queues were
+    built so that the code could change them to any state while the run went. A replay builds them
+    the same way. Empty for a run that was not started live."""
     captures: tuple[Capture, ...] = ()
     """The captures of the interfaces (``measure.capture``): two for each captured link, in the
     order of the list and of ``between``."""
@@ -1185,6 +1280,31 @@ class Result:
     def __len__(self) -> int:
         """How many workloads."""
         return len(self.workloads)
+
+    def steps_table(self) -> Table:
+        """The steps of the timeline as a table, one row for each step (``steps``).
+
+        The columns are ``event``, ``kind``, ``link``, ``direction``, ``scheduled``, ``started``,
+        ``applied`` (seconds from the start of the workloads), ``lateness``, ``packet``, ``held``
+        (seconds), ``from_model`` and ``live``.
+        """
+        steps = self.steps
+        return Table(
+            {
+                "event": [s.event for s in steps],
+                "kind": [s.kind for s in steps],
+                "link": [s.link for s in steps],
+                "direction": [s.direction for s in steps],
+                "scheduled": [s.scheduled for s in steps],
+                "started": [s.started for s in steps],
+                "applied": [s.applied for s in steps],
+                "lateness": [s.lateness for s in steps],
+                "packet": [s.packet for s in steps],
+                "held": [s.held for s in steps],
+                "from_model": [s.from_model for s in steps],
+                "live": [s.live for s in steps],
+            }
+        )
 
     def report(self, format: ReportFormat = "md") -> str:
         """The report of this run as ``"md"`` (Markdown), ``"junit"`` (JUnit XML) or ``"html"``.
@@ -1263,21 +1383,7 @@ class Result:
                 for d in raw.get("directions", ())
             ),
             queues=tuple(_queue_stats(q) for q in raw.get("queues", ())),
-            steps=tuple(
-                TimelineStep(
-                    event=int(e["event"]),
-                    kind=e["kind"],
-                    link=e["link"],
-                    direction=e["direction"],
-                    scheduled=_seconds(e["scheduled_ns"]),
-                    started=_seconds(e["started_ns"]),
-                    applied=_seconds(e["applied_ns"]),
-                    packet=e.get("packet"),
-                    held=None if e.get("held_ns") is None else _seconds(e["held_ns"]),
-                    from_model=bool(e.get("from_model", False)),
-                )
-                for e in raw.get("events", ())
-            ),
+            steps=tuple(step_from_record(e) for e in raw.get("events", ())),
             notes=tuple(raw.get("notes", ())),
             programs=MappingProxyType(
                 {p["id"]: _program(p, directory) for p in raw.get("programs", ())}
@@ -1285,6 +1391,7 @@ class Result:
             scenario_params=MappingProxyType(dict(raw["scenario"].get("params", {}))),
             scenario_profiles=MappingProxyType(dict(raw["scenario"].get("profiles", {}))),
             profile_library=raw["scenario"].get("profile_library"),
+            live_links=tuple(raw["scenario"].get("live_links", ())),
             captures=tuple(_capture(c, directory) for c in raw.get("captures", ())),
             tcp=MappingProxyType({t["id"]: _tcp(t, directory) for t in raw.get("tcp", ())}),
             reproducibility=Reproducibility(

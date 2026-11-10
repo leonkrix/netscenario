@@ -8,14 +8,16 @@ as a skip or a failure, before anything is started.
 
 from __future__ import annotations
 
+import contextlib
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import overload
 
 import netscenario as ns
-from netscenario import CancelToken, Result, RunSet, Scenario
+from netscenario import AsyncRun, CancelToken, Result, Run, RunSet, Scenario
 from netscenario.events import RunEvent
+from netscenario.scenario import ParamValue
 
 doctor = ns.doctor
 """What is asked about the machine; the tests of the plugin replace it."""
@@ -68,18 +70,25 @@ class Runner:
         self._guard = guard
         self._record = record
         self._results: list[Result | RunSet] = []
+        self._started: list[Run] = []
 
-    def load(self, scenario: str | os.PathLike[str]) -> Scenario:
+    def load(
+        self,
+        scenario: str | os.PathLike[str],
+        *,
+        params: Mapping[str, ParamValue] | None = None,
+    ) -> Scenario:
         """Read a scenario file, looked for next to the test file and in the ini directories.
 
         This does not need a machine that can run scenarios: a test that only reads and checks a
-        scenario works anywhere.
+        scenario works anywhere. ``params`` are the values of the parameters of the scenario
+        (``params:`` in the file), by name.
 
         Raises:
             FileNotFoundError: There is no such file.
             netscenario.ScenarioError: The scenario is not valid.
         """
-        return Scenario.load(find_scenario_file(scenario, self._search))
+        return Scenario.load(find_scenario_file(scenario, self._search), params=params)
 
     @overload
     def run(
@@ -101,6 +110,7 @@ class Runner:
         recovery_baseline: int | None = None,
         recovery_window: int | None = None,
         recovery_fraction: float | None = None,
+        params: Mapping[str, ParamValue] | None = None,
     ) -> Result: ...
 
     @overload
@@ -123,6 +133,7 @@ class Runner:
         recovery_baseline: int | None = None,
         recovery_window: int | None = None,
         recovery_fraction: float | None = None,
+        params: Mapping[str, ParamValue] | None = None,
     ) -> RunSet: ...
 
     def run(
@@ -144,6 +155,7 @@ class Runner:
         recovery_baseline: int | None = None,
         recovery_window: int | None = None,
         recovery_fraction: float | None = None,
+        params: Mapping[str, ParamValue] | None = None,
     ) -> Result | RunSet:
         """Run a scenario and return its :class:`netscenario.Result`.
 
@@ -176,6 +188,8 @@ class Runner:
             recovery_baseline: How many bins make the baseline of the recovery.
             recovery_window: How many bins in a row have to be back at the level.
             recovery_fraction: The share of the baseline to reach again, above 0 to 1.
+            params: The values of the parameters of the scenario, by name (``{"rtt": "40ms"}``);
+                the others keep their defaults. The result records them.
 
         Raises:
             Skipped: The machine cannot run scenarios (locally; on the CI that is a failure).
@@ -184,13 +198,9 @@ class Runner:
         if repetitions is None and (statistic is not None or confidence is not None):
             message = "statistic and confidence need repetitions"
             raise ValueError(message)
-        loaded = scenario if isinstance(scenario, Scenario) else self.load(scenario)
+        loaded = self._scenario(scenario, params)
         self._guard()
-        directory = (
-            Path(out)
-            if out is not None
-            else self._out_root / f"run-{len(self._results) + 1}-{loaded.name}"
-        )
+        directory = self._directory(loaded, out)
         result: Result | RunSet
         if repetitions is None:
             result = ns.run(
@@ -230,6 +240,128 @@ class Runner:
         self._results.append(result)
         self._record(result)
         return result
+
+    def _scenario(
+        self,
+        scenario: Scenario | str | os.PathLike[str],
+        params: Mapping[str, ParamValue] | None,
+    ) -> Scenario:
+        """The scenario to run; a file is looked for as :meth:`load` does."""
+        if isinstance(scenario, Scenario):
+            return scenario.with_params(**params) if params else scenario
+        return self.load(scenario, params=params)
+
+    def _directory(self, scenario: Scenario, out: str | os.PathLike[str] | None) -> Path:
+        return (
+            Path(out)
+            if out is not None
+            else self._out_root
+            / f"run-{len(self._results) + len(self._started) + 1}-{scenario.name}"
+        )
+
+    def _kept(self, result: Result) -> None:
+        self._results.append(result)
+        self._record(result)
+
+    def start(
+        self,
+        scenario: Scenario | str | os.PathLike[str],
+        *,
+        live: Iterable[str] = (),
+        out: str | os.PathLike[str] | None = None,
+        seed: int | None = None,
+        settle: float | None = None,
+        packets: bool | None = None,
+        capture: Sequence[str] | None = None,
+        observer: Callable[[RunEvent], None] | None = None,
+        cancel: CancelToken | None = None,
+        params: Mapping[str, ParamValue] | None = None,
+    ) -> Run:
+        """Start a run that the test can talk to while it goes: :func:`netscenario.start`.
+
+        ``live`` names the links the test may change (``run.link("access").set(...)``). The result
+        goes into the report of the test when the test asks for it (``run.result()``, or leaving the
+        ``with`` block). A run that is still going when the test ends is cancelled and torn down.
+        """
+        loaded = self._scenario(scenario, params)
+        self._guard()
+        run = ns.start(
+            loaded,
+            live=live,
+            out=self._directory(loaded, out),
+            seed=seed,
+            settle=settle,
+            packets=packets,
+            capture=capture,
+            observer=observer,
+            cancel=cancel,
+            on_result=self._kept,
+        )
+        self._started.append(run)
+        return run
+
+    async def run_async(
+        self,
+        scenario: Scenario | str | os.PathLike[str],
+        *,
+        out: str | os.PathLike[str] | None = None,
+        seed: int | None = None,
+        settle: float | None = None,
+        packets: bool | None = None,
+        capture: Sequence[str] | None = None,
+        observer: Callable[[RunEvent], None] | None = None,
+        params: Mapping[str, ParamValue] | None = None,
+    ) -> Result:
+        """Run a scenario from an ``async`` test: :func:`netscenario.run_async`."""
+        async with await self.start_async(
+            scenario,
+            out=out,
+            seed=seed,
+            settle=settle,
+            packets=packets,
+            capture=capture,
+            observer=observer,
+            params=params,
+        ) as run:
+            return await run.result()
+
+    async def start_async(
+        self,
+        scenario: Scenario | str | os.PathLike[str],
+        *,
+        live: Iterable[str] = (),
+        out: str | os.PathLike[str] | None = None,
+        seed: int | None = None,
+        settle: float | None = None,
+        packets: bool | None = None,
+        capture: Sequence[str] | None = None,
+        observer: Callable[[RunEvent], None] | None = None,
+        params: Mapping[str, ParamValue] | None = None,
+    ) -> AsyncRun:
+        """Start a run for an ``async`` test: :func:`netscenario.start_async`."""
+        loaded = self._scenario(scenario, params)
+        self._guard()
+        run = await ns.start_async(
+            loaded,
+            live=live,
+            out=self._directory(loaded, out),
+            seed=seed,
+            settle=settle,
+            packets=packets,
+            capture=capture,
+            observer=observer,
+            on_result=self._kept,
+        )
+        self._started.append(run.run)
+        return run
+
+    def close(self) -> None:
+        """End what the test left going: a run not waited for is cancelled and torn down."""
+        for run in self._started:
+            if not run.done:
+                run.cancel()
+            with contextlib.suppress(ns.NetscenarioError):
+                run.result()
 
     @property
     def results(self) -> tuple[Result | RunSet, ...]:

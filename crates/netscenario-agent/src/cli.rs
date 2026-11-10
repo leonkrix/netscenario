@@ -210,18 +210,24 @@ fn say(out: &mut impl Write, event: &Event) {
     }
 }
 
-/// The answers of the run to the barriers of a sender: the lines `go <id>` on its standard input (D-038), and the line
-/// `stop` that ends the stream early (D-066).
+/// The answers of the run to the barriers of a sender: the lines `go <id>` on its standard input (D-038), the line
+/// `stop` that ends the stream early (D-066), and the lines `hold <id>` with which the run asks the sender to stop
+/// before its next packet (D-096).
 struct Gate {
     state: Mutex<GateState>,
     changed: Condvar,
     /// The run said `stop`. Looked at before every packet, so it is not behind the lock.
     stopped: AtomicBool,
+    /// The run asked for a hold that the sender has not taken yet. Looked at before every packet, so it is not
+    /// behind the lock.
+    hold_asked: AtomicBool,
 }
 
 #[derive(Default)]
 struct GateState {
     released: HashSet<u32>,
+    /// The holds that the run asked for and the sender has not taken, in the order they were asked.
+    holds: std::collections::VecDeque<u32>,
     /// The input has ended: nobody will answer any more, so nothing is waited for (a sender whose run died does
     /// not wait for ever).
     closed: bool,
@@ -233,6 +239,7 @@ impl Gate {
             state: Mutex::new(GateState::default()),
             changed: Condvar::new(),
             stopped: AtomicBool::new(false),
+            hold_asked: AtomicBool::new(false),
         })
     }
 
@@ -246,6 +253,17 @@ impl Gate {
                     // A sender that waits for an answer is let go, and the stream ends before its next packet
                     gate.stopped.store(true, Ordering::SeqCst);
                     let _held = gate.state.lock().unwrap_or_else(PoisonError::into_inner);
+                    gate.changed.notify_all();
+                    continue;
+                }
+                if let Some(id) = line
+                    .trim()
+                    .strip_prefix("hold ")
+                    .and_then(|id| id.trim().parse::<u32>().ok())
+                {
+                    let mut state = gate.state.lock().unwrap_or_else(PoisonError::into_inner);
+                    state.holds.push_back(id);
+                    gate.hold_asked.store(true, Ordering::SeqCst);
                     gate.changed.notify_all();
                     continue;
                 }
@@ -316,6 +334,23 @@ impl<W: Write> Barriers for StandardBarriers<'_, W> {
 
     fn stopped(&self) -> bool {
         self.gate.stopped.load(Ordering::SeqCst)
+    }
+
+    fn hold_asked(&self) -> bool {
+        self.gate.hold_asked.load(Ordering::SeqCst)
+    }
+
+    fn take_hold(&mut self) -> Option<u32> {
+        let mut state = self
+            .gate
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let id = state.holds.pop_front();
+        if state.holds.is_empty() {
+            self.gate.hold_asked.store(false, Ordering::SeqCst);
+        }
+        id
     }
 }
 

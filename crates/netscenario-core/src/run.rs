@@ -92,6 +92,9 @@ pub struct RunOptions {
     /// The directory the programs of your own run in, and that a relative path of `ready: { file: ... }` is counted from
     /// (D-041): the directory of the scenario file. Without it, the directory of the supervisor.
     pub working_dir: Option<PathBuf>,
+    /// The inbox of the code that changes links while the run goes (TML-05, D-096): see [`channel`](crate::channel). Its links
+    /// are built so that any state fits them.
+    pub live: Option<Arc<crate::live::LiveInbox>>,
 }
 
 impl std::fmt::Debug for RunOptions {
@@ -107,6 +110,7 @@ impl std::fmt::Debug for RunOptions {
             .field("barriers", &self.barriers)
             .field("partial_on_cancel", &self.partial_on_cancel)
             .field("working_dir", &self.working_dir)
+            .field("live", &self.live)
             .finish()
     }
 }
@@ -126,7 +130,16 @@ impl RunOptions {
             barriers: true,
             partial_on_cancel: false,
             working_dir: None,
+            live: None,
         }
+    }
+
+    /// The same options, with the inbox of a [`channel`](crate::channel): the code that has its handle can change the links the
+    /// channel was made for while the run goes (D-096).
+    #[must_use]
+    pub fn with_live(mut self, inbox: crate::live::LiveInbox) -> Self {
+        self.live = Some(Arc::new(inbox));
+        self
     }
 
     /// The same options, with an observer.
@@ -363,6 +376,58 @@ struct Measurement {
     tcp: Vec<TcpResult>,
     /// Whether the run can be repeated exactly (D-086).
     reproducibility: Reproducibility,
+    /// The changes from test code, as events at the slots of the packets they met (D-096).
+    live_events: Vec<netscenario_model::Event>,
+}
+
+/// Closes the exchange with the code that changes links when the run is left, by whatever way (D-096).
+struct LiveCloses<'a>(&'a crate::live::LiveInbox);
+
+impl Drop for LiveCloses<'_> {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
+/// The scenario with the links that test code may change, if the run takes changes from code (D-096): they are part of the scenario in
+/// memory and not of the file.
+fn with_live_links(given: &Scenario, options: &RunOptions) -> Result<Option<Scenario>, Error> {
+    let Some(inbox) = &options.live else {
+        return Ok(None);
+    };
+    let mut with_links = given.clone();
+    with_links.live_links = inbox.links().to_vec();
+    check_live_links(&with_links)?;
+    Ok(Some(with_links))
+}
+
+/// The scenario as it ran: the file and the changes from test code at the slots of the packets they met, so that a replay does them
+/// there (D-096).
+fn recorded_scenario(original: &Scenario, live_events: Vec<netscenario_model::Event>) -> Scenario {
+    let mut recorded = original.clone();
+    recorded.timeline.extend(live_events);
+    recorded
+}
+
+/// The reasons the clock gives, and one more if the code changed a link while the run went.
+fn with_live_reason(mut reasons: Vec<String>, events: &[EventRecord]) -> Vec<String> {
+    if events.iter().any(|record| record.live) {
+        reasons.push("the code changed a link while the run went (D-096): the moments were its own, so a second live run differs; a replay of this result does the changes at the packets they met and gives the same lost packets".to_owned());
+    }
+    reasons
+}
+
+/// The links that test code may change must exist (D-096).
+fn check_live_links(scenario: &Scenario) -> Result<(), Error> {
+    for name in &scenario.live_links {
+        if !scenario.topology.links.iter().any(|link| &link.id == name) {
+            return Err(failure(
+                "declare a link live",
+                format!("there is no link '{name}' in the scenario"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A scenario that refers to a file must have it read before it runs (D-083): the table is made when the scenario is loaded.
@@ -396,10 +461,14 @@ fn check_files_are_read(scenario: &Scenario) -> Result<(), Error> {
 /// - [`Error::Cancelled`] if `options.cancel` was cancelled; the network is torn down all the same.
 pub fn run(
     backend: &mut dyn Backend,
-    original: &Scenario,
+    given: &Scenario,
     options: &RunOptions,
 ) -> Result<RunResult, Error> {
     let started = SystemTime::now();
+    // The links that test code changes are part of the scenario in memory, not of the file (D-096)
+    let _closes_live = options.live.as_deref().map(LiveCloses);
+    let live_scenario = with_live_links(given, options)?;
+    let original = live_scenario.as_ref().unwrap_or(given);
     let control = Control::new(options);
     // A run that was cancelled before it began builds nothing
     control.checkpoint()?;
@@ -434,11 +503,16 @@ pub fn run(
         captures,
         mut tcp,
         reproducibility,
+        live_events,
     } = measured?;
     torn_down?;
     for record in &mut events {
-        record.from_model = record.event >= models.first_generated;
+        record.from_model = !record.live && record.event >= models.first_generated;
     }
+    // The scenario as it ran: the file and the changes from test code at the slots of the packets they met, so that a replay
+    // does them there (D-096)
+    let recorded = recorded_scenario(original, live_events);
+    let original = &recorded;
     tcp_recoveries(scenario, &mut tcp, &events);
 
     let timeline = Timeline {
@@ -446,7 +520,12 @@ pub fn run(
         events: &events,
     };
     let workloads = workload_results(scenario, &measured, &provisioned, options, &timeline)?;
-    let reasons = not_reproducible_because(scenario, &provisioned, &queue_checks, clock_reasons);
+    let reasons = not_reproducible_because(
+        scenario,
+        &provisioned,
+        &queue_checks,
+        with_live_reason(clock_reasons, &events),
+    );
     let mut result = RunResult {
         format: RESULT_FORMAT.to_owned(),
         version: RESULT_VERSION,
@@ -463,23 +542,8 @@ pub fn run(
             queue_checks,
             not_reproducible_because: reasons,
         },
-        accepted_restrictions: provisioned
-            .accepted
-            .iter()
-            .map(|accepted| AcceptedRestriction {
-                feature: accepted.feature.id().to_owned(),
-                restriction: accepted.restriction.clone(),
-            })
-            .collect(),
-        addresses: provisioned
-            .addresses
-            .iter()
-            .map(|a| AddressInfo {
-                node: a.node.to_string(),
-                link: a.link.to_string(),
-                address: a.address.to_string(),
-            })
-            .collect(),
+        accepted_restrictions: accepted_restrictions(&provisioned),
+        addresses: address_infos(&provisioned),
         nodes: node_infos(scenario, &provisioned),
         routes: route_infos(scenario),
         timing: Timing {
@@ -501,6 +565,31 @@ pub fn run(
     write_outputs(original, options, &mut result)?;
     control.emit(&RunEvent::Finished);
     Ok(result)
+}
+
+/// The restrictions of a backend that the scenario accepted (D-092), for the result.
+fn accepted_restrictions(provisioned: &Provisioned) -> Vec<AcceptedRestriction> {
+    provisioned
+        .accepted
+        .iter()
+        .map(|accepted| AcceptedRestriction {
+            feature: accepted.feature.id().to_owned(),
+            restriction: accepted.restriction.clone(),
+        })
+        .collect()
+}
+
+/// The addresses the nodes got on the links, for the result.
+fn address_infos(provisioned: &Provisioned) -> Vec<AddressInfo> {
+    provisioned
+        .addresses
+        .iter()
+        .map(|a| AddressInfo {
+            node: a.node.to_string(),
+            link: a.link.to_string(),
+            address: a.address.to_string(),
+        })
+        .collect()
 }
 
 /// Judges the checks of the file against a run that went through (D-094): a run cut short has the numbers of a part of the run.
@@ -1925,6 +2014,26 @@ fn measure_with(
         .collect();
     let plan = barriers::plan(scenario, &sending, &steps, options.barriers);
     let senders = start_senders(backend, &flows, options, begin, &plan.bindings)?;
+    // The changes from test code are served by the loop, which holds the sender of the direction before its next packet
+    let live = options.live.as_deref().map(|inbox| {
+        let held = flows
+            .iter()
+            .map(|flow| crate::live::LiveSender {
+                from: flow.workload.from.clone(),
+                to: flow.workload.to.clone(),
+                schedule: flow.schedule.clone(),
+                start_ns: nanos(flow.start),
+                duration_ns: nanos(flow.duration),
+            })
+            .collect();
+        crate::live::LiveRun::new(
+            inbox,
+            held,
+            scenario,
+            u32::try_from(steps.len()).unwrap_or(u32::MAX),
+            begin,
+        )
+    });
     tcp.start_clients(backend, options, begin)?;
 
     let latest_end = flows
@@ -1950,9 +2059,12 @@ fn measure_with(
             programs,
             hold_until: begin_at + Duration::from(scenario.duration),
             queues: &mut sampler,
+            live,
         },
         control,
     )?;
+    let live_events = driven.live_events;
+    let live_notes = driven.live_notes;
     let sent = driven.sent;
     let events = driven.events;
     let interrupted_ns = driven.interrupted_ns;
@@ -2002,7 +2114,12 @@ fn measure_with(
         directions,
         queues,
         events,
-        notes: backend.notes().into_iter().chain(settle_note).collect(),
+        notes: backend
+            .notes()
+            .into_iter()
+            .chain(settle_note)
+            .chain(live_notes)
+            .collect(),
         interrupted_ns,
         begin_ns: begin,
         clock_reasons: plan.reasons,
@@ -2014,6 +2131,7 @@ fn measure_with(
             Reproducibility::statistical(tcp.reasons())
         },
         tcp: std::mem::take(tcp).into_results(begin, &options.out_dir)?,
+        live_events,
     })
 }
 

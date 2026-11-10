@@ -28,6 +28,40 @@ fn version() -> &'static str {
 /// (D-083); the canonical JSON holds what is made of them. Without a `base_dir` a scenario that refers to a file is refused,
 /// because there is nowhere to look. A path that leaves `base_dir` is refused unless `allow_outside_files`. `params` are the
 /// values of the parameters of the scenario, by name.
+/// How the Python side says a scenario was read: the directory of its files, whether files outside it are allowed, and the values
+/// of the parameters.
+type ReadingArg = Option<(Option<String>, bool, Vec<(String, String)>)>;
+
+/// How a scenario was read: where its files are and the values of its parameters, to read it again.
+pub(crate) struct Reading {
+    pub(crate) base_dir: Option<String>,
+    pub(crate) allow_outside_files: bool,
+    pub(crate) params: Vec<(String, String)>,
+}
+
+/// Reads a scenario as `parse_scenario` does: from the text, with the files next to `base_dir` and the values of the parameters.
+pub(crate) fn read_scenario(
+    text: &str,
+    source_name: &str,
+    reading: &Reading,
+) -> Result<Scenario, netscenario_model::Error> {
+    if let Some(base) = &reading.base_dir {
+        netscenario_core::load_scenario(
+            text,
+            source_name,
+            std::path::Path::new(base),
+            reading.allow_outside_files,
+            &reading.params,
+        )
+    } else {
+        let mut options = netscenario_model::LoadOptions::new();
+        for (name, value) in &reading.params {
+            options = options.param(name, value);
+        }
+        Scenario::from_yaml_with(text, source_name, &options)
+    }
+}
+
 #[pyfunction]
 #[pyo3(signature = (text, source_name, base_dir=None, allow_outside_files=false, params=None))]
 fn parse_scenario(
@@ -38,22 +72,12 @@ fn parse_scenario(
     allow_outside_files: bool,
     params: Option<Vec<(String, String)>>,
 ) -> PyResult<String> {
-    let params = params.unwrap_or_default();
-    let loaded = if let Some(base) = base_dir {
-        netscenario_core::load_scenario(
-            text,
-            source_name,
-            std::path::Path::new(base),
-            allow_outside_files,
-            &params,
-        )
-    } else {
-        let mut options = netscenario_model::LoadOptions::new();
-        for (name, value) in &params {
-            options = options.param(name, value);
-        }
-        Scenario::from_yaml_with(text, source_name, &options)
+    let reading = Reading {
+        base_dir: base_dir.map(str::to_owned),
+        allow_outside_files,
+        params: params.unwrap_or_default(),
     };
+    let loaded = read_scenario(text, source_name, &reading);
     let scenario = loaded.map_err(|error| errors::scenario(py, &error))?;
     let wanted = scenario.unresolved_files();
     if !wanted.is_empty() {
@@ -107,7 +131,7 @@ fn doctor(py: Python<'_>) -> String {
 /// `netscenario` program and `agent` the `netscenario-agent` program. `observer` is called as `observer(kind,
 /// fields)` for each event of the run.
 #[pyfunction]
-#[pyo3(signature = (source, canonical, source_name, supervisor, agent, out_dir, seed=None, settle=None, observer=None, cancel=None, bin=None, recovery_basis=None, recovery_baseline=None, recovery_window=None, recovery_fraction=None, working_dir=None, capture=None, packets=None, repetitions=None, statistic=None, confidence=None))]
+#[pyo3(signature = (source, canonical, source_name, supervisor, agent, out_dir, seed=None, settle=None, observer=None, cancel=None, bin=None, recovery_basis=None, recovery_baseline=None, recovery_window=None, recovery_fraction=None, working_dir=None, capture=None, packets=None, repetitions=None, statistic=None, confidence=None, reading=None))]
 #[allow(clippy::too_many_arguments)] // the arguments of one call from Python, all of them by name
 fn run_scenario(
     py: Python<'_>,
@@ -132,6 +156,7 @@ fn run_scenario(
     repetitions: Option<u32>,
     statistic: Option<&str>,
     confidence: Option<f64>,
+    reading: ReadingArg,
 ) -> PyResult<String> {
     let set = run::set_options(repetitions, statistic, confidence)?;
     run::execute(
@@ -158,7 +183,75 @@ fn run_scenario(
                 packets,
             },
             set,
+            reading: reading_of(reading),
         },
+    )
+}
+
+/// How the scenario was read, from the arguments of a call.
+fn reading_of(reading: ReadingArg) -> Option<Reading> {
+    reading.map(|(base_dir, allow_outside_files, params)| Reading {
+        base_dir,
+        allow_outside_files,
+        params,
+    })
+}
+
+/// Starts a run on its own thread and returns the object that talks to it while it goes (TML-05, D-096). `live` names the links the
+/// code may change with `LiveRun.change`; the other arguments are those of `run_scenario`, without the repetitions.
+#[pyfunction]
+#[pyo3(signature = (source, canonical, source_name, supervisor, agent, out_dir, live, seed=None, settle=None, observer=None, cancel=None, bin=None, recovery_basis=None, recovery_baseline=None, recovery_window=None, recovery_fraction=None, working_dir=None, capture=None, packets=None, reading=None))]
+#[allow(clippy::too_many_arguments)] // the arguments of one call from Python, all of them by name
+fn start_scenario(
+    py: Python<'_>,
+    source: String,
+    canonical: String,
+    source_name: String,
+    supervisor: String,
+    agent: String,
+    out_dir: String,
+    live: Vec<String>,
+    seed: Option<u64>,
+    settle: Option<f64>,
+    observer: Option<Py<PyAny>>,
+    cancel: Option<PyRef<'_, PyCancelToken>>,
+    bin: Option<f64>,
+    recovery_basis: Option<String>,
+    recovery_baseline: Option<u32>,
+    recovery_window: Option<u32>,
+    recovery_fraction: Option<f64>,
+    working_dir: Option<String>,
+    capture: Option<Vec<String>>,
+    packets: Option<bool>,
+    reading: ReadingArg,
+) -> PyResult<run::PyLiveRun> {
+    run::execute_live(
+        py,
+        Request {
+            source,
+            canonical,
+            source_name,
+            supervisor,
+            agent,
+            out_dir,
+            seed,
+            settle,
+            observer,
+            cancel: cancel.map(|token| token.token()),
+            working_dir,
+            series: Series {
+                bin,
+                recovery_basis,
+                recovery_baseline,
+                recovery_window,
+                recovery_fraction,
+                capture,
+                packets,
+            },
+            set: None,
+            reading: reading_of(reading),
+        },
+        live,
     )
 }
 
@@ -227,10 +320,12 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(schema, module)?)?;
     module.add_function(wrap_pyfunction!(doctor, module)?)?;
     module.add_function(wrap_pyfunction!(run_scenario, module)?)?;
+    module.add_function(wrap_pyfunction!(start_scenario, module)?)?;
     module.add_function(wrap_pyfunction!(replay_run, module)?)?;
     module.add_function(wrap_pyfunction!(make_report, module)?)?;
     module.add_function(wrap_pyfunction!(result_properties, module)?)?;
     module.add_function(wrap_pyfunction!(runset_properties, module)?)?;
     module.add_class::<PyCancelToken>()?;
+    module.add_class::<run::PyLiveRun>()?;
     Ok(())
 }

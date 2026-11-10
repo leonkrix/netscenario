@@ -498,3 +498,73 @@ def test_the_restrictions_a_scenario_accepts_are_built_from_the_argument() -> No
         .build()
     )
     assert "allow-limited" not in plain.data
+
+
+def test_the_builder_makes_routers_routes_a_timeline_and_checks() -> None:
+    built = (
+        ns.Scenario.builder("typed", duration="20s", seed=1)
+        .node("client")
+        .node("edge", role="router")
+        .node("server")
+        .link(
+            "access",
+            "client",
+            "edge",
+            cost=2,
+            mtu=1400,
+            both=ns.Impairments(
+                delay="20ms",
+                loss={
+                    "model": "gilbert-elliott",
+                    "p": "2%",
+                    "r": "30%",
+                    "loss-bad": "50%",
+                    "loss-good": "0.1%",
+                },
+                reorder=ns.Reorder("5%", gap=3),
+                duplicate="0.5%",
+                corrupt="0.2%",
+            ),
+        )
+        .link("core", "edge", "server", both=ns.Impairments(rate="10mbit", queue={"limit": "50p"}))
+        .routing("auto", ecmp=False)
+        .udp_cbr("media", "client", "server", rate="1mbit", packet_size="1200b")
+        .event("5s", "core", forward=ns.Impairments(rate="5mbit"))
+        .event("8s", "core", set={"forward": {"rate": "20mbit"}})
+        .event("10s", "access", outage="1s", every="3s", count=2)
+        .event("14s", "access", down=True)
+        .event("15s", "access", up=True)
+        .expect("media.loss_ratio", value="< 30%")
+        .build()
+    )
+    data = built.data
+    assert data["topology"]["nodes"][1] == {"id": "edge", "role": "router"}
+    access = data["topology"]["links"][0]
+    assert (access["cost"], access["mtu"]) == (2, 1400)
+    assert access["both"]["reorder"] == {"share": "5%", "gap": 3}
+    assert access["both"]["loss"]["model"] == "gilbert-elliott"
+    assert [event["link"] for event in data["timeline"]] == ["core", "core", "access"] + [
+        "access"
+    ] * 2
+    assert data["expect"]["checks"][0]["metric"] == "media.loss_ratio"
+
+
+def test_the_builder_refuses_what_the_core_refuses() -> None:
+    builder = (
+        ns.Scenario.builder("typed", duration="5s")
+        .nodes("a", "b")
+        .link("l", "a", "b", both=ns.Impairments(reorder="5%"))
+        .udp_cbr("w", "a", "b", rate="1mbit", packet_size="1200b")
+    )
+    # A reordering needs a delay
+    with pytest.raises(ns.ScenarioError):
+        builder.build()
+    with pytest.raises(ns.ScenarioError):
+        (
+            ns.Scenario.builder("typed", duration="5s")
+            .nodes("a", "b")
+            .link("l", "a", "b")
+            .udp_cbr("w", "a", "b", rate="1mbit", packet_size="1200b")
+            .event("9s", "l", down=True)
+            .build()
+        )

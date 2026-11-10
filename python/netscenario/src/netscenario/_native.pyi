@@ -60,6 +60,7 @@ def run_scenario(
     repetitions: int | None = None,
     statistic: str | None = None,
     confidence: float | None = None,
+    reading: tuple[str | None, bool, list[tuple[str, str]]] | None = None,
 ) -> str:
     """Run a scenario; return ``result.json``, or with ``repetitions`` the ``runset.json`` text."""
 
@@ -82,3 +83,46 @@ def result_properties(text: str) -> list[tuple[str, str]]:
 
 def runset_properties(text: str) -> list[tuple[str, str]]:
     """The JUnit properties of a ``runset.json``, as the report writes them."""
+
+class LiveRun:
+    """A run that is going and can be changed (``netscenario.start``)."""
+
+    def change(self, link: str, action: str, change: str | None = None) -> str:
+        """Change a link: ``action`` is ``"set"`` (the JSON of a ``set``), ``"down"`` or ``"up"``.
+
+        Returns the JSON list of the records of the steps it made, once the backend has done them.
+        """
+    def elapsed(self) -> float | None:
+        """Seconds since the workloads started, or ``None`` before."""
+    def is_done(self) -> bool:
+        """Whether the run has ended."""
+    def wait_done(self, timeout: float) -> bool:
+        """Wait at most ``timeout`` seconds for the run to end; whether it has."""
+    def cancel(self) -> None:
+        """Ask the run to stop."""
+    def finish(self) -> str:
+        """Wait for the run and return ``result.json``, or raise. Once."""
+
+def start_scenario(
+    source: str,
+    canonical: str,
+    source_name: str,
+    supervisor: str,
+    agent: str,
+    out_dir: str,
+    live: list[str],
+    seed: int | None = None,
+    settle: float | None = None,
+    observer: Callable[[str, dict[str, float]], None] | None = None,
+    cancel: CancelToken | None = None,
+    bin: float | None = None,
+    recovery_basis: str | None = None,
+    recovery_baseline: int | None = None,
+    recovery_window: int | None = None,
+    recovery_fraction: float | None = None,
+    working_dir: str | None = None,
+    capture: list[str] | None = None,
+    packets: bool | None = None,
+    reading: tuple[str | None, bool, list[tuple[str, str]]] | None = None,
+) -> LiveRun:
+    """Start a run on its own thread; ``live`` names the links the code may change."""

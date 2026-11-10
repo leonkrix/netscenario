@@ -419,7 +419,11 @@ fn events_text(text: &mut String, result: &RunResult) {
             "  at {}  link {}{} {}  {}  {when}",
             seconds(event.scheduled_ns),
             event.link,
-            if event.from_model { " (model)" } else { "" },
+            match (event.from_model, event.live) {
+                (true, _) => " (model)",
+                (_, true) => " (from code)",
+                _ => "",
+            },
             event.direction.as_deref().unwrap_or("both ways"),
             event.kind,
         );

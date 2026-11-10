@@ -97,7 +97,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | TML-02 | Link down and up                                           | M    | 0.2     | done (format with D-050; the Kernel backend since D-064; `tests/timeline.rs`: the sender is refused for exactly the packets of the window, the statistics leave the refused packets out) |
 | TML-03 | Repeating events                                           | S    | 0.3     | done (`every`, `until`, `count`; D-090) |
 | TML-04 | Events tied to a milestone of a workload (after N packets) | C    | 0.7     | idea    |
-| TML-05 | Change a link from test code while the run is going        | S    | 0.3     | planned |
+| TML-05 | Change a link from test code while the run is going        | S    | 0.3     | done (D-096; `crates/netscenario-backend-kernel/tests/live.rs`: the change lands between two packets, a replay loses the same packets; `python/netscenario/tests/test_live.py`) |
 
 ## Mobility (MOB)
 
@@ -214,8 +214,8 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | PYT-01 | Python package with bindings and API (builder, run, results) | M | 0.1 | done ([PYTHON.md](docs/PYTHON.md); `python/netscenario/tests`, wheels: PYT-08); since 0.2 also repetitions and sets of runs, `report`, `replay` and `junit_properties` (D-077) |
 | PYT-02 | `pytest` plugin: fixtures, markers, options | M | 0.1 | done (fixture `netscenario`, marker and `netscenario_result`, the guard, report section and JUnit properties; [PYTEST.md](docs/PYTEST.md), tested with `pytester` in real runs) |
 | PYT-03 | Typed API (`py.typed`, checked with a strict type checker) | M | 0.1 | done (`pyright` strict over the package and its tests, part of `just check`) |
-| PYT-04 | `asyncio` friendly API | S | 0.3 | planned |
-| PYT-05 | Per-packet data as pandas and polars frames | S | 0.3 | planned |
+| PYT-04 | `asyncio` friendly API | S | 0.3 | done (`run_async`, `start_async`, a cancelled task cancels the run and no thread is left; D-096; `python/netscenario/tests/test_live.py`) |
+| PYT-05 | Per-packet data as pandas and polars frames | S | 0.3 | done (`Workload.packets_table`, `Series.table`, `Result.steps_table`, `Table.to_pandas`/`to_polars` as the extras `netscenario[pandas]` and `[polars]`; `python/netscenario/tests/test_frames.py`, also in the minimum environment without them) |
 | PYT-06 | Notebook helpers for plots | C | 0.8 | idea |
 | PYT-07 | Safe with `pytest-xdist` (parallel runs) | M | 0.5 | planned |
 | PYT-08 | Wheels for manylinux on x86_64 and aarch64 | M | 0.1 | done (built and installed into clean environments by every CI run, and published to PyPI: REL-01) |

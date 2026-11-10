@@ -209,19 +209,20 @@ def run(
         recovery_baseline=recovery_baseline,
         recovery_window=recovery_window,
         recovery_fraction=recovery_fraction,
-        working_dir=str(_working_dir(loaded, working_dir)),
+        working_dir=str(resolve_working_dir(loaded, working_dir)),
         capture=None if capture is None else list(capture),
         packets=packets,
         repetitions=repetitions,
         statistic=statistic,
         confidence=confidence,
+        reading=loaded.native_reading(),
     )
     if repetitions is None:
         return Result.from_json(text, directory)
     return RunSet.from_json(text, directory)
 
 
-def _working_dir(scenario: Scenario, given: str | os.PathLike[str] | None) -> Path:
+def resolve_working_dir(scenario: Scenario, given: str | os.PathLike[str] | None) -> Path:
     """The directory of the programs: the one asked for, the scenario file's, or this one."""
     if given is not None:
         return Path(given).resolve()

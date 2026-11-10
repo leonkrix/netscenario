@@ -121,6 +121,15 @@ timeline:
 
 The result has the series by second in two views (what was sent in each second and what arrived in it), how late each step was, and how long each workload took to be back at its level after each event ([docs/RESULTS.md](docs/RESULTS.md); [examples/timeline/](examples/timeline/)).
 
+**A link that changes when the test says.** The test can start a run, wait for a moment, and change a link while it goes, from Python or from `asyncio` ([docs/PYTHON.md](docs/PYTHON.md#changing-a-link-while-the-run-goes), [examples/live-change/](examples/live-change/)):
+
+```python
+with ns.start("scenarios/lte-like.yaml", live=["access"]) as run:
+    run.wait_until(10)                     # seconds into the measured phase
+    run.link("access").set(loss="5%")      # done between two packets, and recorded as a step
+result = run.result()                      # a replay does the change at the same packet
+```
+
 **One run is one sample.** Run it several times with seeds derived from one seed and assert on an interval ([docs/STATISTICS.md](docs/STATISTICS.md)):
 
 ```bash

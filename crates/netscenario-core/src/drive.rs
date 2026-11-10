@@ -22,10 +22,11 @@ use std::time::{Duration, Instant};
 
 use netscenario_agent::clock::monotonic_ns;
 use netscenario_agent::events::{Event, SendSummary};
-use netscenario_model::Scenario;
+use netscenario_model::{Impairments, Scenario};
 
 use crate::backend::{Backend, Direction, ProgramHandle};
 use crate::error::Error;
+use crate::live::{Env, LiveRun};
 use crate::observe::RunEvent;
 use crate::provision::Provisioned;
 use crate::result::EventRecord;
@@ -59,6 +60,58 @@ pub(crate) struct Binding {
     pub(crate) packet: u64,
 }
 
+/// The values each direction of each link has now, so that a step that comes after a change from test code (D-096) is worked out
+/// from the state the direction is in and not from the state the file leads to.
+pub(crate) struct Tracker {
+    current: Vec<[Impairments; 2]>,
+    /// Whether test code has changed the direction: from then on the steps of the file are worked out again.
+    touched: Vec<[bool; 2]>,
+}
+
+const fn way(direction: Direction) -> usize {
+    match direction {
+        Direction::Forward => 0,
+        Direction::Reverse => 1,
+    }
+}
+
+impl Tracker {
+    pub(crate) fn new(scenario: &Scenario) -> Self {
+        Self {
+            current: scenario
+                .topology
+                .links
+                .iter()
+                .map(|link| {
+                    [Direction::Forward, Direction::Reverse]
+                        .map(|direction| crate::timeline::initial(link, direction))
+                })
+                .collect(),
+            touched: vec![[false; 2]; scenario.topology.links.len()],
+        }
+    }
+
+    /// Notes that the step is a change from test code.
+    pub(crate) fn mark_live(&mut self, step: &Step) {
+        if let Action::Impair { direction, .. } = &step.action {
+            self.touched[step.link][way(*direction)] = true;
+        }
+    }
+
+    /// The state to write for an impairing step, and the new state of the direction.
+    fn state(&mut self, step: &Step, direction: Direction, planned: &Impairments) -> Impairments {
+        let place = (step.link, way(direction));
+        let next = match &step.edit {
+            Some(edit) if self.touched[place.0][place.1] => {
+                edit.applied_to(&self.current[place.0][place.1])
+            }
+            _ => planned.clone(),
+        };
+        self.current[place.0][place.1] = next.clone();
+        next
+    }
+}
+
 /// What the loop found out.
 pub(crate) struct Driven {
     /// What each sender said at its end, in the order of the senders.
@@ -68,6 +121,10 @@ pub(crate) struct Driven {
     /// If the run was cancelled and keeps what it has (D-066): when the senders were told to stop, in nanoseconds from
     /// the start of the workloads.
     pub(crate) interrupted_ns: Option<u64>,
+    /// The changes from test code, as events of a scenario at the slots of the packets they met (D-096).
+    pub(crate) live_events: Vec<netscenario_model::Event>,
+    /// What to say about the live changes in the notes of the result.
+    pub(crate) live_notes: Vec<String>,
 }
 
 /// Below this a wait for a step is a sleep to the exact moment and not a wait for news of a sender: the wait for
@@ -89,6 +146,8 @@ pub(crate) struct Watch<'a> {
     pub(crate) hold_until: Instant,
     /// Looks at the queues once a second (PRB-10), while no sender may wait for a barrier.
     pub(crate) queues: &'a mut crate::queues::Sampler,
+    /// The changes from test code, if the run takes them (D-096).
+    pub(crate) live: Option<LiveRun<'a>>,
 }
 
 /// Waits for the senders to end and does the steps of the timeline: at the barriers where `bindings` has one, else by the
@@ -117,7 +176,9 @@ pub(crate) fn drive(
         programs,
         hold_until,
         queues,
+        mut live,
     } = watch;
+    let mut tracker = Tracker::new(scenario);
     // The steps that are done by the clock, in order; the others are done when their sender asks
     let mut pending: VecDeque<(usize, &Step)> = steps
         .iter()
@@ -134,9 +195,22 @@ pub(crate) fn drive(
     loop {
         control.checkpoint()?;
         programs.watch(backend)?;
+        if let Some(live) = live.as_mut() {
+            live.work(&mut Env {
+                backend,
+                provisioned,
+                begin,
+                tracker: &mut tracker,
+                programs: senders,
+                ended: &ended,
+                control,
+                events: &mut events,
+                holds: &mut recorded,
+            })?;
+        }
         // A look at the queues costs a `tc` process or more, a few milliseconds: not while a sender may ask for a barrier and wait
         // for the answer
-        if at_barriers == 0 {
+        if at_barriers == 0 && !live.as_ref().is_some_and(LiveRun::is_waiting) {
             queues.look(backend, begin.ns)?;
         }
         // A cancel that keeps the result (D-066): every sender is told to stop and no step is done any more. The
@@ -151,6 +225,9 @@ pub(crate) fn drive(
             }
             pending.clear();
             at_barriers = 0;
+            if let Some(live) = live.as_mut() {
+                live.close();
+            }
         }
         // The steps by the clock that are due, in order. A step that is a moment away is waited for to the
         // microsecond.
@@ -165,7 +242,15 @@ pub(crate) fn drive(
                 }
                 std::thread::sleep(left);
             }
-            let record = do_step(backend, scenario, provisioned, step, None, begin)?;
+            let record = do_step(
+                backend,
+                scenario,
+                provisioned,
+                step,
+                None,
+                begin,
+                &mut tracker,
+            )?;
             tell(control, &record);
             events.push(record);
             pending.pop_front();
@@ -185,6 +270,12 @@ pub(crate) fn drive(
                     .min(LONGEST_WAIT)
             })
         };
+        // A request from test code is taken within a millisecond
+        let wait = if live.is_some() {
+            wait.min(BARRIER_WAIT)
+        } else {
+            wait
+        };
         let mut waited = false;
         for (index, (program, what)) in senders.iter().enumerate() {
             if ended[index] {
@@ -197,11 +288,31 @@ pub(crate) fn drive(
             lines[index].extend(state.lines);
             // A sender that asks is answered at once, in the order it asked
             for line in &lines[index][before..] {
-                let Event::Barrier { id, .. } = event(line, what)? else {
+                let Event::Barrier { id, packet, .. } = event(line, what)? else {
                     continue;
                 };
                 // A sender that asked just before it was told to stop is not answered: it ends
                 if interrupted_ns.is_some() {
+                    continue;
+                }
+                // The barrier of a hold that a change from test code asked for (D-096)
+                if let Some(live) = live.as_mut().filter(|live| live.owns(id)) {
+                    live.barrier(
+                        &mut Env {
+                            backend,
+                            provisioned,
+                            begin,
+                            tracker: &mut tracker,
+                            programs: senders,
+                            ended: &ended,
+                            control,
+                            events: &mut events,
+                            holds: &mut recorded,
+                        },
+                        index,
+                        id,
+                        packet,
+                    )?;
                     continue;
                 }
                 let place = usize::try_from(id).unwrap_or(usize::MAX);
@@ -224,6 +335,7 @@ pub(crate) fn drive(
                     &steps[place],
                     Some(binding.packet),
                     begin,
+                    &mut tracker,
                 )?;
                 backend.send_line(*program, &format!("go {id}"))?;
                 tell(control, &record);
@@ -239,6 +351,23 @@ pub(crate) fn drive(
                     ));
                 }
                 ended[index] = true;
+                // A change that waited for this sender is done by the clock
+                if let Some(live) = live.as_mut() {
+                    live.sender_ended(
+                        &mut Env {
+                            backend,
+                            provisioned,
+                            begin,
+                            tracker: &mut tracker,
+                            programs: senders,
+                            ended: &ended,
+                            control,
+                            events: &mut events,
+                            holds: &mut recorded,
+                        },
+                        index,
+                    )?;
+                }
             }
         }
         if ended.iter().all(|done| *done) {
@@ -251,7 +380,10 @@ pub(crate) fn drive(
                 ));
             }
             // A cancel that keeps the result also ends the wait for the programs: they are stopped next
-            if pending.is_empty() && (Instant::now() >= hold_until || interrupted_ns.is_some()) {
+            if pending.is_empty()
+                && !live.as_ref().is_some_and(LiveRun::is_waiting)
+                && (Instant::now() >= hold_until || interrupted_ns.is_some())
+            {
                 break;
             }
         }
@@ -266,6 +398,16 @@ pub(crate) fn drive(
             ));
         }
     }
+    let (live_events, live_notes) = match live.as_mut() {
+        Some(live) => {
+            live.close();
+            (
+                std::mem::take(&mut live.recorded),
+                std::mem::take(&mut live.notes),
+            )
+        }
+        None => (Vec::new(), Vec::new()),
+    };
     let mut sent = Vec::new();
     for ((_, what), lines) in senders.iter().zip(&lines) {
         match lines.last().map(|line| event(line, what)).transpose()? {
@@ -310,6 +452,8 @@ pub(crate) fn drive(
         sent,
         events,
         interrupted_ns,
+        live_events,
+        live_notes,
     })
 }
 
@@ -322,13 +466,14 @@ fn tell(control: &Control<'_>, record: &EventRecord) {
 }
 
 /// Does one step and records it. `packet` is set for a step done at a barrier.
-fn do_step(
+pub(crate) fn do_step(
     backend: &mut dyn Backend,
     scenario: &Scenario,
     provisioned: &Provisioned,
     step: &Step,
     packet: Option<u64>,
     begin: Begin,
+    tracker: &mut Tracker,
 ) -> Result<EventRecord, Error> {
     let since = |ns: u64| ns.saturating_sub(begin.ns);
     let started = since(monotonic_ns());
@@ -340,7 +485,8 @@ fn do_step(
             impairments,
             ..
         } => {
-            backend.change(handle, *direction, impairments)?;
+            let state = tracker.state(step, *direction, impairments);
+            backend.change(handle, *direction, &state)?;
             Some(match direction {
                 Direction::Forward => "forward".to_owned(),
                 Direction::Reverse => "reverse".to_owned(),
@@ -370,6 +516,7 @@ fn do_step(
         packet,
         held_ns: None,
         from_model: false,
+        live: false,
     })
 }
 
@@ -391,5 +538,50 @@ mod tests {
         };
         assert_eq!(past.left_until(1_000_000_000), Duration::ZERO);
         assert!(begin.left_until(u64::MAX) > Duration::ZERO);
+    }
+
+    fn two_steps() -> (Scenario, Vec<Step>) {
+        let scenario = Scenario::from_yaml(
+            "version: 0\nname: t\nduration: 20s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\ntimeline:\n  - { at: 2s, link: l, set: { forward: { delay: 20ms } } }\n  - { at: 4s, link: l, set: { forward: { rate: 2mbit } } }\n",
+            "t.yaml",
+        )
+        .unwrap();
+        let steps = crate::timeline::steps(&scenario);
+        (scenario, steps)
+    }
+
+    fn state_of(step: &Step) -> Impairments {
+        match &step.action {
+            Action::Impair { impairments, .. } => (**impairments).clone(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A step of the file that comes after a change from code is worked out from the state the direction is in (D-096): the loss
+    /// the code set stays when the step sets a rate. Canary: while the direction is not marked as changed by code, the step is the
+    /// state the file leads to, so the tracker changes nothing for a run that is not changed from code.
+    #[test]
+    fn a_step_after_a_live_change_is_worked_out_from_the_state_the_direction_is_in() {
+        let (scenario, steps) = two_steps();
+        let mut tracker = Tracker::new(&scenario);
+        let first = tracker.state(&steps[0], Direction::Forward, &state_of(&steps[0]));
+        assert_eq!(first, state_of(&steps[0]));
+        // The code switches a loss on
+        let mut live = steps[1].clone();
+        live.edit = Some(serde_json::from_str(r#"{"loss":{"model":"random","p":"10%"}}"#).unwrap());
+        tracker.mark_live(&live);
+        let with_loss = tracker.state(&live, Direction::Forward, &state_of(&live));
+        assert!(with_loss.loss.is_some() && with_loss.delay.is_some());
+        // The next step of the file sets the rate and keeps the delay and the loss
+        let after = tracker.state(&steps[1], Direction::Forward, &state_of(&steps[1]));
+        assert!(
+            after.rate.is_some() && after.delay.is_some() && after.loss.is_some(),
+            "{after:?}"
+        );
+        // Canary: a tracker that was never told of a change by code writes the state of the file
+        let mut plain = Tracker::new(&scenario);
+        plain.state(&steps[0], Direction::Forward, &state_of(&steps[0]));
+        let untouched = plain.state(&steps[1], Direction::Forward, &state_of(&steps[1]));
+        assert!(untouched.loss.is_none(), "{untouched:?}");
     }
 }

@@ -388,6 +388,7 @@ impl EventRecord {
             packet: None,
             held_ns: None,
             from_model: false,
+            live: false,
         }
     }
 }
@@ -429,6 +430,11 @@ pub struct EventRecord {
     /// run made from the models, after the events of the file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub from_model: bool,
+    /// Whether test code made the step while the run went (D-096) and not the file: `event` is then its place among the
+    /// live changes, and `scheduled_ns` the moment the code asked. The recorded scenario holds it as an event at the slot of
+    /// the packet it met (`packet`), so a replay does it there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub live: bool,
 }
 
 /// Which scenario a result belongs to.
@@ -450,6 +456,10 @@ pub struct ScenarioInfo {
     /// The version of the profile library the profiles were resolved with; none if no link has a profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_library: Option<u32>,
+    /// The links that were declared live (D-096): the queues of these links were built so that any state fits, and code could change
+    /// them while the run went. A replay builds them the same way. Empty for a run that was not changed from code.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub live_links: Vec<String>,
 }
 
 impl ScenarioInfo {
@@ -501,6 +511,11 @@ pub(crate) fn scenario_info(
             .filter_map(|link| Some((link.id.to_string(), link.profile.clone()?)))
             .collect(),
         profile_library: scenario.profile_library,
+        live_links: scenario
+            .live_links
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
     }
 }
 
@@ -985,6 +1000,7 @@ pub(crate) mod tests {
                 params: std::collections::BTreeMap::new(),
                 profiles: std::collections::BTreeMap::new(),
                 profile_library: None,
+                live_links: Vec::new(),
             },
             provenance: Provenance {
                 netscenario: "0.0.0".to_owned(),

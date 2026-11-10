@@ -15,7 +15,7 @@ pytest finds this module through the ``pytest11`` entry point. What it offers:
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -46,6 +46,7 @@ _MARKER_OPTIONS = frozenset(
         "recovery_baseline",
         "recovery_window",
         "recovery_fraction",
+        "params",
     }
 )
 """The options of ``Runner.run`` that a marker can give (not the observer, token or directory)."""
@@ -118,7 +119,7 @@ def _guard(config: pytest.Config) -> Callable[[], None]:
 @pytest.fixture
 def netscenario(
     request: pytest.FixtureRequest, tmp_path: Path, pytestconfig: pytest.Config
-) -> Runner:
+) -> Iterator[Runner]:
     """The runner of this test.
 
     ``netscenario.run("file.yaml")`` runs a scenario file that is looked for next to the test file,
@@ -137,12 +138,15 @@ def netscenario(
         found = set_properties(result) if isinstance(result, ns.RunSet) else properties(result)
         item.user_properties.extend(found)
 
-    return Runner(
+    runner = Runner(
         out_root=tmp_path / "netscenario",
         search=search,
         guard=_guard(pytestconfig),
         record=record,
     )
+    yield runner
+    # A run the test started and did not wait for must not outlive it
+    runner.close()
 
 
 def _marker_run(request: pytest.FixtureRequest, fixture: str) -> tuple[str, dict[str, Any]]:
@@ -185,7 +189,7 @@ def netscenario_result(request: pytest.FixtureRequest, netscenario: Runner) -> n
             "netscenario_runs",
             pytrace=False,
         )
-    needed = netscenario.load(scenario).expect_repetitions
+    needed = netscenario.load(scenario, params=options.get("params")).expect_repetitions
     if needed is not None:
         pytest.fail(
             f"the checks in {scenario} need a set of {needed} runs, so the result is a set: use "
@@ -207,7 +211,10 @@ def netscenario_runs(request: pytest.FixtureRequest, netscenario: Runner) -> ns.
     """
     scenario, options = _marker_run(request, "netscenario_runs")
     # The checks of a file with `expect: {repetitions: n}` say how many runs they need (D-094)
-    if "repetitions" not in options and netscenario.load(scenario).expect_repetitions is None:
+    if (
+        "repetitions" not in options
+        and netscenario.load(scenario, params=options.get("params")).expect_repetitions is None
+    ):
         pytest.fail(
             "the fixture netscenario_runs needs repetitions in the marker: "
             '@pytest.mark.netscenario("scenario.yaml", repetitions=10)',

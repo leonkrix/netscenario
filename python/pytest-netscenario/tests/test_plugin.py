@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -676,6 +677,102 @@ def test_the_runs_of_a_file_with_checks_on_a_set_need_no_repetitions_in_the_mark
         def test_it(netscenario_runs):
             assert netscenario_runs.repetitions == 5
             assert netscenario_runs.expect.passed
+        """
+    )
+    pytester.runpytest().assert_outcomes(passed=1)
+
+
+# ---- parameters, live changes and asyncio (TML-05, PYT-04, SCN-05) ----
+
+PARAMETERS = SCENARIO.replace("topology:", "params:\n  delay: 20ms\ntopology:").replace(
+    "forward: { delay: 20ms }", 'forward: { delay: "{delay}" }'
+)
+
+
+@pytest.mark.usefixtures("runnable")
+def test_the_marker_and_the_call_take_the_values_of_the_parameters(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makefile(".yaml", plug=PARAMETERS)
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.netscenario("plug.yaml", params={"delay": "40ms"}, settle=0.2)
+        def test_marker(netscenario_result):
+            assert netscenario_result.scenario_params["delay"] == "40ms"
+            assert netscenario_result["media"].delay.p50 >= 0.040
+
+        def test_call(netscenario):
+            assert netscenario.load("plug.yaml", params={"delay": "10ms"}).params["delay"] == "10ms"
+            result = netscenario.run("plug.yaml", params={"delay": "30ms"}, settle=0.2)
+            assert result.scenario_params["delay"] == "30ms"
+            assert result["media"].delay.p50 >= 0.030
+        """
+    )
+    pytester.runpytest().assert_outcomes(passed=2)
+
+
+@pytest.mark.usefixtures("runnable")
+def test_a_test_changes_a_link_while_the_run_goes_and_the_report_has_it(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makefile(".yaml", plug=SCENARIO)
+    pytester.makepyfile(
+        """
+        def test_it(netscenario):
+            with netscenario.start("plug.yaml", live=["access"], settle=0.2) as run:
+                run.wait_until(0.3)
+                steps = run.link("access").set(delay="50ms")
+            assert steps[0].live
+            result = run.result()
+            assert netscenario.results == (result,)
+            assert result.steps[0].live
+        """
+    )
+    result = pytester.runpytest("-rA")
+    result.assert_outcomes(passed=1)
+
+
+@pytest.mark.usefixtures("runnable")
+def test_a_run_the_test_left_going_is_cancelled_when_the_test_ends(
+    pytester: pytest.Pytester,
+) -> None:
+    long = SCENARIO.replace("duration: 1s", "duration: 60s")
+    pytester.makefile(".yaml", plug=long)
+    pytester.makepyfile(
+        """
+        def test_it(netscenario):
+            run = netscenario.start("plug.yaml")
+            run.wait_until(0.2)
+            assert not run.done
+        """
+    )
+    began = time.monotonic()
+    pytester.runpytest().assert_outcomes(passed=1)
+    assert time.monotonic() - began < 20, "the run was not cancelled"
+
+
+@pytest.mark.usefixtures("runnable")
+def test_an_async_test_runs_a_scenario_without_blocking_the_loop(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makefile(".yaml", plug=SCENARIO)
+    pytester.makepyfile(
+        """
+        import asyncio
+
+        def test_it(netscenario):
+            async def main():
+                result = await netscenario.run_async("plug.yaml", settle=0.2)
+                assert result["media"].sent == 209
+                started = netscenario.start_async("plug.yaml", live=["access"], settle=0.2)
+                async with await started as run:
+                    await run.wait_until(0.3)
+                    await run.link("access").set(loss="1%")
+                return len(netscenario.results)
+
+            assert asyncio.run(main()) == 2
         """
     )
     pytester.runpytest().assert_outcomes(passed=1)
