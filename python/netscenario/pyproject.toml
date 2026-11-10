@@ -21,6 +21,11 @@ classifiers = [
 # released together (D-004)
 dynamic = ["version"]
 
+# The tables of a result (`Table.to_pandas`, `Table.to_polars`, PYT-05) need one of these. They are imported when the method is called
+[project.optional-dependencies]
+pandas = ["pandas>=2.0"]
+polars = ["polars>=1.0"]
+
 # `pip install netscenario` puts the command `netscenario` on the PATH: it starts the program of the
 # wheel (python/netscenario/src/netscenario/__main__.py)
 [project.scripts]

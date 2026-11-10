@@ -447,6 +447,72 @@ fn a_sender_asks_after_the_packet_before_and_holds_the_next_one_until_it_is_answ
     assert_eq!(held, [(0, 20, true), (1, 40, true)], "{:?}", sent.barriers);
 }
 
+/// A hold that the run asks for with `hold <id>` on the input (D-096): the sender asks the barrier for its next packet,
+/// sends nothing until the answer, and the packets before the barrier are exactly those it names. Two holds in a row are
+/// taken in the order they were asked, and a hold asked of a slow stream is taken at once and not at its next slot.
+#[test]
+fn a_hold_on_the_input_stops_the_stream_between_two_packets() {
+    let agent = env!("CARGO_BIN_EXE_netscenario-agent");
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let target = socket.local_addr().unwrap().to_string();
+    // 800 kbit with 100 byte packets: 1,000 packets a second, for 400 ms
+    let mut process = Command::new(agent)
+        .args(["send", "--to", &target, "--rate", "800000", "--size", "100"])
+        .args(["--duration-ns", "400000000"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = process.stdin.take().unwrap();
+    let mut lines = BufReader::new(process.stdout.take().unwrap()).lines();
+    std::thread::sleep(Duration::from_millis(100));
+    writeln!(stdin, "hold 5").unwrap();
+    let line = lines.next().unwrap().unwrap();
+    let Event::Barrier { id, packet, .. } = serde_json::from_str(&line).unwrap() else {
+        panic!("a barrier was expected, the sender said {line}");
+    };
+    assert_eq!(id, 5);
+    assert!((90..=130).contains(&packet), "held before packet {packet}");
+    // Held: everything before the packet is there and nothing else arrives while the answer is held back
+    std::thread::sleep(Duration::from_millis(100));
+    let seen = drain(&socket);
+    assert_eq!(
+        seen,
+        (0..u32::try_from(packet).unwrap()).collect::<Vec<_>>()
+    );
+    writeln!(stdin, "go 5").unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        drain(&socket).first(),
+        Some(&u32::try_from(packet).unwrap())
+    );
+    // The second hold, later: it gets its own number
+    writeln!(stdin, "hold 6").unwrap();
+    let line = lines.next().unwrap().unwrap();
+    let Event::Barrier {
+        id, packet: second, ..
+    } = serde_json::from_str(&line).unwrap()
+    else {
+        panic!("a barrier was expected, the sender said {line}");
+    };
+    assert_eq!(id, 6);
+    assert!(second > packet);
+    writeln!(stdin, "go 6").unwrap();
+    let Event::Sent(sent) = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() else {
+        panic!("the last line must be sent");
+    };
+    assert!(process.wait().unwrap().success());
+    assert_eq!(
+        sent.packets + sent.errors,
+        400,
+        "no slot is lost or repeated"
+    );
+    assert_eq!(sent.barrier_timeouts, 0);
+    let held: Vec<(u32, u64)> = sent.barriers.iter().map(|b| (b.id, b.packet)).collect();
+    assert_eq!(held, [(5, packet), (6, second)]);
+}
+
 /// Canary for the test above, and a rule of its own: a sender whose run has gone away (its standard input ends)
 /// does not wait for an answer that will never come, and says nothing was missed.
 #[test]

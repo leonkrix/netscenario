@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use netscenario_backend_kernel::{KernelBackend, KernelOptions};
 use netscenario_core::{
-    CancelToken, Error, Recorded, Repetition, RunEvent, RunOptions, RunSetOptions, compare,
-    replay_json, run, run_set,
+    CancelToken, Error, LiveChange, LiveHandle, Recorded, Repetition, RunEvent, RunOptions,
+    RunSetOptions, compare, replay_json, run, run_set,
 };
 use netscenario_model::{MeasureOverrides, Name, Probability, RecoveryBasis, Scenario};
 use pyo3::prelude::*;
@@ -278,6 +278,15 @@ pub(crate) struct Request {
     pub(crate) series: Series,
     /// Repetitions: run the scenario several times and return the text of `runset.json` (ASR-02, ASR-03).
     pub(crate) set: Option<RunSetOptions>,
+    /// How the scenario was read, so that it can be read again with its origins and a refusal of a backend is put at the line
+    /// where the value was written (D-093).
+    pub(crate) reading: Option<crate::Reading>,
+}
+
+/// The scenario read again with its origins, if it was expanded from parameters, templates or includes; `None` otherwise (the
+/// lines of the text are right then).
+fn located(source: &str, source_name: &str, reading: Option<&crate::Reading>) -> Option<Scenario> {
+    crate::read_scenario(source, source_name, reading?).ok()
 }
 
 /// What the thread of the run does.
@@ -444,8 +453,8 @@ fn conclude(
     py: Python<'_>,
     outcome: &Outcome,
     watch: &Watch,
-    source_name: &str,
-    source: &str,
+    (source_name, source): (&str, &str),
+    located: Option<&Scenario>,
 ) -> PyResult<String> {
     let (finished, interrupt) = wait_for(py, outcome, &watch.token);
     if let Some(error) = interrupt {
@@ -462,7 +471,7 @@ fn conclude(
     match finished {
         Finished::Returned(returned) => match *returned {
             Ok(text) => Ok(text),
-            Err(error) => Err(errors::core(py, &error, source_name, source)),
+            Err(error) => Err(errors::core(py, &error, source_name, source, located)),
         },
         Finished::Panicked(text) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
             "internal error in the native library: {text}"
@@ -486,6 +495,7 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
         working_dir,
         series,
         set,
+        reading,
     } = request;
     let mut scenario = Scenario::from_yaml(&canonical, &source_name)
         .map_err(|error| errors::scenario(py, &error))?;
@@ -493,6 +503,7 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
         scenario.seed = seed;
     }
     scenario.measure.apply(&series.overrides()?);
+    let found = located(&source, &source_name, reading.as_ref());
     let Prepared {
         options,
         before,
@@ -510,7 +521,13 @@ pub(crate) fn execute(py: Python<'_>, request: Request) -> PyResult<String> {
         None => Job::Run(scenario),
     };
     let outcome = start_worker(job, supervisor, options, before);
-    conclude(py, &outcome, &watch, &source_name, &source)
+    conclude(
+        py,
+        &outcome,
+        &watch,
+        (&source_name, &source),
+        found.as_ref(),
+    )
 }
 
 /// What the Python call of a replay asks for.
@@ -568,7 +585,202 @@ pub(crate) fn execute_replay(py: Python<'_>, request: ReplayRequest) -> PyResult
         py,
         &outcome,
         &watch,
-        netscenario_core::SCENARIO_FILE,
-        &source,
+        (netscenario_core::SCENARIO_FILE, &source),
+        None,
     )
+}
+
+/// A run that is going and can be talked to (TML-05, D-096): the object `netscenario.start` wraps. The run is on a thread of its
+/// own as for every run; this holds the handle that changes links, the slot the outcome appears in, and the token that stops it.
+#[pyclass(name = "LiveRun", module = "netscenario._native", frozen)]
+pub(crate) struct PyLiveRun {
+    handle: LiveHandle,
+    outcome: Outcome,
+    watch: Watch,
+    source_name: String,
+    source: String,
+    /// The scenario read again with its origins, for the lines of a refusal.
+    located: Option<Scenario>,
+    /// Whether `finish` was called: the outcome can be had once.
+    finishing: std::sync::atomic::AtomicBool,
+    /// Whether `finish` has taken the outcome: the run has ended then, and the slot is empty.
+    finished: std::sync::atomic::AtomicBool,
+}
+
+#[pymethods]
+impl PyLiveRun {
+    /// Changes a link and returns the records of the steps it made as JSON (a list of the objects of `events` in the result).
+    /// `action` is `"set"` (with `change`, the JSON of a `set` of the file: `{"forward": {...}}`), `"down"` or `"up"`. The call
+    /// returns once the backend has done it.
+    #[pyo3(signature = (link, action, change=None))]
+    fn change(
+        &self,
+        py: Python<'_>,
+        link: &str,
+        action: &str,
+        change: Option<&str>,
+    ) -> PyResult<String> {
+        let invalid = |text: String| pyo3::exceptions::PyValueError::new_err(text);
+        let link = Name::new(link).map_err(|error| invalid(format!("link: {error}")))?;
+        let request = match action {
+            "set" => {
+                let text = change.ok_or_else(|| invalid("set needs a change".to_owned()))?;
+                let change: netscenario_model::Change = serde_json::from_str(text)
+                    .map_err(|error| invalid(format!("the change is not valid: {error}")))?;
+                LiveChange::set(link, change)
+            }
+            "down" => LiveChange::down(link),
+            "up" => LiveChange::up(link),
+            other => return Err(invalid(format!("action is set, down or up, not '{other}'"))),
+        };
+        let records = py
+            .detach(|| self.handle.change(request))
+            // A change made by the code has no place in the text: the path is shown, not a line
+            .map_err(|error| errors::core(py, &error, "the change", "", None))?;
+        serde_json::to_string(&records)
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
+    }
+
+    /// How old the measured phase is in seconds, or `None` before the workloads started.
+    fn elapsed(&self) -> Option<f64> {
+        self.handle.elapsed().map(|elapsed| elapsed.as_secs_f64())
+    }
+
+    /// Waits at most `timeout` seconds for the run to end, with the GIL given up; whether it has. The outcome stays to be had with
+    /// `finish`.
+    fn wait_done(&self, py: Python<'_>, timeout: f64) -> bool {
+        if self.watch_outcome_ready() {
+            return true;
+        }
+        let (slot, ready) = &*self.outcome;
+        let limit = Duration::try_from_secs_f64(timeout.max(0.0)).unwrap_or(SLICE);
+        py.detach(|| {
+            let guard = slot.lock().unwrap_or_else(PoisonError::into_inner);
+            let (guard, _) = ready
+                .wait_timeout_while(guard, limit, |finished| finished.is_none())
+                .unwrap_or_else(PoisonError::into_inner);
+            guard.is_some()
+        })
+    }
+
+    /// Whether the run has ended (the outcome is there, to be had with `finish`).
+    fn is_done(&self) -> bool {
+        self.watch_outcome_ready()
+    }
+
+    /// Asks the run to stop: the network is torn down and `finish` raises `Cancelled`.
+    fn cancel(&self) {
+        self.watch.token.cancel();
+    }
+
+    /// Waits for the run to end and returns the text of `result.json`, or raises what went wrong. Once.
+    fn finish(&self, py: Python<'_>) -> PyResult<String> {
+        if self
+            .finishing
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "the run was finished already",
+            ));
+        }
+        let concluded = conclude(
+            py,
+            &self.outcome,
+            &self.watch,
+            (&self.source_name, &self.source),
+            self.located.as_ref(),
+        );
+        self.finished
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        concluded
+    }
+}
+
+impl PyLiveRun {
+    fn watch_outcome_ready(&self) -> bool {
+        // `finish` takes the outcome out of the slot: a run that was finished has ended
+        if self.finished.load(std::sync::atomic::Ordering::SeqCst) {
+            return true;
+        }
+        let (slot, _) = &*self.outcome;
+        slot.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+}
+
+/// Starts a run of the scenario on its own thread and returns the object that talks to it. `live` names the links the code may change;
+/// they must exist. A repetition set cannot be live.
+///
+/// # Errors
+///
+/// `ValueError` for a link that does not exist, or the errors of reading the scenario.
+pub(crate) fn execute_live(
+    py: Python<'_>,
+    request: Request,
+    live: Vec<String>,
+) -> PyResult<PyLiveRun> {
+    let Request {
+        source,
+        canonical,
+        source_name,
+        supervisor,
+        agent,
+        out_dir,
+        seed,
+        settle,
+        observer,
+        cancel,
+        working_dir,
+        series,
+        set: _,
+        reading,
+    } = request;
+    let mut scenario = Scenario::from_yaml(&canonical, &source_name)
+        .map_err(|error| errors::scenario(py, &error))?;
+    if seed.is_some() {
+        scenario.seed = seed;
+    }
+    scenario.measure.apply(&series.overrides()?);
+    let invalid = |text: String| pyo3::exceptions::PyValueError::new_err(text);
+    let mut names = Vec::new();
+    for link in live {
+        let name = Name::new(&link).map_err(|error| invalid(format!("live: {error}")))?;
+        if !scenario.topology.links.iter().any(|known| known.id == name) {
+            return Err(invalid(format!(
+                "live: there is no link '{link}' in the scenario"
+            )));
+        }
+        names.push(name);
+    }
+    let found = located(&source, &source_name, reading.as_ref());
+    let (handle, inbox) = netscenario_core::channel(names);
+    let Prepared {
+        options,
+        before,
+        watch,
+    } = prepare(
+        &agent,
+        &out_dir,
+        settle.map(Duration::from_secs_f64),
+        working_dir,
+        observer,
+        cancel,
+    );
+    let outcome = start_worker(
+        Job::Run(scenario),
+        supervisor,
+        options.with_live(inbox),
+        before,
+    );
+    Ok(PyLiveRun {
+        handle,
+        outcome,
+        watch,
+        source_name,
+        source,
+        located: found,
+        finishing: std::sync::atomic::AtomicBool::new(false),
+        finished: std::sync::atomic::AtomicBool::new(false),
+    })
 }

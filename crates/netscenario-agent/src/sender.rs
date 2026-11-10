@@ -64,6 +64,19 @@ pub trait Barriers {
     fn stopped(&self) -> bool {
         false
     }
+
+    /// Whether the run asked the sender to hold before its next packet (D-096) and the sender has not taken the request
+    /// yet. Looked at before every packet and while the sender waits for the next one, so the hold does not wait for
+    /// a slow stream. The default never asks.
+    fn hold_asked(&self) -> bool {
+        false
+    }
+
+    /// Takes the oldest request to hold, by the number the run gave it. The sender then asks the barrier with that
+    /// number for its next packet and waits for the answer.
+    fn take_hold(&mut self) -> Option<u32> {
+        None
+    }
 }
 
 /// Asks the barriers of `planned` from index `from` on that belong to `packet`, and notes when.
@@ -326,8 +339,33 @@ pub fn run_with(
     for (index, leaves_at) in schedule.offsets(*duration_ns).enumerate() {
         let n = index as u64;
         let due = start.saturating_add(leaves_at);
-        if !wait_until(due, &|| barriers.stopped()) {
-            summary.stopped = true;
+        // A hold that the run asks for comes before the packet: the barrier is asked for the packet that is next, and the
+        // sender waits for the answer, so the change is made between two packets and the number of the packet that
+        // meets the old state is exact (D-096). It is taken as soon as it is asked, not at the slot of the packet.
+        loop {
+            let reached = wait_until(due, &|| barriers.stopped() || barriers.hold_asked());
+            if barriers.stopped() {
+                summary.stopped = true;
+                break;
+            }
+            if reached && !barriers.hold_asked() {
+                break;
+            }
+            while let Some(id) = barriers.take_hold() {
+                let asked_at = monotonic_ns();
+                barriers.ask(id, n);
+                if !barriers.wait(id) {
+                    summary.barrier_timeouts += 1;
+                }
+                summary.barriers.push(BarrierDone {
+                    id,
+                    packet: n,
+                    asked_ns: asked_at,
+                    held_ns: monotonic_ns().saturating_sub(asked_at),
+                });
+            }
+        }
+        if summary.stopped {
             break;
         }
         // What the run is to do before this packet is done by now, or the packet waits for it
@@ -524,6 +562,86 @@ mod tests {
             "{:?}",
             began.elapsed()
         );
+    }
+
+    /// A run that asks the sender to hold after `after`, answers a little later, and notes what the sender asked.
+    struct HoldsAfter {
+        asked_at: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        asked: Vec<(u32, u64)>,
+        answer_after: Duration,
+    }
+
+    impl HoldsAfter {
+        fn new(after: Duration, answer_after: Duration) -> Self {
+            let pending = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let setter = std::sync::Arc::clone(&pending);
+            std::thread::spawn(move || {
+                std::thread::sleep(after);
+                setter.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            Self {
+                asked_at: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                pending,
+                asked: Vec::new(),
+                answer_after,
+            }
+        }
+    }
+
+    impl Barriers for HoldsAfter {
+        fn ask(&mut self, id: u32, packet: u64) {
+            self.asked.push((id, packet));
+        }
+        fn wait(&mut self, _id: u32) -> bool {
+            std::thread::sleep(self.answer_after);
+            true
+        }
+        fn hold_asked(&self) -> bool {
+            self.pending.load(std::sync::atomic::Ordering::SeqCst)
+                && !self.asked_at.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn take_hold(&mut self) -> Option<u32> {
+            if self.hold_asked() {
+                self.asked_at
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                Some(77)
+            } else {
+                None
+            }
+        }
+    }
+
+    /// A hold asked in the middle of a stream is taken before the next packet and not at its slot, the barrier is asked for
+    /// the number of the next packet, the packet waits for the answer, and the summary says how long (D-096). 100 packets a
+    /// second (80 kbit in packets of 100 bytes) for 1 s, the hold at 250 ms: packets 0 to 25 have left (one at
+    /// 0, 10, ... 250 ms: the 250 ms may or may not), the hold is for the next one, and the answer takes 50 ms.
+    #[test]
+    fn a_hold_is_taken_between_two_packets_and_the_summary_says_which() {
+        let mut stream = config(80_000, 100, 1_000_000_000);
+        stream.target = ([127, 0, 0, 1], 9).into();
+        let mut run = HoldsAfter::new(Duration::from_millis(250), Duration::from_millis(50));
+        let summary = run_with(&stream, &mut run).unwrap();
+        assert_eq!(run.asked.len(), 1);
+        let (id, packet) = run.asked[0];
+        assert_eq!(id, 77);
+        assert!((25..=26).contains(&packet), "held before packet {packet}");
+        // Every slot is accounted for: the hold neither loses nor repeats a packet
+        assert_eq!(summary.packets + summary.errors, 100);
+        let done = &summary.barriers;
+        assert_eq!(done.len(), 1);
+        assert_eq!((done[0].id, done[0].packet), (77, packet));
+        assert!(done[0].held_ns >= 50_000_000, "{}", done[0].held_ns);
+        assert!(!summary.stopped);
+    }
+
+    /// Canary for the test above: a sender without the hold (the default of the trait) asks nothing.
+    #[test]
+    fn a_run_that_never_holds_gets_no_barrier() {
+        let mut stream = config(80_000, 100, 200_000_000);
+        stream.target = ([127, 0, 0, 1], 9).into();
+        let summary = run_with(&stream, &mut NoBarriers).unwrap();
+        assert_eq!(summary.barriers, Vec::new());
     }
 
     /// A drawn schedule is sent as it is walked: the packets that left are exactly the moments of the schedule, and a

@@ -151,6 +151,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | `format`, `version` | See above. |
 | `scenario.name` | The `name` of the scenario. |
 | `scenario.profiles` | The profile of each link that has one, by the id of the link (D-095); absent without profiles. `scenario.profile_library` is the version of the library they were resolved with. The values themselves are in the scenario the run was made with. |
+| `scenario.live_links` | The links that were declared live (D-096): their queues were built so that code could change them to any state while the run went, and a replay builds them the same way. Absent for a run that was not started live. |
 | `scenario.params` | The parameters of the scenario with the values the run was made with, as text (D-093); absent for a scenario without `params:`. They are part of the hash. |
 | `scenario.hash` | `sha256:` and the SHA-256 of the scenario in canonical JSON (the keys in the order of the format, keys with default values left out). A change of comments or of the layout of the file does not change it; a change of any value does. Two results with the same hash come from the same scenario. |
 | `provenance` | Where, when and with what the result was made (ENV-02), below. |
@@ -392,6 +393,7 @@ One entry for each **step** of the timeline, in the order the run did them. An e
 | --- | --- |
 | `event` | The place of the event in `timeline` of the scenario as the run made it, from 0: an event that repeats is its copies one after the other, and the events that the models of the links made come last (D-090). |
 | `from_model` | `true` if a model made the event and not the file. Left out when `false`. |
+| `live` | `true` if the code made the step while the run went and not the file (D-096, `netscenario.start`). `event` is then its place among the live changes, `scheduled_ns` is the moment the code asked, and `packet` says which packet met the old state: the sender is held before its next packet and the step is done between two packets. The recorded scenario (`scenario.json`) holds the step as an event at the moment of the slot of that packet, so a replay does it at the same packet. Left out when `false`. A run with live steps says in `seed.not_reproducible_because` that a second live run differs. |
 | `kind` | `set`, `outage-start`, `outage-end`, `down` or `up` (D-064). The two ends of an outage are two steps, always done by the clock (`packet` is `null`); `down` and `up` have no `direction`. |
 | `link`, `direction` | The link, and `forward` or `reverse`; `null` for a step of the whole link. |
 | `scheduled_ns` | When the file says it happens, in nanoseconds from the start of the measured phase, the moment at which the workloads start. |

@@ -58,8 +58,18 @@ pub(crate) fn scenario(py: Python<'_>, error: &netscenario_model::Error) -> PyEr
 
 /// A scenario that the backend cannot reproduce exactly: every refusal, rendered with the lines of the text the
 /// scenario was read from.
-fn capability(py: Python<'_>, error: &CapabilityError, source_name: &str, source: &str) -> PyErr {
-    let rendered = error.render(source_name, source);
+fn capability(
+    py: Python<'_>,
+    error: &CapabilityError,
+    source_name: &str,
+    source: &str,
+    located: Option<&netscenario_model::Scenario>,
+) -> PyErr {
+    // A scenario that was expanded from parameters, templates or includes is shown at the line where the value was written
+    let rendered = match located {
+        Some(scenario) => error.render_for(scenario, source_name, source),
+        None => error.render(source_name, source),
+    };
     let message = if rendered.trim().is_empty() {
         error.to_string()
     } else {
@@ -86,8 +96,15 @@ fn capability(py: Python<'_>, error: &CapabilityError, source_name: &str, source
     }
 }
 
-/// An error of the core. `source_name` and `source` are the scenario as the person wrote it, for the lines.
-pub(crate) fn core(py: Python<'_>, error: &Error, source_name: &str, source: &str) -> PyErr {
+/// An error of the core. `source_name` and `source` are the scenario as the person wrote it, for the lines; `located` is the
+/// scenario read again with its origins (D-093), so that a refusal of a backend is put at the line where the value was written.
+pub(crate) fn core(
+    py: Python<'_>,
+    error: &Error,
+    source_name: &str,
+    source: &str,
+    located: Option<&netscenario_model::Scenario>,
+) -> PyErr {
     let none = || py.None().into_bound(py);
     match error {
         Error::InvalidScenario(_) => exception(
@@ -97,7 +114,7 @@ pub(crate) fn core(py: Python<'_>, error: &Error, source_name: &str, source: &st
             PyList::empty(py).into_any(),
         ),
         Error::Capability(capability_error) => {
-            capability(py, capability_error, source_name, source)
+            capability(py, capability_error, source_name, source, located)
         }
         Error::Backend { .. } => exception(py, "backend", &error.to_string(), none()),
         Error::Cancelled => exception(py, "cancelled", &error.to_string(), none()),

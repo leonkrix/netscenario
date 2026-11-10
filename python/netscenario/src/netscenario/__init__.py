@@ -23,6 +23,17 @@ from netscenario.errors import (
     ScenarioError,
     ScenarioProblem,
 )
+from netscenario.frames import Table
+from netscenario.live import (
+    UNSET,
+    AsyncLinkHandle,
+    AsyncRun,
+    LinkHandle,
+    Run,
+    run_async,
+    start,
+    start_async,
+)
 from netscenario.replay import Difference, LostPackets, Replay, Verdict, replay
 from netscenario.reports import ReportFormat, junit_properties, report
 from netscenario.results import (
@@ -76,7 +87,14 @@ from netscenario.runset import (
     SetRun,
     SetSeed,
 )
-from netscenario.scenario import Impairments, Jitter, Loss, Scenario, ScenarioBuilder
+from netscenario.scenario import (
+    Impairments,
+    Jitter,
+    Loss,
+    Reorder,
+    Scenario,
+    ScenarioBuilder,
+)
 
 __version__: str = pep440(_native.version())
 """The version of the package as pip knows it (``0.1.0rc1``).
@@ -85,7 +103,10 @@ The library and the programs write the same version as Cargo does (``0.1.0-rc.1`
 """
 
 __all__ = [
+    "UNSET",
     "Address",
+    "AsyncLinkHandle",
+    "AsyncRun",
     "BackendError",
     "Bin",
     "BinDelay",
@@ -110,6 +131,7 @@ __all__ = [
     "Interval",
     "Jitter",
     "LateTime",
+    "LinkHandle",
     "Loss",
     "LossRun",
     "LossRuns",
@@ -125,12 +147,14 @@ __all__ = [
     "QueueStats",
     "Recovery",
     "Refusal",
+    "Reorder",
     "Reordering",
     "Replay",
     "ReportFormat",
     "Reproducibility",
     "Restriction",
     "Result",
+    "Run",
     "RunError",
     "RunSet",
     "Scenario",
@@ -143,6 +167,7 @@ __all__ = [
     "SetMetric",
     "SetRun",
     "SetSeed",
+    "Table",
     "Tcp",
     "TcpGoodput",
     "TcpRequests",
@@ -159,4 +184,7 @@ __all__ = [
     "replay",
     "report",
     "run",
+    "run_async",
+    "start",
+    "start_async",
 ]

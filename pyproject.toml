@@ -22,6 +22,8 @@ dev = [
   "netscenario",
   "pytest-netscenario",
   "pytest>=8",
+  "pandas>=2.0",
+  "polars>=1.0",
   "ruff",
   "pyright",
 ]

@@ -92,13 +92,17 @@ pub struct Step {
     pub kind: Kind,
     /// What to do.
     pub action: Action,
+    /// For a `set` of the file: the change that led to the whole state in `action`. A run that is changed from test code
+    /// (D-096) works the state out again from this change and the state the direction is in, so that a step of the file
+    /// that comes after a live change keeps the keys the live change set. `None` for the other steps.
+    pub edit: Option<netscenario_model::ImpairmentsChange>,
 }
 
 /// The two directions of a link.
 const DIRECTIONS: [Direction; 2] = [Direction::Forward, Direction::Reverse];
 
 /// The impairments a link has at the start, for one direction: none if it has none.
-fn initial(link: &netscenario_model::Link, direction: Direction) -> Impairments {
+pub(crate) fn initial(link: &netscenario_model::Link, direction: Direction) -> Impairments {
     impairments_of(link, direction).cloned().unwrap_or_default()
 }
 
@@ -179,13 +183,14 @@ pub fn steps(scenario: &Scenario) -> Vec<Step> {
             Raw::Down => Kind::Down,
             Raw::Up => Kind::Up,
         };
-        let mut step = |action: Action| {
+        let mut step = |action: Action, edit: Option<&netscenario_model::ImpairmentsChange>| {
             steps.push(Step {
                 at,
                 event,
                 link,
                 kind,
                 action,
+                edit: edit.cloned(),
             });
         };
         let bases = &mut bases[link];
@@ -203,11 +208,14 @@ pub fn steps(scenario: &Scenario) -> Vec<Step> {
                         *base = edit.applied_to(base);
                     }
                     for &direction in directions(side) {
-                        step(Action::Impair {
-                            direction,
-                            impairments: Box::new(bases[way(direction)].clone()),
-                            outage: outages[way(direction)],
-                        });
+                        step(
+                            Action::Impair {
+                                direction,
+                                impairments: Box::new(bases[way(direction)].clone()),
+                                outage: outages[way(direction)],
+                            },
+                            Some(edit),
+                        );
                     }
                 }
             }
@@ -215,11 +223,11 @@ pub fn steps(scenario: &Scenario) -> Vec<Step> {
                 let on = matches!(kind, Kind::OutageStart);
                 for &direction in directions(side) {
                     outages[way(direction)] = on;
-                    step(Action::Blackout { direction, on });
+                    step(Action::Blackout { direction, on }, None);
                 }
             }
-            Raw::Down => step(Action::Down),
-            Raw::Up => step(Action::Up),
+            Raw::Down => step(Action::Down, None),
+            Raw::Up => step(Action::Up, None),
         }
     }
     steps
@@ -232,6 +240,22 @@ const fn way(direction: Direction) -> usize {
     }
 }
 
+/// The state that stands for every state a link that test code changes can be in (D-096): a delay, a rate, loss, reordering,
+/// duplication and corruption, all on. A rate with a reordering needs two queues, and loss needs the seed, so the layout fits
+/// any state; the rate makes the class of the rate part of it. It is never applied. It has no jitter of its own, because
+/// the distribution of a jitter is fixed by the first one the queue gets (D-059) and the code must be free to choose it; a link
+/// that starts with a jitter keeps that one.
+fn envelope(first: &Impairments) -> Impairments {
+    let mut change: netscenario_model::ImpairmentsChange = serde_json::from_str(
+        r#"{"delay":"1ms","loss":{"model":"random","p":"1%"},"reorder":{"share":"1%"},"duplicate":"1%","corrupt":"1%","rate":"1gbit"}"#,
+    )
+    .unwrap_or_default();
+    if let Some(jitter) = &first.jitter {
+        change.jitter = netscenario_model::Edit::Set(jitter.clone());
+    }
+    change.applied_to(&Impairments::default())
+}
+
 /// Every state that one direction of a link goes through, the one it starts with first: what a backend needs to know
 /// to build queues that every state fits (D-059). A state that repeats is listed once.
 #[must_use]
@@ -240,6 +264,14 @@ pub fn states_of(scenario: &Scenario, link: usize, direction: Direction) -> Vec<
         return Vec::new();
     };
     let mut states = vec![initial(first, direction)];
+    // A link that test code may change (D-096) has to be built for any state: the one with everything on, which needs the
+    // most queues and the seed, is planned as well
+    if scenario.live_links.contains(&first.id) {
+        let wide = envelope(&states[0]);
+        if !states.contains(&wide) {
+            states.push(wide);
+        }
+    }
     for step in steps(scenario) {
         if step.link != link {
             continue;
@@ -556,5 +588,36 @@ mod tests {
         // A link without events has its start only
         let quiet = scenario("      both: { delay: 5ms }\n", "  []\n");
         assert_eq!(states_of(&quiet, 0, Direction::Forward).len(), 1);
+    }
+
+    /// A link that code may change is planned for any state (D-096): it has one more state, with everything on but a jitter,
+    /// so that the layout has two queues and a seed. A link that is not declared live has none, and a jitter of the link
+    /// itself is kept. Canary: the same scenario without the declaration has one state.
+    #[test]
+    fn a_live_link_is_planned_for_a_state_with_everything_on() {
+        let mut s = scenario("      forward: { delay: 20ms }\n", "  []\n");
+        assert_eq!(states_of(&s, 0, Direction::Forward).len(), 1);
+        s.live_links = vec![s.topology.links[0].id.clone()];
+        for direction in [Direction::Forward, Direction::Reverse] {
+            let states = states_of(&s, 0, direction);
+            assert_eq!(states.len(), 2, "{direction:?}");
+            let wide = &states[1];
+            assert!(wide.delay.is_some() && wide.rate.is_some() && wide.loss.is_some());
+            assert!(wide.reorder.is_some() && wide.duplicate.is_some() && wide.corrupt.is_some());
+            assert!(
+                wide.jitter.is_none(),
+                "the code chooses the distribution of a jitter"
+            );
+        }
+        let mut with_jitter = scenario(
+            "      forward: { delay: 20ms, jitter: { amount: 5ms, distribution: normal } }\n",
+            "  []\n",
+        );
+        with_jitter.live_links = vec![with_jitter.topology.links[0].id.clone()];
+        let wide = &states_of(&with_jitter, 0, Direction::Forward)[1];
+        assert_eq!(
+            wide.jitter.as_ref().map(|j| j.distribution),
+            Some(netscenario_model::JitterDistribution::Normal)
+        );
     }
 }

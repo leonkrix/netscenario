@@ -212,10 +212,64 @@ The events are `Provisioned`, `ReceiversReady`, `Started`, `Progress` (once a se
 
 `ns.run` blocks, but it gives up the GIL and looks for interrupts every 100 ms. **Ctrl-C** (`KeyboardInterrupt`) and `pytest-timeout` stop the run: the network is torn down first, then the interrupt is raised. A cancel from Python is an error and not a partial result: the option that keeps what was recorded (`RunOptions::partial_on_cancel`, D-066) is for the command line. A run cannot be left behind: everything runs in a PID namespace that the kernel ends when the run's supervisor dies (D-022).
 
+## Changing a link while the run goes
+
+`ns.start` starts a run and returns at once with a `Run`. With `live` it names the links that the code may change (TML-05, D-096):
+
+```python
+with ns.start(scenario, live=["access"]) as run:
+    run.wait_until(1.5)                      # seconds into the measured phase
+    steps = run.link("access").set(loss="2%", rate="2mbit")
+    run.link("access").down()
+result = run.result()                        # after the block: the run has ended
+```
+
+- A change is a **step of the timeline** like the steps of the file. It takes the same keys as a `set` (`delay`, `jitter`, `loss`, `rate`, `reorder`, `duplicate`, `corrupt`; or `forward=`, `reverse=`, `both=` with a mapping or `ns.Impairments`), a key that is not given stays as it is, and `None` takes the impairment away. `down()` and `up()` are steps too. The call returns once the backend has done it, with the `TimelineStep`s it made (`live` is true, `packet` says which packet met the old state).
+- **It lands between two packets.** The run asks the sender that sends into the direction to hold before its next packet, does the step, and lets it go (`held` says how long that packet waited, about a millisecond). A direction no running workload sends into is changed by the clock (`packet` is `None`).
+- **A replay does it at the same packet.** The recorded scenario (`scenario.json`) holds each live change as an event at the moment of the slot of the packet it met, and `ns.replay` builds the live links as the run did (`Result.live_links`), so it loses the same packets. Two live runs differ, because the moment is the code's; the result says so in `seed.not_reproducible_because`.
+- **A link must be declared.** A direction is built once and not again (D-059): its queues keep their random numbers and the packets in flight. So the queues of a live link are built to fit any state (two queues, a seed, a rate stage that passes on at once while the link has no rate), and a change of another link is refused with `ValueError` (`run.link(...)`). The cost is a little more per packet on a live link.
+- **What the queues cannot follow is refused to the code, before anything changes**: a state that is not valid (`ScenarioError`, a jitter with no delay), and what the backend cannot do exactly (`CapabilityError`: a jitter whose distribution the queue could not go back to, D-059). The run goes on.
+- `run.elapsed` is the scenario's clock (the moment the workloads start is 0), `run.wait_until(seconds)` waits for a moment of it, `run.events()` yields the events as they come until the run has ended, `run.done`, `run.cancel()`. Leaving the block waits for the run (and raises what went wrong in it); leaving it with an exception cancels the run, waits until the network is torn down, and lets the exception go on.
+
+### `asyncio`
+
+```python
+result = await ns.run_async(scenario)                       # the loop is free while it runs
+
+async with await ns.start_async(scenario, live=["access"]) as run:
+    await run.wait_until(1.5)
+    await run.link("access").set(loss="2%")
+    async for event in run.events():
+        ...
+```
+
+`run_async` and `start_async` take the arguments of `run` and `start`. Nothing blocks the loop: the run is on a thread of its own as always, and the calls that wait go to a thread of the loop's executor that ends with the call. **A cancelled task cancels the run**, the call returns when the network is torn down, and then `asyncio.CancelledError` is raised; no thread is left behind. There is no dependency on a plugin: the tests use `asyncio.run`.
+
+## Tables, pandas and polars
+
+The per-packet records, the series and the steps of a result are tables of plain Python values in the units of the package (seconds, bits per second, ratios from 0 to 1), and a table becomes a frame (PYT-05):
+
+```python
+result = ns.run(scenario, packets=True)
+packets = result["media"].packets_table()     # sequence, send, receive, delay, lost, duplicate, corrupted, unexpected
+series = result["media"].series.table()        # one row for each bin: sent, received, lost, delays, arrived, bits
+steps = result.steps_table()                   # the steps of the timeline, live ones included
+
+df = packets.to_pandas()                       # pip install 'netscenario[pandas]'
+lf = series.to_polars()                        # pip install 'netscenario[polars]'
+packets.to_dicts()                             # no library needed
+```
+
+Neither library is a dependency: they are the extras `netscenario[pandas]` and `netscenario[polars]` and are imported when the method is called; without them it raises an `ImportError` that names the extra. The packets table needs the export (`packets=True`, or `measure.packets` in the scenario).
+
+## Building a scenario in code
+
+`Scenario.builder` has a method for each part of the format ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md)): `nodes()` and `node(id, role="router")`, `link(...)` with `both`/`forward`/`reverse` as `Impairments` (`delay`, `jitter`, `loss` as a string, a `Loss` or a mapping for the other models, `rate`, `reorder`, `duplicate`, `corrupt`, `queue`), `profile`, `model`, `cost` and `mtu`; `routing()` and `route()`; the workloads (`udp_cbr`, `udp_poisson`, `udp_onoff`, `udp_bursty`, `tcp_bulk`, `request_response`); `event()` for the timeline (a `set`, an `outage`, `down`, `up`, repeated with `every`); `expect()` for the checks of the file; `measure()`. `build()` checks the scenario with the core, and a scenario made this way equals the one read from the same file. What the format has beyond this (templates, includes, `params:`) is for files: a scenario in code has Python.
+
 ## The programs of a run
 
 Python cannot be the supervisor of a run (it has several threads and cannot move into a user namespace), so a run starts the program `netscenario`, which is its own supervisor, and `netscenario-agent` in the nodes. They are looked for in this order: the directory in `NETSCENARIO_BIN_DIR`; `netscenario/_bin` inside the package (where a wheel puts them); in a checkout, `target/release` or `target/debug`, whichever was built last. If they are not found, `ns.run` raises `BackendError` and lists the places it looked.
 
 ## Not yet
 
-`asyncio` (0.3), per-packet data as frames (0.3). The pytest plugin is described in [PYTEST.md](PYTEST.md).
+The pytest plugin is described in [PYTEST.md](PYTEST.md).

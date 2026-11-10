@@ -162,6 +162,12 @@ pub struct Scenario {
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) origins: Origins,
+    /// The links that test code may change while the run goes (D-096). Not part of the file: it is not written or hashed, a run
+    /// takes it from its options and a replay from the result. A backend builds the queues of these links so that any state
+    /// fits (`netscenario_core::timeline::states_of`).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub live_links: Vec<Name>,
     /// The nodes, the links between them and the routes.
     pub topology: Topology,
     /// What sends traffic. At least one.
@@ -199,6 +205,7 @@ impl Scenario {
             params: BTreeMap::new(),
             profile_library: None,
             origins: Origins::default(),
+            live_links: Vec::new(),
             topology,
             workloads,
             timeline: Vec::new(),
@@ -639,6 +646,26 @@ pub struct Event {
     /// How many times the event happens in all. Needs `every`; not with `until`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+}
+
+impl Event {
+    /// An event of `link` at `at` that does nothing yet: set `set`, `down` or `up` on the result. For a change that the code
+    /// makes while the run goes (D-096).
+    #[must_use]
+    pub fn new(at: Duration, link: Name) -> Self {
+        Self {
+            at,
+            link,
+            direction: None,
+            set: None,
+            outage: None,
+            down: None,
+            up: None,
+            every: None,
+            until: None,
+            count: None,
+        }
+    }
 }
 
 /// What `set` changes, for each direction. `both` changes the two directions.

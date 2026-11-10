@@ -51,6 +51,12 @@ def test_the_loss_is_low(netscenario_runs):
     assert netscenario_runs.metric("media.loss_ratio").ci95_high < 0.05
 ```
 
+## Parameters, live changes and `asyncio`
+
+- **Parameters.** `netscenario.run("file.yaml", params={"rtt": "40ms"})`, `netscenario.load("file.yaml", params=...)` and the marker `@pytest.mark.netscenario("file.yaml", params={"rtt": "40ms"})` give the values of the parameters of the scenario ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#parameters)); the result records them (`result.scenario_params`). A refusal of a backend for a scenario that was expanded from a template is shown at the line of the file where the value was written.
+- **Changing a link while the run goes** (TML-05, [PYTHON.md](PYTHON.md#changing-a-link-while-the-run-goes)). `netscenario.start("file.yaml", live=["access"])` is `netscenario.start` with the file looked for and the directory chosen as for `run`. The result goes into the report of the test when the test asks for it (`run.result()`, or leaving the `with` block). A run that the test left going is cancelled and torn down when the test ends.
+- **`asyncio`.** `await netscenario.run_async(...)` and `await netscenario.start_async(...)` in a test that runs its own loop (`asyncio.run`, or any plugin that does): the same arguments, the same report. The plugin needs no async plugin and does not start a loop.
+
 ## A machine that cannot run scenarios
 
 A run needs network namespaces. Before the first run of a session the plugin asks `netscenario.doctor()` (once) and, if the machine cannot run scenarios, **skips** the test with the reason and the fix, or **fails** it. `--netscenario-environment` chooses:

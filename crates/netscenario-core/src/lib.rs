@@ -62,6 +62,7 @@ mod expect;
 mod export;
 mod feature;
 mod files;
+mod live;
 mod machine;
 pub mod metrics;
 mod models;
@@ -98,6 +99,7 @@ pub use expect::{
 pub use export::{write_packets, write_packets_marked, write_packets_refused};
 pub use feature::{FAST_RATE_STEP, FASTEST_RATE_STEP, Feature, Requirement, requirements};
 pub use files::{DirectoryFiles, load_scenario, read_referenced, resolve_files};
+pub use live::{LiveAction, LiveChange, LiveHandle, LiveInbox, channel};
 pub use machine::{Provenance, collect as collect_provenance, rfc3339_utc};
 pub use models::expand_models;
 pub use netscenario_model::sha256_hex;

@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=../../docs/schema/scenario-v0.json
+# A stream over a link of 4 mbit and 30 ms of delay for 4 s. The file changes nothing: the test does, while the run goes
+# (test_live_change.py), and the result records the change as a step of the timeline at the packet it met.
+version: 0
+name: live-stream
+duration: 4s
+seed: 7
+topology:
+  nodes: [client, server]
+  links:
+    - id: access
+      between: [client, server]
+      forward: { delay: 30ms, rate: 4mbit }
+workloads:
+  - { id: media, kind: udp-cbr, from: client, to: server, rate: 1mbit, packet-size: 1000b }

@@ -163,6 +163,20 @@ impl Recorded {
         if let Some(seed) = self.result.seed.value {
             scenario.seed = Some(seed);
         }
+        // The links that code changed while the run went are built the same way (D-096)
+        scenario.live_links = scenario
+            .topology
+            .links
+            .iter()
+            .filter(|link| {
+                self.result
+                    .scenario
+                    .live_links
+                    .iter()
+                    .any(|name| *name == link.id.as_str())
+            })
+            .map(|link| link.id.clone())
+            .collect();
         scenario
     }
 

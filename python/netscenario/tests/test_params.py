@@ -194,3 +194,33 @@ def test_the_examples_with_parameters_and_includes_load(repository: Path) -> Non
     )
     assert bigger.data["workloads"][0]["rate"] == "16mbit"
     assert json.loads(bigger.to_json())["params"]["rate"] == "20mbit"
+
+
+@pytest.mark.usefixtures("runnable")
+def test_a_refusal_of_the_backend_is_put_at_the_line_where_the_value_was_written() -> None:
+    """The run reads the canonical scenario, which has no lines.
+
+    The refusal is located through the text again, so a scenario that was expanded from a template
+    shows the line of the file and not the nearest one of the expanded text.
+    """
+    text = (
+        "version: 0\nname: refused\nduration: 5s\n"
+        "templates:\n  access:\n    params:\n      id:\n      node:\n    content:\n"
+        '      id: "{id}"\n      between: ["{node}", server]\n      both: { rate: 10mbit }\n'
+        "topology:\n  nodes: [a, b, server]\n  links:\n"
+        "    - use: access\n      with:\n        id: la\n        node: a\n"
+        "    - use: access\n      with:\n        id: lb\n        node: b\n"
+        "workloads:\n"
+        "  - { id: w, kind: udp-cbr, from: a, to: server, rate: 1mbit, packet-size: 1200b }\n"
+        "timeline:\n"
+        "  - { at: 1s, link: la, set: { forward: { rate: 5mbit } } }\n"
+        "  - { at: 1050ms, link: la, set: { forward: { rate: 2mbit } } }\n"
+    )
+    line = (
+        text.splitlines().index("  - { at: 1s, link: la, set: { forward: { rate: 5mbit } } }") + 1
+    )
+    scenario = ns.Scenario.from_yaml(text, name="refused.yaml")
+    with pytest.raises(ns.CapabilityError) as raised:
+        ns.run(scenario)
+    # The column too: the expanded text puts the mark at column 5, the line of the file at 7
+    assert f"refused.yaml:{line}:7" in str(raised.value), str(raised.value)

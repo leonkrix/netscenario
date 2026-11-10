@@ -57,6 +57,23 @@ class Loss:
 
 
 @dataclass(frozen=True)
+class Reorder:
+    """Some packets skip the delay and so overtake the others (needs a delay on the link)."""
+
+    share: str
+    """The share of the packets that are sent at once, always with the percent sign: ``"5%"``."""
+    gap: int | None = None
+    """Every ``gap``-th packet is a candidate; the default is 1."""
+
+    def to_data(self) -> dict[str, Any]:
+        """The reordering as the plain data of the file format."""
+        data: dict[str, Any] = {"share": self.share}
+        if self.gap is not None:
+            data["gap"] = self.gap
+        return data
+
+
+@dataclass(frozen=True)
 class Impairments:
     """What a link does to the packets of one direction.
 
@@ -68,10 +85,20 @@ class Impairments:
     """A fixed delay, for example ``"40ms"``."""
     jitter: Jitter | str | None = None
     """A jitter. A string is the amount of a uniform jitter: ``"5ms"``. Needs ``delay``."""
-    loss: Loss | str | None = None
-    """A loss. A string is the probability of a random loss: ``"1%"``."""
+    loss: Loss | str | Mapping[str, Any] | None = None
+    """A loss. A string is the probability of a random loss: ``"1%"``. A mapping is any other model
+    as the file writes it (``{"model": "gilbert-elliott", "p": "2%", "r": "30%", ...}``)."""
     rate: str | None = None
     """A limit on the rate of the link, for example ``"10mbit"``."""
+    reorder: Reorder | str | None = None
+    """A reordering. A string is the share: ``"5%"``. Needs ``delay``."""
+    duplicate: str | None = None
+    """The share of the packets that are sent twice, for example ``"0.5%"``."""
+    corrupt: str | None = None
+    """The share of the packets with one bit flipped, for example ``"0.2%"``."""
+    queue: Mapping[str, Any] | None = None
+    """A queue in front of the rate, as the file writes it (``{"limit": "100p"}``,
+    ``{"discipline": "codel"}``). Needs ``rate``."""
 
     def to_data(self) -> dict[str, Any]:
         """The impairments as the plain data of the file format; what is not set is left out."""
@@ -82,10 +109,22 @@ class Impairments:
             jitter = Jitter(self.jitter) if isinstance(self.jitter, str) else self.jitter
             data["jitter"] = jitter.to_data()
         if self.loss is not None:
-            loss = Loss(self.loss) if isinstance(self.loss, str) else self.loss
-            data["loss"] = loss.to_data()
+            if isinstance(self.loss, Mapping):
+                data["loss"] = dict(self.loss)
+            else:
+                loss = Loss(self.loss) if isinstance(self.loss, str) else self.loss
+                data["loss"] = loss.to_data()
         if self.rate is not None:
             data["rate"] = self.rate
+        if self.reorder is not None:
+            reorder = Reorder(self.reorder) if isinstance(self.reorder, str) else self.reorder
+            data["reorder"] = reorder.to_data()
+        if self.duplicate is not None:
+            data["duplicate"] = self.duplicate
+        if self.corrupt is not None:
+            data["corrupt"] = self.corrupt
+        if self.queue is not None:
+            data["queue"] = dict(self.queue)
         return data
 
 
@@ -259,6 +298,17 @@ class Scenario:
             name, duration=duration, seed=seed, backend=backend, allow_limited=allow_limited
         )
 
+    def native_reading(self) -> tuple[str | None, bool, list[tuple[str, str]]] | None:
+        """How the scenario was read, for the native library (not part of the API).
+
+        The run reads the text again with it to put a refusal of a backend at the line where the
+        value was written, in the template or the included file (``docs/SCENARIO-FORMAT.md``).
+        """
+        reading = self._reading
+        if reading is None:
+            return None
+        return (reading.base_dir, reading.allow_outside_files, list(reading.params))
+
     @property
     def name(self) -> str:
         """The name of the scenario."""
@@ -408,13 +458,136 @@ class ScenarioBuilder:
             self._data["backend"] = backend
         if allow_limited:
             self._data["allow-limited"] = list(allow_limited)
-        self._nodes: list[str] = []
+        self._nodes: list[str | dict[str, Any]] = []
+        self._topology: dict[str, Any] = {}
+        self._timeline: list[dict[str, Any]] = []
         self._links: list[dict[str, Any]] = []
         self._workloads: list[dict[str, Any]] = []
 
     def nodes(self, *names: str) -> Self:
-        """Add nodes. Release 0.1 has exactly two."""
+        """Add hosts. For a router use :meth:`node`."""
         self._nodes.extend(names)
+        return self
+
+    def node(self, id: str, *, role: Literal["host", "router"] | None = None) -> Self:
+        """Add a node with a role: a ``"router"`` forwards packets between its links."""
+        self._nodes.append(id if role is None else {"id": id, "role": role})
+        return self
+
+    def routing(self, mode: Literal["auto", "manual"], *, ecmp: bool | None = None) -> Self:
+        """Say how the routes are made.
+
+        ``"auto"`` (the default) computes them, ``"manual"`` only has the ones added with
+        :meth:`route`. ``ecmp`` installs all the shortest paths.
+        """
+        self._topology["routing"] = mode
+        if ecmp is not None:
+            self._topology["ecmp"] = ecmp
+        return self
+
+    def route(
+        self,
+        node: str,
+        to: str,
+        via: str,
+        *,
+        metric: int | None = None,
+        weight: int | None = None,
+    ) -> Self:
+        """Add a route: ``node`` sends to ``to`` (a node, or ``"default"``) out of the link ``via``.
+
+        Routes with the same ``metric`` (default 100) share the packets by their ``weight``.
+        """
+        route: dict[str, Any] = {"node": node, "to": to, "via": via}
+        if metric is not None:
+            route["metric"] = metric
+        if weight is not None:
+            route["weight"] = weight
+        self._topology.setdefault("routes", []).append(route)
+        return self
+
+    def event(
+        self,
+        at: str,
+        link: str,
+        *,
+        set: Mapping[str, Any] | None = None,
+        both: Edit | None = None,
+        forward: Edit | None = None,
+        reverse: Edit | None = None,
+        outage: str | None = None,
+        direction: Literal["forward", "reverse", "both"] | None = None,
+        down: bool = False,
+        up: bool = False,
+        every: str | None = None,
+        until: str | None = None,
+        count: int | None = None,
+    ) -> Self:
+        """Add an event to the timeline: at ``at`` something happens to ``link``.
+
+        Exactly one of ``set`` (or ``both``/``forward``/``reverse``, the keys of a ``set``),
+        ``outage``, ``down`` and ``up``. In a change a key that is not given stays as it is, and a
+        mapping with ``None`` takes the impairment away; :class:`Impairments` change the keys that
+        are set. ``every``, with ``until`` or ``count``, repeats the event.
+        """
+        event: dict[str, Any] = {"at": at, "link": link}
+        change: dict[str, Any] = dict(set) if set is not None else {}
+        for key, edit in (("both", both), ("forward", forward), ("reverse", reverse)):
+            if edit is not None:
+                change[key] = edit.to_data() if isinstance(edit, Impairments) else dict(edit)
+        if change:
+            event["set"] = change
+        if outage is not None:
+            event["outage"] = outage
+        if direction is not None:
+            event["direction"] = direction
+        if down:
+            event["down"] = True
+        if up:
+            event["up"] = True
+        for key, value in (("every", every), ("until", until), ("count", count)):
+            if value is not None:
+                event[key] = value
+        self._timeline.append(event)
+        return self
+
+    def expect(
+        self,
+        metric: str,
+        *,
+        name: str | None = None,
+        value: str | None = None,
+        mean: str | None = None,
+        median: str | None = None,
+        min: str | None = None,
+        max: str | None = None,
+        ci95_low: str | None = None,
+        ci95_high: str | None = None,
+        repetitions: int | None = None,
+    ) -> Self:
+        """Add a check on a metric that the core judges when the run is over (``expect``).
+
+        A bound is a string, an operator and a value in the unit of the metric: ``"< 150ms"``,
+        ``">= 8mbit"``, ``"<= 2%"``. ``value`` judges one run; the others judge a set of runs
+        (``repetitions``, 5 to 1000, says how many).
+        """
+        check: dict[str, Any] = {"metric": metric}
+        for key, bound in (
+            ("name", name),
+            ("value", value),
+            ("mean", mean),
+            ("median", median),
+            ("min", min),
+            ("max", max),
+            ("ci95-low", ci95_low),
+            ("ci95-high", ci95_high),
+        ):
+            if bound is not None:
+                check[key] = bound
+        expect = self._data.setdefault("expect", {})
+        expect.setdefault("checks", []).append(check)
+        if repetitions is not None:
+            expect["repetitions"] = repetitions
         return self
 
     def link(
@@ -428,6 +601,8 @@ class ScenarioBuilder:
         reverse: Impairments | None = None,
         model: Mapping[str, Any] | None = None,
         profile: str | None = None,
+        cost: int | None = None,
+        mtu: int | None = None,
     ) -> Self:
         """Add a link between two nodes.
 
@@ -446,8 +621,15 @@ class ScenarioBuilder:
             profile: The id of a profile of the library (``"lte-typical"``; ``netscenario profiles``
                 lists them). The first node is the terminal: ``forward`` is up, ``reverse`` is down.
                 The values written above win over the profile, key by key.
+            cost: What the link costs the automatic routing (default 1): the shortest path is the
+                smallest sum.
+            mtu: The largest packet of the link in bytes (default 1500).
         """
         link: dict[str, Any] = {"id": id, "between": [first, second]}
+        if cost is not None:
+            link["cost"] = cost
+        if mtu is not None:
+            link["mtu"] = mtu
         if profile is not None:
             link["profile"] = profile
         for key, impairments in (("both", both), ("forward", forward), ("reverse", reverse)):
@@ -826,8 +1008,14 @@ class ScenarioBuilder:
                 because there is no file.
         """
         data = dict(self._data)
-        data["topology"] = {"nodes": list(self._nodes), "links": list(self._links)}
+        data["topology"] = {
+            **self._topology,
+            "nodes": list(self._nodes),
+            "links": list(self._links),
+        }
         data["workloads"] = list(self._workloads)
+        if self._timeline:
+            data["timeline"] = list(self._timeline)
         text = json.dumps(data, indent=2)
         try:
             return Scenario(text, "<builder>", _native.parse_scenario(text, "<builder>"))
@@ -835,11 +1023,19 @@ class ScenarioBuilder:
             raise _without_places(error) from None
 
 
+Edit = Impairments | Mapping[str, Any]
+"""A change of the impairments of one direction.
+
+:class:`Impairments` (the keys that are set), or the keys of a ``set`` of the file as a mapping,
+where ``None`` takes an impairment away."""
+
 __all__ = [
+    "Edit",
     "Impairments",
     "Jitter",
     "JitterDistribution",
     "Loss",
+    "Reorder",
     "Scenario",
     "ScenarioBuilder",
     "ScenarioProblem",
