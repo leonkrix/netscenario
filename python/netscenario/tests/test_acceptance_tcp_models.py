@@ -65,7 +65,7 @@ import pytest
 
 import netscenario as ns
 
-pytestmark = pytest.mark.usefixtures("runnable")
+pytestmark = [pytest.mark.usefixtures("runnable"), pytest.mark.once]
 
 RUNS = 5
 SEGMENT = 1448

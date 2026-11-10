@@ -33,6 +33,11 @@ dev = [
 testpaths = ["python", "examples"]
 # pytester is the pytest plugin that lets a test run pytest on a test file of its own (used for the plugin)
 addopts = "-ra --strict-markers --strict-config -p pytester"
+markers = [
+  # A test that does not depend on the version of Python and takes long: the CI runs it on one version, in jobs of their own
+  # (`just py-test-versions` leaves them out, `just py-test-once` runs them). A plain `pytest` runs all.
+  "once: does not depend on the version of Python and takes long; the CI runs it once",
+]
 
 [tool.ruff]
 line-length = 100

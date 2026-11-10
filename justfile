@@ -40,6 +40,32 @@ fidelity:
 # All the tests: the quick ones, then the fidelity tests
 test: test-quick fidelity-test
 
+# The binaries that ask for all the threads (`.config/nextest.toml`) run alone in the part they fall in.
+# One part of the quick tests: the CI cuts them in parts that run on machines of their own (`just test-part 1 2`, `just test-part 2 2`)
+test-part part="1" of="1":
+    cargo nextest run --workspace --all-features --no-tests=pass -E 'not binary(fidelity)' --partition count:{{part}}/{{of}}
+
+# Only the doc tests (nextest does not run them; the Python extension has none)
+test-doc:
+    cargo test --workspace --exclude netscenario-py --all-features --doc
+
+# Compile what `test-part` and `test-kernel` run, and run nothing: the run after a merge fills the caches this way (`ci.yml`)
+build-tests:
+    cargo nextest run --workspace --all-features -E 'not binary(fidelity)' --no-run
+
+# The same for what `test-kernel` runs (the CI builds it as the runner user and runs it as root)
+build-kernel-tests:
+    cargo nextest run -p netscenario-backend-kernel -p netscenario-agent --all-features -E 'not binary(fidelity)' --no-run
+
+# The same for the fidelity tests
+build-fidelity:
+    cargo nextest run -p netscenario-backend-kernel -p netscenario-agent --all-features -E 'binary(fidelity)' --no-run
+
+# The CI runs this on Rust 1.89 (the rust-version in Cargo.toml) in place of the whole test suite: the two libraries are pure logic.
+# The tests of the model and the core
+msrv-test:
+    cargo nextest run -p netscenario-model -p netscenario-core --all-features --no-tests=pass
+
 # Nextest does not run doc tests. The Python extension is a cdylib: cargo has no doc tests for it and would say
 # so on every run, so it is left out of the doc tests.
 # Everything but the fidelity tests, and the doc tests
@@ -85,11 +111,24 @@ py-programs:
     cargo build -p netscenario-cli -p netscenario-agent
 
 # Python: format, lints, types (pyright, strict) and tests
-py-check: py-sync py-programs
+py-check: py-sync py-programs py-lint
+    uv run pytest
+
+# Format, lint and type check the Python code
+py-lint:
     uv run ruff format --check python examples
     uv run ruff check python examples
     uv run pyright
-    uv run pytest
+
+# The long tests that do not depend on the version of Python are marked `once`: the TCP acceptance tests, the run of the book, the
+# tests of the release scripts. The CI runs them once (`py-test-once`) and this on every version.
+# All the Python tests but those marked `once`
+py-test-versions:
+    uv run pytest -m "not once"
+
+# The tests marked `once`; with paths, only those files
+py-test-once *paths:
+    uv run pytest -m once {{paths}}
 
 # Format the Python code and fix what ruff can fix
 py-fmt: py-sync
