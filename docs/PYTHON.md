@@ -37,7 +37,7 @@ assert media.delay is not None
 assert media.delay.p99 < 0.150  # seconds
 ```
 
-A run builds the network in network namespaces, starts the agents in the nodes, lets the workloads run for the duration of the scenario and removes everything again. It needs the same machine as the command line; `ns.doctor()` says what this one can do.
+A run builds the network in network namespaces, starts the agents in the nodes, lets the workloads run for the duration of the scenario and removes everything again. It needs the same machine as the command line; `ns.doctor()` says what this one can do, and `ns.doctor(timers=True)` also how precise its timers are (about two seconds; `report.timers`, `report.tc_change`, times in seconds). Each result carries a short measurement of the same in `result.provenance.timers`.
 
 ## Scenarios
 

@@ -7,9 +7,10 @@ Both commands belong to the Kernel backend (D-005, D-022). They are for the pers
 ```bash
 netscenario doctor            # text for people
 netscenario doctor --json     # the same checks as JSON
+netscenario doctor --timers   # also the precision of the timers (about two seconds)
 ```
 
-It looks at the machine and prints one line per check, in four groups, and for everything that is not as it should be a line `fix:` that says what to do. The exit code is **0** if scenarios can run here and **3** if something has to be fixed first (the codes are listed in `netscenario --help`). A warning does not change the exit code: it means a scenario can run, with a limit that the line names.
+It looks at the machine and prints one line per check, in four groups (five with `--timers`, below), and for everything that is not as it should be a line `fix:` that says what to do. The exit code is **0** if scenarios can run here and **3** if something has to be fixed first (the codes are listed in `netscenario --help`). A warning does not change the exit code: it means a scenario can run, with a limit that the line names.
 
 | Group | Check (`id`) | What it tests | Not as it should be |
 | --- | --- | --- | --- |
@@ -47,6 +48,22 @@ The steps after `veth` are not blamed on the kernel when no pair could be create
 ```
 
 `status` is `ok`, `warn`, `fail` or `info`; `version` is the version of this form and changes when a field changes its meaning. `ok` is true when no check failed.
+
+### `--timers`: how precise the timers of this machine are (ENV-05, D-097)
+
+A packet leaves at the slot the plan gives it only as exactly as the machine wakes a sleeping core, and a step of a timeline is done only as fast as `tc` answers. How late that is depends on the processor, its idle states, the timer slack of the process and the load, so no figure can be promised; `--timers` measures this machine for about two seconds and adds a group **Timers**:
+
+| Check (`id`) | What it measures | `warn` when |
+| --- | --- | --- |
+| `timer-clock` | The source of `CLOCK_MONOTONIC`, what a reading costs and the smallest step between two readings. A sender reads the clock for every packet. | a reading costs more than 1 microsecond (a `hpet` or `acpi_pm` source, a virtual machine that traps the clock) |
+| `timer-sleep-200us`, `timer-sleep-1ms` | How much longer than asked a sleep of that length took: the median, the 99th percentile and the largest of 1,000 and 300 sleeps. It is the call the senders and the steps wait with. | the 99th percentile is later than 150 microseconds, the stretch a sender spins at the end: a later wake-up sends the packet late |
+| `timer-slack` | The timer slack of the process (50 microseconds unless changed: the kernel may delay a timer this much, which is why a median of about 50 microseconds late is usual) and the governor of the first processor. | never (`info`) |
+| `timer-load` | The load average of the last minute against the number of processors, and the runnable tasks. | the load is above the number of processors |
+| `timer-tc-change` | What a change of the root qdisc costs through the `tc` that lives for a run (D-038): 500 changes of a `netem` in a network namespace of its own, a `pfifo` where the kernel has no `netem`. It is what a step of a timeline waits for. | the 99th percentile is above 2 milliseconds; `info` with the reason where no namespace can be made |
+
+A late timer is a `warn` and never a `FAIL`: the exit code is the one of the rest of the report, and a run is not refused because of it. `--json` has the same checks and, next to them, the measurements under `timers` (`timers`, `tc_change`, or `tc_change_error`). From Python: `ns.doctor(timers=True)`.
+
+Every run records a short version of the same measurement (about 40 milliseconds, taken just before the network is built) as `provenance.timers` ([RESULTS.md](RESULTS.md)), and the text and the page of a run have a line for it. What a run actually met is in `max_lateness_ns` of each workload and, for the steps, in `applied_ns - scheduled_ns` of the `events`; the report says what the machine does when it is idle of this run, those say what the run got.
 
 ### The gate: a run follows the probe (D-068)
 

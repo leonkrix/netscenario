@@ -1010,6 +1010,7 @@ pub(crate) mod tests {
                 kernel: None,
                 cpu_model: None,
                 cpus: Some(4),
+                timers: None,
             },
             seed: SeedInfo {
                 value: Some(7),

@@ -24,8 +24,8 @@ def needs(text: str, source_name: str) -> list[str]:
 def schema() -> str:
     """The JSON Schema of the scenario format."""
 
-def doctor() -> str:
-    """The JSON of ``netscenario doctor --json``."""
+def doctor(timers: bool = False) -> str:
+    """The JSON of ``netscenario doctor --json`` (with ``--timers`` if ``timers``)."""
 
 class CancelToken:
     """A request to stop a run; clones of the Python object share nothing, pass the same object."""

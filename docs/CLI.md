@@ -169,4 +169,4 @@ They then complete the keys and values (the loss models, the signals, the direct
 
 ## `doctor` and `clean`
 
-See [DOCTOR.md](DOCTOR.md).
+See [DOCTOR.md](DOCTOR.md). `doctor --timers` also measures the clock, how late sleeps wake and what a change of a qdisc costs.

@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::BackendInfo;
+use crate::timers::Timers;
 
 /// The provenance block of a result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +28,19 @@ pub struct Provenance {
     pub cpu_model: Option<String>,
     /// How many processors the run could use.
     pub cpus: Option<usize>,
+    /// The precision of the timers of the machine as measured just before the run built its network (ENV-05, D-097). `None`
+    /// in a result of an older release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timers: Option<Timers>,
+}
+
+impl Provenance {
+    /// The provenance with the timers that were measured before the run began.
+    #[must_use]
+    pub fn with_timers(mut self, timers: Timers) -> Self {
+        self.timers = Some(timers);
+        self
+    }
 }
 
 /// Collects the provenance of a run that starts now.
@@ -46,6 +60,7 @@ pub fn collect(backend: &BackendInfo, now: SystemTime) -> Provenance {
             .ok()
             .and_then(|text| cpu_model(&text)),
         cpus: std::thread::available_parallelism().ok().map(usize::from),
+        timers: None,
     }
 }
 

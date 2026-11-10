@@ -8,12 +8,12 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import overload
+from typing import Any, overload
 
 from netscenario import _binaries, _native
 from netscenario.errors import BackendError
 from netscenario.events import RunEvent, make_event
-from netscenario.results import Result
+from netscenario.results import Result, Timers, parse_timers
 from netscenario.runset import RunSet
 from netscenario.scenario import ParamValue, Scenario
 
@@ -235,7 +235,7 @@ class Check:
     """One line of the report of :func:`doctor`."""
 
     section: str
-    """The group: ``tools``, ``rights``, ``kernel`` or ``features``."""
+    """The group: ``tools``, ``rights``, ``kernel``, ``features`` or ``timers``."""
     id: str
     """A stable name, for example ``tool-tc`` or ``seed``."""
     status: str
@@ -249,6 +249,25 @@ class Check:
 
 
 @dataclass(frozen=True)
+class TcChange:
+    """What a change of a qdisc costs through the ``tc`` that lives for a run.
+
+    It is what a step of a timeline waits for.
+    """
+
+    qdisc: str
+    """The kind of qdisc changed: ``netem``, or ``pfifo`` where the kernel has no ``netem``."""
+    samples: int
+    """How many changes were timed."""
+    p50: float
+    """The median, in seconds."""
+    p99: float
+    """The 99th percentile (the nearest rank), in seconds."""
+    max: float
+    """The largest, in seconds."""
+
+
+@dataclass(frozen=True)
 class DoctorReport:
     """What this machine can do for the Kernel backend (``docs/DOCTOR.md``)."""
 
@@ -256,6 +275,12 @@ class DoctorReport:
     """Whether scenarios can run here: no check failed."""
     checks: tuple[Check, ...]
     """Every check, in the order they are shown."""
+    timers: Timers | None = None
+    """The timers of the machine, with ``doctor(timers=True)``."""
+    tc_change: TcChange | None = None
+    """The cost of a change of a qdisc, with ``doctor(timers=True)``, if it could be measured."""
+    tc_change_error: str | None = None
+    """Why the cost of a change could not be measured."""
 
     @property
     def problems(self) -> tuple[Check, ...]:
@@ -272,12 +297,20 @@ class DoctorReport:
         return "\n".join(lines)
 
 
-def doctor() -> DoctorReport:
+def doctor(*, timers: bool = False) -> DoctorReport:
     """Look at this machine: the tools, the rights to create namespaces, what the kernel accepts.
 
     It starts a few processes and takes a moment; nothing outside its own namespaces is touched.
+
+    Args:
+        timers: Also measure the precision of the timers: the clock, how late sleeps wake, the load
+            and what a change of a qdisc costs (``netscenario doctor --timers``). It takes about two
+            seconds. A late timer is a ``warn`` check and never a failure.
     """
-    raw = json.loads(_native.doctor())
+    raw = json.loads(_native.doctor(timers))
+    measured: dict[str, Any] | None = raw.get("timers")
+    change: dict[str, Any] | None = measured.get("tc_change") if measured else None
+    error: str | None = measured.get("tc_change_error") if measured else None
     return DoctorReport(
         ok=bool(raw["ok"]),
         checks=tuple(
@@ -291,4 +324,17 @@ def doctor() -> DoctorReport:
             )
             for c in raw["checks"]
         ),
+        timers=parse_timers(measured["timers"]) if measured else None,
+        tc_change=(
+            TcChange(
+                qdisc=change["qdisc"],
+                samples=change["samples"],
+                p50=change["p50_ns"] / 1e9,
+                p99=change["p99_ns"] / 1e9,
+                max=change["max_ns"] / 1e9,
+            )
+            if change
+            else None
+        ),
+        tc_change_error=error,
     )
