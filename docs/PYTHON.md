@@ -74,6 +74,8 @@ result = ns.run("scenarios/parameters.yaml", params={"share": 0.5})
 result.scenario_params                                   # {"rate": "10mbit", "rtt": "40ms", "share": "0.5"}
 ```
 
+**Profiles** (SCN-06, [PROFILES.md](PROFILES.md)): `builder.link("access", "phone", "server", profile="lte-good")` takes the values of a profile of the library; the first node is the terminal, so `forward` is up. The values written next to it win. A run records the profile: `result.scenario_profiles` is `{"access": "lte-good"}` and `result.profile_library` the version of the library. `netscenario profiles` lists the ids.
+
 A value is a string as the file writes it (`"40ms"`), or a number or a bool; the kind has to be that of the default. `Scenario.params` is the record of the values, and `Scenario.data` and `to_json()` are the scenario after the expansion, which is what is hashed and replayed. An included file is read from the directory of the file (`load`; with `from_yaml`, give `base_dir`). A problem in a template or an included file has `ScenarioProblem.file` and `.chain` besides the line: the file the line is in, and the places of use that led there.
 
 ## Results

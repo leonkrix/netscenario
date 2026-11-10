@@ -39,6 +39,7 @@ mod link_model;
 mod link_trace;
 mod measure;
 mod mtu;
+mod profile;
 mod queue;
 mod rate_changes;
 mod read;
@@ -86,6 +87,7 @@ pub use mtu::{
     DEFAULT_MTU, MAX_MTU, MAX_PACKET_SIZE_V6, MAX_UDP_PAYLOAD_V4, MAX_UDP_PAYLOAD_V6, MIN_MTU,
     MIN_MTU_V6, frames_per_packet, mtus_of, mtus_of_topology, path_problem,
 };
+pub use profile::{Library, Profile, library};
 pub use queue::{Discipline, Queue, QueueLimit};
 pub use rate_changes::RateChange;
 pub use read::MAX_FILE_BYTES;

@@ -443,9 +443,34 @@ pub struct ScenarioInfo {
     /// The parameters of the scenario and the values the run was made with (D-093); empty for a scenario without parameters.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub params: std::collections::BTreeMap<String, String>,
+    /// The profile of each link that has one (D-095): the id of the link and the profile. The values of the profile are in the scenario
+    /// the run was made with; this is the record of where they came from.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub profiles: std::collections::BTreeMap<String, String>,
+    /// The version of the profile library the profiles were resolved with; none if no link has a profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_library: Option<u32>,
 }
 
 impl ScenarioInfo {
+    /// The profiles as `link=profile, link=profile` in the order of the link names, with the version of the library, or `None`
+    /// for a scenario without profiles.
+    #[must_use]
+    pub fn profiles_line(&self) -> Option<String> {
+        (!self.profiles.is_empty()).then(|| {
+            let list = self
+                .profiles
+                .iter()
+                .map(|(link, profile)| format!("{link}={profile}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            match self.profile_library {
+                Some(version) => format!("{list} (library {version})"),
+                None => list,
+            }
+        })
+    }
+
     /// The parameters as `name=value, name=value` in the order of their names, or `None` for a scenario without parameters.
     #[must_use]
     pub fn params_line(&self) -> Option<String> {
@@ -456,6 +481,26 @@ impl ScenarioInfo {
                 .collect::<Vec<_>>()
                 .join(", ")
         })
+    }
+}
+
+/// What a result records of the scenario: the name, the hash, the parameters and the profiles with the version of the library.
+pub(crate) fn scenario_info(
+    name: String,
+    hash: String,
+    scenario: &netscenario_model::Scenario,
+) -> ScenarioInfo {
+    ScenarioInfo {
+        name,
+        hash,
+        params: scenario.params.clone(),
+        profiles: scenario
+            .topology
+            .links
+            .iter()
+            .filter_map(|link| Some((link.id.to_string(), link.profile.clone()?)))
+            .collect(),
+        profile_library: scenario.profile_library,
     }
 }
 
@@ -938,6 +983,8 @@ pub(crate) mod tests {
                 name: "t".to_owned(),
                 hash: "sha256:00".to_owned(),
                 params: std::collections::BTreeMap::new(),
+                profiles: std::collections::BTreeMap::new(),
+                profile_library: None,
             },
             provenance: Provenance {
                 netscenario: "0.0.0".to_owned(),

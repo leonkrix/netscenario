@@ -116,8 +116,11 @@ impl Scenario {
             Err(error) => return Err(fail(vec![syntax_problem(&error, &index)])),
         };
 
-        let problems: Vec<Problem> = scenario
-            .validate()
+        let mut problems = scenario.resolve_profiles();
+        if problems.is_empty() {
+            problems = scenario.validate();
+        }
+        let problems: Vec<Problem> = problems
             .into_iter()
             .map(|problem| locate(problem, &index))
             .collect();

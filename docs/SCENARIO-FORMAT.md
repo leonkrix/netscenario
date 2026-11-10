@@ -76,6 +76,7 @@ workloads:
 | `allow-limited` | no | A list of ids of features: the restrictions of a backend that the scenario accepts, see [Limited features](#limited-features). |
 | `params` | no | The parameters of the scenario with their defaults, see [Parameters, templates and includes](#parameters-templates-and-includes). In the scenario that is read it holds the values the run was made with, as text. |
 | `templates` | no | Named templates of this file, see [Parameters, templates and includes](#parameters-templates-and-includes). |
+| `profile-library` | no | Written by the tool, not by hand: the version of the profile library that the `profile` of the links was resolved with (D-095). A scenario that has it is not resolved again, so a recorded scenario keeps the values of its run. |
 | `topology` | yes | See below. |
 | `workloads` | yes | A list with at least one workload. |
 | `timeline` | no | A list of events, see [Timeline](#timeline). |
@@ -147,6 +148,20 @@ topology:
 ```
 
 The shortcuts are in [scenarios/dumbbell.yaml](../scenarios/dumbbell.yaml) and [scenarios/star-and-chain.yaml](../scenarios/star-and-chain.yaml); a chain of two routers written out is in [scenarios/three-hops.yaml](../scenarios/three-hops.yaml), a failover with listed routes in [scenarios/two-paths.yaml](../scenarios/two-paths.yaml) and a computed network with one route changed by hand in [scenarios/manual-routes.yaml](../scenarios/manual-routes.yaml).
+
+### Profiles (SCN-06, D-095)
+
+A link can take its values from the **profile library** with `profile: <id>` (`netscenario profiles` lists the ids, [PROFILES.md](PROFILES.md) has the numbers and their sources):
+
+```yaml
+links:
+  - id: access
+    between: [phone, server]       # the first node is the terminal: forward is up, reverse is down
+    profile: lte-good
+    forward: { loss: { model: random, p: 1% } }   # written next to the profile, it wins
+```
+
+A profile sets only what a source states, so most profiles set a delay and few set more; what they do not set, the file writes. The keys written next to `profile` win over it key by key (a `loss` of the file replaces the `loss` of the profile as a whole; `both` wins in both directions). The profile is replaced by its values when the file is read, so `netscenario expand` shows them; the link keeps `profile` as a record, and the scenario gets `profile-library` with the version of the library. A profile is a key of a link, not of a direction, because up and down are only known for a link. An unknown id is an error with the closest one. A step of the timeline and a model of the link work on the values the profile gave.
 
 ### Impairments of a direction
 

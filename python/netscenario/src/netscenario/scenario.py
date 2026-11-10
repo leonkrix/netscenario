@@ -427,6 +427,7 @@ class ScenarioBuilder:
         forward: Impairments | None = None,
         reverse: Impairments | None = None,
         model: Mapping[str, Any] | None = None,
+        profile: str | None = None,
     ) -> Self:
         """Add a link between two nodes.
 
@@ -442,8 +443,13 @@ class ScenarioBuilder:
                 file (``{"kind": "periodic", "states": [...]}``, a ``"markov"`` chain, or a
                 ``"trace"`` whose files are read when the scenario is loaded from a file with
                 :meth:`Scenario.load`). The values above are what the link has outside the states.
+            profile: The id of a profile of the library (``"lte-typical"``; ``netscenario profiles``
+                lists them). The first node is the terminal: ``forward`` is up, ``reverse`` is down.
+                The values written above win over the profile, key by key.
         """
         link: dict[str, Any] = {"id": id, "between": [first, second]}
+        if profile is not None:
+            link["profile"] = profile
         for key, impairments in (("both", both), ("forward", forward), ("reverse", reverse)):
             if impairments is not None:
                 link[key] = impairments.to_data()

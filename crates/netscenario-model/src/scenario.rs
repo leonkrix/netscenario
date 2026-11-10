@@ -149,6 +149,14 @@ pub struct Scenario {
     /// and takes no part in the scenario. It is part of the canonical form, so two runs with other values are other scenarios.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, String>,
+    /// The version of the profile library that the profiles of the links were resolved with (D-095). Written by the tool when a file
+    /// is read, and a scenario that has it is not resolved again, so a recorded scenario keeps the numbers of its run.
+    #[serde(
+        default,
+        rename = "profile-library",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub profile_library: Option<u32>,
     /// Where the values of the scenario were written, if the file had parameters, templates or includes. Not part of the
     /// scenario: it is not written, compared or hashed.
     #[serde(skip)]
@@ -189,6 +197,7 @@ impl Scenario {
             backend: Backend::Auto,
             allow_limited: Vec::new(),
             params: BTreeMap::new(),
+            profile_library: None,
             origins: Origins::default(),
             topology,
             workloads,
@@ -228,6 +237,10 @@ pub struct Link {
     /// link has outside the states.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<LinkModel>,
+    /// The profile the values of the link were taken from (SCN-06, D-095): written as `profile: lte-typical`, replaced by its values
+    /// when the file is read, and kept here as the record. The keys the file writes next to it win.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 impl Link {
@@ -243,6 +256,7 @@ impl Link {
             reverse: None,
             both: None,
             model: None,
+            profile: None,
         }
     }
 

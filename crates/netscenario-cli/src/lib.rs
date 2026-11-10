@@ -7,6 +7,7 @@
 
 mod args;
 mod interrupt;
+mod profiles_cmd;
 mod render;
 mod replay_cmd;
 mod report_cmd;
@@ -47,6 +48,8 @@ Commands:
   expand <file>    print a scenario in its long form (a shortcut becomes nodes and links)
   show <file>      show the network: nodes, links, routes and the path of each workload
   schema           print the JSON Schema of the scenario format
+  profiles [<id>]  list the link profiles, or show one with its values and sources
+  capabilities     what the Kernel backend reproduces on this machine, feature by feature
   doctor           report what this machine can do (--json for machines)
   clean            end what a run without a supervisor left behind (--dry-run, --json)
 
@@ -121,6 +124,8 @@ where
         "expand" => show_cmd::expand(rest, out, err),
         "show" => show_cmd::show(rest, out, err),
         "schema" => validate::schema(rest, out, err),
+        "profiles" => profiles_cmd::profiles(rest, out, err),
+        "capabilities" => profiles_cmd::capabilities(rest, out, err),
         "doctor" => doctor(rest, out, err),
         "clean" => clean(rest, out, err),
         other => {
@@ -253,6 +258,8 @@ mod tests {
             "doctor",
             "clean",
             "schema",
+            "profiles",
+            "capabilities",
             "Exit codes",
         ] {
             assert!(out.contains(word), "help does not mention {word}");
@@ -272,6 +279,8 @@ mod tests {
             ("schema", "JSON Schema"),
             ("doctor", "--json"),
             ("clean", "--dry-run"),
+            ("profiles", "docs/PROFILES.md"),
+            ("capabilities", "--json"),
         ] {
             let (code, out, err) = call(&["netscenario", command, "--help"]);
             assert_eq!(code, exit::OK, "{command}");

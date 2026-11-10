@@ -185,6 +185,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [docs/DOCTOR.md](docs/DOCTOR.md): `netscenario doctor` and `netscenario clean`: what they check, what they print, their exit codes.
 - [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md): the scenario file, version 0: every key, every unit, every error.
 - [docs/PRIOR-ART.md](docs/PRIOR-ART.md): what exists, and where netscenario differs.
+- [docs/PROFILES.md](docs/PROFILES.md): the draft of the link profiles (3G to LEO satellite) with the source of every number.
 - [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md): how each criterion of a release is proven, and what the proof does not cover.
 - [docs/VERSIONING.md](docs/VERSIONING.md): what a version number promises, and what a release may break.
 - [docs/RELEASING.md](docs/RELEASING.md): how a release is made, and the one-time setup of the registries.
