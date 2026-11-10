@@ -8,7 +8,6 @@ it can fail.
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -64,12 +63,10 @@ def test_every_block_and_link_of_the_book_is_good() -> None:
     assert check.check_book() == []
 
 
+@pytest.mark.once
 @pytest.mark.usefixtures("runnable")
 def test_the_scenarios_and_the_python_the_book_marks_for_a_run_run() -> None:
-    # It takes about three minutes. On the CI the job "Book" runs it (NETSCENARIO_BOOK_RUN),
-    # and the jobs of the Python versions do not
-    if os.environ.get("CI") and not os.environ.get("NETSCENARIO_BOOK_RUN"):
-        pytest.skip("the job 'Book' of the CI runs the blocks of the book")
+    # It takes about three minutes and does not depend on the version of Python: the CI runs it once
     assert check.check_book(run=True) == []
 
 

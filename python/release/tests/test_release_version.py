@@ -8,6 +8,9 @@ from types import ModuleType
 
 import pytest
 
+# The scripts of the release do not depend on the version of Python: the CI runs these tests once
+pytestmark = pytest.mark.once
+
 _ROOT = Path(__file__).resolve().parents[3]
 _FILES = ["Cargo.toml", "Cargo.lock", "uv.lock", "python/pytest-netscenario/pyproject.toml"]
 

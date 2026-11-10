@@ -1,15 +1,32 @@
 name: CI
 
+# What runs depends on what changed (job `changes`, .github/scripts/ci_changes.py):
+#   a pull request that touches code, tests, documents that tests read, or anything not on the short list of light files: everything;
+#   a pull request that touches only light files (the book, the templates): the cheap checks of workflows and dependencies;
+#   a push to main, after a merge: the jobs build but do not run the tests, which fills the caches that the pull requests read (the
+#     ruleset requires a branch to be up to date, so the merged tree is the one that was tested);
+#   every Monday, and by hand: everything, as a pull request with heavy changes does.
+# Branch protection requires one job, `ci-ok` ("CI passed"). It knows which jobs the event needs and fails if one of them was skipped.
+
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'full: the whole CI. warm: only build, as after a merge (to try that path from a branch)'
+        type: choice
+        options: [full, warm]
+        default: full
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -17,8 +34,31 @@ env:
   CARGO_INCREMENTAL: '0'
 
 jobs:
+  # Which jobs does this change need? The rule is in a script that is tested: a change is light only if every file in it is on a short
+  # list, so a file that nobody has thought of runs everything.
+  changes:
+    name: What the change needs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      heavy: ${{ steps.decide.outputs.heavy }}
+      wheels: ${{ steps.decide.outputs.wheels }}
+      warm: ${{ steps.decide.outputs.warm }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED: ${{ inputs.mode }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 .github/scripts/ci_changes.py
+
   fmt:
     name: Format (Rust)
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true' && needs.changes.outputs.warm != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -32,6 +72,8 @@ jobs:
 
   clippy:
     name: Lints (clippy)
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -43,41 +85,102 @@ jobs:
           tools: just@1.40.0
       - run: just clippy
 
-  # The tests but the fidelity ones run on both Ubuntu images that the project supports and with the current
-  # stable Rust and with the lowest supported one (rust-version in Cargo.toml, 1.89). The fidelity tests are a job
-  # of their own below: they are most of the time of the tests, and they measure the network, which does not
-  # depend on the version of Rust.
+  # The quick tests (all but the fidelity ones) on both Ubuntu images that the project supports, with the current stable Rust, cut in
+  # two parts that run on machines of their own (nextest `--partition`; a binary that asks for all the threads runs alone in its part).
+  # The lowest supported Rust is `msrv` below, and the run as root is `rights`. The fidelity tests are a job of their own: they
+  # measure the network, which does not depend on the version of Rust.
   test:
-    name: Tests (${{ matrix.os }}, Rust ${{ matrix.rust }})
+    name: Tests (${{ matrix.os }}, part ${{ matrix.part }} of 2)
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
-        rust: [stable, 1.89.0]
+        part: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:
-          toolchain: ${{ matrix.rust }}
           tools: just@1.40.0,cargo-nextest@0.9.150
+          cache-key: test
       # A tc that knows the seed of netem, and the permission to create user namespaces
       - uses: ./.github/actions/namespaces
-      - run: just test-quick
-      # The same tests once more with the rights of root, so that both ways of running a scenario are tested
-      # (an ordinary user runs it in a user namespace, root with its own rights, D-022). The environment is
-      # passed on: `sudo` would drop the toolchain and the `PATH` with the newer `tc`.
-      - name: Kernel backend tests as root
+      - name: Build the tests (after a merge, only this, for the cache)
+        if: needs.changes.outputs.warm == 'true'
+        run: just build-tests
+      - name: Test
+        if: needs.changes.outputs.warm != 'true'
+        run: just test-part ${{ matrix.part }} 2
+      # Nextest does not run doc tests; they are quick, so one part has them
+      - name: Doc tests
+        if: needs.changes.outputs.warm != 'true' && matrix.part == 1
+        run: just test-doc
+
+  # The same Kernel backend and agent tests once more with the rights of root, so that both ways of running a scenario are tested (an
+  # ordinary user runs it in a user namespace, root with its own rights, D-022). Which tests behave differently with the rights is not
+  # decided test by test: a test that starts a scenario may be one, so all of them run. The job runs beside the others, so it adds no time.
+  rights:
+    name: Tests as root (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          tools: just@1.40.0,cargo-nextest@0.9.150
+          cache-key: test
+      - uses: ./.github/actions/namespaces
+      - name: Build the tests as the runner user
+        run: just build-kernel-tests
+      # The environment is passed on: `sudo` would drop the toolchain and the `PATH` with the newer `tc`.
+      - name: Kernel backend and agent tests as root
+        if: needs.changes.outputs.warm != 'true'
         run: |
           sudo env "PATH=$PATH" "HOME=$HOME" "CI=$CI" "RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN" "TC_LIB_DIR=$TC_LIB_DIR" just test-kernel
-      # The step above left files in target/ that belong to root. The cache is saved at the end of the job by
-      # the user of the runner, and `tar` fails on files it may not read (the cache was silently not saved).
+      # The step above leaves files in target/ that belong to root. The cache is saved at the end of the job by the user of the
+      # runner, and `tar` fails on files it may not read (the cache was silently not saved).
       - name: Give target/ back to the runner user
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" target
+
+  # The lowest supported Rust (rust-version in Cargo.toml, 1.89): everything must compile with it, tests included, and the tests of the
+  # two libraries, which are pure logic, run. The compiler is what the version changes; the behaviour of the network is the same for
+  # every version, and the tests of that run on the current stable.
+  msrv:
+    name: Lowest supported Rust (1.89)
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          toolchain: 1.89.0
+          tools: just@1.40.0,cargo-nextest@0.9.150
+      - name: Everything compiles
+        run: cargo check --workspace --all-targets --all-features
+      - name: Tests of the two libraries
+        if: needs.changes.outputs.warm != 'true'
+        run: just msrv-test
+      - name: Build the tests of the two libraries (after a merge, only this, for the cache)
+        if: needs.changes.outputs.warm == 'true'
+        run: cargo nextest run -p netscenario-model -p netscenario-core --all-features --no-tests=pass --no-run
 
   # The fidelity tests (QA-06, docs/FIDELITY.md): does the network do what the scenario says, to within the bounds
   # of the cases. Each of them measures time, so it runs alone on its machine (`.config/nextest.toml`), and that makes
@@ -86,6 +189,8 @@ jobs:
   # what netem does to a packet.
   fidelity:
     name: Fidelity (${{ matrix.os }}, part ${{ matrix.part }} of 2)
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -102,11 +207,16 @@ jobs:
           tools: just@1.40.0,cargo-nextest@0.9.150
       # A tc that knows the seed of netem, and the permission to create user namespaces
       - uses: ./.github/actions/namespaces
-      - run: just fidelity-test ${{ matrix.part }} 2
+      - name: Build the fidelity tests (after a merge, only this, for the cache)
+        if: needs.changes.outputs.warm == 'true'
+        run: just build-fidelity
+      - name: Fidelity tests
+        if: needs.changes.outputs.warm != 'true'
+        run: just fidelity-test ${{ matrix.part }} 2
       # What the cases measured on this runner: one table for each half, to be compared with the table in the
       # repository.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && needs.changes.outputs.warm != 'true'
         with:
           name: fidelity-${{ matrix.os }}-part-${{ matrix.part }}
           path: target/tmp/fidelity/
@@ -115,6 +225,8 @@ jobs:
 
   docs:
     name: Documentation (rustdoc)
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -128,6 +240,8 @@ jobs:
 
   deny:
     name: Supply chain (cargo-deny)
+    needs: changes
+    if: needs.changes.outputs.warm != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -144,6 +258,8 @@ jobs:
   # the day of a release.
   package:
     name: Packages (cargo publish --dry-run)
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -162,7 +278,8 @@ jobs:
   # that is in it. Only the two libraries are checked; the other crates are published for the programs.
   semver:
     name: API (cargo-semver-checks)
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -203,11 +320,15 @@ jobs:
           fi
           exit "$status"
 
-  # The Python packages build the native module with maturin, so this job needs Rust as well
+  # The Python packages build the native module with maturin, so these jobs need Rust as well. The tests that depend on the
+  # version of Python run on each version (`just py-test-versions`); the long ones that do not (the tests marked `once`: the TCP
+  # acceptance tests, the run of the book, the scripts of the release) run once, in the jobs of `acceptance`.
   python:
     name: Python ${{ matrix.python }}
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -222,19 +343,37 @@ jobs:
         with:
           python: ${{ matrix.python }}
           tools: just@1.40.0
+          cache-key: python
       # The Python tests run scenarios in network namespaces, as the Rust tests do
       - uses: ./.github/actions/namespaces
-      - run: just py-check
+      - name: Build the extension and the programs
+        run: just py-sync py-programs
+      - name: Format, lints, types
+        if: needs.changes.outputs.warm != 'true'
+        run: just py-lint
+      - name: Tests
+        if: needs.changes.outputs.warm != 'true'
+        run: just py-test-versions
 
-  # The scenarios and the Python of the guide (docs/book) that are marked for a run are run in a job of their own, in parallel with the
-  # others, so that the four Python jobs above do not take the 3 minutes it needs. The same test checks every page in those jobs
-  book:
-    name: Book (the scenarios run)
+  # The tests marked `once`, on one version of Python and in two jobs that run beside each other: the TCP acceptance tests (the
+  # fairness of two flows, then the formula of Mathis, two paths and the queues: statistical, so they take minutes), the run of the
+  # scenarios and the Python of the book, and the tests of the release scripts.
+  acceptance:
+    name: Acceptance (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fairness, book, release
+            paths: python/netscenario/tests/test_acceptance_tcp.py python/netscenario/tests/test_book.py python/release/tests
+          - name: TCP models
+            paths: python/netscenario/tests/test_acceptance_tcp_models.py
     env:
       UV_PYTHON: '3.12'
-      NETSCENARIO_BOOK_RUN: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -243,20 +382,28 @@ jobs:
         with:
           python: '3.12'
           tools: just@1.40.0
+          cache-key: python
       - uses: ./.github/actions/namespaces
-      - run: just py-sync py-programs
-      - run: uv run pytest python/netscenario/tests/test_book.py
+      - name: Build the extension and the programs
+        run: just py-sync py-programs
+      - name: Tests marked once
+        if: needs.changes.outputs.warm != 'true'
+        run: just py-test-once ${{ matrix.paths }}
 
   # The wheels (PYT-08), built and installed into clean environments: .github/workflows/wheels.yml, which
-  # release.yml uses as well
+  # release.yml uses as well. They are skipped for a change of files that are not in a wheel, and after a merge.
   wheels:
     name: Wheels
+    needs: changes
+    if: needs.changes.outputs.wheels == 'true'
     uses: ./.github/workflows/wheels.yml
 
   # The workflows are code too: syntax, expressions and the shell scripts in them. The binary is pinned
   # by version and checksum.
   actionlint:
     name: Workflows (actionlint)
+    needs: changes
+    if: needs.changes.outputs.warm != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -273,6 +420,7 @@ jobs:
 
   dependency-review:
     name: Dependency review
+    needs: changes
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -286,25 +434,48 @@ jobs:
         with:
           fail-on-severity: high
 
-  # Branch protection requires only this job, so new jobs are added to "needs" without touching the
-  # repository settings. Every job has to succeed; only the two jobs that run on pull requests alone (the
-  # dependency review and the check of the API) may be skipped.
+  # Branch protection requires only this job, so new jobs are added to "needs" without touching the repository settings.
+  # The plan for the event says which jobs must have succeeded (`must`); a job that the plan wants and that was skipped is a failure,
+  # so a mistake in an `if` of a job cannot let a pull request through untested. Any job that failed or was cancelled is a failure too.
+  # A test checks that every job of this file is in `needs` (python/release/tests/test_ci_changes.py).
   ci-ok:
     name: CI passed
     if: always()
-    needs: [fmt, clippy, test, fidelity, docs, deny, package, semver, python, book, wheels, actionlint, dependency-review]
+    needs: [changes, fmt, clippy, test, rights, msrv, fidelity, docs, deny, package, semver, python, acceptance, wheels, actionlint, dependency-review]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Check the result of every job
         env:
           NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+          HEAVY: ${{ needs.changes.outputs.heavy }}
+          WHEELS: ${{ needs.changes.outputs.wheels }}
+          WARM: ${{ needs.changes.outputs.warm }}
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          # Every job has to succeed; only the jobs of pull requests may be skipped (push to main)
-          if echo "$NEEDS" | jq -e 'to_entries | map(select(.value.result != "success" and ((.key != "dependency-review" and .key != "semver") or .value.result != "skipped"))) | length == 0' > /dev/null; then
-            echo "All required jobs succeeded"
-          else
-            echo "A required job did not succeed"
-            exit 1
+          echo "event $EVENT, heavy $HEAVY, wheels $WHEELS, warm $WARM"
+          must=( changes )
+          if [ "$WARM" != true ]; then must+=( deny actionlint ); fi
+          if [ "$EVENT" = pull_request ]; then must+=( dependency-review ); fi
+          if [ "$HEAVY" = true ]; then
+            must+=( clippy test rights msrv fidelity docs package python acceptance )
+            if [ "$WARM" != true ]; then must+=( fmt ); fi
+            if [ "$EVENT" = pull_request ]; then must+=( semver ); fi
           fi
+          if [ "$WHEELS" = true ]; then must+=( wheels ); fi
+          status=0
+          for job in "${must[@]}"; do
+            result=$(echo "$NEEDS" | jq -r --arg job "$job" '.[$job].result')
+            if [ "$result" != success ]; then
+              echo "::error::$job should have succeeded and is: $result"
+              status=1
+            fi
+          done
+          failed=$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')
+          if [ -n "$failed" ]; then
+            echo "::error::failed or cancelled: $failed"
+            status=1
+          fi
+          if [ "$status" -eq 0 ]; then echo "All required jobs succeeded"; fi
+          exit "$status"
