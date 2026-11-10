@@ -1,0 +1,113 @@
+# The profile library, version 1 (D-095, docs/PROFILES.md).
+#
+# A profile sets only what a source states, or what follows from the sources by arithmetic that docs/PROFILES.md shows. Nothing
+# in this file is an estimate. `up` is from the terminal to the network (`forward` of a link whose first node is the terminal),
+# `down` the other way, `both` the same in both directions. The ids in `sources` are those of the list in docs/PROFILES.md.
+version: 1
+profiles:
+  - id: 3g-good
+    family: 3g
+    tier: good
+    summary: The one-way delays of an HSPA network in 2012, the lowest published medians of 3G.
+    sources: [S1]
+    up: { delay: 15ms }
+    down: { delay: 18ms }
+
+  - id: 3g-typical
+    family: 3g
+    tier: typical
+    summary: Half of the average round trip of 3G in the UK, October 2023 to March 2024.
+    sources: [S2]
+    both: { delay: 21.15ms }
+
+  - id: lte-good
+    family: lte
+    tier: good
+    summary: The one-way delays of an LTE network in 2012, the lowest published medians of LTE, with the slower uplink.
+    sources: [S1]
+    up: { delay: 24ms }
+    down: { delay: 8ms }
+
+  - id: lte-typical
+    family: lte
+    tier: typical
+    summary: Half of the UK median round trip of 4G in 2025.
+    sources: [S3]
+    both: { delay: 10.55ms }
+
+  - id: 5g-typical
+    family: 5g
+    tier: typical
+    summary: Half of the UK median round trip of 5G in 2025.
+    sources: [S3]
+    both: { delay: 9.1ms }
+
+  - id: 5g-poor
+    family: 5g
+    tier: poor
+    summary: Half of the average round trip of the first non-standalone 5G deployments (China, 3.5 GHz, 2020).
+    sources: [S4]
+    both: { delay: 21.8ms }
+
+  - id: dsl-good
+    family: dsl
+    tier: good
+    summary: Half of the idle round trip of the fastest speed tier of DSL in the US, 2022.
+    sources: [S5]
+    both: { delay: 10ms }
+
+  - id: dsl-poor
+    family: dsl
+    tier: poor
+    summary: Half of the idle round trip of the slowest speed tier of DSL in the US, 2022.
+    sources: [S5]
+    both: { delay: 30.5ms }
+
+  - id: geo-good
+    family: geo
+    tier: good
+    summary: One Viasat-2 terminal without a proxy; half of the round trip, half of the loss of a round trip, and the peak rate of the plan downstream.
+    sources: [S6]
+    both:
+      delay: 298.5ms
+      loss: { model: random, p: 0.025% }
+    down: { rate: 144mbit }
+
+  - id: geo-typical
+    family: geo
+    tier: typical
+    summary: Half of the median latency of all geostationary operators in the M-Lab data.
+    sources: [S7]
+    both: { delay: 336.75ms }
+
+  - id: geo-poor
+    family: geo
+    tier: poor
+    summary: Half of the median latency of the slowest geostationary operator in the M-Lab data.
+    sources: [S7]
+    both: { delay: 417.6ms }
+
+  - id: leo-typical
+    family: leo
+    tier: typical
+    summary: Half of the global median latency of Starlink, which is 40 to 50 ms (the middle, 45 ms).
+    sources: [S8]
+    both: { delay: 22.5ms }
+
+  - id: datacenter-rack
+    family: datacenter
+    tier: rack
+    summary: Inside a pod of one data center (DC1 of the study), measured by a TCP probe, so with the hosts; half of the round trip and of the drop rate.
+    sources: [S9]
+    both:
+      delay: 108us
+      loss: { model: random, p: 0.000655% }
+
+  - id: datacenter-fabric
+    family: datacenter
+    tier: fabric
+    summary: Between pods of the same data center, measured by a TCP probe, so with the hosts; half of the round trip and of the drop rate.
+    sources: [S9]
+    both:
+      delay: 134us
+      loss: { model: random, p: 0.003775% }

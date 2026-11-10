@@ -34,7 +34,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | SCN-03 | Units and durations parsed strictly (`40ms`, `10mbit`, `2%`) | M | 0.1 | done |
 | SCN-04 | Scenarios built in code (Python and Rust builders), same model as the file | M | 0.1 | done (the Rust builder, and the Python builder, which gives the same canonical form as the file: a test compares them) |
 | SCN-05 | Parameters, includes and templates (reuse a link, vary a value) | S | 0.3 | done (`params:` with `--param name=value`, exact `{expressions}`, `templates:` with `use:`, files with `include:`; the expanded scenario is what is hashed, recorded and replayed, and an error names the file, the line and each place of use, D-093: `crates/netscenario-model/tests/expand.rs`, `python/netscenario/tests/test_params.py`, the fuzz target `expand`, the examples [parameters](scenarios/parameters.yaml), [templates](scenarios/templates.yaml), [include](scenarios/include.yaml)) |
-| SCN-06 | Profile library: 3G, LTE, 5G, Wi-Fi, DSL, GEO and LEO satellite, datacenter, lossy radio | S | 0.3 | planned |
+| SCN-06 | Profile library: 3G, LTE, 5G, Wi-Fi, DSL, GEO and LEO satellite, datacenter, lossy radio. Every value has a source ([PROFILES.md](docs/PROFILES.md)) | S | 0.3 | done (version 1: 14 profiles of 3G, LTE, 5G, DSL, GEO, LEO and datacenter, mostly delays; Wi-Fi, cable, lossy radio and the rest of the keys wait for sources, D-095) |
 | SCN-07 | Matrices and sweeps (grids, random sampling) | S | 0.5 | planned |
 | SCN-08 | Migration between schema versions (`netscenario migrate`) | S | 0.7 | planned |
 | SCN-09 | Convert to and from `tc netem` command lines | C | 0.7 | idea |
@@ -201,7 +201,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | --- | --- | --- | --- | --- |
 | CLI-01 | `run`, `validate`, `doctor`, `clean` | M | 0.1 | done ([CLI.md](docs/CLI.md), `tests/binary.rs`) |
 | CLI-02 | `report`: HTML and Markdown from result files | M | 0.2 | done (`netscenario report <dir> --format md\|html\|junit`: [REPORTS.md](docs/REPORTS.md), D-076) |
-| CLI-03 | `profiles` and `capabilities`: what exists, what a backend can do | S | 0.3 | planned |
+| CLI-03 | `profiles` and `capabilities`: what exists, what a backend can do | S | 0.3 | done |
 | CLI-07 | `expand` (the long form of a scenario that uses shortcuts, parameters or profiles) and `show` (the graph, the addresses, the effective routes: text and Graphviz) | S | 0.3 | in progress (`expand` and `show` of the topology, with the shortcuts, are in [CLI.md](docs/CLI.md); the addresses join `show` when the Kernel backend builds networks; parameters and profiles when they exist) |
 | CLI-04 | `schema`: print the JSON Schema | S | 0.1 | done (`netscenario schema`) |
 | CLI-05 | Shell completions and man pages | S | 0.8 | planned |

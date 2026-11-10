@@ -1097,6 +1097,55 @@ impl Report {
         text
     }
 
+    /// What the backend reproduces on this machine, as text for people: one line for each feature (`netscenario capabilities`).
+    #[must_use]
+    pub fn render_features(&self) -> String {
+        let mut text =
+            String::from("netscenario capabilities: the Kernel backend on this machine\n\n");
+        for check in self.checks.iter().filter(|c| c.section == "features") {
+            let _ = writeln!(text, "  {:<34} {}", check.title, check.detail);
+            if let Some(fix) = &check.fix {
+                let _ = writeln!(text, "  {:<34} fix: {fix}", "");
+            }
+        }
+        let _ = write!(
+            text,
+            "\n{}\n",
+            if self.ok {
+                "Scenarios can run here."
+            } else {
+                "Scenarios cannot run here yet: `netscenario doctor` says what to fix."
+            }
+        );
+        text
+    }
+
+    /// What the backend reproduces on this machine, as JSON (`netscenario capabilities --json`).
+    #[must_use]
+    pub fn features_json(&self) -> String {
+        let features: Vec<_> = self
+            .checks
+            .iter()
+            .filter(|c| c.section == "features")
+            .map(|c| {
+                serde_json::json!({
+                    "id": c.id,
+                    "title": c.title,
+                    "status": c.status,
+                    "detail": c.detail,
+                    "fix": c.fix,
+                })
+            })
+            .collect();
+        serde_json::to_string_pretty(&serde_json::json!({
+            "version": 1,
+            "backend": "kernel",
+            "ok": self.ok,
+            "features": features,
+        }))
+        .unwrap_or_else(|error| format!("{{\"error\": \"{error}\"}}"))
+    }
+
     /// The report as JSON, for machines.
     #[must_use]
     pub fn to_json(&self) -> String {

@@ -150,6 +150,7 @@ A run of a scenario like `scenarios/lte-like.yaml` with a duration of 3 seconds,
 | --- | --- |
 | `format`, `version` | See above. |
 | `scenario.name` | The `name` of the scenario. |
+| `scenario.profiles` | The profile of each link that has one, by the id of the link (D-095); absent without profiles. `scenario.profile_library` is the version of the library they were resolved with. The values themselves are in the scenario the run was made with. |
 | `scenario.params` | The parameters of the scenario with the values the run was made with, as text (D-093); absent for a scenario without `params:`. They are part of the hash. |
 | `scenario.hash` | `sha256:` and the SHA-256 of the scenario in canonical JSON (the keys in the order of the format, keys with default values left out). A change of comments or of the layout of the file does not change it; a change of any value does. Two results with the same hash come from the same scenario. |
 | `provenance` | Where, when and with what the result was made (ENV-02), below. |

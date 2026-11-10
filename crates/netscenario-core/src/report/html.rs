@@ -212,6 +212,9 @@ fn summary(out: &mut String, result: &RunResult) {
     if let Some(params) = result.scenario.params_line() {
         let _ = write!(out, "<dt>Parameters</dt><dd>{}</dd>", escape(&params));
     }
+    if let Some(profiles) = result.scenario.profiles_line() {
+        let _ = write!(out, "<dt>Profiles</dt><dd>{}</dd>", escape(&profiles));
+    }
     out.push_str("</dl>");
     if let Some(interrupted) = result.timing.interrupted_ns {
         let _ = write!(

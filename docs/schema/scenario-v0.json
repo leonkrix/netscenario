@@ -1547,6 +1547,21 @@
               ],
               "description": "The MTU of the interface at both ends of the link, in bytes (D-081). 1500 by default. A datagram that does not fit\nthe first link of its path is cut into fragments by the sender; later links must carry those whole."
             },
+            "profile": {
+              "anyOf": [
+                {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                {
+                  "pattern": "\\{[^{}]+\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "The profile the values of the link were taken from (SCN-06, D-095): written as `profile: lte-typical`, replaced by its values\nwhen the file is read, and kept here as the record. The keys the file writes next to it win."
+            },
             "reverse": {
               "anyOf": [
                 {
@@ -4576,6 +4591,23 @@
       },
       "description": "The parameters of the scenario: a name and its default, or no value for a parameter that must be given (`--param name=value`). `{name}` in a value is replaced (D-093).",
       "type": "object"
+    },
+    "profile-library": {
+      "anyOf": [
+        {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        {
+          "pattern": "\\{[^{}]+\\}",
+          "type": "string"
+        }
+      ],
+      "description": "The version of the profile library that the profiles of the links were resolved with (D-095). Written by the tool when a file\nis read, and a scenario that has it is not resolved again, so a recorded scenario keeps the numbers of its run."
     },
     "seed": {
       "anyOf": [

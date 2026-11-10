@@ -46,6 +46,9 @@ fn markdown_run(result: &RunResult) -> String {
     if let Some(params) = result.scenario.params_line() {
         let _ = writeln!(text, "| Parameters | {} |", cell(&params));
     }
+    if let Some(profiles) = result.scenario.profiles_line() {
+        let _ = writeln!(text, "| Profiles | {} |", cell(&profiles));
+    }
     let _ = writeln!(
         text,
         "| Duration | {} s, then {} s for the packets in the network |",

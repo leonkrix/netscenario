@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=../docs/schema/scenario-v0.json
+# A link from the profile library: `profile: lte-good` gives the delays of an LTE network (24 ms up, 8 ms down), and the keys written
+# next to it win. The profile sets only what a source states; the loss here is written by the file. `netscenario profiles` lists them.
+version: 0
+name: profile
+seed: 7
+duration: 20s
+topology:
+  nodes: [phone, server]            # the first node of `between` is the terminal: forward is up, reverse is down
+  links:
+    - id: access
+      between: [phone, server]
+      profile: lte-good
+      forward: { loss: { model: random, p: 1% } }
+workloads:
+  - id: media
+    kind: udp-cbr
+    from: phone
+    to: server
+    rate: 2mbit
+    packet-size: 1200b
+expect:
+  checks:
+    - metric: media.delay.p50
+      value: "< 40ms"

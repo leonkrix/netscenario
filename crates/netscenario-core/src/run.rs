@@ -33,8 +33,8 @@ use crate::recovery::{self, Basis, Recovery, RecoveryOptions};
 use crate::result::{
     AcceptedRestriction, AddressInfo, CaptureResult, DirectionTally, EchoResult, EventRecord,
     NodeInfo, PathInfo, ProgramResult, QueueCheck, QueueInfo, RESULT_FORMAT, RESULT_VERSION,
-    Reproducibility, RouteInfo, RunResult, ScenarioInfo, SeedInfo, SenderInfo, SeriesInfo,
-    TcpResult, Timing, TraceInfo, WorkloadResult,
+    Reproducibility, RouteInfo, RunResult, SeedInfo, SenderInfo, SeriesInfo, TcpResult, Timing,
+    TraceInfo, WorkloadResult,
 };
 use crate::series::{self, DEFAULT_BIN_NS};
 use crate::stats::analyse_refused;
@@ -450,11 +450,11 @@ pub fn run(
     let mut result = RunResult {
         format: RESULT_FORMAT.to_owned(),
         version: RESULT_VERSION,
-        scenario: ScenarioInfo {
-            name: scenario.name.to_string(),
-            hash: crate::replay::scenario_hash(original),
-            params: original.params.clone(),
-        },
+        scenario: crate::result::scenario_info(
+            scenario.name.to_string(),
+            crate::replay::scenario_hash(original),
+            original,
+        ),
         provenance: collect(&backend.describe(), started),
         seed: SeedInfo {
             value: provisioned.seed,

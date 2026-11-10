@@ -9,6 +9,8 @@ netscenario <command> [options]
 | `run <file>`      | Runs a scenario in network namespaces and writes the result.                             |
 | `validate <file>` | Checks a scenario file without running it.                                               |
 | `schema`          | Prints the JSON Schema of the scenario format.                                           |
+| `profiles [id]`   | Lists the link profiles, or shows one with its values and its sources ([PROFILES.md](PROFILES.md)). |
+| `capabilities`    | What the Kernel backend reproduces on this machine, feature by feature. |
 | `doctor`          | Reports what this machine can do and how to fix what it cannot ([DOCTOR.md](DOCTOR.md)). |
 | `clean`           | Ends what a run without a supervisor left behind ([DOCTOR.md](DOCTOR.md)).               |
 
@@ -158,6 +160,12 @@ version: 0
 ```
 
 They then complete the keys and values (the loss models, the signals, the directions), show the description of each key, and mark a wrong value while you type. The example scenarios of this repository carry the same line with a relative path to the schema of their own checkout. The schema describes the shape; the rules between values (a node must exist, a jitter needs a delay) are checked by `netscenario validate`, which an editor does not run. The URL above follows `main`, so it can be ahead of the release you have installed; for a fixed version use the file of that tag, or `netscenario schema > scenario.schema.json` and a path to it.
+
+## `profiles` and `capabilities`
+
+`netscenario profiles` lists the profile library (CLI-03, SCN-06): for each profile the id (`lte-typical`), the keys it sets and what the tier is. `netscenario profiles <id>` shows one: the tier, the sources of its numbers, and what a link gets (`forward` is up, from the terminal; `reverse` is down). `--json` prints the library or the profile for machines. An unknown id is an error with the closest one (exit code 2). A link takes a profile with `profile: <id>` ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md#profiles-scn-06-d-095)); the numbers and where they come from are in [PROFILES.md](PROFILES.md).
+
+`netscenario capabilities` prints what the Kernel backend reproduces on this machine, feature by feature: exactly, only in part (a scenario must accept the restriction with `allow-limited`), or not at all, with the way out. It is the feature list of `doctor` without the checks that lead to it; `--json` prints it for machines. The exit code is 0 (the rest of the machine is `doctor`'s).
 
 ## `doctor` and `clean`
 

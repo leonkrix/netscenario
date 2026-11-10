@@ -557,11 +557,11 @@ pub fn run_set(
     let result = RunSetResult {
         format: RUNSET_FORMAT.to_owned(),
         version: RUNSET_VERSION,
-        scenario: ScenarioInfo {
-            name: scenario.name.to_string(),
-            hash: hash_without_seed(scenario),
-            params: scenario.params.clone(),
-        },
+        scenario: crate::result::scenario_info(
+            scenario.name.to_string(),
+            hash_without_seed(scenario),
+            scenario,
+        ),
         provenance: first.provenance.clone(),
         seed: SetSeed {
             value: set_seed,

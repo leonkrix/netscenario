@@ -1150,6 +1150,13 @@ class Result:
     scenario_params: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
     """The parameters of the scenario with the values the run was made with, as text. Empty for a
     scenario without parameters."""
+    scenario_profiles: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    """The profile of each link that has one, by the id of the link (``{"access": "lte-good"}``).
+    The values of the profile are in the scenario the run was made with; this says where they came
+    from. Empty for a scenario without profiles."""
+    profile_library: int | None = None
+    """The version of the profile library that the profiles were resolved with, or ``None`` for a
+    scenario without profiles."""
     captures: tuple[Capture, ...] = ()
     """The captures of the interfaces (``measure.capture``): two for each captured link, in the
     order of the list and of ``between``."""
@@ -1276,6 +1283,8 @@ class Result:
                 {p["id"]: _program(p, directory) for p in raw.get("programs", ())}
             ),
             scenario_params=MappingProxyType(dict(raw["scenario"].get("params", {}))),
+            scenario_profiles=MappingProxyType(dict(raw["scenario"].get("profiles", {}))),
+            profile_library=raw["scenario"].get("profile_library"),
             captures=tuple(_capture(c, directory) for c in raw.get("captures", ())),
             tcp=MappingProxyType({t["id"]: _tcp(t, directory) for t in raw.get("tcp", ())}),
             reproducibility=Reproducibility(
