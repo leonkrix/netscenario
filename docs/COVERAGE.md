@@ -152,7 +152,7 @@ One-way delay is exact because all nodes share one machine and one clock. For th
 | Feature | Kernel | Engine | Proxy |
 | --- | --- | --- | --- |
 | UDP and everything on it (QUIC, RTP, custom protocols) | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/fidelity.rs): UDP streams of any packet size) | ✔ 0.4 | ✔ 0.5 |
-| TCP behaviour under loss and delay (congestion control) | ✔ 0.3 | ✔ 0.4 | ✘ |
+| TCP behaviour under loss and delay (congestion control) | ✔ 0.3 ([test](../python/netscenario/tests/test_acceptance_tcp_models.py): Reno follows the formula of Mathis at two points, CoDel and FQ-CoDel keep the queue near their target where a FIFO does not; [fairness](../python/netscenario/tests/test_acceptance_tcp.py)) | ✔ 0.4 | ✘ |
 | ICMP | ✔ 0.1 ([test](../crates/netscenario-backend-kernel/tests/provision.rs): `a_ping_takes_the_round_trip_of_both_directions`) | ✔ 0.4 | ✘ |
 
 ## Reproducibility
