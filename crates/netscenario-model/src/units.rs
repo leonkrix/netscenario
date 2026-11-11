@@ -751,6 +751,15 @@ mod tests {
         text.parse()
     }
 
+    /// A name is its text, for the functions that take anything that is a `str`.
+    #[test]
+    fn a_name_is_seen_as_its_text() {
+        let name = Name::new("client-1").unwrap();
+        let text: &str = name.as_ref();
+        assert_eq!(text, "client-1");
+        assert_eq!(name.as_str(), text);
+    }
+
     #[test]
     fn durations_are_exact_and_print_in_the_largest_exact_unit() {
         assert_eq!(duration("40ms").unwrap().as_nanos(), 40_000_000);

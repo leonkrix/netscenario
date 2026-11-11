@@ -861,4 +861,96 @@ mod tests {
             (Some(10e6), Some(0))
         );
     }
+
+    /// The median of an even number of values is the mean of the two in the middle, of an odd number the one in the middle, and of
+    /// none there is none. The values are not in order.
+    #[test]
+    fn the_median_is_the_middle_value_or_the_mean_of_the_two_in_the_middle() {
+        assert_eq!(median(vec![4.0, 1.0, 3.0, 2.0]), Some(2.5));
+        assert_eq!(median(vec![1.0, 100.0]), Some(50.5));
+        assert_eq!(median(vec![9.0, 1.0, 5.0]), Some(5.0));
+        assert_eq!(median(vec![7.0]), Some(7.0));
+        assert_eq!(median(Vec::new()), None);
+    }
+
+    /// Two outages on the same link: the end of each belongs to its own start. With the same direction and another event the start
+    /// of the first would be taken for both.
+    #[test]
+    fn the_end_of_an_outage_belongs_to_the_start_of_the_same_event() {
+        let events = [
+            event("outage-start", 0, 2, Some("forward")),
+            event("outage-end", 0, 3, Some("forward")),
+            event("outage-start", 1, 5, Some("forward")),
+            event("outage-end", 1, 6, Some("forward")),
+            event("outage-start", 2, 8, Some("reverse")),
+            event("outage-end", 2, 9, Some("reverse")),
+        ];
+        let at = |index: usize| disturbance_of(&events[index], &events) / SECOND;
+        assert_eq!((at(1), at(3), at(5)), (2, 5, 8));
+        // The same event in the other direction is another outage
+        let both = [
+            event("outage-start", 0, 2, Some("forward")),
+            event("outage-start", 0, 4, Some("reverse")),
+            event("outage-end", 0, 7, Some("reverse")),
+        ];
+        assert_eq!(disturbance_of(&both[2], &both) / SECOND, 4);
+        // An end without a start is a disturbance of its own moment
+        let alone = [event("outage-end", 3, 6, Some("forward"))];
+        assert_eq!(disturbance_of(&alone[0], &alone) / SECOND, 6);
+    }
+
+    /// The level to reach is the share of the baseline, and not the share divided by it: a stream that delivered half of what it sent
+    /// before the disturbance has recovered when it delivers 45 % again, and does not have to reach 180 %.
+    #[test]
+    fn the_level_is_the_fraction_of_a_baseline_that_is_not_one() {
+        let mut delivered = vec![50; 10];
+        delivered.extend([0, 0, 0]);
+        delivered.extend([50; 7]);
+        let events = [
+            event("outage-start", 0, 10, Some("forward")),
+            event("outage-end", 0, 13, Some("forward")),
+        ];
+        let found = recoveries(
+            &events,
+            &series(&delivered),
+            SECOND,
+            &RecoveryOptions::default(),
+        );
+        let r = &found[0];
+        assert_eq!(r.baseline, Some(0.5));
+        assert!((r.level.unwrap() - 0.45).abs() < 1e-12, "{:?}", r.level);
+        assert_eq!(time_of(&found), [Some(0)]);
+        // 40 % is not enough
+        let mut weak = vec![50; 10];
+        weak.extend([0, 0, 0]);
+        weak.extend([40; 7]);
+        let found = recoveries(&events, &series(&weak), SECOND, &RecoveryOptions::default());
+        assert_eq!(time_of(&found), [None]);
+    }
+
+    /// A window in which the stream sent nothing in one of the bins is not a recovery, even if the bins around it did well: the
+    /// link was down in that bin and the sender was refused.
+    #[test]
+    fn a_window_with_a_bin_in_which_nothing_was_sent_is_not_a_recovery() {
+        let mut bins = series(&[100; 20]);
+        // The link is down from 10 s to 13 s: nothing arrives in the bins of 10 s and 11 s, and in the bin of 12 s the sender is refused
+        for (index, slot) in bins.iter_mut().enumerate().take(12).skip(10) {
+            *slot = bin(index as u64, 0, 0);
+        }
+        bins[12].by_send.sent = 0;
+        bins[12].by_send.lost = 0;
+        bins[12].by_send.received = 0;
+        bins[12].by_send.delivered_ratio = None;
+        let events = [event("down", 0, 10, None), event("up", 1, 13, None)];
+        let options = RecoveryOptions {
+            window_bins: 3,
+            ..RecoveryOptions::default()
+        };
+        let found = recoveries(&events, &bins, SECOND, &options);
+        assert_eq!(found.len(), 2, "{found:?}");
+        // From the `down` at 10 s: the window 12..15 would hold 200 packets sent and 200 delivered, but it has a bin of nothing sent,
+        // so the first window that counts is the one from 13 s
+        // From the `up` at 13 s: the baseline is taken before the link went down, and the windows from 13 s on are all good
+        assert_eq!(time_of(&found), [Some(3), Some(0)]);
+    }
 }

@@ -30,6 +30,7 @@ The pages of this book explain and show. The exact definition of every key, fiel
 | --- | --- |
 | [Architecture](https://github.com/leonkrix/netscenario/blob/main/docs/ARCHITECTURE.md) | The crates, the backend and the agents. |
 | [Coverage](https://github.com/leonkrix/netscenario/blob/main/docs/COVERAGE.md) | What each backend reproduces exactly, in part, or not at all. |
+| [Testing](https://github.com/leonkrix/netscenario/blob/main/docs/TESTING.md) | The kinds of test, where they run, coverage and mutation tests. |
 | [Fidelity](https://github.com/leonkrix/netscenario/blob/main/docs/FIDELITY.md) | How the Kernel backend was checked against the kernel. |
 | [Decisions](https://github.com/leonkrix/netscenario/blob/main/docs/DECISIONS.md) | Every decision that is hard to undo, with its reasons. |
 | [Features](https://github.com/leonkrix/netscenario/blob/main/FEATURES.md) | The ledger of what exists and what is planned. |

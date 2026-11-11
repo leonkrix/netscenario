@@ -93,6 +93,24 @@ book:
 book-check *args:
     uv run python docs/book/check.py {{args}}
 
+# One-time: rustup component add llvm-tools-preview and cargo install cargo-llvm-cov --locked. The instrumented build is in
+# target/llvm-cov-target and takes 6 GB: remove it afterwards
+# Line coverage of the Rust crates as the CI runs the tests (not the fidelity ones)
+coverage:
+    cargo llvm-cov nextest --workspace --all-features --no-tests=pass -E 'not binary(fidelity)' --summary-only --ignore-filename-regex '(/tests/|/fuzz/|/spikes/)'
+
+# One-time: cargo install cargo-mutants --locked. Each worker builds a copy of the tree: the copies go to the disk and not to /tmp, which
+# may be a tmpfs in memory, and the build and the tests are kept to a few threads. For a long run use `systemd-run --user` with MemoryMax
+# Mutation tests of one file of a crate (docs/TESTING.md): `just mutants netscenario-core crates/netscenario-core/src/stats.rs`
+mutants crate file:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    base="${XDG_CACHE_HOME:-$HOME/.cache}/netscenario-mutants"
+    mkdir -p "$base/tmp"
+    TMPDIR="$base/tmp" CARGO_BUILD_JOBS=4 NEXTEST_TEST_THREADS=4 nice -n 10 \
+        cargo mutants -p {{crate}} -f {{file}} -j 2 --test-tool nextest --minimum-test-timeout 60 --output "$base/out/$(basename {{file}} .rs)"
+    echo "survivors: $base/out/$(basename {{file}} .rs)/mutants.out/missed.txt"
+
 # Licences, advisories, sources and bans (deny.toml)
 deny:
     cargo deny check

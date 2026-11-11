@@ -462,4 +462,36 @@ mod tests {
         assert_eq!(Capabilities::new("none").iter().count(), 0);
         assert_eq!(Capabilities::new("x").backend(), "x");
     }
+
+    /// Several refusals are shown one after the other with an empty line between them, and none before the first or after the last.
+    /// The mutation test found that a display of one refusal was all that was checked.
+    #[test]
+    fn several_refusals_are_separated_by_an_empty_line() {
+        let refusal = |feature, path: &str| Refusal {
+            feature,
+            path: path.to_owned(),
+            reason: "no".to_owned(),
+            fix: "none".to_owned(),
+        };
+        let error = CapabilityError::new(
+            "fake",
+            vec![
+                refusal(Feature::FixedDelay, "a"),
+                refusal(Feature::SeededLoss, "b"),
+            ],
+        );
+        let text = error.to_string();
+        let blocks: Vec<&str> = text.trim_end().split("\n\n").collect();
+        assert_eq!(blocks.len(), 2, "{text:?}");
+        assert!(
+            blocks[0].contains("path: a") && !blocks[0].contains("path: b"),
+            "{text:?}"
+        );
+        assert!(
+            blocks[1].starts_with("error: ") && blocks[1].contains("path: b"),
+            "{text:?}"
+        );
+        assert!(text.starts_with("error: ") && text.ends_with('\n'));
+        assert!(!text.ends_with("\n\n"));
+    }
 }

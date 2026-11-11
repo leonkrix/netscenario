@@ -537,6 +537,32 @@ mod tests {
         }
     }
 
+    /// The edges of the ranges and of the sequence numbers that a sender used: a run of refused numbers hides its first and its last
+    /// number, and the number `slots` itself was never sent. (The mutation test found the edges unchecked.)
+    #[test]
+    fn the_edges_of_a_refused_run_and_of_the_slots_are_exact() {
+        let seen: Vec<Record> = [2, 3, 4, 5, 9, 10, 11].into_iter().map(at).collect();
+        // Ten slots, 3 and 4 refused: 3 and 4 are inside the run, 5 just after it, 9 the last slot, 10 and 11 were never used
+        assert_eq!(name_damaged_refused(10, &[[3, 4]], &[], &seen), [2, 5, 9]);
+        // Two runs, a single number as a run, and a run at the very end
+        assert_eq!(
+            name_damaged_refused(10, &[[2, 2], [4, 5], [9, 9]], &[], &seen),
+            [3]
+        );
+        // Without a refusal every number below the slots is named, the edge included
+        assert_eq!(name_damaged_refused(10, &[], &[], &seen), [2, 3, 4, 5, 9]);
+        assert_eq!(name_damaged_refused(9, &[], &[], &seen), [2, 3, 4, 5]);
+    }
+
+    /// A rank beyond the last delay is the last delay (the defence of the function against a permille above 1000).
+    #[test]
+    fn the_nearest_rank_never_goes_past_the_last_delay() {
+        let sorted = [10, 20, 30, 40];
+        assert_eq!(nearest_rank(&sorted, 1000), 40);
+        assert_eq!(nearest_rank(&sorted, 5000), 40);
+        assert_eq!(nearest_rank(&[7], 999), 7);
+    }
+
     #[test]
     fn the_nearest_rank_is_a_measured_delay() {
         // Four delays: the median is the second one (rank 2), not the mean of the middle two

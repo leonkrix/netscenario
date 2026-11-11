@@ -1,0 +1,12 @@
+---
+source: crates/netscenario-model/tests/corpus.rs
+expression: error.render()
+input_file: scenarios/invalid/planned-key-link-address.yaml
+---
+error: `address` is planned for a later release (see FEATURES.md)
+ --> planned-key-link-address.yaml:9:7
+  |
+8 |       between: [client, server]
+9 |       address: 10.0.0.0/30
+  |       ^^^^^^^
+  = path: topology.links[0].address

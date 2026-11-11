@@ -49,7 +49,12 @@ const RESERVED_VALUES: &[(&str, &str, &str)] = &[
 ];
 
 fn planned(what: &str, release: &str) -> String {
-    format!("{what} is planned for release {release} (see FEATURES.md)")
+    // "release 0.5", or "a later release" when it is not decided which
+    if release.starts_with("a later") {
+        format!("{what} is planned for {release} (see FEATURES.md)")
+    } else {
+        format!("{what} is planned for release {release} (see FEATURES.md)")
+    }
 }
 
 /// Finds everything in the file that belongs to a later release.
