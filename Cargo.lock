@@ -545,7 +545,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "netscenario-agent"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "nix",
  "rustix",
@@ -555,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "netscenario-backend-kernel"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "netscenario-agent",
  "netscenario-core",
@@ -568,7 +568,7 @@ dependencies = [
 
 [[package]]
 name = "netscenario-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "netscenario-backend-kernel",
  "netscenario-core",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "netscenario-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "insta",
  "netscenario-agent",
@@ -591,7 +591,7 @@ dependencies = [
 
 [[package]]
 name = "netscenario-model"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "granit-parser",
  "insta",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "netscenario-py"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "netscenario-backend-kernel",
  "netscenario-core",
