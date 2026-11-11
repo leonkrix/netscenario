@@ -1,0 +1,20 @@
+# Spike S21: the data path of a packet engine, in Rust that is safe except for one small module. A scratch crate, not part of
+# any workspace.
+[package]
+name = "spike-engine-safe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+nix = { version = "0.31", default-features = false, features = ["socket", "net", "uio", "process", "resource"] }
+rustix = { version = "1", default-features = false, features = ["std", "time", "event", "process", "linux_5_11"] }
+signal-hook = "0.4"
+# Only for the module `sys` (bind and two socket options of a packet socket, which nix and rustix cannot set safely)
+libc = "0.2"
+
+[profile.release]
+debug = false
+opt-level = 3
+
+[workspace]

@@ -1,0 +1,17 @@
+# Spike S22: netlink by a thin layer of our own over `netlink-packet-route` (no `unsafe`) and `netlink-sys`. A scratch crate, not part of any workspace.
+[package]
+name = "spike-netlink-own"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+netlink-packet-core = "0.9"
+netlink-packet-route = "0.34"
+netlink-sys = "0.9"
+
+[profile.release]
+debug = false
+opt-level = 3
+
+[workspace]

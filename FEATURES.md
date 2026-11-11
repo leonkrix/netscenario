@@ -75,7 +75,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | LNK-10 | MTU and fragmentation | S | 0.3 | done (`mtu` on a link, the sender cuts a packet that does not fit, a router never cuts, the account is by frames, `dont-fragment` makes the sender refuse, [D-081](docs/decisions/D-081.md); `tests/network.rs`, `tests/fidelity.rs`: a lost fragment loses the packet) |
 | LNK-11 | Different values per direction | M | 0.1 | done (`tests/provision.rs`: `the_impairments_are_in_the_queues_of_the_right_interfaces`; `tests/agent.rs`) |
 | LNK-12 | Outages (windows without any delivery, also of the packets on their way) | M | 0.2 | done (format with D-050; the Kernel backend since D-064; `tests/timeline.rs`: nothing arrives in the window and the packets in flight are dropped; the edges are placed by the clock) |
-| LNK-13 | ECN marking | C | 0.4 | idea |
+| LNK-13 | ECN marking: a queue marks an ECN-capable packet instead of dropping it, and TCP in the nodes uses it (`tcp_ecn`) ([D-100](docs/decisions/D-100.md); spike S24: `codel`, `fq_codel`, `pie` and `netem ... ecn` mark, TCP needs no retransmission for a mark) | S | 0.4 | planned |
 
 ## Link models over time (LMD)
 
@@ -165,15 +165,16 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | BKD-02 | Kernel backend in an unprivileged user namespace | M | 0.1 | done (the CI runs the tests as an ordinary user on `ubuntu-22.04` and `ubuntu-24.04`; tests: [`doctor.rs`](crates/netscenario-backend-kernel/tests/doctor.rs), [`run.rs`](crates/netscenario-backend-kernel/tests/run.rs)) |
 | BKD-03 | Every backend declares what it reproduces faithfully, and refuses the rest with an error | M | 0.1 | done (`tests/refusal.rs`, `tests/coverage.rs`, `capability.rs`; D-023; a restriction that a scenario accepts with `allow-limited` is recorded in the result, D-092) |
 | BKD-04 | Cleanup guarantee: no leftovers after a crash (PID namespace, D-022), and `netscenario clean` as a safety net | M | 0.1 | done (the guarantee is tested at 18 steps in `tests/crash.rs`; `clean` in `tests/clean.rs`, D-024) |
-| BKD-05 | Netlink instead of calls to `ip` and `tc` | S | 0.4 | planned |
-| BKD-06 | Packet engine in userspace (deterministic, no root) | M | 0.4? | planned |
-| BKD-07 | Kernel and engine compared by differential tests | M | 0.4 | planned |
+| BKD-05 | Netlink instead of calls to `ip` and `tc`: a thin layer of our own over `netlink-packet-route`, the options of the qdiscs encoded by us ([D-101](docs/decisions/D-101.md); spike S22: 17 of 17 dumps of the kernel equal those of `tc`) | S | 0.4 | designed |
+| BKD-06 | Packet engine in userspace (deterministic, no root): a process in the fabric namespace with packet sockets on the veth ends, safe Rust but for one small module ([D-098](docs/decisions/D-098.md), [D-099](docs/decisions/D-099.md), [D-100](docs/decisions/D-100.md); spikes S21 and S23) | M | 0.4 | designed |
+| BKD-07 | Kernel and engine compared by differential tests: equivalence inside a margin derived from what each backend measures about itself ([D-102](docs/decisions/D-102.md)) | M | 0.4 | designed |
 | BKD-08 | Portable proxy backend (UDP exact, TCP at stream level) | M | 0.5 | planned |
 | BKD-09 | Docker backend (containers as nodes) | S | 0.5 | planned |
 | BKD-10 | Nodes on several machines | C | 1.x | idea |
 | BKD-11 | Hardware in the loop (a real device behind a physical or virtual port) | C | 1.x | idea |
 | BKD-12 | Exchange of traces with ns-3 | C | 1.x | idea |
 | BKD-13 | An engine based on eBPF/XDP | C | 1.x | idea |
+| BKD-14 | The run chooses the backend (`--backend kernel\|engine\|auto`, `backend=`, a plugin option); the default is the kernel and `auto` says what it chose ([D-103](docs/decisions/D-103.md)) | S | 0.4 | designed |
 
 ## Reproducibility and environment (ENV)
 
@@ -186,6 +187,7 @@ A line moves to `in progress` when the first code of the feature exists, and to 
 | ENV-05 | Report on timer and clock precision | S | 0.3 | done (`provenance.timers` of every result, `netscenario doctor --timers`, `ns.doctor(timers=True)`: [DOCTOR.md](docs/DOCTOR.md), D-097; tests in [`timers.rs`](crates/netscenario-core/src/timers.rs) and [`timers.rs`](crates/netscenario-backend-kernel/src/timers.rs)) |
 | ENV-06 | Result format with a version | M | 0.1 | done (`format` and `version`, 0 until 1.0; tests: [`test_results.py`](python/netscenario/tests/test_results.py), [`run.rs`](crates/netscenario-backend-kernel/tests/run.rs)) |
 | ENV-07 | Reproducibility check: the run compares the packet counter of each queue with the packets of the workload, and marks a run in which something else entered the queue as not reproducible; `doctor` checks that `tc` knows `seed` | M | 0.1 | done (`doctor` checks that `tc` knows `seed`; a run counts the packets of the queue of each direction with loss and compares them with the packets the workloads sent: `check_queues` in `run.rs`, `tests/run.rs` with a canary that sends one extra packet, D-036; two workloads in one direction whose queue draws are said not to be reproducible, D-065, because the count cannot see the order of their packets) |
+| ENV-08 | The engine reports itself: the lateness of its releases as a distribution, an overload flag, its timer and the reason for it, and a log of its decisions ([D-098](docs/decisions/D-098.md), [D-099](docs/decisions/D-099.md)) | M | 0.4 | planned |
 
 ## Safety (SAF)
 
