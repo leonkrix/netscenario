@@ -1,0 +1,238 @@
+{
+ "format": "netscenario-result",
+ "version": 0,
+ "scenario": {
+  "name": "all-sections",
+  "hash": "sha256:a672b5e6ea3eebb2ccbb6bfdb32476c2fb1b3f34daa1bf629fdc495a60b64fdc"
+ },
+ "provenance": {
+  "netscenario": "0.2.0",
+  "started_at": "2026-11-11T10:08:14Z",
+  "backend": "kernel",
+  "backend_details": {
+   "rights": "user namespace",
+   "tc": "iproute2 6.15.0",
+   "tcp_congestion_controls": "reno cubic"
+  },
+  "kernel": "6.12.116+deb13-amd64",
+  "cpu_model": "AMD Ryzen 7 5800X 8-Core Processor",
+  "cpus": 16,
+  "timers": {
+   "clock_source": "tsc",
+   "clock_read_ns": 30,
+   "clock_step_ns": 30,
+   "timer_slack_ns": 50000,
+   "cpu_governor": "performance",
+   "load_1m_hundredths": 122,
+   "runnable_tasks": 2,
+   "sleeps": [
+    {
+     "asked_ns": 200000,
+     "samples": 50,
+     "p50_ns": 54070,
+     "p99_ns": 56580,
+     "max_ns": 56580
+    },
+    {
+     "asked_ns": 1000000,
+     "samples": 20,
+     "p50_ns": 54680,
+     "p99_ns": 61690,
+     "max_ns": 61690
+    }
+   ]
+  }
+ },
+ "seed": {
+  "value": 3,
+  "drawn": false,
+  "loss_reproducible": true,
+  "queue_checks": [],
+  "not_reproducible_because": []
+ },
+ "accepted_restrictions": [],
+ "addresses": [
+  {
+   "node": "client",
+   "link": "access",
+   "address": "10.100.0.1"
+  },
+  {
+   "node": "server",
+   "link": "access",
+   "address": "10.100.0.2"
+  }
+ ],
+ "nodes": [
+  {
+   "node": "client",
+   "role": "host",
+   "address": "10.200.0.1"
+  },
+  {
+   "node": "server",
+   "role": "host",
+   "address": "10.200.0.2"
+  }
+ ],
+ "routes": [
+  {
+   "node": "client",
+   "to": "server",
+   "link": "access",
+   "next_hop": "server",
+   "metric": 100,
+   "weight": 1,
+   "given": false
+  },
+  {
+   "node": "server",
+   "to": "client",
+   "link": "access",
+   "next_hop": "client",
+   "metric": 100,
+   "weight": 1,
+   "given": false
+  }
+ ],
+ "timing": {
+  "duration_ns": 2000000000,
+  "settle_ns": 301098608,
+  "interrupted_ns": null
+ },
+ "workloads": [],
+ "directions": [],
+ "queues": [],
+ "events": [],
+ "notes": [],
+ "programs": [
+  {
+   "id": "tool",
+   "node": "server",
+   "run": [
+    "sh",
+    "-c",
+    "echo 'metric latency 1.5'; echo hello; sleep 30"
+   ],
+   "started_ns": -604207739,
+   "ready_ns": -502054420,
+   "ended_ns": 2320533857,
+   "ended": "stopped",
+   "exit_code": null,
+   "exit_signal": 15,
+   "stdout_file": "program-tool.stdout.log",
+   "stderr_file": "program-tool.stderr.log",
+   "output": {
+    "stdout_bytes": 25,
+    "stdout_dropped_bytes": 0,
+    "stderr_bytes": 0,
+    "stderr_dropped_bytes": 0,
+    "long_lines": 0
+   },
+   "lines_dropped": false,
+   "metrics": [],
+   "metrics_file": null,
+   "metric_readings": 0,
+   "bad_metric_lines": 0,
+   "bad_metric_examples": []
+  }
+ ],
+ "captures": [
+  {
+   "link": "access",
+   "node": "client",
+   "interface": "l0",
+   "file": "capture-access-client.pcap",
+   "packets": 560,
+   "bytes": 437098,
+   "first_ns": 171921,
+   "last_ns": 2475010,
+   "realtime_minus_monotonic_ns": 1794356634991674252,
+   "receive_buffer_bytes": 425984,
+   "interface_frames": 560,
+   "missing": 0
+  },
+  {
+   "link": "access",
+   "node": "server",
+   "interface": "l0",
+   "file": "capture-access-server.pcap",
+   "packets": 560,
+   "bytes": 437098,
+   "first_ns": 166121,
+   "last_ns": 2470770,
+   "realtime_minus_monotonic_ns": 1794356634991674472,
+   "receive_buffer_bytes": 425984,
+   "interface_frames": 560,
+   "missing": 0
+  }
+ ],
+ "tcp": [
+  {
+   "id": "download",
+   "kind": "tcp-bulk",
+   "from": "server",
+   "to": "client",
+   "from_address": "10.200.0.2",
+   "to_address": "10.200.0.1:6000",
+   "congestion": "cubic",
+   "connections": 2,
+   "failed_connections": 0,
+   "start_ns": 0,
+   "window_ns": 2000000000,
+   "bytes_sent": 400000,
+   "bytes_received": 400000,
+   "goodput": {
+    "bin_ns": 1000000000,
+    "bits_per_second": [
+     3200000
+    ],
+    "mean_bits_per_second": 2586109360
+   },
+   "transfers": [
+    {
+     "connection": 0,
+     "started_ns": 138891,
+     "established_ns": 230441,
+     "done_ns": 1330241,
+     "bytes_sent": 200000,
+     "bytes_received": 0,
+     "ok": true
+    },
+    {
+     "connection": 1,
+     "started_ns": 147621,
+     "established_ns": 231151,
+     "done_ns": 1376271,
+     "bytes_sent": 200000,
+     "bytes_received": 0,
+     "ok": true
+    }
+   ],
+   "retransmitted_segments": 0,
+   "rtt": {
+    "min_ns": 30000,
+    "mean_ns": 32000,
+    "p50_ns": 30000,
+    "p90_ns": 34000,
+    "p95_ns": 34000,
+    "p99_ns": 34000,
+    "p999_ns": 34000,
+    "max_ns": 34000
+   },
+   "requests": null,
+   "first_error": null,
+   "info_error": null,
+   "stopped": false,
+   "client_file": "tcp-0.client.streams",
+   "server_file": "tcp-0.server.streams",
+   "recoveries": []
+  }
+ ],
+ "reproducibility": {
+  "class": "statistical",
+  "because": [
+   "TCP is driven by feedback (the windows, the timers and the acknowledgements of the kernel of this machine), so the same file gives a different run each time; repeat the run and read the interval"
+  ]
+ }
+}

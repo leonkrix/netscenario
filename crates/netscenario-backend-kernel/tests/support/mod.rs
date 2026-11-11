@@ -180,11 +180,40 @@ pub(crate) fn assert_nothing_left(run_id: &str, context: &str) {
     }
 }
 
-/// A directory for the files that programs of a test write.
+/// A directory for the files that programs of a test write. It is removed when the thread of the test ends if the test passed;
+/// the directory of a test that failed is kept for a look (`NETSCENARIO_KEEP_TEST_DIRS=1` keeps all of them).
 pub(crate) fn work_dir(name: &str) -> PathBuf {
+    use std::cell::{Cell, RefCell};
+    use std::sync::Once;
+
+    struct Made(RefCell<Vec<PathBuf>>);
+    impl Drop for Made {
+        fn drop(&mut self) {
+            if std::env::var_os("NETSCENARIO_KEEP_TEST_DIRS").is_some() || FAILED.with(Cell::get) {
+                return;
+            }
+            for path in self.0.get_mut().drain(..) {
+                let _ = std::fs::remove_dir_all(path);
+            }
+        }
+    }
+    thread_local! {
+        static MADE: Made = const { Made(RefCell::new(Vec::new())) };
+        static FAILED: Cell<bool> = const { Cell::new(false) };
+    }
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let before = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            FAILED.with(|failed| failed.set(true));
+            before(info);
+        }));
+    });
+
     let dir = std::env::temp_dir().join(format!("netscenario-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    MADE.with(|made| made.0.borrow_mut().push(dir.clone()));
     dir
 }
 

@@ -14,6 +14,7 @@
 
 mod support;
 
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use netscenario_agent::records::{self, Record};
@@ -97,44 +98,61 @@ const DELAYS: &[(&str, f64, f64)] = &[
 /// What a few milliseconds of two interfaces, a receiver that is not scheduled at once and a busy machine add to a delay.
 const ROOM: f64 = 0.015;
 
-fn measured_delays(id: &str) {
+/// How many profiles one run holds: a run may use 8 network namespaces (SAF-02), the network and 7 terminals.
+const PER_RUN: usize = 7;
+
+/// The profiles of the library in as few runs as the limit of namespaces allows (`PER_RUN` each): the network is a star with
+/// one link for each profile and a stream of 20 packets a second in each direction of each link. A run holds several profiles
+/// because the links do not touch each other and what a profile adds to the kernel (its delay, jitter, loss and rate on its
+/// own link) does not depend on the others; a run for each profile costs 14 times the set-up and the wait for nothing more.
+/// A failure names the profile and the direction.
+fn delays_of_the_profiles_in_run(run_index: usize) {
     if !namespaces_available() || agent_exe().is_none() {
         return;
     }
-    let &(_, up, down) = DELAYS.iter().find(|(name, ..)| *name == id).unwrap();
-    let (_, records, dir) = go(&scenario(id, "", TWO_STREAMS), &format!("profile-{id}"));
-    // `up` is the first workload, from the terminal, which is the first node of the link: its delay is `forward`
-    delay_holds(&records[0], up, ROOM).unwrap_or_else(|why| panic!("{id}, up: {why}"));
-    delay_holds(&records[1], down, ROOM).unwrap_or_else(|why| panic!("{id}, down: {why}"));
+    let profiles = DELAYS.chunks(PER_RUN).nth(run_index).unwrap();
+    let mut nodes = String::from("network");
+    let mut links = String::new();
+    let mut streams = String::new();
+    for &(id, ..) in profiles {
+        write!(nodes, ", t-{id}").unwrap();
+        writeln!(
+            links,
+            "    - {{ id: l-{id}, between: [t-{id}, network], profile: {id} }}"
+        )
+        .unwrap();
+        // `up` is from the terminal, which is the first node of the link: its delay is `forward`
+        write!(
+            streams,
+            "  - {{ id: up-{id}, kind: udp-cbr, from: t-{id}, to: network, rate: 160kbit, packet-size: 1000b }}\n  - {{ id: down-{id}, kind: udp-cbr, from: network, to: t-{id}, rate: 160kbit, packet-size: 1000b }}\n"
+        )
+        .unwrap();
+    }
+    let yaml = format!(
+        "version: 0\nname: profile-test\nduration: 3s\ntopology:\n  nodes: [{nodes}]\n  links:\n{links}workloads:\n{streams}"
+    );
+    let mut scenario = Scenario::from_yaml(&yaml, "profiles.yaml").unwrap();
+    scenario.measure.packets = true;
+    let (_, records, dir) = go(&scenario, &format!("profile-all-{run_index}"));
+    assert_eq!(records.len(), 2 * profiles.len());
+    for (index, &(id, up, down)) in profiles.iter().enumerate() {
+        delay_holds(&records[2 * index], up, ROOM).unwrap_or_else(|why| panic!("{id}, up: {why}"));
+        delay_holds(&records[2 * index + 1], down, ROOM)
+            .unwrap_or_else(|why| panic!("{id}, down: {why}"));
+    }
     let _ = std::fs::remove_dir_all(dir);
 }
 
-macro_rules! delay_tests {
-    ($($name:ident: $id:literal),* $(,)?) => {
-        $(
-            #[test]
-            fn $name() {
-                measured_delays($id);
-            }
-        )*
-    };
+/// The first seven profiles of the table.
+#[test]
+fn the_delays_of_the_first_profiles_are_the_published_ones() {
+    delays_of_the_profiles_in_run(0);
 }
 
-delay_tests! {
-    the_delays_of_3g_good_are_the_published_medians: "3g-good",
-    the_delays_of_3g_typical_are_half_of_the_round_trip: "3g-typical",
-    the_delays_of_lte_good_differ_by_direction: "lte-good",
-    the_delays_of_lte_typical_are_half_of_the_round_trip: "lte-typical",
-    the_delays_of_5g_typical_are_half_of_the_round_trip: "5g-typical",
-    the_delays_of_5g_poor_are_the_published_average: "5g-poor",
-    the_delays_of_dsl_good_are_half_of_the_round_trip: "dsl-good",
-    the_delays_of_dsl_poor_are_half_of_the_round_trip: "dsl-poor",
-    the_delays_of_geo_good_are_half_of_the_round_trip: "geo-good",
-    the_delays_of_geo_typical_are_half_of_the_median: "geo-typical",
-    the_delays_of_geo_poor_are_half_of_the_median: "geo-poor",
-    the_delays_of_leo_typical_are_half_of_the_middle_median: "leo-typical",
-    the_delays_of_datacenter_rack_are_half_of_the_round_trip: "datacenter-rack",
-    the_delays_of_datacenter_fabric_are_half_of_the_round_trip: "datacenter-fabric",
+/// The next seven.
+#[test]
+fn the_delays_of_the_next_profiles_are_the_published_ones() {
+    delays_of_the_profiles_in_run(1);
 }
 
 /// Canary for the list above: a profile in the library without a test here fails, and so does a test for a profile that is gone.
@@ -147,6 +165,12 @@ fn every_profile_of_the_library_is_tested_and_the_table_is_the_library() {
     assert_eq!(
         tested, library_ids,
         "a profile without a test, or a test without a profile"
+    );
+    // ... and the runs above hold all of them (two tests, `PER_RUN` profiles each)
+    assert_eq!(
+        DELAYS.chunks(PER_RUN).count(),
+        2,
+        "a profile is in no run: add a test for the next run"
     );
     // The numbers of the table are those of the library: a changed number fails here until the table is changed on purpose
     for &(id, up, down) in DELAYS {

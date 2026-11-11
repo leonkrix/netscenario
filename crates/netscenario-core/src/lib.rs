@@ -82,6 +82,8 @@ pub mod series;
 mod special;
 pub mod stats;
 mod tcp;
+#[cfg(test)]
+mod testdir;
 pub mod timeline;
 pub mod timers;
 mod traffic;
