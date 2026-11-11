@@ -13,7 +13,7 @@ readme = "README.md"
 # Released together with the package, so the exact version (python/release/version.py keeps it)
 dependencies = ["netscenario==0.2.0", "pytest>=8"]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 3 - Alpha",
   "Framework :: Pytest",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",

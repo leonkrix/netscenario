@@ -7,14 +7,14 @@
 [![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange?logo=rust)](docs/DECISIONS.md)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](docs/DECISIONS.md)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux&logoColor=white)](docs/COVERAGE.md)
-[![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-red)](FEATURES.md)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](docs/VERSIONING.md)
 [![Release](https://img.shields.io/github/v/release/leonkrix/netscenario)](https://github.com/leonkrix/netscenario/releases)
 [![PyPI](https://img.shields.io/pypi/v/netscenario?label=PyPI)](https://pypi.org/project/netscenario/)
 [![crates.io](https://img.shields.io/crates/v/netscenario-cli?label=crates.io)](https://crates.io/crates/netscenario-cli)
 
 Describe a network, send traffic through it, measure what happens, and assert on it. In a test, in your CI, or on your laptop.
 
-> **Status: pre-alpha, release 0.2.** The Kernel backend, the command line, the Python package and the pytest plugin work on Linux: you describe a point-to-point link in a file, with burst loss, reordering, duplication, corruption, outages and changes over time, run it in network namespaces with a stream or **your own program** in the nodes, and get loss, delay percentiles, throughput and a series over time back, with the seed and the versions that produced them. Repeat a run with derived seeds to get **confidence intervals**, replay a run from its directory, and make reports as Markdown, JUnit and HTML. What is not there yet is listed under "What 0.2 does not do". The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea.
+> **Status: alpha, release 0.3.** The Kernel backend, the command line, the Python package and the pytest plugin work on Linux: you describe a network in a file or in code (two nodes, or a star, a chain, a dumbbell or two paths, over IPv4 and IPv6) with delay, jitter, loss, reordering, duplication, corruption, a rate, queues, outages and changes over time, run it in network namespaces with UDP streams, **TCP and request/response workloads** or **your own program** in the nodes, and get loss, delay percentiles, throughput, a series over time and the time to recover back, with the seed and the versions that produced them. Links can come from a **library of profiles** (LTE, 5G, satellite), from traces and from tables of samples. Repeat a run with derived seeds to get **confidence intervals**, put the checks in the file (`expect`), replay a run from its directory, and make reports as Markdown, JUnit and HTML. What is not there yet is listed under "What 0.3 does and does not do". Alpha means that it is used and tested for real, and that the formats of the scenario and of the result are at version 0 and may change in a minor release (the [changelog](CHANGELOG.md) says what breaks; [docs/VERSIONING.md](docs/VERSIONING.md)). The [feature ledger](FEATURES.md) says what exists, what is next and what is only an idea. A [guide](https://leonkrix.github.io/netscenario/) with tutorials is online.
 
 ## Why
 
@@ -22,10 +22,10 @@ Code that talks over a network behaves differently on a good link and on a bad o
 
 netscenario is meant to make this a normal, repeatable test:
 
-- **A scenario is data.** Nodes, links, delay, jitter, loss (also in bursts), reordering, duplication, corruption, a rate, outages and changes over time, written in a short file or built in code. (Queues and more than two nodes come in the next release.)
+- **A scenario is data.** Nodes, links and routers (a star, a chain, a dumbbell, several paths, IPv4 and IPv6), delay, jitter, loss (also in bursts), reordering, duplication, corruption, a rate, queues, outages and changes over time, written in a short file or built in code, with parameters, templates and a library of profiles.
 - **Results are numbers with provenance.** Loss, delay percentiles, throughput, the series over time and the time to recover after an event, together with the seed, the kernel and the tool versions that produced them. Several runs give intervals, and a run can be replayed.
 - **It fits the tools you have.** A command line, a Python package, a `pytest` plugin, reports for a CI (Markdown for the summary of a job, JUnit, one HTML file), and a CI that does not need a special machine.
-- **Later in the plan:** more than two nodes, TCP, queue disciplines, baselines and regression detection, containers as nodes, and backends that need no root.
+- **Later in the plan:** a backend that needs no root and is exact, containers as nodes, mobility, baselines and regression detection.
 
 ## Install
 
@@ -146,20 +146,43 @@ assert runs.metric("media.delay.p99").ci95_high < 0.150     # seconds
 
 **Your own program in the network**: a node can run a server, a client or the program that you build, started in order, waited for, supervised, with the addresses of the other nodes in its environment, and with the metrics it prints as lines of JSON in the result ([docs/PROGRAMS.md](docs/PROGRAMS.md); [examples/echo-server/](examples/echo-server/)). **Reports** ([docs/REPORTS.md](docs/REPORTS.md)) are made from a result directory: Markdown, JUnit with one test case for each workload, and one HTML file with charts and nothing to fetch ([sample](docs/sample-report/report.html)).
 
-## What 0.2 does and does not do
+## Networks, TCP and profiles
+
+**More than two nodes.** A shortcut makes the usual shapes (`chain`, `star`, `dumbbell`, `multipath`), and the long form, a graph with routes of your own, is one `netscenario expand` away. [scenarios/dumbbell.yaml](scenarios/dumbbell.yaml):
+
+```yaml
+topology:
+  dumbbell:
+    left: [alice, bob]
+    right: [carol, dave]
+    access:
+      both: { delay: 2ms, rate: 100mbit }
+    bottleneck:
+      both: { delay: 20ms, rate: 10mbit }
+```
+
+The routers forward, the routes are computed (or listed), and the result says for each link how many packets entered, were dropped by the queue, by the loss and arrived, so that a loss can be put on a link. `netscenario show` draws the network and the path of each workload, as text or Graphviz.
+
+**TCP and request/response.** Bulk transfers and closed loops over the TCP of the kernel, with the congestion control you name, measured per connection (goodput, the round trip and the window from the kernel). The classic fairness test, two flows over a dumbbell, is [scenarios/tcp-fairness.yaml](scenarios/tcp-fairness.yaml); the acceptance checks the sum of the goodputs, the Jain index, the formula of Mathis, the split over two paths and the queue of CoDel against what is known ([docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)).
+
+**Links from the library.** `profile: lte-good` gives the delays of a published measurement; what you write next to it wins. Every number has a source ([docs/PROFILES.md](docs/PROFILES.md), `netscenario profiles`). Links can also follow a trace of rates, a recorded stream of packets can be replayed, and delays can come from a file of samples or from a normal, Pareto or Pareto-normal distribution.
+
+**Checks in the file.** `expect:` holds the claims on a run or on a set of runs, with the verdict in the result, the reports and the exit code ([scenarios/expect.yaml](scenarios/expect.yaml)).
+
+## What 0.3 does and does not do
 
 | Does | Does not do yet |
 | --- | --- |
-| Two nodes and one link, IPv4; a link that goes down and up | More than two nodes (a star, a chain, a dumbbell: 0.3), nodes that join and leave (0.6), IPv6 (0.3) |
-| Delay, jitter (uniform, normal), loss at random and in bursts (Gilbert-Elliott, four states), reordering, duplication, corruption, a rate, outages, different values per direction | Queue limits and disciplines, other jitter distributions, traces (0.3) |
-| Changes over time: steps that set any of these, links down and up, outages, done so that the same seed gives the same lost packets | Mobility and geometry (0.6) |
-| UDP streams, constant, Poisson, on/off and bursty, also without the checksum, measured per packet: loss, one-way delay, throughput, reordering, jitter, loss runs, the series over time and the time to recover | TCP and request/response workloads (0.3), a container as a node (0.5) |
+| Two nodes or a network of up to eight namespaces: star, chain, dumbbell, several paths with failover, ECMP and weights, routes of your own; IPv4, IPv6 and both; an MTU with fragments; links that go down and up | Nodes that join and leave (0.6), a network of more than eight nodes |
+| Delay, jitter (uniform, normal, Pareto, Pareto-normal, tables), loss at random and in bursts, reordering, duplication, corruption, a rate, queues (tail drop, CoDel, FQ-CoDel, PIE), traces, outages, different values per direction, a library of profiles | Profiles for Wi-Fi, cable and the tiers of cellular networks that have no published source yet ([docs/PROFILES.md](docs/PROFILES.md)) |
+| Changes over time: steps, links down and up, outages, models that follow a pattern (a periodic one, a Markov chain), events that repeat; a live change from a test | Mobility and geometry (0.6) |
+| UDP streams (constant, Poisson, on/off, bursty, replay of a recorded stream, echo), TCP bulk and request/response, measured per packet or per connection, with the series over time and the time to recover | A container as a node (0.5), MPTCP |
 | Your own program as a node, with readiness, supervision, logs and metrics; packet capture of a link as pcap | Baselines and regression detection (0.7) |
-| Seeds, and the same lost packets for the same seed on the same kernel and `tc`; repetitions with confidence intervals; replay of a run | Backends other than the Linux kernel (0.4 and 0.5) |
-| Results as JSON with the versions and the seed; reports as Markdown, JUnit and HTML | A user guide (0.8) |
-| A command line, a Python package, a pytest plugin | |
+| Seeds, and the same lost packets for the same seed on the same kernel and `tc`; repetitions with confidence intervals; replay of a run; checks in the file | Backends other than the Linux kernel (0.4 and 0.5) |
+| Parameters, includes and templates in the file; results as JSON with the versions and the seed; reports as Markdown, JUnit and HTML | A cookbook (0.8) |
+| A command line, a Python package, a pytest plugin, a [guide](https://leonkrix.github.io/netscenario/) | |
 
-A scenario that asks for something that is not in the left column is refused with an error that names the release in which it is planned; it is never approximated silently. **Release 0.2 changes the format of the scenario file and of the result** (version 0 of both, which may change in a minor release): the [changelog](CHANGELOG.md) names what breaks.
+A scenario that asks for something that is not in the left column is refused with an error that names the release in which it is planned; it is never approximated silently. **Release 0.3 changes the format of the scenario file and of the result** (version 0 of both, which may change in a minor release): the [changelog](CHANGELOG.md) names what breaks.
 
 ## Principles
 
@@ -195,7 +218,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [docs/DOCTOR.md](docs/DOCTOR.md): `netscenario doctor` and `netscenario clean`: what they check, what they print, their exit codes.
 - [docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md): the scenario file, version 0: every key, every unit, every error.
 - [docs/PRIOR-ART.md](docs/PRIOR-ART.md): what exists, and where netscenario differs.
-- [docs/PROFILES.md](docs/PROFILES.md): the draft of the link profiles (3G to LEO satellite) with the source of every number.
+- [docs/PROFILES.md](docs/PROFILES.md): the library of link profiles (3G to satellite) with the source of every number.
 - [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md): how each criterion of a release is proven, and what the proof does not cover.
 - [docs/TESTING.md](docs/TESTING.md): how the tests are organised, where each kind runs, how coverage and mutation tests are measured, and the rules for a new test.
 - [docs/VERSIONING.md](docs/VERSIONING.md): what a version number promises, and what a release may break.

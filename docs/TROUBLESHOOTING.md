@@ -28,6 +28,22 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
 **`jitter tables` is a warning.** A `tc` that you built yourself looks for `normal.dist` in `/usr/lib/tc`. Point `TC_LIB_DIR` to the `netem` folder of its build. Without it a jitter with `distribution: normal` fails when the run applies it.
 
+## Networks, IPv6, TCP and files (release 0.3)
+
+`netscenario doctor` has one check for each of these, and a scenario that needs what the machine lacks is refused before anything is created, with the feature, the backend and a way out.
+
+**Routers and several links are refused (`forwarding and routes in a node` fails).** A network of more than two nodes needs a node that can switch on `ip_forward` and have a route through a next hop. A point-to-point scenario still runs. The usual cause is a container or a kernel that does not let a node write `/proc/sys/net`; run in a user namespace as in [PERMISSIONS.md](PERMISSIONS.md), or with the rights named there. Nothing is changed on the host: the setting is made inside the namespace of the node.
+
+**`ip: v6` or `ip: dual` is refused (`IPv6 in a node` warns).** The kernel has no IPv6: `/proc/sys/net/ipv6` is missing, usually because it was started with `ipv6.disable=1`. Remove that option, or use IPv4 (`ip: v4`, the default). Everything that does not ask for IPv6 runs.
+
+**TCP workloads are refused for `segment size of a link`.** The `ip` of the machine cannot set `gso_max_size` and `gso_max_segs` on an interface; iproute2 4.12 or newer is needed. Without it `netem` would see super-packets of up to 64 KB and the delay and loss of a TCP flow would be wrong, so the run is refused and not approximated.
+
+**`this machine does not offer the congestion control 'bbr' to a socket`.** `cc:` names a congestion control that the kernel has not loaded. The message lists the ones it has (`reno` and `cubic` are always there); `sudo modprobe tcp_bbr` loads another. A socket in a user namespace can use only what is loaded, and a file that does not name `cc` gets `cubic` whatever the default of the machine is, so that it means one thing on two machines.
+
+**A file the scenario refers to is refused (`cannot read '...'`).** A file of delay samples, a trace or a table is read once when the scenario is loaded, from the directory of the scenario file, at most 16 MiB. A path that leads out of that directory (`..`, an absolute path, a link) is refused; `--allow-outside-files` (Python: `allow_outside_files=True`) lifts it. The scenario of a run keeps what was read, so a replay needs no file.
+
+**`a run may use at most 8 network namespaces (SAF-02)`.** A run has a namespace for each node, hosts and routers alike, and no more than 8. Cut the scenario into runs of at most 8 nodes (the pieces that do not interact can run apart), or fewer routers.
+
 ## The scenario is refused (exit code 2)
 
 A scenario with a mistake is refused before anything is created, with the line and column, the path in the file, and a hint:
