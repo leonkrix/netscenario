@@ -1617,4 +1617,196 @@ result: out/result.json
         assert_eq!(rate(1_234_567_890.0), "1.23 gbit/s");
         assert_eq!(ms(20_016_000), "20.0 ms");
     }
+    /// A real run with a TCP transfer, a program and the capture of a link (`tests/fixtures`): every section of the summary
+    /// that a user reads for them, and then the warnings, each one from the field that raises it. The fixture is a result as
+    /// `netscenario run` wrote it; a test changes the field and reads the summary again.
+    const ALL: &str = include_str!("../tests/fixtures/all-sections.result.json");
+
+    fn all_with(change: impl FnOnce(&mut serde_json::Value)) -> String {
+        let mut value: serde_json::Value = serde_json::from_str(ALL).unwrap();
+        change(&mut value);
+        summary(
+            &RunResult::from_json(&value.to_string()).unwrap(),
+            Path::new("out"),
+        )
+    }
+
+    fn lacks_warning(text: &str) {
+        assert!(!text.contains("warning:"), "{text}");
+    }
+
+    #[test]
+    fn the_summary_of_a_run_with_tcp_a_program_and_a_capture_has_a_section_for_each() {
+        let text = all_with(|_| {});
+        for expected in [
+            "tcp download  server -> client  tcp-bulk, 2 connections, cubic",
+            "  sent 400000 bytes  received 400000 bytes",
+            "  2 of 2 transfers complete, the last after ",
+            "  goodput  2.59 gbit/s on average over the transfer",
+            "  round trip time of the kernel  min 0.0 ms  median 0.0 ms  p95 0.0 ms  max 0.0 ms",
+            "  retransmitted segments  0",
+            "program tool  in server  sh -c echo 'metric latency 1.5'; echo hello; sleep 30",
+            "(stopped, signal 15)",
+            "  output  25 bytes in program-tool.stdout.log, 0 bytes of standard error in program-tool.stderr.log",
+            "capture link access in client  560 frames, 437098 bytes, in capture-access-client.pcap",
+            "  from 0.000 s to 0.002 s of the measured phase",
+            "  whole: the interface l0 counted 560 frames, as many as the file has",
+        ] {
+            assert!(text.contains(expected), "{expected}\n{text}");
+        }
+        lacks_warning(&text);
+    }
+
+    #[test]
+    fn a_failed_or_interrupted_transfer_is_a_warning_with_the_reason() {
+        let text = all_with(|v| {
+            v["tcp"][0]["failed_connections"] = 1.into();
+            v["tcp"][0]["first_error"] = "connection reset".into();
+            v["tcp"][0]["stopped"] = true.into();
+        });
+        assert!(
+            text.contains("  warning: 1 of 2 connections failed: connection reset"),
+            "{text}"
+        );
+        assert!(
+            text.contains("  the run was interrupted before the client was done"),
+            "{text}"
+        );
+        let text = all_with(|v| v["tcp"][0]["failed_connections"] = 2.into());
+        assert!(
+            text.contains("  warning: 2 of 2 connections failed: no reason was given"),
+            "{text}"
+        );
+        // One connection reads in the singular
+        let text = all_with(|v| v["tcp"][0]["connections"] = 1.into());
+        assert!(text.contains("tcp-bulk, 1 connection, cubic"), "{text}");
+    }
+
+    #[test]
+    fn the_requests_of_a_workload_are_counted_and_timed() {
+        let summary_of_delays = |ns: u64| {
+            serde_json::json!({"min_ns": ns, "mean_ns": ns, "p50_ns": ns, "p90_ns": ns, "p95_ns": ns,
+                "p99_ns": ns, "p999_ns": ns, "max_ns": ns})
+        };
+        let text = all_with(|v| {
+            v["tcp"][0]["kind"] = "tcp-request".into();
+            v["tcp"][0]["requests"] = serde_json::json!({
+                "sent": 10, "answered": 9, "failed": 1, "max_wait_ns": 5_000_000,
+                "latency": summary_of_delays(2_000_000), "round_trip": summary_of_delays(1_000_000)
+            });
+        });
+        for expected in [
+            "  requests  sent 10  answered 9  failed 1",
+            "  latency from the moment due  min 2.0 ms  median 2.0 ms  p95 2.0 ms  p99 2.0 ms  max 2.0 ms",
+            "  round trip from the moment sent  min 1.0 ms  median 1.0 ms  p95 1.0 ms  p99 1.0 ms  max 1.0 ms",
+        ] {
+            assert!(text.contains(expected), "{expected}\n{text}");
+        }
+        // The bytes of a transfer are not shown for requests
+        assert!(!text.contains("transfers complete"), "{text}");
+    }
+
+    #[test]
+    fn what_went_wrong_with_a_program_is_a_warning_on_a_line_of_its_own() {
+        let text = all_with(|v| {
+            let program = &mut v["programs"][0];
+            program["ended"] = "on-its-own".into();
+            program["exit_code"] = 3.into();
+            program["exit_signal"] = serde_json::Value::Null;
+            program["output"]["stdout_dropped_bytes"] = 7.into();
+            program["output"]["stderr_dropped_bytes"] = 9.into();
+            program["output"]["long_lines"] = 2.into();
+            program["lines_dropped"] = true.into();
+            program["bad_metric_lines"] = 4.into();
+            program["bad_metric_examples"] = serde_json::json!(["metric latency fast"]);
+            program["metrics"] = serde_json::json!([{
+                "name": "latency", "unit": "ms", "count": 3, "first": 1.0, "last": 1.5, "min": 1.0, "max": 2.0,
+                "mean": 1.5, "sum": 4.5
+            }]);
+        });
+        for expected in [
+            "(on-its-own, exit code 3)",
+            "  metric latency  3 readings, last 1.5 ms, min 1, max 2",
+            "  warning: it ended by itself with an error, before the run asked it to stop",
+            "  warning: the files hold the first megabyte; 7 bytes of standard output and 9 of standard error are not in them",
+            "  warning: 2 lines of standard output were longer than 64 KiB and were cut",
+            "  warning: lines of standard output were dropped before the run read them; metrics in them are lost",
+            "  warning: 4 lines looked like metrics and were not valid, the first: metric latency fast",
+        ] {
+            assert!(text.contains(expected), "{expected}\n{text}");
+        }
+        // A program that ends by itself with 0 has finished its work
+        let text = all_with(|v| {
+            v["programs"][0]["ended"] = "on-its-own".into();
+            v["programs"][0]["exit_code"] = 0.into();
+        });
+        lacks_warning(&text);
+        // No exit status at all
+        let text = all_with(|v| v["programs"][0]["exit_signal"] = serde_json::Value::Null);
+        assert!(text.contains("(stopped, no exit status)"), "{text}");
+    }
+
+    #[test]
+    fn a_capture_that_lost_frames_or_could_not_check_itself_is_a_warning() {
+        let text = all_with(|v| {
+            v["captures"][0]["missing"] = 12.into();
+            v["captures"][0]["packets"] = 548.into();
+        });
+        assert!(
+            text.contains("  warning: 12 frames are missing: the interface l0 counted 560 and the file has 548 (the receive buffer of the capture was 425984 bytes; `net.core.rmem_max` limits it)"),
+            "{text}"
+        );
+        let text = all_with(|v| {
+            v["captures"][0]["missing"] = serde_json::Value::Null;
+            v["captures"][0]["interface_frames"] = serde_json::Value::Null;
+            v["captures"][0]["first_ns"] = serde_json::Value::Null;
+        });
+        assert!(
+            text.contains("  warning: the counters of the interface could not be read, so the capture could not check that it is whole"),
+            "{text}"
+        );
+        // Without a first frame there is no span to show for the client's file
+        assert!(
+            !text.contains("capture link access in client  560 frames, 437098 bytes, in capture-access-client.pcap\n  from"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_timeline_lists_its_steps_with_how_late_each_was_and_cuts_a_long_one() {
+        let step = |index: u64, packet: Option<u64>, model: bool, live: bool| {
+            serde_json::json!({
+                "event": index, "kind": "set", "link": "access", "direction": if index == 1 { serde_json::Value::Null } else { "forward".into() },
+                "scheduled_ns": index * 1_000_000_000, "started_ns": index * 1_000_000_000,
+                "applied_ns": index * 1_000_000_000 + 2_500_000, "packet": packet,
+                "held_ns": packet.map(|_| 1_200_000_u64), "from_model": model, "live": live
+            })
+        };
+        let text = all_with(|v| {
+            v["events"] = serde_json::json!([
+                step(0, None, false, false),
+                step(1, Some(42), true, false),
+                step(2, None, false, true)
+            ]);
+        });
+        for expected in [
+            "timeline\n",
+            "  at 0.000 s  link access forward  set  done 2.5 ms late",
+            "  at 1.000 s  link access (model) both ways  set  before packet 42, which waited 1.200 ms",
+            "  at 2.000 s  link access (from code) forward  set  done 2.5 ms late",
+        ] {
+            assert!(text.contains(expected), "{expected}\n{text}");
+        }
+        // More than the summary lists: the first ones and the count
+        let text = all_with(|v| {
+            v["events"] =
+                serde_json::Value::Array((0..25).map(|i| step(i, None, true, false)).collect());
+        });
+        assert!(
+            text.contains("  and 5 more steps (all of them are in result.json)"),
+            "{text}"
+        );
+        assert!(!text.contains("at 20.000 s"), "{text}");
+        assert!(text.contains("at 19.000 s"), "{text}");
+    }
 }

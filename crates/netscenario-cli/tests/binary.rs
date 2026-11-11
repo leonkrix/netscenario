@@ -1396,9 +1396,12 @@ fn a_set_judged_by_the_file_exits_with_the_verdict() {
     }
     let dir = work_dir("expect-set-run");
     let out = dir.join("result");
+    // Five repetitions are the least a set may have; one second each is enough for a verdict (the exit code follows `passed`).
+    // Two sets of five runs of two seconds were the slowest test of the command line (33 s in a full run)
+    let short = SCENARIO.replace("duration: 2s", "duration: 1s");
     for (bound, code) in [("5%", 0), ("0%", 1)] {
         let text = format!(
-            "{SCENARIO}expect:\n  repetitions: 5\n  checks:\n    - {{ metric: media.loss_ratio, max: \"< {bound}\" }}\n"
+            "{short}expect:\n  repetitions: 5\n  checks:\n    - {{ metric: media.loss_ratio, max: \"< {bound}\" }}\n"
         );
         let file = write_scenario(&dir, &text);
         let output = netscenario_in(&dir, &["run", &file, "--out", out.to_str().unwrap()]).unwrap();

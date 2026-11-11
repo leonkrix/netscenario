@@ -386,12 +386,30 @@ fn a_row_without_a_delivery_is_a_stall_that_the_scenario_must_accept() {
         .iter()
         .filter(|r| r.receive_ns >= from && r.receive_ns < to)
         .count() as i64;
-    let late = 2.0 * 2000.0 * slack(&result);
-    let (upper, lower) = (3602.0 + 8.0 + late, 3602.0 - 8.0 - 400.0 - late);
+    // A step that starts a stall and is applied late lets the link run on at the full rate (a surplus); a step that ends one
+    // and is late keeps the link stalled (a deficit). Each direction has its own bound from the steps of its own kind, at the
+    // rate of 2,000 packets a second. (The steps that end a stall were once counted for the surplus too: one 128 ms late, on a
+    // loaded machine, made the bound useless and the test failed with 3,404 packets arrived, which is the right number.)
+    let late_at = |offset_ms: u64| -> f64 {
+        result
+            .events
+            .iter()
+            .filter(|e| e.scheduled_ns >= 1_000_000_000 && e.scheduled_ns < 3_000_000_000)
+            .filter(|e| e.scheduled_ns % 1_000_000_000 == offset_ms * 1_000_000)
+            .map(|e| e.applied_ns.saturating_sub(e.scheduled_ns) as f64 / 1e9 + 0.005)
+            .sum()
+    };
+    // The stall of a pass begins at 400 ms and ends at 500 ms
+    let (surplus, deficit) = (2000.0 * late_at(400), 2000.0 * late_at(500));
+    let (upper, lower) = (3602.0 + 8.0 + surplus, 3602.0 - 8.0 - 400.0 - deficit);
     // Canary: the surplus allowed leaves out the 4,000 of a link that does not stall, so the bound can fail
     assert!(
         upper < 4000.0,
-        "the lateness of the steps ({late}) makes the bound useless"
+        "the lateness of the steps that start a stall ({surplus}) makes the bound useless"
+    );
+    assert!(
+        late_at(400) > 0.0 && late_at(500) > 0.0,
+        "the steps of the stalls were not found in the events"
     );
     assert!(
         (lower..=upper).contains(&(arrived as f64)),

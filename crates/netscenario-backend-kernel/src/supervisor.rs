@@ -76,26 +76,37 @@ fn hold() -> ExitCode {
 /// `sysctl` to rely on (D-078). Only names of the networking tables are accepted.
 fn sysctl(settings: &[&str]) -> ExitCode {
     for setting in settings {
-        let Some((name, value)) = setting.split_once('=') else {
-            return fail(&format!("'{setting}' is not name=value"));
+        let (name, value) = match split_setting(setting) {
+            Ok(parts) => parts,
+            Err(message) => return fail(&message),
         };
-        if !name.starts_with("net.")
-            || name.split('.').any(|part| {
-                part.is_empty()
-                    || part == ".."
-                    || !part
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            })
-        {
-            return fail(&format!("'{name}' is not the name of a network setting"));
-        }
         let path = format!("/proc/sys/{}", name.replace('.', "/"));
         if let Err(error) = std::fs::write(&path, value) {
             return fail(&format!("cannot write {value} to {path}: {error}"));
         }
     }
     ExitCode::SUCCESS
+}
+
+/// The name and the value of `net.ipv4.ip_forward=1`, or why it is refused: it has to be `name=value`, and the name has to be in
+/// the tables of the network with parts that are plain words (no empty part, no `..`, nothing that is not a letter, a digit, `_`
+/// or `-`), so that the path in `/proc/sys` cannot leave them.
+fn split_setting(setting: &str) -> Result<(&str, &str), String> {
+    let Some((name, value)) = setting.split_once('=') else {
+        return Err(format!("'{setting}' is not name=value"));
+    };
+    if !name.starts_with("net.")
+        || name.split('.').any(|part| {
+            part.is_empty()
+                || part == ".."
+                || !part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
+    {
+        return Err(format!("'{name}' is not the name of a network setting"));
+    }
+    Ok((name, value))
 }
 
 /// Puts the signals that a program may be sent (`TERM` by default, and the others of `shutdown`) back to what a program
@@ -306,4 +317,90 @@ fn supervise(run_id: &str, max_nodes: usize) -> ExitCode {
     // The caller is gone without a teardown: clean up as far as we can, and the kernel does the rest
     let _ = provisioner.teardown();
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn main_with(arguments: &[&str]) -> ExitCode {
+        main(arguments.iter().map(|argument| (*argument).to_owned()))
+    }
+
+    /// The command line of the helper: anything but the three forms, and a number of nodes that is no number, is refused
+    /// before anything is made (nothing is started, nothing is written).
+    #[test]
+    fn a_command_line_that_is_none_of_the_three_forms_is_refused() {
+        for arguments in [
+            &[][..],
+            &["supervise"],
+            &["supervise", "run"],
+            &["supervise", "run", "many"],
+            &["supervise", "run", "-1"],
+            &["supervise", "run", "4", "extra"],
+            &["hold"],
+            &["sysctl"],
+            &["restart", "run"],
+        ] {
+            assert_eq!(main_with(arguments), ExitCode::FAILURE, "{arguments:?}");
+        }
+    }
+
+    /// `sysctl` writes only into the tables of the network (D-078): a name outside them, with a part that could leave the
+    /// directory or with a character that is no part of a name, is refused before a file is opened; a plain name is taken as it
+    /// is, which is the canary for the refusals (a check that refuses everything would pass the rest).
+    #[test]
+    fn a_setting_outside_the_network_tables_is_refused_before_a_file_is_opened() {
+        for (setting, why) in [
+            (
+                "kernel.hostname=x",
+                "'kernel.hostname' is not the name of a network setting",
+            ),
+            (
+                "net..ipv4.ip_forward=1",
+                "'net..ipv4.ip_forward' is not the name of a network setting",
+            ),
+            (
+                "net.ipv4.ip_forward.=1",
+                "'net.ipv4.ip_forward.' is not the name of a network setting",
+            ),
+            (
+                "net.ipv4./.x=1",
+                "'net.ipv4./.x' is not the name of a network setting",
+            ),
+            (
+                "net.ipv4.ip forward=1",
+                "'net.ipv4.ip forward' is not the name of a network setting",
+            ),
+            ("net.=1", "'net.' is not the name of a network setting"),
+            (
+                "net.ipv4.ip_forward",
+                "'net.ipv4.ip_forward' is not name=value",
+            ),
+        ] {
+            assert_eq!(split_setting(setting), Err(why.to_owned()), "{setting}");
+        }
+        for (setting, parts) in [
+            ("net.ipv4.ip_forward=1", ("net.ipv4.ip_forward", "1")),
+            (
+                "net.ipv6.conf.all.disable_ipv6=0",
+                ("net.ipv6.conf.all.disable_ipv6", "0"),
+            ),
+            (
+                "net.ipv4.conf.veth-1.rp_filter=",
+                ("net.ipv4.conf.veth-1.rp_filter", ""),
+            ),
+        ] {
+            assert_eq!(split_setting(setting), Ok(parts), "{setting}");
+        }
+        // A refusal stops the rest, and a good name that is not there fails at the write, with no file made
+        assert_eq!(
+            sysctl(&["kernel.x=1", "net.netscenario_no_such_setting=1"]),
+            ExitCode::FAILURE
+        );
+        assert_eq!(
+            sysctl(&["net.netscenario_no_such_setting.x=1"]),
+            ExitCode::FAILURE
+        );
+    }
 }

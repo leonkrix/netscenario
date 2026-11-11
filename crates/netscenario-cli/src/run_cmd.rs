@@ -720,6 +720,66 @@ mod tests {
         Parsed::parse(&all, &RUN_SPEC).unwrap()
     }
 
+    /// What went wrong is told with the exit code that fits: a scenario the backend refuses or that is not valid is a wrong input
+    /// (2), a backend that fails is the machine (3, with the way to `doctor`), any other failure of the run is 4. A canary: each
+    /// kind has its own code, so a mix-up of two arms fails.
+    #[test]
+    fn each_kind_of_failure_has_its_exit_code_and_its_message() {
+        let loaded = Loaded {
+            name: "bad.yaml".to_owned(),
+            text: "not a scenario".to_owned(),
+            scenario: netscenario_model::Scenario::from_yaml("not a scenario", "bad.yaml"),
+        };
+        assert!(loaded.scenario.is_err());
+        let say = |error: Error| {
+            let mut err = Vec::new();
+            let code = report(&error, &loaded, &mut err);
+            (code, String::from_utf8(err).unwrap())
+        };
+        let (code, text) = say(Error::Backend {
+            backend: "kernel".to_owned(),
+            action: "create the node 'a'".to_owned(),
+            message: "no room".to_owned(),
+        });
+        assert_eq!(code, exit::ENVIRONMENT);
+        assert!(
+            text.contains("the kernel backend failed to create the node 'a': no room")
+                && text.contains("run `netscenario doctor`"),
+            "{text}"
+        );
+        let (code, text) = say(Error::InvalidScenario(Vec::new()));
+        assert_eq!(code, exit::USAGE);
+        assert!(
+            text.starts_with("netscenario: the scenario is not valid"),
+            "{text}"
+        );
+        let (code, text) = say(Error::Run {
+            action: "start the agent".to_owned(),
+            message: "it did not answer".to_owned(),
+        });
+        assert_eq!(code, exit::RUN_FAILED);
+        assert_eq!(
+            text,
+            "netscenario: the run failed to start the agent: it did not answer\n"
+        );
+        // A refusal of the backend names the feature and the fix, with the place in the file where there is one
+        let refusal = netscenario_core::Refusal {
+            feature: netscenario_core::Feature::DifferentValuesPerDirection,
+            path: "topology.links[0].both.loss".to_owned(),
+            reason: "this backend cannot do it".to_owned(),
+            fix: "use the kernel backend".to_owned(),
+        };
+        let (code, text) = say(Error::Capability(netscenario_core::CapabilityError::new(
+            "other",
+            vec![refusal],
+        )));
+        assert_eq!(code, exit::USAGE);
+        assert!(
+            text.contains("this backend cannot do it") && text.contains("use the kernel backend"),
+            "{text}"
+        );
+    }
+
     /// The defaults are those of the library, and every option moves its own parameter (D-070).
     #[test]
     fn the_options_of_the_measure_section_are_read() {

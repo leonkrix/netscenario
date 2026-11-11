@@ -68,9 +68,11 @@ A cargo-mutants result is relative to the tests it runs: by default the tests of
 
 ## The rules for a new test
 
+- **Clean up.** A unit test gets its directory from `testdir` (core) or `work_dir` (Kernel backend tests): it is removed when the test passed and kept when it failed, so the temporary directory does not fill up and a failure can still be looked at (`NETSCENARIO_KEEP_TEST_DIRS=1` keeps all of them).
 - **Name the bound.** Bounds are derived, not picked by eye: the model, its deviation and the size of the run are written next to the number. A delay has an exact lower bound and room only upward.
 - **Test the edge.** For a limit, the value on the edge is accepted and the next one is refused with the reason (`crates/netscenario-model/tests/limits.rs`).
 - **Look for the words of a refusal**, so that another fault in the same file cannot stand for it.
 - **Say why a test is slow** if it takes longer than five seconds, in its doc comment, and mark it `once` (Python) or let it run alone (`.config/nextest.toml`) if it measures time.
+- **One run for what does not interact.** Tests that only differ in the entry of a table (the delays of each profile) share a run when the limits of a run allow it (8 namespaces); a failure still names the entry.
 - **A test that does not depend on the version runs once.** A new CI job goes into `needs` and, if code changes need it, into `must` of `ci-ok`.
 - **Link the test where the ledger asks for it.** A row of [FEATURES.md](../FEATURES.md) that says `done` names the test that proves it, and a faithful mark in [COVERAGE.md](COVERAGE.md) links to it; tests check both.

@@ -165,9 +165,7 @@ mod tests {
     use super::*;
 
     fn dir(name: &str) -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("netscenario-files-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&path);
+        let path = crate::testdir::fresh("files", name);
         fs::create_dir_all(&path).unwrap();
         path
     }

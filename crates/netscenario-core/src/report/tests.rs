@@ -148,10 +148,7 @@ pub(super) fn sample_run(dir: &Path) -> RunResult {
 }
 
 fn directory(name: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("netscenario-report-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
+    crate::testdir::fresh("report", name)
 }
 
 fn load(name: &str, detail: bool) -> Report {

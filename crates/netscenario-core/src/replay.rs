@@ -541,9 +541,7 @@ mod tests {
     }
 
     fn directory(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("netscenario-replay-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::testdir::fresh("replay", name);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

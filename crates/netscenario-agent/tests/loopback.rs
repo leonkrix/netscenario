@@ -456,10 +456,12 @@ fn a_hold_on_the_input_stops_the_stream_between_two_packets() {
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
     socket.set_nonblocking(true).unwrap();
     let target = socket.local_addr().unwrap().to_string();
-    // 800 kbit with 100 byte packets: 1,000 packets a second, for 400 ms
+    // 800 kbit with 100 byte packets: 1,000 packets a second, for 1.2 s. The run is long so that a machine under load, which
+    // answers the first hold late (the sleeps below are minimums, not exact), still has the second hold before the end: a run
+    // of 400 ms failed once in a full run that went out of the bounds of the packet below.
     let mut process = Command::new(agent)
         .args(["send", "--to", &target, "--rate", "800000", "--size", "100"])
-        .args(["--duration-ns", "400000000"])
+        .args(["--duration-ns", "1200000000"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -473,7 +475,9 @@ fn a_hold_on_the_input_stops_the_stream_between_two_packets() {
         panic!("a barrier was expected, the sender said {line}");
     };
     assert_eq!(id, 5);
-    assert!((90..=130).contains(&packet), "held before packet {packet}");
+    // The hold came while the stream ran: after its start (a packet is due every millisecond, the sender needs a few to start)
+    // and before its end. Where exactly depends on the load, so the packets that arrive are compared with `packet`, not with a time.
+    assert!((1..1200).contains(&packet), "held before packet {packet}");
     // Held: everything before the packet is there and nothing else arrives while the answer is held back
     std::thread::sleep(Duration::from_millis(100));
     let seen = drain(&socket);
@@ -505,7 +509,7 @@ fn a_hold_on_the_input_stops_the_stream_between_two_packets() {
     assert!(process.wait().unwrap().success());
     assert_eq!(
         sent.packets + sent.errors,
-        400,
+        1200,
         "no slot is lost or repeated"
     );
     assert_eq!(sent.barrier_timeouts, 0);

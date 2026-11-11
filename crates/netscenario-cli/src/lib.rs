@@ -460,6 +460,73 @@ mod tests {
         assert_eq!(json["topology"]["links"].as_array().unwrap().len(), 5);
     }
 
+    /// `expand --seed` writes the events that a model or a repeating event makes with that seed, which is what a run with it
+    /// does: the file with `every:` has more steps, and the same seed gives the same text. A seed that is no number, and a
+    /// help or a missing file, are told apart from a good call.
+    #[test]
+    fn expand_with_a_seed_writes_the_events_that_the_repeats_make() {
+        let path = scenarios().join("flapping-link.yaml");
+        let path = path.to_str().unwrap();
+        let (code, plain, err) = call(&["netscenario", "expand", path]);
+        assert_eq!((code, err.as_str()), (exit::OK, ""));
+        let (code, seeded, err) = call(&["netscenario", "expand", path, "--seed", "4"]);
+        assert_eq!((code, err.as_str()), (exit::OK, ""));
+        let steps = |text: &str| text.matches("- at:").count();
+        assert!(
+            steps(&seeded) > steps(&plain),
+            "{} steps against {}",
+            steps(&seeded),
+            steps(&plain)
+        );
+        assert!(seeded.contains("seed: 4"), "{seeded}");
+        assert!(!seeded.contains("every:"), "{seeded}");
+        let (_, again, _) = call(&["netscenario", "expand", path, "--seed", "4"]);
+        assert_eq!(seeded, again);
+        // Canary: the seed has to be a number, and a call with no file is a mistake of the command line
+        let (code, out, err) = call(&["netscenario", "expand", path, "--seed", "four"]);
+        assert_eq!((code, out.as_str()), (exit::USAGE, ""));
+        assert!(
+            err.contains("--seed needs a whole number, found 'four'"),
+            "{err}"
+        );
+        let (code, _, err) = call(&["netscenario", "expand"]);
+        assert_eq!(code, exit::USAGE);
+        assert!(err.contains("the scenario file is missing"), "{err}");
+        let (code, out, _) = call(&["netscenario", "expand", "--help"]);
+        assert_eq!(code, exit::OK);
+        assert!(out.starts_with("Usage: netscenario expand"), "{out}");
+        let (code, _, err) = call(&["netscenario", "expand", "/nonexistent/x.yaml"]);
+        assert_eq!(code, exit::USAGE);
+        assert!(err.contains("cannot read '/nonexistent/x.yaml'"), "{err}");
+    }
+
+    /// `show` names the model of a link: the files of a trace with their format and rows, and the states of a chain.
+    #[test]
+    fn show_names_the_model_of_a_link() {
+        let show = |name: &str| {
+            let path = scenarios().join(name);
+            let (code, out, err) = call(&["netscenario", "show", path.to_str().unwrap()]);
+            assert_eq!((code, err.as_str()), (exit::OK, ""), "{name}");
+            out
+        };
+        let trace = show("cell-drive.yaml");
+        assert!(
+            trace.contains("trace both cell-drive.csv (csv, "),
+            "{trace}"
+        );
+        assert!(trace.contains(" rows, "), "{trace}");
+        let walk = show("mahimahi-walk.yaml");
+        assert!(walk.contains("(mahimahi, "), "{walk}");
+        let chain = show("signal-states.yaml");
+        assert!(chain.contains(" states"), "{chain}");
+        let (code, out, _) = call(&["netscenario", "show", "--help"]);
+        assert_eq!(code, exit::OK);
+        assert!(out.starts_with("Usage: netscenario show"), "{out}");
+        let (code, _, err) = call(&["netscenario", "show"]);
+        assert_eq!(code, exit::USAGE);
+        assert!(err.contains("the scenario file is missing"), "{err}");
+    }
+
     /// `show` lists the nodes, the links, the routes and the path of each workload; as Graphviz and as JSON too.
     #[test]
     fn show_lists_the_network_the_routes_and_the_paths() {

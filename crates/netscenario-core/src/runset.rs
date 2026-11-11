@@ -600,7 +600,7 @@ mod tests {
 
     /// Where the set of the test `name` writes.
     fn written_to(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("netscenario-set-{name}-{}", std::process::id()))
+        crate::testdir::path("set", name)
     }
 
     /// The same, emptied first.

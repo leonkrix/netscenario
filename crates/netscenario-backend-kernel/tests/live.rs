@@ -75,6 +75,10 @@ fn a_change_from_test_code_lands_between_two_packets_and_a_replay_loses_the_same
         return;
     }
     let (result, dir) = live_run("live-a", Duration::from_secs(1), |handle| {
+        // The links the code may change, and how old the measured phase is when the wait is over (the wait is on the clock of
+        // the phase, so it is at least what was waited for)
+        assert_eq!(handle.links(), [access()]);
+        assert!(handle.elapsed().unwrap() >= Duration::from_secs(1));
         let records = handle.change(LiveChange::set(access(), loss_30())).unwrap();
         assert_eq!(records.len(), 1);
         assert!(records[0].live && records[0].packet.is_some());
@@ -331,6 +335,8 @@ fn a_run_that_fails_does_not_leave_the_code_waiting() {
     let error = run(&mut failing, &scenario(), &options).unwrap_err();
     assert!(error.to_string().contains("agent"), "{error}");
     let began = std::time::Instant::now();
+    // The workloads never began, so the phase has no age
+    assert_eq!(handle.elapsed(), None);
     assert!(handle.change(LiveChange::down(access())).is_err());
     assert!(handle.wait_until(Duration::from_secs(3_600)).is_err());
     assert!(
