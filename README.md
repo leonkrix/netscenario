@@ -197,6 +197,7 @@ A Rust core (scenario model, scheduler, backends, traffic generators, probes, st
 - [docs/PRIOR-ART.md](docs/PRIOR-ART.md): what exists, and where netscenario differs.
 - [docs/PROFILES.md](docs/PROFILES.md): the draft of the link profiles (3G to LEO satellite) with the source of every number.
 - [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md): how each criterion of a release is proven, and what the proof does not cover.
+- [docs/TESTING.md](docs/TESTING.md): how the tests are organised, where each kind runs, how coverage and mutation tests are measured, and the rules for a new test.
 - [docs/VERSIONING.md](docs/VERSIONING.md): what a version number promises, and what a release may break.
 - [docs/RELEASING.md](docs/RELEASING.md): how a release is made, and the one-time setup of the registries.
 - [docs/DECISIONS.md](docs/DECISIONS.md): the decisions made so far, with reasons (one file each in [docs/decisions/](docs/decisions/)).

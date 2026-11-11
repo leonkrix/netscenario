@@ -560,4 +560,127 @@ mod tests {
         assert_eq!(show_value(MetricUnit::Number, 0.5), "0.5");
         assert_eq!(show_value(MetricUnit::Ratio, f64::NAN), "n/a");
     }
+
+    /// The median and the smallest of a set are judged with their own values, not with the mean or the largest. The mutation test
+    /// found both statistics unchecked: a set of eight losses with an outlier tells them apart.
+    #[test]
+    fn the_median_and_the_minimum_of_a_set_are_judged_with_their_own_values() {
+        let (metrics, confidence) = set_of(&[0.01, 0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.09]);
+        let set = metrics
+            .iter()
+            .find(|set| set.name == "w.loss_ratio")
+            .unwrap();
+        assert!(set.min < set.median && set.median < set.mean && set.mean < set.max);
+        let scenario = scenario(
+            "expect:\n  repetitions: 8\n  checks:\n    - { name: m, metric: w.loss_ratio, median: \"< 2%\", min: \">= 1%\", mean: \"> 2%\", max: \"<= 9%\" }\n",
+        );
+        let verdict = judge_set(&scenario, &metrics, &[], &confidence, 8).unwrap();
+        assert!(verdict.passed, "{verdict:?}");
+        let value_of = |statistic| {
+            verdict
+                .checks
+                .iter()
+                .find(|check| check.statistic == statistic)
+                .unwrap()
+                .actual
+                .unwrap()
+        };
+        assert!((value_of(Statistic::Median) - set.median).abs() < 1e-15);
+        assert!((value_of(Statistic::Min) - set.min).abs() < 1e-15);
+        assert!((value_of(Statistic::Mean) - set.mean).abs() < 1e-15);
+        assert!((value_of(Statistic::Max) - set.max).abs() < 1e-15);
+    }
+
+    /// Canary: the interval of a set that was made another way than the 95 % interval around the mean is not judged, whichever of the
+    /// two differs, and the check fails with the reason.
+    #[test]
+    fn an_interval_of_another_level_or_around_the_median_is_not_judged_as_the_95_interval() {
+        let (metrics, confidence) = set_of(&[0.01; 8]);
+        let scenario = scenario(
+            "expect:\n  repetitions: 8\n  checks:\n    - { metric: w.loss_ratio, ci95-high: \"< 5%\", ci95-low: \">= 0%\" }\n",
+        );
+        assert!(
+            judge_set(&scenario, &metrics, &[], &confidence, 8)
+                .unwrap()
+                .passed
+        );
+        let other_level = Confidence {
+            level: 0.9,
+            ..confidence.clone()
+        };
+        let other_statistic = Confidence {
+            statistic: IntervalAround::Median,
+            ..confidence
+        };
+        for (name, other) in [("level", other_level), ("statistic", other_statistic)] {
+            let verdict = judge_set(&scenario, &metrics, &[], &other, 8).unwrap();
+            assert!(!verdict.passed, "{name}");
+            assert_eq!(verdict.failures().count(), 2, "{name}: both ends");
+            for check in verdict.failures() {
+                assert!(
+                    check
+                        .note
+                        .as_deref()
+                        .unwrap()
+                        .contains("another interval than the 95 %"),
+                    "{name}: {check:?}"
+                );
+            }
+        }
+    }
+
+    /// What a missing metric usually means is said for the metrics where that is known, and not for the others.
+    #[test]
+    fn a_missing_metric_says_what_it_usually_means() {
+        assert_eq!(
+            why_missing("w.delay.p99"),
+            "no packet or response arrived, so there is no delay to judge"
+        );
+        assert_eq!(
+            why_missing("f.rtt.p50"),
+            "the kernel gave no samples of the round trip time"
+        );
+        assert_eq!(why_missing("f.completion"), "no connection did its work");
+        assert_eq!(
+            why_missing("w.loss_ratio"),
+            "the workload did not report it"
+        );
+        // `completion` is a name only at the end: a delay of a workload with that name is a delay
+        assert_eq!(
+            why_missing("completion.delay.p99"),
+            "no packet or response arrived, so there is no delay to judge"
+        );
+    }
+
+    /// The edges of the units in which a value is shown: the value that is exactly one unit is shown in that unit.
+    #[test]
+    fn a_value_at_the_edge_of_a_unit_is_shown_in_that_unit() {
+        let shown = [
+            (MetricUnit::Seconds, 1.0, "1s"),
+            (MetricUnit::Seconds, 0.001, "1ms"),
+            (MetricUnit::Seconds, 0.000_001, "1us"),
+            (MetricUnit::Seconds, 0.999, "999ms"),
+            (MetricUnit::BitsPerSecond, 1e9, "1gbit"),
+            (MetricUnit::BitsPerSecond, 1e6, "1mbit"),
+            (MetricUnit::BitsPerSecond, 1e3, "1kbit"),
+            (MetricUnit::BitsPerSecond, 999.0, "999bit"),
+            (MetricUnit::BitsPerSecond, 999_000.0, "999kbit"),
+        ];
+        for (unit, value, text) in shown {
+            assert_eq!(show_value(unit, value), text, "{value}");
+        }
+    }
+
+    /// Four significant digits, whatever the size of the number: a large one has no decimals, a small one has as many as it needs.
+    #[test]
+    fn a_value_is_shown_with_four_significant_digits() {
+        assert_eq!(show_value(MetricUnit::Number, 1234.5678), "1235");
+        assert_eq!(show_value(MetricUnit::Number, 123.456_78), "123.5");
+        assert_eq!(show_value(MetricUnit::Number, 12.3456), "12.35");
+        assert_eq!(show_value(MetricUnit::Number, 1.234_56), "1.235");
+        assert_eq!(show_value(MetricUnit::Number, 0.123_456), "0.1235");
+        assert_eq!(show_value(MetricUnit::Number, 0.012_345_6), "0.01235");
+        assert_eq!(show_value(MetricUnit::Number, 100.0), "100");
+        assert_eq!(show_value(MetricUnit::Number, -12.3456), "-12.35");
+    }
 }

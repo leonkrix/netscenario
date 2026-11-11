@@ -272,6 +272,21 @@ fn the_reach_of_a_table_made_from_samples_is_checked_when_it_is_read() {
     );
 }
 
+/// The bound is exact down to the nanosecond: `pareto` reaches 5461 / 8192 of the amount below the mean, so with an amount of
+/// 8192 ns a delay of 5461 ns is accepted and 5460 ns is refused (the mutation test found the edge unchecked).
+#[test]
+fn a_delay_exactly_as_long_as_the_reach_of_the_table_is_accepted() {
+    let with = |delay: &str| {
+        scenario(
+            &format!("{{ delay: {delay}, jitter: {{ amount: 8192ns, distribution: pareto }} }}"),
+            "",
+        )
+    };
+    assert!(with("5461ns").is_ok());
+    let refused = with("5460ns").unwrap_err();
+    assert!(refused.contains("must be at least 0.67 times"), "{refused}");
+}
+
 const STEP_BASE: &str =
     "{ delay: 80ms, jitter: { amount: 20ms, distribution: table, table: { file: d.txt } } }";
 
