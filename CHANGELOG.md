@@ -3,6 +3,47 @@
 Every release of netscenario, newest first. The lines are the titles of the pull requests; the rules for what
 a version may change are in [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## 0.3.0 (2026-11-11)
+
+Release 0.3 "Shapes". A scenario is no longer one link between two nodes: it is a network of nodes, routers and routes, written out or built from the shortcuts chain, star, dumbbell and multipath, over IPv4 and IPv6, with an MTU, the don't-fragment bit and queues with their disciplines and statistics. Traffic gets the TCP of the machine (bulk transfers and request/response), the echo of a UDP stream and the replay of a trace from a CSV file or a capture, and your own program can still run in a node. A link can follow a model over time, a trace or a table of samples, and a link profile library (LTE, 5G, satellite) gives starting values with published sources. Scenario files take parameters, templates and includes, and carry their `expect` checks, so the file is the whole test. In Python a link can be changed while a run goes, with `asyncio`, data frames and a fuller builder, and every run reports the precision of the timers of the machine. The README says what 0.3 does and does not do, and [docs/ACCEPTANCE.md](https://github.com/leonkrix/netscenario/blob/main/docs/ACCEPTANCE.md) how each criterion of the release is proven, among them the fairness of two flows over a bottleneck, two paths, Reno against the formula of Mathis, and everything written for 0.2 still working.
+
+**Breaking.** The format of the scenario file and of the result is version 0, which a minor release may change ([docs/VERSIONING.md](https://github.com/leonkrix/netscenario/blob/main/docs/VERSIONING.md)): the files of 0.2 still read and run, results made by 0.2 are read by the reports, `replay` and the Python package, and the result has new fields. No command, option or name in Python was removed. What breaks is the Rust API of `netscenario-model` and `netscenario-core` ([#94](https://github.com/leonkrix/netscenario/pull/94), [#96](https://github.com/leonkrix/netscenario/pull/96), [#99](https://github.com/leonkrix/netscenario/pull/99), [#100](https://github.com/leonkrix/netscenario/pull/100), [#101](https://github.com/leonkrix/netscenario/pull/101), [#102](https://github.com/leonkrix/netscenario/pull/102), [#104](https://github.com/leonkrix/netscenario/pull/104), [#108](https://github.com/leonkrix/netscenario/pull/108), [#113](https://github.com/leonkrix/netscenario/pull/113), [#114](https://github.com/leonkrix/netscenario/pull/114), [#115](https://github.com/leonkrix/netscenario/pull/115)):
+
+- Types of the scenario are `non_exhaustive`: `Scenario`, `Link`, `Jitter`, `Event` and `Topology`, and `Problem` of the errors; so is `Provisioned` of the core and the enum `Basis` of the recovery. A new field or variant is no longer a break from now on.
+- `Impairments` has the field `queue`, and `JitterDistribution` has the variants `Pareto`, `ParetoNormal` and `Table`. `Jitter` and `series::Input` are no longer `Copy`.
+- `netscenario_core::check` takes two parameters and not three, and `sha256_hex` moved from `netscenario-core` to `netscenario-model`.
+
+### Features
+
+- **Breaking:** Read networks of several nodes, links and routes in the scenario format ([#94](https://github.com/leonkrix/netscenario/pull/94))
+- Add the shortcuts chain, star, dumbbell and multipath and the commands expand and show ([#95](https://github.com/leonkrix/netscenario/pull/95))
+- **Breaking:** Build networks of several nodes, routers and routes in the Kernel backend ([#96](https://github.com/leonkrix/netscenario/pull/96))
+- Account for packets link by link along a path and test the fidelity of paths ([#97](https://github.com/leonkrix/netscenario/pull/97))
+- Add the MTU of a link and account for the fragments of a packet ([#98](https://github.com/leonkrix/netscenario/pull/98))
+- **Breaking:** Add IPv6 and dont-fragment, and the MTU in the values of a shortcut ([#99](https://github.com/leonkrix/netscenario/pull/99))
+- **Breaking:** Add queues with disciplines and their statistics ([#100](https://github.com/leonkrix/netscenario/pull/100))
+- **Breaking:** Add the pareto, paretonormal and table distributions of the jitter ([#101](https://github.com/leonkrix/netscenario/pull/101))
+- **Breaking:** Add the trace-replay workload with CSV files and captures ([#102](https://github.com/leonkrix/netscenario/pull/102))
+- **Breaking:** Add the TCP agents, the stream records, the UDP echo and a limit on the segments of a link ([#104](https://github.com/leonkrix/netscenario/pull/104))
+- Add the workloads tcp-bulk and request-response to the format ([#105](https://github.com/leonkrix/netscenario/pull/105))
+- Run the TCP workloads and report them in the result ([#106](https://github.com/leonkrix/netscenario/pull/106))
+- Add the echo of a UDP stream and report its round trip ([#107](https://github.com/leonkrix/netscenario/pull/107))
+- **Breaking:** Recover TCP workloads on their goodput and name their metrics ([#108](https://github.com/leonkrix/netscenario/pull/108))
+- **Breaking:** Add models over time for links and repeating events of the timeline ([#113](https://github.com/leonkrix/netscenario/pull/113))
+- **Breaking:** Add trace-driven links, a rate that follows its steps, and allow-limited ([#114](https://github.com/leonkrix/netscenario/pull/114))
+- **Breaking:** Add parameters, templates and includes for scenario files ([#115](https://github.com/leonkrix/netscenario/pull/115))
+- Add expect checks to the scenario file ([#122](https://github.com/leonkrix/netscenario/pull/122))
+- Add the link profile library and the profiles and capabilities commands ([#123](https://github.com/leonkrix/netscenario/pull/123))
+- Change a link from test code while a run goes, add asyncio, data frames and a fuller builder ([#124](https://github.com/leonkrix/netscenario/pull/124))
+- Report the precision of the timers in every run and with doctor --timers ([#125](https://github.com/leonkrix/netscenario/pull/125))
+
+### Fixes
+
+- Name the node address as the source in the routes of a node ([#109](https://github.com/leonkrix/netscenario/pull/109))
+- Run TCP workloads with many connections and add the acceptance experiments of TCP ([#111](https://github.com/leonkrix/netscenario/pull/111))
+- Raise the listener queue of the TCP agent and widen the delay of the seed test ([#112](https://github.com/leonkrix/netscenario/pull/112))
+- Refuse unread link traces, order faults deterministically and guard zero packet size ([#121](https://github.com/leonkrix/netscenario/pull/121))
+
 ## 0.2.0 (2026-11-03)
 
 Release 0.2 "Time and noise". This is the state of `0.2.0-rc.1`; the release only removes the notes that say it is a candidate.
