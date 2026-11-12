@@ -10,10 +10,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args_os()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
-    if matches!(
-        args.get(1).map(String::as_str),
-        Some("supervise" | "hold" | "sysctl")
-    ) {
+    if matches!(args.get(1).map(String::as_str), Some("supervise" | "hold")) {
         return netscenario_backend_kernel::supervisor::main(args.into_iter().skip(1));
     }
     let code = netscenario_cli::run(

@@ -16,7 +16,11 @@ netscenario-model.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # The signal for the process group of a program: a safe call, no `unsafe` (D-025)
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["process", "thread"] }
+# Netlink instead of the tools `ip` and `tc` (D-101)
+netlink-packet-core.workspace = true
+netlink-packet-route.workspace = true
+netlink-sys.workspace = true
 # Handlers for the signals a program may be sent, so that they are not ignored in the programs (below)
 signal-hook.workspace = true
 

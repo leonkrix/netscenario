@@ -2,6 +2,7 @@
 //! pairs, impairments as `netem`. It runs in the supervisor, which is the first process of a PID namespace and
 //! lives in a network namespace of its own (D-022), so nothing here can reach the network of the host (SAF-01).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -17,6 +18,7 @@ use netscenario_model::Impairments;
 use crate::batch::{ANSWER_WITHIN, Batch, Failure};
 use crate::command::{Toolbox, run, run_with_env};
 use crate::netem;
+use crate::netlink::{self, Hop, Netlink, RouteSpec, Verb};
 use crate::programs::{Output, read_stderr, read_stdout, socket_is_bound};
 use crate::protocol::{OutputCounts, Way};
 use crate::tables::TableDirectory;
@@ -203,6 +205,9 @@ pub(crate) struct Provisioner {
     /// The tables of the jitter that the run made from samples, once there is one (D-084). Every `tc` of the run gets this
     /// directory as `TC_LIB_DIR` from then on.
     tables: Option<TableDirectory>,
+    /// The netlink sockets of the run: one in the namespace of the supervisor (`None`) and one in the namespace of each node and of
+    /// the fabric, by the process that holds it. A socket stays in the namespace it was made in (BKD-05).
+    sockets: RefCell<HashMap<Option<u32>, Netlink>>,
 }
 
 fn id(index: usize) -> Result<u32, String> {
@@ -240,6 +245,7 @@ impl Provisioner {
             batches: HashMap::new(),
             notes: Vec::new(),
             tables: None,
+            sockets: RefCell::new(HashMap::new()),
         })
     }
 
@@ -253,12 +259,7 @@ impl Provisioner {
                 "the supervisor is process {pid}, not the first process of a PID namespace; it refuses to run (SAF-01)"
             ));
         }
-        let listing = run(&self.tools.ip, &["-o", "link", "show"])?;
-        let interfaces: Vec<&str> = listing
-            .lines()
-            .filter_map(|line| line.split(": ").nth(1))
-            .map(|name| name.split('@').next().unwrap_or(name))
-            .collect();
+        let interfaces = self.netlink(None, Netlink::link_names)?;
         if interfaces != ["lo"] {
             return Err(format!(
                 "the supervisor sees the network interfaces {}: it is not in a network namespace of its own and refuses to touch the network (SAF-01)",
@@ -285,14 +286,27 @@ impl Provisioner {
         Ok(())
     }
 
-    /// Writes kernel settings (`net.ipv4.ip_forward=1`) in the network namespace of a node, by the program itself (the
-    /// hidden call `sysctl`).
-    fn sysctl(&self, pid: u32, settings: &[&str]) -> Result<(), String> {
-        let namespace = format!("--net=/proc/{pid}/ns/net");
-        let exe = self.exe.to_string_lossy().into_owned();
-        let mut arguments = vec![namespace.as_str(), "--", exe.as_str(), "sysctl"];
-        arguments.extend_from_slice(settings);
-        run(&self.tools.nsenter, &arguments).map(|_| ())
+    /// Writes kernel settings (`net.ipv4.ip_forward=1`) in the network namespace of a node.
+    fn sysctl(pid: u32, settings: &[&str]) -> Result<(), String> {
+        netlink::write_settings(Some(pid), settings)
+    }
+
+    /// Runs `action` with the netlink socket of the namespace that process `pid` holds (`None`: the namespace of the supervisor).
+    /// The socket is made when it is first needed and kept until the teardown.
+    fn netlink<T>(
+        &self,
+        pid: Option<u32>,
+        action: impl FnOnce(&mut Netlink) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut sockets = self.sockets.borrow_mut();
+        let socket = match sockets.entry(pid) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => entry.insert(match pid {
+                Some(pid) => Netlink::in_namespace(pid)?,
+                None => Netlink::here()?,
+            }),
+        };
+        action(socket)
     }
 
     /// Waits until the packets that the interfaces of a network with IPv6 send of their own are over (D-081), so that the
@@ -353,18 +367,12 @@ impl Provisioner {
             return Err(format!("the node '{name}' exists already"));
         }
         let pid = self.spawn_holder(name)?;
-        self.in_node(pid, &self.tools.ip, &["link", "set", "lo", "up"])?;
+        self.netlink(Some(pid), |socket| socket.set_state("lo", true))?;
         // A route through an interface whose carrier is gone is not used (the other path takes over, D-078), and a packet is
         // not dropped because it arrives on another interface than the one the reverse route leaves by
-        let namespace = format!("--net=/proc/{pid}/ns/net");
-        let exe = self.exe.to_string_lossy().into_owned();
-        run(
-            &self.tools.nsenter,
+        Self::sysctl(
+            pid,
             &[
-                namespace.as_str(),
-                "--",
-                exe.as_str(),
-                "sysctl",
                 "net.ipv4.conf.all.ignore_routes_with_linkdown=1",
                 "net.ipv4.conf.all.rp_filter=0",
                 "net.ipv4.conf.default.rp_filter=0",
@@ -390,7 +398,7 @@ impl Provisioner {
             }
             settings.push("net.ipv6.conf.all.ignore_routes_with_linkdown=1".to_owned());
             let settings: Vec<&str> = settings.iter().map(String::as_str).collect();
-            self.sysctl(pid, &settings)?;
+            Self::sysctl(pid, &settings)?;
         }
         self.failpoints.hit("node:end");
         id(self.nodes.len() - 1)
@@ -424,27 +432,15 @@ impl Provisioner {
             for (addresses, prefix) in families.iter().zip(&prefixes) {
                 let address = format!("{}/{prefix}", addresses[end]);
                 // IPv6: no duplicate address detection (`nodad`), the address is there at once
-                let mut add = vec!["addr", "add", address.as_str(), "dev", &inside];
-                if addresses[end].contains(':') {
-                    add.push("nodad");
-                }
-                self.in_node(pid, &self.tools.ip, &add)?;
+                let (local, length) = netlink::parse_cidr(&address)?;
+                self.netlink(Some(pid), |socket| {
+                    socket.set_address(inside, local, length, Verb::Add)
+                })?;
                 // The neighbour is fixed instead of learned: no ARP or neighbour solicitation may shift the loss pattern
-                self.in_node(
-                    pid,
-                    &self.tools.ip,
-                    &[
-                        "neigh",
-                        "replace",
-                        &addresses[other],
-                        "lladdr",
-                        &macs[other],
-                        "dev",
-                        inside,
-                        "nud",
-                        "permanent",
-                    ],
-                )?;
+                let neighbour = netlink::parse_ip(&addresses[other])?;
+                self.netlink(Some(pid), |socket| {
+                    socket.set_neighbour(inside, neighbour, &macs[other])
+                })?;
                 neighbours[end]
                     .0
                     .push([addresses[other].clone(), macs[other].clone()]);
@@ -452,7 +448,7 @@ impl Provisioner {
                     neighbours[end].1 = Some(address.clone());
                 }
             }
-            self.in_node(pid, &self.tools.ip, &["link", "set", inside, "up"])?;
+            self.netlink(Some(pid), |socket| socket.set_state(inside, true))?;
             self.limit_segments(pid, inside, DEFAULT_MTU)?;
         }
         Ok(neighbours)
@@ -464,21 +460,9 @@ impl Provisioner {
     /// machine may not have; the size and the number of segments that the device accepts are properties of the link that `ip`
     /// sets.
     fn limit_segments(&self, pid: u32, interface: &str, mtu: u32) -> Result<(), String> {
-        let size = (mtu + ETHERNET_HEADER).to_string();
-        self.in_node(
-            pid,
-            &self.tools.ip,
-            &[
-                "link",
-                "set",
-                interface,
-                "gso_max_size",
-                &size,
-                "gso_max_segs",
-                "1",
-            ],
-        )?;
-        Ok(())
+        self.netlink(Some(pid), |socket| {
+            socket.set_segments(interface, mtu + ETHERNET_HEADER, 1)
+        })
     }
 
     /// A veth pair between two nodes, moved into them (the direct build of a link).
@@ -489,37 +473,14 @@ impl Provisioner {
         macs: &[String; 2],
         pids: [u32; 2],
     ) -> Result<(), String> {
-        run(
-            &self.tools.ip,
-            &[
-                "link",
-                "add",
-                &outside[0],
-                "address",
-                &macs[0],
-                "type",
-                "veth",
-                "peer",
-                "name",
-                &outside[1],
-                "address",
-                &macs[1],
-            ],
-        )?;
+        self.netlink(None, |socket| {
+            socket.add_veth(&outside[0], Some(&macs[0]), &outside[1], Some(&macs[1]))
+        })?;
         self.failpoints.hit("link:created");
         for (end, pid) in pids.iter().enumerate() {
-            run(
-                &self.tools.ip,
-                &[
-                    "link",
-                    "set",
-                    &outside[end],
-                    "netns",
-                    &pid.to_string(),
-                    "name",
-                    inside,
-                ],
-            )?;
+            self.netlink(None, |socket| {
+                socket.move_link(&outside[end], *pid, Some(inside))
+            })?;
         }
         Ok(())
     }
@@ -538,59 +499,23 @@ impl Provisioner {
     ) -> Result<[String; 2], String> {
         let fabric = self.fabric_pid()?;
         let ports = [format!("nsf{index}a"), format!("nsf{index}b")];
-        run(
-            &self.tools.ip,
-            &[
-                "link",
-                "add",
-                &outside[0],
-                "address",
-                &macs[0],
-                "type",
-                "veth",
-                "peer",
-                "name",
-                &ports[0],
-            ],
-        )?;
-        run(
-            &self.tools.ip,
-            &[
-                "link",
-                "add",
-                &ports[1],
-                "type",
-                "veth",
-                "peer",
-                "name",
-                &outside[1],
-                "address",
-                &macs[1],
-            ],
-        )?;
+        self.netlink(None, |socket| {
+            socket.add_veth(&outside[0], Some(&macs[0]), &ports[0], None)
+        })?;
+        self.netlink(None, |socket| {
+            socket.add_veth(&ports[1], None, &outside[1], Some(&macs[1]))
+        })?;
         self.failpoints.hit("link:created");
         for (end, pid) in pids.iter().enumerate() {
-            run(
-                &self.tools.ip,
-                &[
-                    "link",
-                    "set",
-                    &outside[end],
-                    "netns",
-                    &pid.to_string(),
-                    "name",
-                    inside,
-                ],
-            )?;
+            self.netlink(None, |socket| {
+                socket.move_link(&outside[end], *pid, Some(inside))
+            })?;
         }
         for port in &ports {
-            run(
-                &self.tools.ip,
-                &["link", "set", port, "netns", &fabric.to_string()],
-            )?;
+            self.netlink(None, |socket| socket.move_link(port, fabric, None))?;
         }
         for (from, to) in [(0, 1), (1, 0)] {
-            self.in_node(fabric, &self.tools.ip, &["link", "set", &ports[from], "up"])?;
+            self.netlink(Some(fabric), |socket| socket.set_state(&ports[from], true))?;
             self.in_node(
                 fabric,
                 &self.tools.tc,
@@ -692,26 +617,11 @@ impl Provisioner {
     pub(crate) fn set_node_address(&mut self, node: u32, address: &str) -> Result<(), String> {
         let pid = self.node_pid(node)?;
         self.failpoints.hit("address:start");
-        if address.contains(':') {
-            self.in_node(
-                pid,
-                &self.tools.ip,
-                &[
-                    "addr",
-                    "add",
-                    &format!("{address}/128"),
-                    "dev",
-                    "lo",
-                    "nodad",
-                ],
-            )?;
-        } else {
-            self.in_node(
-                pid,
-                &self.tools.ip,
-                &["addr", "add", &format!("{address}/32"), "dev", "lo"],
-            )?;
-        }
+        let local = netlink::parse_ip(address)?;
+        let length = if local.is_ipv6() { 128 } else { 32 };
+        self.netlink(Some(pid), |socket| {
+            socket.set_address("lo", local, length, Verb::Add)
+        })?;
         self.node_addresses
             .insert((node, address.contains(':')), address.to_owned());
         self.failpoints.hit("address:end");
@@ -732,11 +642,7 @@ impl Provisioner {
             .collect();
         self.failpoints.hit("mtu:start");
         for (pid, interface) in &ends {
-            self.in_node(
-                *pid,
-                &self.tools.ip,
-                &["link", "set", interface, "mtu", &mtu.to_string()],
-            )?;
+            self.netlink(Some(*pid), |socket| socket.set_mtu(interface, mtu))?;
             self.limit_segments(*pid, interface, mtu)?;
         }
         self.failpoints.hit("mtu:end");
@@ -751,9 +657,9 @@ impl Provisioner {
         let v4 = format!("net.ipv4.ip_forward={}", u8::from(on));
         let v6 = format!("net.ipv6.conf.all.forwarding={}", u8::from(on));
         if self.v6 {
-            self.sysctl(pid, &[v4.as_str(), v6.as_str()])?;
+            Self::sysctl(pid, &[v4.as_str(), v6.as_str()])?;
         } else {
-            self.sysctl(pid, &[v4.as_str()])?;
+            Self::sysctl(pid, &[v4.as_str()])?;
         }
         self.failpoints.hit("forwarding:end");
         Ok(())
@@ -777,17 +683,17 @@ impl Provisioner {
             metric,
             next_hops: next_hops.to_vec(),
         };
-        self.install(&route, "add", &route.next_hops)?;
+        self.install(&route, Verb::Add, &route.next_hops)?;
         self.routes.push(route);
         self.failpoints.hit("route:end");
         Ok(())
     }
 
-    /// Runs `ip route <verb>` for a route with the given ways out (all of its own, or those that are up).
+    /// Puts a route in the main table of its node, with the given ways out (all of its own, or those that are up).
     fn install(
         &self,
         route: &Route,
-        verb: &str,
+        verb: Verb,
         next_hops: &[crate::protocol::WireHop],
     ) -> Result<(), String> {
         let node = route.node;
@@ -795,25 +701,20 @@ impl Provisioner {
         if next_hops.is_empty() {
             return Err("a route needs a way out".to_owned());
         }
-        let mut arguments: Vec<String> = Vec::new();
-        if route.v6 {
-            arguments.push("-6".into());
-        }
-        arguments.extend(["route".to_owned(), verb.to_owned()]);
-        let host_prefix = if route.v6 { 128 } else { 32 };
-        arguments.push(
-            route
-                .destination
-                .as_ref()
-                .map_or_else(|| "default".to_owned(), |a| format!("{a}/{host_prefix}")),
-        );
-        arguments.extend(["metric".to_owned(), route.metric.to_string()]);
+        let destination = route
+            .destination
+            .as_deref()
+            .map(netlink::parse_ip)
+            .transpose()?;
         // A packet that the node sends over the route has the address of the node as its source, not the address of the link it
         // leaves by: the other nodes have a route to the node address only, so a reply to a link address would have none
         // (a TCP connection through a router never got its answer)
-        if let Some(address) = self.node_addresses.get(&(node, route.v6)) {
-            arguments.extend(["src".to_owned(), address.clone()]);
-        }
+        let source = self
+            .node_addresses
+            .get(&(node, route.v6))
+            .map(|address| netlink::parse_ip(address))
+            .transpose()?;
+        let mut hops = Vec::with_capacity(next_hops.len());
         for hop in next_hops {
             let link = self
                 .links
@@ -827,45 +728,36 @@ impl Provisioner {
                 return Err(format!("the link {} is not at the node {node}", hop.link));
             }
             let gateway = if route.v6 {
-                link_address_v6(hop.link, 1 - hop.end).to_string()
+                std::net::IpAddr::V6(link_address_v6(hop.link, 1 - hop.end))
             } else {
-                link_address(hop.link, 1 - hop.end).to_string()
+                std::net::IpAddr::V4(link_address(hop.link, 1 - hop.end))
             };
-            if next_hops.len() > 1 {
-                arguments.push("nexthop".into());
-            }
-            arguments.extend([
-                "via".to_owned(),
+            hops.push(Hop {
                 gateway,
-                "dev".to_owned(),
-                end.interface.clone(),
-            ]);
-            if next_hops.len() > 1 {
-                arguments.extend(["weight".to_owned(), hop.weight.to_string()]);
-            }
+                interface: end.interface.clone(),
+                weight: hop.weight,
+            });
         }
-        let words: Vec<&str> = arguments.iter().map(String::as_str).collect();
         if next_hops.len() > 1 {
             // The kernel chooses a way of a multipath route by the addresses only unless told to look at the ports as well,
             // so every flow between two nodes would take the same way; with the ports the flows share the ways (D-078)
-            let namespace = format!("--net=/proc/{pid}/ns/net");
-            let exe = self.exe.to_string_lossy().into_owned();
-            run(
-                &self.tools.nsenter,
-                &[
-                    namespace.as_str(),
-                    "--",
-                    exe.as_str(),
-                    "sysctl",
-                    if route.v6 {
-                        "net.ipv6.fib_multipath_hash_policy=1"
-                    } else {
-                        "net.ipv4.fib_multipath_hash_policy=1"
-                    },
-                ],
+            Self::sysctl(
+                pid,
+                &[if route.v6 {
+                    "net.ipv6.fib_multipath_hash_policy=1"
+                } else {
+                    "net.ipv4.fib_multipath_hash_policy=1"
+                }],
             )?;
         }
-        self.in_node(pid, &self.tools.ip, &words).map(|_| ())
+        let spec = RouteSpec {
+            destination,
+            metric: route.metric,
+            source,
+            hops,
+            v6: route.v6,
+        };
+        self.netlink(Some(pid), |socket| socket.set_route(&spec, verb))
     }
 
     /// Puts the routes back that lead out of a link that came up. The kernel removed them when the interface went down (the
@@ -883,7 +775,7 @@ impl Provisioner {
                 .copied()
                 .collect();
             if !ways.is_empty() {
-                self.install(route, "replace", &ways)?;
+                self.install(route, Verb::Replace, &ways)?;
             }
         }
         Ok(())
@@ -1076,7 +968,6 @@ impl Provisioner {
             .links
             .get(link as usize)
             .ok_or_else(|| format!("the link {link} does not exist in this run"))?;
-        let state = if up { "up" } else { "down" };
         let ends: Vec<LinkEnd> = link
             .ends
             .iter()
@@ -1091,7 +982,7 @@ impl Provisioner {
             .collect();
         // One end after the other: for a moment a sender on the first side is refused and one on the second is not
         for (pid, interface, _, _) in &ends {
-            self.in_node(*pid, &self.tools.ip, &["link", "set", interface, state])?;
+            self.netlink(Some(*pid), |socket| socket.set_state(interface, up))?;
         }
         if up {
             // The kernel removed the fixed neighbours with the down (a fixed one as well as a learned one); without them the
@@ -1100,30 +991,18 @@ impl Provisioner {
             // with it, so the address comes first
             for (pid, interface, _, v6_address) in &ends {
                 if let Some(address) = v6_address {
-                    self.in_node(
-                        *pid,
-                        &self.tools.ip,
-                        &["addr", "replace", address, "dev", interface, "nodad"],
-                    )?;
+                    let (local, length) = netlink::parse_cidr(address)?;
+                    self.netlink(Some(*pid), |socket| {
+                        socket.set_address(interface, local, length, Verb::Replace)
+                    })?;
                 }
             }
             for (pid, interface, neighbours, _) in &ends {
                 for [address, mac] in neighbours {
-                    self.in_node(
-                        *pid,
-                        &self.tools.ip,
-                        &[
-                            "neigh",
-                            "replace",
-                            address,
-                            "lladdr",
-                            mac,
-                            "dev",
-                            interface,
-                            "nud",
-                            "permanent",
-                        ],
-                    )?;
+                    let address = netlink::parse_ip(address)?;
+                    self.netlink(Some(*pid), |socket| {
+                        socket.set_neighbour(interface, address, mac)
+                    })?;
                 }
             }
             self.down.remove(&link_index);

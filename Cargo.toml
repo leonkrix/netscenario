@@ -29,6 +29,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 # The agent reads the clock and sets socket buffers through this safe interface, so no crate of ours needs `unsafe`
 rustix = { version = "1", default-features = false, features = ["std", "time", "net"] }
+# Netlink for the Kernel backend (D-101): the messages are built by `netlink-packet-route` (no `unsafe`), the socket is `netlink-sys`.
+# What the first lacks (`netem`, `htb`, `tbf`, `codel`, `pie`, the fifos) the backend encodes itself
+netlink-packet-core = "0.9"
+netlink-packet-route = "0.34"
+netlink-sys = "0.9"
 # The command line stops a run in an orderly way on Ctrl-C (D-066). The handler of the signal is in this crate, so no crate of
 # ours needs `unsafe`
 signal-hook = "0.4"
