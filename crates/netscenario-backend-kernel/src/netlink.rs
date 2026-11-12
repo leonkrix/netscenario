@@ -590,7 +590,7 @@ mod tests {
     /// Set in the copy of the test binary that runs inside the namespaces.
     const INSIDE: &str = "NETSCENARIO_NETLINK_TEST_INSIDE";
 
-    /// Runs the test `name` again in a user namespace of its own with a network namespace (`unshare --user --map-root-user
+    /// Runs the test `name` again in a network namespace of its own (`unshare --user --map-root-user --net`, as root `unshare
     /// --net`), where the test may make namespaces and interfaces without touching the machine (SAF-01). `false` in the copy
     /// that runs inside, where the body goes on; `true` in the first copy, which has asserted that the second passed. Where the
     /// machine does not allow user namespaces the test has nothing to show and returns at once: the CI is the judge there.
@@ -598,15 +598,24 @@ mod tests {
         if std::env::var_os(INSIDE).is_some() {
             return false;
         }
+        // As root a network namespace is enough. A user namespace would make the test binary unreachable when it lies in a
+        // directory of another user (`/home/runner/...` on the CI): root of the new user namespace has no rights over files
+        // whose owner is not mapped.
+        let arguments: &[&str] = if rustix::process::geteuid().is_root() {
+            &["--net", "--"]
+        } else {
+            &["--user", "--map-root-user", "--net", "--"]
+        };
         let probe = Command::new("unshare")
-            .args(["--user", "--map-root-user", "--net", "--", "true"])
+            .args(arguments)
+            .arg("true")
             .stderr(Stdio::null())
             .status();
         if !probe.is_ok_and(|status| status.success()) {
             return true;
         }
         let output = Command::new("unshare")
-            .args(["--user", "--map-root-user", "--net", "--"])
+            .args(arguments)
             .arg(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture", "--test-threads=1"])
             .env(INSIDE, "1")
