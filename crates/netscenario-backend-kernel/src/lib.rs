@@ -14,6 +14,7 @@ mod command;
 pub mod doctor;
 mod fabric;
 mod netem;
+mod netlink;
 mod programs;
 mod protocol;
 mod provisioner;
