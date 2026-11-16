@@ -73,9 +73,8 @@ impl Captures {
                         format!("the link '{id}' was not built (the {index}th)"),
                     )
                 })?;
-            for end in 0..2 {
+            for (end, node_name) in link.between.iter().enumerate() {
                 control.checkpoint()?;
-                let node_name = &link.between[end];
                 let node = provisioned
                     .nodes
                     .iter()
