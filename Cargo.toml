@@ -49,7 +49,7 @@ thiserror = "2"
 insta = { version = "1", features = ["glob"] }
 proptest = "1"
 # Checks that the example scenarios satisfy the generated schema
-jsonschema = { version = "0.60", default-features = false }
+jsonschema = { version = "0.61", default-features = false }
 
 [workspace.lints.rust]
 # A crate that needs `unsafe` (the engine, the bindings) overrides this in its own Cargo.toml and says why

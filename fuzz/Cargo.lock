@@ -206,7 +206,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "netscenario-agent"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "nix",
  "rustix",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "netscenario-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "netscenario-agent",
  "netscenario-model",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "netscenario-model"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "granit-parser",
  "schemars",
@@ -382,9 +382,9 @@ dependencies = [
 
 [[package]]
 name = "serde-saphyr"
-version = "2.0.0"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a253edfdea34032da21af84e16fcc94f4c7a6ba237f9f3bc2dbf43cea8535c44"
+checksum = "d43fb82d550b07e6f929a58d7d0935182602f48ddead875f5ee313c41c8f07fe"
 dependencies = [
  "annotate-snippets",
  "base64",

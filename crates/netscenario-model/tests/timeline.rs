@@ -9,7 +9,13 @@ use netscenario_model::{Direction, Edit, Impairments, Scenario};
 const HEAD: &str = "version: 0\nname: t\nduration: 30s\ntopology:\n  nodes: [a, b]\n  links:\n    - id: l\n      between: [a, b]\n      both: { delay: 10ms, rate: 8mbit, loss: { model: random, p: 1% } }\nworkloads:\n  - { id: w, kind: udp-cbr, from: a, to: b, rate: 1mbit, packet-size: 1200b }\ntimeline:\n";
 
 fn scenario(timeline: &str) -> Scenario {
-    Scenario::from_yaml(&format!("{HEAD}{timeline}"), "t.yaml")
+    // No events: the key is left out. An empty key is a null, and a null is not a list (it is written `[]`).
+    let head = if timeline.is_empty() {
+        HEAD.trim_end_matches("timeline:\n")
+    } else {
+        HEAD
+    };
+    Scenario::from_yaml(&format!("{head}{timeline}"), "t.yaml")
         .unwrap_or_else(|error| panic!("{error}"))
 }
 
