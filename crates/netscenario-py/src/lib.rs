@@ -322,8 +322,10 @@ fn runset_properties(text: &str) -> PyResult<Vec<(String, String)>> {
     Ok(report::set_properties(&set))
 }
 
+// The Rust function has no underscore (a lint of Rust 1.100 refuses to use an item with one); the module is still `_native`
 #[pymodule]
-fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "_native")]
+fn native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(version, module)?)?;
     module.add_function(wrap_pyfunction!(parse_scenario, module)?)?;
     module.add_function(wrap_pyfunction!(needs, module)?)?;
