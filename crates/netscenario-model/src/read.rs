@@ -318,7 +318,22 @@ fn clean_message(rendered: &str) -> (String, Option<String>) {
         );
     }
     let text = text.trim();
-    (text.to_owned(), unknown_name_hint(text))
+    // A key without a value is a null, and since serde-saphyr 2.1 a null is neither a list nor a mapping
+    let empty_hint = match text {
+        "expected sequence start" => {
+            Some("a list is written `[]` when it is empty; or leave the key out")
+        }
+        "expected mapping start" => {
+            Some("a mapping is written `{}` when it is empty; or leave the key out")
+        }
+        _ => None,
+    };
+    (
+        text.to_owned(),
+        empty_hint
+            .map(str::to_owned)
+            .or_else(|| unknown_name_hint(text)),
+    )
 }
 
 /// For "unknown field `dealy`, expected one of delay, jitter" (or "unknown variant"): the name that was most

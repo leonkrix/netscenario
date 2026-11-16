@@ -16,9 +16,15 @@ use netscenario_model::Scenario;
 use support::{agent_exe, assert_nothing_left, backend, namespaces_available, work_dir};
 
 fn scenario(link: &str, measure: &str) -> Scenario {
+    // Nothing to measure: the key is left out (an empty key is a null, and a null is not a mapping)
+    let measure = if measure.is_empty() {
+        String::new()
+    } else {
+        format!("measure:\n{measure}")
+    };
     Scenario::from_yaml(
         &format!(
-            "version: 0\nname: capture-test\nseed: 5\nduration: 3s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n{link}workloads:\n  - {{ id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }}\nmeasure:\n{measure}"
+            "version: 0\nname: capture-test\nseed: 5\nduration: 3s\ntopology:\n  nodes: [client, server]\n  links:\n    - id: access\n      between: [client, server]\n{link}workloads:\n  - {{ id: media, kind: udp-cbr, from: client, to: server, rate: 2mbit, packet-size: 1200b }}\n{measure}"
         ),
         "capture-test.yaml",
     )

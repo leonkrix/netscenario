@@ -17,6 +17,7 @@ The format is versioned with the line `version: 0`. **Version 0 is the series be
 The format is YAML 1.2; JSON is accepted because it is a subset. In addition:
 
 - One document per file, UTF-8, at most 4 MiB (the expanded form of a scenario with a trace or a table holds their packets or entries), nesting at most 32 levels deep. An empty file is an error.
+- A key without a value is a null, and a null is neither a list nor a mapping: write `[]` or `{}` for an empty one, or leave the key out (`timeline:` with nothing after it is refused). Where a value may be cleared, `null` means that (see `set` below).
 - Keys are unique inside a mapping.
 - **Anchors, aliases, merge keys (`<<`) and tags are refused.** A scenario reads the same from top to bottom. Reuse is done on purpose with parameters, templates and includes ([below](#parameters-templates-and-includes)), and not through YAML features.
 - Comments are free.
